@@ -1,0 +1,6 @@
+{
+  "format": "antiphon-rc-trusted-projects-v1",
+  "schema": 1,
+  "description": "CARD-1836 D-4: reviewed, revocable trust for specific shared application projects. Ships empty. An entry names an exact in-repository .csproj, its Windows configurations, owned test chunks with complete case rosters, the downstream edges it may satisfy and a contract producer. It is read only at the comparison commit; adding, removing or changing an entry needs review, a Full shadow and the replay gate. SDK, toolchain, framework, NuGet/npm package, lockfile, generator/analyzer and external runtime entries are refused.",
+  "entries": []
+}

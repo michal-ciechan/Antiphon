@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,6 +18,108 @@ namespace Antiphon.Tests.Scripts;
 [Timeout(60_000)]
 public sealed class RcForcedFullTests
 {
+    // CARD-1836 S3 (CP-3, V-3, G-8..G-11): trust releases holds only on executed clean own tests plus equal B/A contracts.
+    [Test]
+    public void Trust_requires_executed_own_tests_and_equal_contracts()
+    {
+        const string Messaging = "src/Messaging/Messaging.csproj";
+        string Policy(params object[] entries) => JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["format"] = "antiphon-rc-trusted-projects-v1", ["schema"] = 1, ["entries"] = entries,
+        });
+        object Entry(string project, bool tests = true, bool contract = true) => new Dictionary<string, object?>
+        {
+            ["project"] = project, ["configurations"] = new[] { "Release|x64" },
+            ["ownedTests"] = tests ? new object[] { new Dictionary<string, object> { ["chunk"] = "MessagingTests", ["cases"] = new[] { "m1", "m2" } } } : Array.Empty<object>(),
+            ["downstream"] = new[] { "src/Server/Server.csproj", "src/Runner/Runner.csproj" }, ["contractProducer"] = contract ? "antiphon-contract-v1" : null,
+        };
+        var trusted = Policy(Entry(Messaging));
+        var empty = Policy();
+        RcTrustChunk[] chunks =
+        [
+            new() { Id = "MessagingTests", Project = "tests/Messaging/Messaging.Tests.csproj", Consumes = [Messaging] },
+            new() { Id = "ServerTests", Project = "tests/Server/Server.Tests.csproj", Consumes = ["src/Server/Server.csproj", Messaging] },
+            new() { Id = "RunnerTests", Project = "tests/Runner/Runner.Tests.csproj", Consumes = ["src/Runner/Runner.csproj", Messaging] },
+            new() { Id = "OtherTests", Project = "tests/Other/Other.Tests.csproj", Consumes = ["src/Other/Other.csproj"] },
+        ];
+        string[] privateChange = ["src/Messaging/Internal/Queue.cs"];
+        RcOwnResult Own(string result = "pass", string disposition = "executed", int skipped = 0, bool timedOut = false, string[]? cases = null) => new()
+        {
+            Chunk = "MessagingTests", Disposition = disposition, Result = result, Skipped = skipped, TimedOut = timedOut, PassedCases = cases ?? ["m1", "m2"],
+        };
+        RcContractReceipt Contract(string side, string hash) => new() { Project = Messaging, Side = side, ExtractorVersion = "contract-v1", ContractHash = hash };
+        RcContractReceipt[] equal = [Contract("B", "h1"), Contract("A", "h1")];
+        RcTrustDecision Decide(RcOwnResult[]? own, RcContractReceipt[]? contracts = null, string? policyB = null, string? policyA = null, string[]? paths = null,
+            RcTrustChunk[]? with = null) =>
+            RcTrustedProjectGate.Decide(policyB ?? trusted, policyA ?? trusted, paths ?? privateChange, with ?? chunks, own, contracts ?? equal);
+        string Show(RcTrustDecision d) => string.Join(" ", d.Chunks.Select(c => c.Chunk + "=" + c.Decision + "[" + string.Join(",", c.Reasons) + "]"))
+            + " reasons=" + string.Join(",", d.Reasons) + " refused=" + string.Join(",", d.Refused);
+        bool Expanded(RcTrustDecision d, string why) => new[] { "ServerTests", "RunnerTests" }.All(id =>
+            d.Of(id).Decision == "execute" && d.Of(id).Reasons.Any(r => r == "trust-gate-failed:" + Messaging + ":" + why));
+        var rows = new NightlyCaseRows();
+
+        var first = Decide(null);
+        rows.Check(first.Of("MessagingTests").Decision == "execute" && first.Of("ServerTests").Decision == "held" && first.Of("RunnerTests").Decision == "held"
+            && first.Of("OtherTests").Decision == "carry" && first.Mode == "Scoped", "s3-hold-only-dependents", Show(first));
+
+        var release = Decide([Own()]);
+        rows.Check(new[] { "ServerTests", "RunnerTests" }.All(id => release.Of(id).Decision == "carry" && release.Of(id).Reasons.SequenceEqual(["trust-gate-passed:" + Messaging]))
+            && release.Of("MessagingTests").Decision == "execute", "s3-release", Show(release));
+
+        var red = Decide([Own(result: "FAIL")]);
+        rows.Check(Expanded(red, "own-red"), "s3-own-red", Show(red));
+        var skip = Decide([Own(skipped: 1)]);
+        rows.Check(Expanded(skip, "own-skip"), "s3-own-skip", Show(skip));
+        var timeout = Decide([Own(result: "TIMEOUT", timedOut: true)]);
+        rows.Check(Expanded(timeout, "own-timeout"), "s3-own-timeout", Show(timeout));
+        var notRun = Decide([Own(disposition: "missing", result: "")]);
+        var noRow = Decide([]);
+        rows.Check(Expanded(notRun, "own-missing") && Expanded(noRow, "own-missing"), "s3-own-missing", Show(notRun));
+
+        var drift = Decide([Own()], [Contract("B", "h1"), Contract("A", "h2")]);
+        rows.Check(Expanded(drift, "contract-drift"), "s3-hash-drift", Show(drift));
+        var absentA = Decide([Own()], [Contract("B", "h1")]);
+        var absentBoth = Decide([Own()], [Contract("B", ""), Contract("A", "")]);
+        rows.Check(Expanded(absentA, "contract-absent") && Expanded(absentBoth, "contract-absent"), "s3-hash-absent", Show(absentBoth));
+
+        var edited = Policy(Entry(Messaging), Entry("src/Server/Server.csproj"));
+        var edit = Decide([Own()], policyA: edited);
+        rows.Check(edit.Reasons.Contains("trust-policy-changed") && new[] { "ServerTests", "RunnerTests" }.All(id => edit.Of(id).Decision == "execute")
+            && edit.PolicyDigestA != edit.PolicyDigestB, "s3-policy-edit", Show(edit));
+
+        var self = Decide([Own()], policyB: empty, policyA: trusted);
+        rows.Check(new[] { "ServerTests", "RunnerTests" }.All(id => self.Of(id).Decision == "execute" && !self.Of(id).Reasons.Any(r => r.StartsWith("trust-gate-passed", StringComparison.Ordinal))),
+            "s3-self-authorize", Show(self));
+
+        var package = Decide([Own()], paths: [.. privateChange, "Directory.Packages.props"]);
+        var sdk = Decide([Own()], paths: ["global.json"]);
+        rows.Check(package.Mode == "Full" && package.Reasons.Contains("global-input:Directory.Packages.props") && sdk.Mode == "Full"
+            && sdk.Chunks.All(c => c.Decision == "execute"), "s3-package-sdk", Show(package));
+
+        var refusedPolicy = Policy(Entry("src/*/Messaging.csproj"), Entry("src/Server/Server.csproj", tests: false), Entry("Directory.Packages.props"),
+            Entry("nuget:Newtonsoft.Json"), Entry("src/Runner/Runner.csproj", contract: false));
+        var refusals = new List<string>();
+        var admitted = RcTrustedProjectGate.Entries(refusedPolicy, refusals);
+        rows.Check(admitted.Length == 0 && refusals.Contains("trust-entry-refused:src/*/Messaging.csproj:wildcard")
+            && refusals.Contains("trust-entry-refused:src/Server/Server.csproj:no-owned-tests") && refusals.Contains("trust-entry-refused:Directory.Packages.props:external")
+            && refusals.Contains("trust-entry-refused:nuget:Newtonsoft.Json:external") && refusals.Contains("trust-entry-refused:src/Runner/Runner.csproj:no-contract"),
+            "s3-policy-refusals", string.Join(",", refusals));
+
+        var shippedPath = Path.Combine(Antiphon.Tests.TestHelpers.C1514Support.RepoRoot(), "scripts", "lib", "rc-trusted-projects.json");
+        var shippedRefusals = new List<string>();
+        using (var shipped = JsonDocument.Parse(File.ReadAllText(shippedPath)))
+            rows.Check(shipped.RootElement.GetProperty("format").GetString() == "antiphon-rc-trusted-projects-v1" && shipped.RootElement.GetProperty("entries").GetArrayLength() == 0
+                && RcTrustedProjectGate.Entries(File.ReadAllText(shippedPath), shippedRefusals).Length == 0 && shippedRefusals.Count == 0, "s3-empty-shipped-policy");
+
+        RcTrustChunk[] direct = [.. chunks.Select(c => c.Id == "ServerTests" ? new RcTrustChunk { Id = c.Id, Project = c.Project, Consumes = c.Consumes, DirectHit = true } : c)];
+        var retained = Decide([Own()], with: direct);
+        rows.Check(retained.Of("ServerTests").Decision == "execute" && retained.Of("ServerTests").Reasons.Contains("direct-hit") && retained.Of("RunnerTests").Decision == "carry",
+            "s3-direct-hit-retained", Show(retained));
+
+        rows.ShouldAllPass(14, "s3-hold-only-dependents", "s3-release", "s3-own-red", "s3-own-skip", "s3-own-timeout", "s3-own-missing", "s3-hash-drift",
+            "s3-hash-absent", "s3-policy-edit", "s3-self-authorize", "s3-package-sdk", "s3-policy-refusals", "s3-empty-shipped-policy", "s3-direct-hit-retained");
+    }
+
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-13T12:00:00Z", CultureInfo.InvariantCulture);
 
     private static readonly string[] HashFields =
