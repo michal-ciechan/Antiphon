@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Api;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public class CallerWakeTests
+public partial class CallerWakeTests
 {
     [Test]
     public async Task Adopted_caller_wakes_for_an_unread_report_and_a_withheld_shortfall()
