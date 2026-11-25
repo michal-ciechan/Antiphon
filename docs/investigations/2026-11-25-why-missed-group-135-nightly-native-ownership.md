@@ -31,7 +31,8 @@ failing pin were byte-identical to master base
 
 ## Approving reviews
 
-The CARD-2051 verification note records a portable red and green on
+CARD-2051 Debug `a589c78d-bb9d-46da-a69a-2fc1e2822a07` reported a portable
+red and green on
 `/*/*/QualificationSupervisorTests/Quiet_test_host_reaches_its_idle_budget_while_the_owner_and_other_logs_are_busy`
 on Linux. The Windows replay of `C1039_DescendantExit` was pending at
 land. The review
@@ -45,8 +46,8 @@ for this investigation.
 ## Outside the selection
 
 `tests/Antiphon.Tests/Scripts/NightlyNativeOwnershipTests.cs` is an
-Integration class. Every case enters a Windows guard and requires the staged
-`OwnedChild.exe`. These cases skip on Linux. The short Merge gate runs the
+Integration class. Its native fixture cases use a Windows guard and require
+the staged `OwnedChild.exe`. Those cases skip on Linux. The short Merge gate runs the
 subjects' narrow witness rows. The documented portable CARD-2051 selection
 exercises the idle decision and leaves the real Job Object termination and
 handle capture to the Windows witness.
@@ -69,6 +70,19 @@ exercise assignment, child exit, drain, or environment handling without
 setting an idle monitor. Their live marker reads already use `LiveFixtureText`
 from the earlier sharing repair.
 
+The test keeps the idle cutoff and checks that the capture carries the idle
+header, the owner's exact reason and its live root PID. The private job
+must contain at least one active member at capture. Its exact membership
+count is a diagnostic snapshot. The fixture still checks that termination
+succeeds, cleanup completes, and the retained root handle signals. No
+product change was needed for the idle cutoff to run on this fixture.
+
+The portable witness uses a synthetic `active=2` row. It rejects an empty
+job, a different root PID and a root already marked exited. The truncated
+Windows excerpt does not establish the actual value of `active`, so the
+portable witness establishes the assertion change and the native replay
+remains pending.
+
 ## Cheapest pre-land check
 
 `tests/Antiphon.Tests/Scripts/NightlyNativeOwnershipTests.cs`,
@@ -79,6 +93,9 @@ method from the TRX for the incident replay. For the CARD-2051 addition,
 that filter is `/*/*/NightlyNativeOwnershipTests/C1039_DescendantExit` with
 the existing 120-second case budget and a build-slot-gated run on an
 isolated Windows runner.
+
+The portable repair checkpoint selects
+`/*/*/NightlyNativeOwnershipTests/Idle_capture_identifies_the_live_root_of_a_populated_job`.
 
 ## Exemption
 
