@@ -500,45 +500,35 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
             });
             await setup.SaveChangesAsync();
         }
-        var gate = new PauseDecisionInsertInterceptor();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-        var check = Task.Run(async () =>
+        // Run the competitor from the real INSERT boundary on an already-open second
+        // connection. No scheduled worker or wall-clock race is needed to hold admission.
+        await using var writer = NewDb(schema.ConnectionString);
+        await writer.Database.OpenConnectionAsync();
+        await writer.Database.ExecuteSqlRawAsync("SET lock_timeout = '500ms'");
+        var gate = new CompetingBindingInterceptor(async ct =>
         {
-            var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseNpgsql(schema.ConnectionString).AddInterceptors(gate).Options;
-            await using var db = new AppDbContext(options);
-            var caller = new AgentTaskService.Caller(await db.AgentTasks.AsNoTracking()
-                .SingleAsync(t => t.Id == taskId), sessionId, workspace.Path);
-            return await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, Sample(), caller,
-                timeout.Token);
-        });
-        try
-        {
-            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
-            await using var writer = NewDb(schema.ConnectionString);
-            // SET is session-local; keep EF's connection open across the following UPDATE.
-            await writer.Database.OpenConnectionAsync();
-            await writer.Database.ExecuteSqlRawAsync("SET lock_timeout = '500ms'");
             var blocked = await Should.ThrowAsync<PostgresException>(() =>
                 writer.Database.ExecuteSqlInterpolatedAsync(
-                    $"UPDATE \"AgentTasks\" SET \"Status\" = {(int)AgentTaskStatus.Working} WHERE \"Id\" = {competitorId}"));
+                    $"UPDATE \"AgentTasks\" SET \"Status\" = {(int)AgentTaskStatus.Working} WHERE \"Id\" = {competitorId}", ct));
             blocked.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
-        }
-        finally
-        {
-            gate.Resume.TrySetResult();
-            await check.WaitAsync(TimeSpan.FromSeconds(15));
-        }
-        (await check).Disposition.ShouldBe(InternalDecisionDisposition.Continue);
+        });
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql(schema.ConnectionString).AddInterceptors(gate).Options;
+        await using var db = new AppDbContext(options);
+        var caller = new AgentTaskService.Caller(await db.AgentTasks.AsNoTracking()
+            .SingleAsync(t => t.Id == taskId), sessionId, workspace.Path);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var decision = await new AgentTaskDecisionQuestionService(db).CheckAsync(taskId, Sample(), caller, timeout.Token);
+        gate.Attempts.ShouldBe(1);
+        decision.Disposition.ShouldBe(InternalDecisionDisposition.Continue);
         await using var verify = NewDb(schema.ConnectionString);
         (await verify.AgentTaskDecisionQuestions.CountAsync(q => q.AgentTaskId == taskId)).ShouldBe(1);
         (await verify.AgentTasks.SingleAsync(t => t.Id == competitorId)).Status.ShouldBe(AgentTaskStatus.Queued);
     }
 
-    private sealed class PauseDecisionInsertInterceptor : DbCommandInterceptor
+    private sealed class CompetingBindingInterceptor(Func<CancellationToken, Task> write) : DbCommandInterceptor
     {
-        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Attempts { get; private set; }
 
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
@@ -546,8 +536,8 @@ public sealed class AgentTaskDecisionQuestionIntegrationTests
         {
             if (command.CommandText.Contains("INSERT INTO \"AgentTaskDecisionQuestions\"", StringComparison.Ordinal))
             {
-                Entered.TrySetResult();
-                await Resume.Task.WaitAsync(cancellationToken);
+                Attempts++;
+                await write(cancellationToken);
             }
             return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
         }
