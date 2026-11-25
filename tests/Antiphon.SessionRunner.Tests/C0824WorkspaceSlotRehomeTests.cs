@@ -279,6 +279,33 @@ public sealed class C0824WorkspaceSlotRehomeTests
     }
 
     [Test]
+    public async Task C2061_HiddenSubmoduleEditHoldsQuarantine(CancellationToken ct)
+    {
+        using var scratch = Create();
+        var pool = scratch.Pool(Settings(settings => settings.LingerRetries = 0));
+        var lease = await pool.LeaseAsync(scratch.RequestA(), ct);
+        Git(lease.Path, "-c", "protocol.file.allow=always", "submodule", "add", scratch.Origin, "child");
+        Git(lease.Path, "commit", "-m", "add submodule");
+        Git(lease.Path, "push", "origin", BranchA);
+        scratch.Processes.Holders = path => path == lease.Path ? [new(4242, "sleep", "cwd")] : [];
+        (await pool.ReleaseAsync(new(lease.SlotId, lease.Generation, TaskA) { TaskSettled = true }, ct))
+            .Outcome.ShouldBe("quarantined");
+        scratch.Processes.Holders = _ => [];
+
+        var child = Path.Combine(lease.Path, "child");
+        Git(child, "update-index", "--skip-worktree", "README.md");
+        Plant(child, "README.md", "only copy");
+        Git(lease.Path, "-c", "core.fsmonitor=false", "status", "--porcelain", "--ignore-submodules=none").ShouldBeEmpty();
+
+        await pool.MaintainAsync(ct);
+
+        var held = pool.Ledger().QuarantinedDirectories.ShouldHaveSingleItem();
+        held.IsOpen.ShouldBeTrue("the child index can hide the only copy of a tracked edit");
+        held.Outcome.ShouldBe("automatic: dirty_or_status_unknown");
+        File.ReadAllText(Path.Combine(child, "README.md")).ShouldBe("only copy");
+    }
+
+    [Test]
     public async Task C2061_UnreadableTaskBranchHoldsQuarantine(CancellationToken ct)
     {
         using var scratch = Create();
