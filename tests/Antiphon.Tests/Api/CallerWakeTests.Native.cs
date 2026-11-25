@@ -118,7 +118,7 @@ public partial class CallerWakeTests
         var config = Path.Combine(world.CallerDirectory, "isolated-config");
         const string key = "local-test-provider";
         RealCliStubClaudeConfig.SeedOnboarding(config, key, trustedCwd: cwd);
-        var env = new Dictionary<string, string>(RealCliStubEnv.ForClaude(stub.BaseUrl, key, config).Env)
+        var overlay = new Dictionary<string, string>(RealCliStubEnv.ForClaude(stub.BaseUrl, key, config).Env)
         {
             ["ANTIPHON_ORCHESTRATOR"] = "1", ["ANTIPHON_TASK_ID"] = "", ["ANTIPHON_TASK_KIND"] = "",
             ["ANTIPHON_AGENT_ID"] = agentId.ToString(), ["ANTIPHON_TASK_TOKEN"] = token,
@@ -127,6 +127,7 @@ public partial class CallerWakeTests
             ["WAKE_TEST_CLI"] = Path.Combine(AppContext.BaseDirectory, "antiphon-scripts", "Antiphon.Scripts.dll"),
             ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1", ["ANTHROPIC_AUTH_TOKEN"] = "", ["CLAUDE_CODE_OAUTH_TOKEN"] = "",
         };
+        var (env, unset) = IsolateNativeCaller(overlay, InheritedVariableNames());
         var reportId = Guid.Empty;
         var sawNotice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var mixed = false;
@@ -161,8 +162,7 @@ public partial class CallerWakeTests
         if (!OperatingSystem.IsWindows())
         {
             exe = "/usr/bin/env";
-            args = ["-u", "ANTIPHON_TASK_ID", "-u", "ANTIPHON_TASK_KIND",
-                "-u", "ANTHROPIC_AUTH_TOKEN", "-u", "CLAUDE_CODE_OAUTH_TOKEN", "claude", .. args];
+            args = [.. unset.SelectMany(name => new[] { "-u", name }), "claude", .. args];
         }
         var spec = new AgentLaunchSpec("wake", AgentKind.ClaudeCode, exe, args,
             env, cwd, 120, 40, AcceptedStartedAt: session.StartedAt);
@@ -227,6 +227,65 @@ public partial class CallerWakeTests
         {
             runner.KillOnDispose = true;
         }
+    }
+
+    /// <summary>
+    /// CARD-2074 witness. The native caller must not depend on the runner having unset the outer
+    /// session's provider variables: every inherited <c>CLAUDE*</c> and <c>ANTHROPIC*</c> name the
+    /// overlay does not set to a value is removed for the child (empty in the overlay for the
+    /// Windows pty merge, <c>env -u</c> on Unix), and the overlay's own values are kept.
+    /// </summary>
+    [Test]
+    public void C2074_Native_caller_strips_every_inherited_provider_variable()
+    {
+        var overlay = new Dictionary<string, string>(RealCliStubEnv.ForClaude("http://127.0.0.1:9", "k", Path.GetTempPath()).Env)
+        {
+            ["ANTIPHON_TASK_ID"] = "", ["ANTHROPIC_AUTH_TOKEN"] = "", ["CLAUDE_CODE_OAUTH_TOKEN"] = "",
+            ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1",
+        };
+        string[] inherited = ["PATH", "HOME", "CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_EFFORT",
+            "CLAUDE_PID", "CLAUDE_CONFIG_DIR", "ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
+
+        var (env, unset) = IsolateNativeCaller(overlay, inherited);
+
+        string[] stripped = ["CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_EFFORT", "CLAUDE_PID",
+            "ANTHROPIC_MODEL", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"];
+        foreach (var name in stripped)
+        {
+            unset.ShouldContain(name, $"{name} is removed before exec on Unix");
+            env.TryGetValue(name, out var value).ShouldBeTrue($"{name} is emptied for the Windows pty merge");
+            value.ShouldBeEmpty();
+        }
+        unset.ShouldContain("ANTIPHON_TASK_ID", "the outer delegate identity is still removed");
+        foreach (var kept in new[] { "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" })
+        {
+            unset.ShouldNotContain(kept, $"{kept} is the isolated caller's own value");
+            env[kept].ShouldBe(overlay[kept]);
+        }
+        unset.ShouldNotContain("PATH");
+        env.ContainsKey("PATH").ShouldBeFalse("unrelated inherited variables are left to the pty merge");
+
+        // The real inherited environment of this test host, whatever launched it.
+        var (_, live) = IsolateNativeCaller(overlay, InheritedVariableNames());
+        InheritedVariableNames().Where(IsProviderVariable)
+            .Where(name => !overlay.TryGetValue(name, out var value) || value.Length == 0)
+            .ShouldAllBe(name => live.Contains(name));
+    }
+
+    private static IEnumerable<string> InheritedVariableNames() =>
+        Environment.GetEnvironmentVariables().Keys.Cast<string>();
+
+    private static bool IsProviderVariable(string name) =>
+        name.StartsWith("CLAUDE", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("ANTHROPIC", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The native caller's launch environment and the names removed before exec on Unix.</summary>
+    private static (Dictionary<string, string> Env, string[] Unset) IsolateNativeCaller(
+        IReadOnlyDictionary<string, string> overlay, IEnumerable<string> inherited)
+    {
+        _ = inherited;
+        return (new Dictionary<string, string>(overlay),
+            ["ANTIPHON_TASK_ID", "ANTIPHON_TASK_KIND", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]);
     }
 
     private static JsonElement? ReadStatusResult(IEnumerable<string> lines)
