@@ -224,10 +224,14 @@ public sealed class CodexCliObservationTests
     [Test]
     public async Task C959_Retry_and_cancellation_recheck()
     {
-        foreach (var version in new[] { "0.156.1", "unknown" })
-        foreach (var busy in new[] { false, true })
-        foreach (var worktree in new[] { false, true })
+        // Each vector builds its own schema, repository, clock and kits, so the vectors run side by side.
+        var vectors = from version in new[] { "0.156.1", "unknown" }
+                      from busy in new[] { false, true }
+                      from worktree in new[] { false, true }
+                      select (version, busy, worktree);
+        await Worlds.InParallelAsync(vectors, c => $"lost-claim/{c.version}/busy={c.busy}/worktree={c.worktree}", async c =>
         {
+            var (version, busy, worktree) = c;
             var vector = $"lost-claim/{version}/busy={busy}/worktree={worktree}";
             using var scenario = TestTrace.Span("scenario", "c959.vector", vector);
             await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -319,7 +323,7 @@ public sealed class CodexCliObservationTests
                 foreach (var root in roots)
                     if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, recursive: true);
             }
-        }
+        });
         using var cancel = new CancellationTokenSource();
         await using var k = await Kit.CreateAsync(cancel);
         await Should.ThrowAsync<OperationCanceledException>(() => k.Service.CreateAsync(k.Request(false), k.Caller, cancel.Token));
