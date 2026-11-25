@@ -23982,12 +23982,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Application/CodexCliObservationGapTests.cs",
-      "classes": [
-        "CodexCliObservationTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Application/CodexCliRemoteDeliveryFixture.cs",
       "classes": [
         "CodexCliObservationTests",
@@ -24680,6 +24674,14 @@
       "path": "tests/Antiphon.Tests/Application/OutputDistillationDeliveryTests.cs",
       "classes": [
         "OutputDistillationApplyRaceTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/ParallelWorlds.cs",
+      "classes": [
+        "CodexCliObservationGapTests",
+        "CodexCliObservationTests",
+        "DelegateBranchDeliveryTests"
       ]
     },
     {
