@@ -84,3 +84,18 @@ To reproduce this method on server2:
 ```sh
 pwsh -NoProfile -File scripts/build-slot.ps1 -Label caller-wake -- dotnet run --project tests/Antiphon.Tests -- --treenode-filter '/*/*/CallerWakeTests/Adopted_caller_wakes_for_an_unread_report_and_a_withheld_shortfall'
 ```
+
+### Round-two recipient and retention evidence
+
+The server now matches the caller credential, Claude conversation UUID and accepted launch time, and requires an observed end of turn in that launch. A busy or unknown turn retains its claim. An ordinary report stays due through queue retention until the matching parent reads that settlement or the full submitted prompt appears in its transcript. A later settlement creates a new obligation. The keep-six job owns the initial reminder. A withheld pending reminder can repeat natively after its durable interval. Acknowledgement, a hold and refill to target retire the outstanding row.
+
+The reviewed test previously ran Node directly and read the report from the test process. It missed a relative status command that failed with exit 127 from a generated sibling outside the checkout. The hook now supplies the command using the checkout that owns the hook.
+
+At `5a35082ecb3bca3e1bd769829320220ac563b41b`, an installed Claude CLI received the native hook after runner adoption in each layout. A loopback model requested the exact command printed by the hook. Claude executed it and recorded the unique report body in its tool result. The real status endpoint persisted the receiving session and settlement in both cases. The original terminal notification remained unconfirmed with zero typing attempts.
+
+| Workspace | Claude conversation | Task read by Claude | Settlement UTC |
+|---|---|---|---|
+| Main checkout | `cc891e50-d485-4739-905a-5631f0266ce1` | `fc9eb1cf-63dd-4dac-95a1-6e3558ca5864` | 15:34:04.267431 |
+| Generated sibling worktree | `bfdb9b70-ed6e-482f-8ad5-f522392907d9` | `031a7332-98ee-4278-a69b-62ac6ee428b0` | 15:35:09.984804 |
+
+Native TRX `5c93e164-4f6e-4614-9b98-e936e7b797f9` executed both cases in 2m 44.642s. TRX `54453b88-6546-42e8-85b2-8e1a97b70f79` passed eight narrow checks in 43.247s, including the three repaired impact tests. Both runs had zero failures and skips. On unmodified master `2fd61b643ea4231fa732cd4969b5284d43b33f39`, TRX `f08342e6-ff69-4ce9-959a-53da7f7cbf14` reproduced the fourth impact failure, the watchdog entering Blocked at T+4m59s. The prior 31m 28.521s selection is partitioned into [four serial impact rows](2026-11-25-completion-wake-r2-impact-plan.md).
