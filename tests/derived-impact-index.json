@@ -2304,9 +2304,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
         "CheckpointSourceGitBoundsTests",
         "CheckpointSourceStateTests",
