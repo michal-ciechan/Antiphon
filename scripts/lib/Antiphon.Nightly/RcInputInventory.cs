@@ -79,7 +79,7 @@ namespace Antiphon.Nightly
         public string CreditBlockedBy { get; set; }
         /// <summary>The checked-in no-op path patterns this snapshot applied (not part of the record).</summary>
         [System.Text.Json.Serialization.JsonIgnore]
-        public Regex[] NoopPatterns { get; set; } = Array.Empty<Regex>();
+        public RcInputGlob[] NoopPatterns { get; set; } = Array.Empty<RcInputGlob>();
 
         public bool IsNoopPath(string path) => NoopPatterns.Any(p => p.IsMatch(path ?? ""));
     }
@@ -137,6 +137,101 @@ namespace Antiphon.Nightly
         public bool GateCredit { get; set; }
     }
 
+    /// <summary>A whole-path owner glob with matching work bounded by the pattern and path lengths.</summary>
+    public sealed class RcInputGlob
+    {
+        private enum Kind { Literal, One, ComponentStar, PathStar, DirectoryPrefix }
+
+        private readonly string prefix;
+        private readonly bool ignoreCase;
+        private readonly (Kind Kind, char Literal)[] tokens;
+
+        internal RcInputGlob(string pattern, bool ignoreCase)
+        {
+            this.ignoreCase = ignoreCase;
+            var wildcard = pattern.AsSpan().IndexOfAny('*', '?');
+            prefix = wildcard < 0 ? pattern : pattern.Substring(0, wildcard);
+            var parsed = new List<(Kind, char)>();
+            for (var i = prefix.Length; i < pattern.Length; i++)
+            {
+                var remaining = pattern.AsSpan(i);
+                if (remaining.StartsWith("**/", StringComparison.Ordinal))
+                {
+                    parsed.Add((Kind.DirectoryPrefix, default));
+                    i += 2;
+                }
+                // The old glob translation paired **/ before **, including after an adjacent *.
+                else if (remaining.StartsWith("**", StringComparison.Ordinal) && !remaining.StartsWith("***/", StringComparison.Ordinal))
+                {
+                    parsed.Add((Kind.PathStar, default));
+                    i++;
+                }
+                else
+                {
+                    var c = pattern[i];
+                    parsed.Add((c == '*' ? Kind.ComponentStar : c == '?' ? Kind.One : Kind.Literal, c));
+                }
+            }
+            tokens = parsed.ToArray();
+        }
+
+        public bool IsMatch(string path)
+        {
+            ArgumentNullException.ThrowIfNull(path);
+            if (!MatchesPrefix(path)) return false;
+            var tail = path.AsSpan(prefix.Length);
+            // The former regex's $ also permits a final LF. Git tree paths reject controls before matching.
+            if (tokens.Length == 0) return tail.IsEmpty || (tail.Length == 1 && tail[0] == '\n');
+
+            // After each token, reached[i] means that the pattern prefix can end at path offset i.
+            // Each token updates the frontier in one pass, even when many globstars can share the same suffix.
+            var width = tail.Length + 1;
+            Span<bool> reached = width <= 256 ? stackalloc bool[width] : new bool[width];
+            reached.Clear();
+            reached[0] = true;
+            foreach (var (kind, literal) in tokens)
+            {
+                switch (kind)
+                {
+                    case Kind.ComponentStar:
+                    case Kind.PathStar:
+                        var excluded = kind == Kind.ComponentStar ? '/' : '\n';
+                        for (var i = 1; i < width; i++)
+                            reached[i] |= reached[i - 1] && tail[i - 1] != excluded;
+                        break;
+                    case Kind.DirectoryPrefix:
+                        var canStart = reached[0];
+                        for (var i = 1; i < width; i++)
+                        {
+                            var before = reached[i];
+                            var c = tail[i - 1];
+                            reached[i] |= canStart && c == '/';
+                            canStart = before || (canStart && c != '\n');
+                        }
+                        break;
+                    default:
+                        for (var i = width - 1; i > 0; i--)
+                            reached[i] = reached[i - 1] && (kind == Kind.One ? tail[i - 1] != '/' : MatchesLiteral(literal, tail[i - 1]));
+                        reached[0] = false;
+                        break;
+                }
+            }
+            return reached[^1] || (tail.EndsWith("\n", StringComparison.Ordinal) && reached[^2]);
+        }
+
+        private bool MatchesPrefix(string path)
+        {
+            if (!ignoreCase) return path.StartsWith(prefix, StringComparison.Ordinal);
+            if (path.Length < prefix.Length) return false;
+            for (var i = 0; i < prefix.Length; i++)
+                if (!MatchesLiteral(prefix[i], path[i])) return false;
+            return true;
+        }
+
+        private bool MatchesLiteral(char expected, char actual) =>
+            expected == actual || (ignoreCase && char.ToLowerInvariant(expected) == char.ToLowerInvariant(actual));
+    }
+
     public static class RcInputInventory
     {
         public const string MapPath = "scripts/lib/rc-input-owners.json";
@@ -151,13 +246,11 @@ namespace Antiphon.Nightly
         /// unless ignoreCase. Refuses an empty, rooted, parent-escaping or over-long pattern, or one with \ : ; [ ] or a
         /// control character.
         /// </summary>
-        public static Regex Pattern(string pattern, bool ignoreCase = false)
+        public static RcInputGlob Pattern(string pattern, bool ignoreCase = false)
         {
             if (string.IsNullOrEmpty(pattern) || pattern.Length > 2048 || PatternRefused.IsMatch(pattern) || pattern.StartsWith("/", StringComparison.Ordinal)
                 || pattern.Split('/').Contains("..")) throw Refuse("invalid-input-pattern");
-            var expression = "^" + Regex.Escape(pattern).Replace("\\*\\*/", "(?:.*/)?").Replace("\\*\\*", ".*").Replace("\\*", "[^/]*").Replace("\\?", "[^/]") + "$";
-            var options = RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
-            return new Regex(expression, options, TimeSpan.FromMilliseconds(100));
+            return new RcInputGlob(pattern, ignoreCase);
         }
 
         private static readonly Regex Unresolvable = new Regex(@"[$@%:\x00-\x1f]", RegexOptions.CultureInvariant);
@@ -365,7 +458,7 @@ namespace Antiphon.Nightly
         private sealed class Reading
         {
             public Dictionary<string, TreeEntry> Tree;
-            public Regex[] Noop = Array.Empty<Regex>();
+            public RcInputGlob[] Noop = Array.Empty<RcInputGlob>();
             public readonly List<string> NoopConflicts = new List<string>();
             public readonly HashSet<string> NoopConflictKeys = new HashSet<string>(StringComparer.Ordinal);
 
@@ -468,7 +561,7 @@ namespace Antiphon.Nightly
                 AssertKeys(noop, "schemaVersion", "rows");
                 if (!IsOne(Get(noop, "schemaVersion"))) throw Refuse("noop-map-version");
                 if (!IsArray(Get(noop, "rows"))) throw Refuse("noop-map-shape");
-                var patterns = new List<Regex>();
+                var patterns = new List<RcInputGlob>();
                 foreach (var row in noop.GetProperty("rows").EnumerateArray())
                 {
                     AssertKeys(row, "path", "reason", "evidence");
@@ -504,7 +597,7 @@ namespace Antiphon.Nightly
                     continue;
                 }
                 var pattern = Pattern(rootPath, NugetConfig.IsMatch(rootPath));
-                var except = new List<Regex>();
+                var except = new List<RcInputGlob>();
                 if (Has(root, "except"))
                     foreach (var item in root.GetProperty("except").EnumerateArray())
                     {
@@ -779,11 +872,11 @@ namespace Antiphon.Nightly
         private sealed class TestOnlyPolicy
         {
             public bool Enabled;
-            public Regex[] Paths = Array.Empty<Regex>(), ExceptPaths = Array.Empty<Regex>();
+            public RcInputGlob[] Paths = Array.Empty<RcInputGlob>(), ExceptPaths = Array.Empty<RcInputGlob>();
             public HashSet<string> ExceptReasons = new HashSet<string>(StringComparer.Ordinal), ProductEdges = new HashSet<string>(StringComparer.Ordinal);
-            public (Regex Pattern, Regex[] Except, string Reason, bool Walker, string[] Consumers)[] Roots = Array.Empty<(Regex, Regex[], string, bool, string[])>();
+            public (RcInputGlob Pattern, RcInputGlob[] Except, string Reason, bool Walker, string[] Consumers)[] Roots = Array.Empty<(RcInputGlob, RcInputGlob[], string, bool, string[])>();
 
-            private static bool Carves((Regex Pattern, Regex[] Except, string Reason, bool Walker, string[] Consumers) root, string path) => root.Except.Any(e => e.IsMatch(path));
+            private static bool Carves((RcInputGlob Pattern, RcInputGlob[] Except, string Reason, bool Walker, string[] Consumers) root, string path) => root.Except.Any(e => e.IsMatch(path));
 
             public bool IsTestOnly(string path)
             {
@@ -825,7 +918,7 @@ namespace Antiphon.Nightly
             var roots = map.GetProperty("roots").EnumerateArray().Select(root =>
             {
                 var path = Text(Get(root, "path"));
-                var except = Has(root, "except") ? root.GetProperty("except").EnumerateArray().Select(e => Pattern(Text(e))).ToArray() : Array.Empty<Regex>();
+                var except = Has(root, "except") ? root.GetProperty("except").EnumerateArray().Select(e => Pattern(Text(e))).ToArray() : Array.Empty<RcInputGlob>();
                 var walker = Get(root, "walker").ValueKind == JsonValueKind.True;
                 var consumers = IsArray(Get(root, "consumers")) ? root.GetProperty("consumers").EnumerateArray().Select(Text).ToArray() : Array.Empty<string>();
                 return (Pattern(path, NugetConfig.IsMatch(path ?? "")), except, Text(Get(root, "reason")) ?? "", walker, consumers);
