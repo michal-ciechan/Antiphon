@@ -832,6 +832,31 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         InProcessGitStatus.TryAnswer(repo.Root, status, ChildEnvironment(("GIT_CONFIG_PARAMETERS", "'core.autocrlf'='true'"))).ShouldBeNull();
     }
 
+    /// <summary>
+    /// The status view is master's: its files are stamped by length and write time, never opened, so a global file the
+    /// process cannot open (git lists the rest with a warning) still leaves a view that agrees, and the remote get-url
+    /// view (<see cref="GitRemoteConfigView"/>, which does open them) changes nothing here.
+    /// </summary>
+    [Test]
+    public async Task The_status_view_stamps_its_files_without_opening_them()
+    {
+        await using var repo = await Repo.CreateAsync(linked: false);
+        var global = Path.GetFullPath(Path.Combine(repo.Root, "..", "locked-global"));
+        await File.WriteAllTextAsync(global, "");
+        File.SetLastWriteTimeUtc(global, DateTime.UtcNow.AddMinutes(-5)); // not racy: the cached remote stamp is not rehashed
+        await Repo.RunGitAsync(repo.Root, "remote", "add", "origin", "https://example.invalid/origin.git");
+        var env = ChildEnvironment(("GIT_CONFIG_GLOBAL", global));
+        InProcessGitReads.TryAnswerRemoteUrl(repo.Root, ["remote", "get-url", "origin"], env).ShouldNotBeNull("readable: answered");
+        using var opened = new LibGit2Sharp.Repository(repo.Root);
+        await using (new FileStream(global, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            GitStatusConfigAgreement.Disagreement(opened, env, []).ShouldBeNull("a present global file the probe cannot open");
+            InProcessGitReads.TryAnswerRemoteUrl(repo.Root, ["remote", "get-url", "origin"], env).ShouldBeNull();
+            GitStatusConfigAgreement.Disagreement(opened, env, []).ShouldBeNull("after a remote get-url under the same environment");
+        }
+        GitStatusConfigAgreement.Disagreement(opened, env, []).ShouldBeNull("readable again");
+    }
+
     private static async Task InitNestedAsync(Repo r, string relative)
     {
         var path = r.Full(relative);

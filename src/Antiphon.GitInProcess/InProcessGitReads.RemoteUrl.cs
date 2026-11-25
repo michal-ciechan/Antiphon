@@ -17,10 +17,11 @@ namespace Antiphon.GitInProcess;
 /// (<c>config.worktree</c>, <c>extensions.worktreeConfig</c>);</item>
 /// <item>no line of that file continued with a backslash (libgit2 and git end such a value differently), and every
 /// remote.* and branch.* entry in it one git's remote.c reads without dying or warning (<see cref="LocalUrl"/>);</item>
-/// <item>no <c>remote.*</c>, <c>branch.*</c>, <c>url.*</c>, <c>include.*</c> or <c>includeIf.*</c> key in the system,
-/// global, XDG or command levels the git child itself reads, asked of git once per distinct child environment, and
-/// the same safe.* entries there as libgit2 reads here (<see cref="GitStatusConfigAgreement.ChildRemoteKeys"/>;
-/// GIT_CONFIG_PARAMETERS, GIT_CONFIG and a relative config or home path refuse outright);</item>
+/// <item>no <c>remote.&lt;name&gt;.*</c>, <c>branch.&lt;name&gt;.*</c>, <c>url.*</c>, <c>include.*</c> or <c>includeIf.*</c>
+/// key in the system, global, XDG or command levels the git child itself reads (a few top-level remote and branch
+/// keys git reads harmlessly are allowed), asked of git once per distinct child environment, and the same safe.*
+/// entries there as libgit2 reads here (<see cref="GitRemoteConfigView"/>, its own cache, apart from the status
+/// view's; GIT_CONFIG_PARAMETERS, GIT_CONFIG and an empty or relative config or home path refuse outright);</item>
 /// <item>no <c>remotes/&lt;name&gt;</c> or <c>branches/&lt;name&gt;</c> entry in the git or common directory, no
 /// variable in the child's environment that redirects the repository, and nothing <see cref="Unusual"/>.</item>
 /// </list>
@@ -54,10 +55,12 @@ internal static partial class InProcessGitReads
         if (!RemoteName.IsMatch(name)) return null;
         foreach (var redirect in RepositoryRedirects)
             if (childEnvironment.TryGetValue(redirect, out var value) && !string.IsNullOrEmpty(value)) return null;
-        // Injected command-level keys are listed by the probe too; one naming a remote, a rewrite or an include is
-        // refused here as well, before any git or libgit2 work.
+        // Injected command-level keys are listed by the probe too; one naming a remote, a branch, a rewrite, an include
+        // or a safe.* setting is refused here as well, before any git or libgit2 work.
         if (InjectedKeys(childEnvironment) is not { } injected
             || injected.Any(key => key.StartsWith("remote.", StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith("branch.", StringComparison.OrdinalIgnoreCase)
+                || key.StartsWith("safe.", StringComparison.OrdinalIgnoreCase)
                 || key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
                 || key.StartsWith("include", StringComparison.OrdinalIgnoreCase))) return null;
         try
@@ -83,13 +86,8 @@ internal static partial class InProcessGitReads
             {
                 if (LocalUrl(view.Config, name) is not { } url) return null;
                 // The child's own non-repository levels, last: the one step that may start git (once per environment).
-                // git's remote.c reads every remote.* and branch.* key of every level and dies or warns on a bad one;
-                // those levels are only listed by name, so any such key there is git's.
-                if (GitStatusConfigAgreement.ChildRemoteKeys(childEnvironment, view.Config) is not { } inherited
-                    || inherited.Any(key => key.StartsWith("url.", StringComparison.OrdinalIgnoreCase)
-                        || key.StartsWith("include", StringComparison.OrdinalIgnoreCase)
-                        || key.StartsWith("remote.", StringComparison.OrdinalIgnoreCase)
-                        || key.StartsWith("branch.", StringComparison.OrdinalIgnoreCase))) return null;
+                // git's remote.c reads every remote.* and branch.* key of every level and dies or warns on a bad one.
+                if (GitRemoteConfigView.Refusal(childEnvironment, view.Config) is not null) return null;
                 return Ok(url + "\n");
             }
             finally

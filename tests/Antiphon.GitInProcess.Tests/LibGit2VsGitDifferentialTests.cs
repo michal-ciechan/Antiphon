@@ -692,6 +692,11 @@ public sealed class LibGit2VsGitDifferentialTests
         var injected = RemoteChild(fixture, ("GIT_CONFIG_COUNT", "1"), ("GIT_CONFIG_KEY_0", "remote.origin.url"),
             ("GIT_CONFIG_VALUE_0", "https://command.invalid/origin.git"));
         await CompareRemoteUrlAsync(repo, Expect.Fallback, injected, "origin");
+        // Injected branch.* and safe.* keys are refused before the probe, whatever their shape.
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "branch.main.merge"), ("GIT_CONFIG_VALUE_0", "")), "origin");
+        await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "safe.directory"), ("GIT_CONFIG_VALUE_0", "*")), "origin");
         await CompareRemoteUrlAsync(repo, Expect.Fallback,
             RemoteChild(fixture, ("GIT_CONFIG_PARAMETERS", "'url.https://p.invalid/.insteadof'='x'")), "origin");
         await CompareRemoteUrlAsync(repo, Expect.Fallback, RemoteChild(fixture, ("GIT_CONFIG", global)), "origin");
@@ -785,19 +790,92 @@ public sealed class LibGit2VsGitDifferentialTests
             await CaseAsync(failures, "HOMEDRIVE+HOMEPATH .gitconfig", async () =>
                 (await CompareRemoteUrlAsync(repo, Expect.Fallback, candidates, "origin")).Result.Output
                     .ShouldBe("https://global.invalid/origin.git\n"));
+            // USERPROFILE's file is not read while HOMEDRIVE+HOMEPATH exists; deleting that directory (no file in it
+            // changes: none is left) makes git read USERPROFILE's, so the home's existence is part of the view.
+            await File.WriteAllTextAsync(Path.Combine(profile, ".gitconfig"), fromGlobal);
+            File.Delete(Path.Combine(driveHome, ".gitconfig"));
+            await CaseAsync(failures, "HOMEDRIVE+HOMEPATH present, USERPROFILE unread",
+                () => CompareRemoteUrlAsync(repo, Expect.Answered, candidates, "origin"));
+            Directory.Delete(driveHome);
+            await CaseAsync(failures, "HOMEDRIVE+HOMEPATH deleted", async () =>
+                (await CompareRemoteUrlAsync(repo, Expect.Fallback, candidates, "origin")).Result.Output
+                    .ShouldBe("https://global.invalid/origin.git\n"));
         }
 
         // A global file edited while git lists the child's config: the view read before the edit is not kept.
         var global = Path.Combine(fixture.Root, "home", "remote-url-racing-global");
         await File.WriteAllTextAsync(global, "");
         var racing = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", global));
-        GitStatusConfigAgreement.AfterListing.Value = () => File.WriteAllText(global, fromGlobal);
+        GitRemoteConfigView.AfterListing.Value = () => File.WriteAllText(global, fromGlobal);
         try
         {
             await CaseAsync(failures, "edited during the listing", () => CompareRemoteUrlAsync(repo, Expect.Fallback, racing, "origin"));
         }
-        finally { GitStatusConfigAgreement.AfterListing.Value = null; }
+        finally { GitRemoteConfigView.AfterListing.Value = null; }
         await CaseAsync(failures, "edited during the listing, next read", () => CompareRemoteUrlAsync(repo, Expect.Fallback, racing, "origin"));
+
+        // The system file the child reads, edited while git lists: stamped before the listing as well as after it, so
+        // the view listed before the edit is neither returned nor kept for the next read.
+        var racingSystem = Path.Combine(fixture.Root, "home", "remote-url-racing-system");
+        await File.WriteAllTextAsync(racingSystem, "");
+        var systemChild = RemoteChild(fixture, ("GIT_CONFIG_NOSYSTEM", null), ("GIT_CONFIG_SYSTEM", racingSystem));
+        await CaseAsync(failures, "system file before", () => CompareRemoteUrlAsync(repo, Expect.Answered, systemChild, "origin"));
+        // A different environment signature, so the race runs on a fresh view: an injected harmless key.
+        var systemRace = RemoteChild(fixture, ("GIT_CONFIG_NOSYSTEM", null), ("GIT_CONFIG_SYSTEM", racingSystem),
+            ("GIT_CONFIG_COUNT", "1"), ("GIT_CONFIG_KEY_0", "gc.auto"), ("GIT_CONFIG_VALUE_0", "0"));
+        GitRemoteConfigView.AfterListing.Value = () => File.WriteAllText(racingSystem, "[url \"https://mirror.invalid/\"]\n\tinsteadOf = x\n");
+        try
+        {
+            await CaseAsync(failures, "system file edited during the listing",
+                () => CompareRemoteUrlAsync(repo, Expect.Fallback, systemRace, "origin"));
+        }
+        finally { GitRemoteConfigView.AfterListing.Value = null; }
+        await CaseAsync(failures, "system file edited during the listing, next read",
+            () => CompareRemoteUrlAsync(repo, Expect.Fallback, systemRace, "origin"));
+        await CaseAsync(failures, "system file edited, the earlier view", () => CompareRemoteUrlAsync(repo, Expect.Fallback, systemChild, "origin"));
+
+        // The machine's own system file, located by `git var GIT_CONFIG_SYSTEM`: answered exactly when it lists nothing
+        // that could decide a remote (Git for Windows' own file lists none).
+        var machineSystem = RemoteChild(fixture, ("GIT_CONFIG_NOSYSTEM", null), ("GIT_CONFIG_SYSTEM", null));
+        var systemKeys = await GitInAsync(Path.GetTempPath(), machineSystem,
+            "config", "--system", "--get-regexp", "^(remote|branch|url|include|includeif|safe)\\.");
+        await CaseAsync(failures, "machine system file", () => CompareRemoteUrlAsync(repo,
+            systemKeys.Result.ExitCode == 1 ? Expect.Answered : Expect.Fallback, machineSystem, "origin"));
+
+        // A candidate global file that exists but cannot be read: git warns, so it is git's, both for a new view and
+        // for one cached while it was readable (its write time is old, so only an open sees the lock), and nothing is
+        // cached (once readable again, it is answered).
+        var locked = Path.Combine(fixture.Root, "home", "remote-url-locked-global");
+        await File.WriteAllTextAsync(locked, "[core]\n\tautocrlf = false\n");
+        File.SetLastWriteTimeUtc(locked, DateTime.UtcNow.AddMinutes(-5));
+        var lockedChild = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", locked));
+        var lockedCached = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", locked), ("GIT_CONFIG_COUNT", "1"),
+            ("GIT_CONFIG_KEY_0", "gc.auto"), ("GIT_CONFIG_VALUE_0", "0"));
+        await CaseAsync(failures, "readable before the lock", () => CompareRemoteUrlAsync(repo, Expect.Answered, lockedCached, "origin"));
+        await using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            await CaseAsync(failures, "unreadable global file", () => CompareRemoteUrlAsync(repo, Expect.Fallback, lockedChild, "origin"));
+            await CaseAsync(failures, "unreadable global file, cached view", () => CompareRemoteUrlAsync(repo, Expect.Fallback, lockedCached, "origin"));
+        }
+        await CaseAsync(failures, "readable again, cached view", () => CompareRemoteUrlAsync(repo, Expect.Answered, lockedCached, "origin"));
+        await CaseAsync(failures, "readable again", () => CompareRemoteUrlAsync(repo, Expect.Answered, lockedChild, "origin"));
+
+        // Top-level remote and branch keys git reads harmlessly are allowed in the child's global file; a value git
+        // rejects, a bare pushdefault, or any remote.<name>.* / branch.<name>.* key there is git's.
+        var harmless = Path.Combine(fixture.Root, "home", "remote-url-harmless-global");
+        var harmlessChild = RemoteChild(fixture, ("GIT_CONFIG_GLOBAL", harmless));
+        async Task GlobalCaseAsync(string name, string text, Expect expect)
+        {
+            await File.WriteAllTextAsync(harmless, text);
+            await CaseAsync(failures, name, () => CompareRemoteUrlAsync(repo, expect, harmlessChild, "origin"));
+        }
+        await GlobalCaseAsync("harmless top-level keys",
+            "[branch]\n\tsort = -committerdate\n\tautosetupmerge = always\n\tautosetuprebase = always\n[remote]\n\tpushdefault = origin\n",
+            Expect.Answered);
+        await GlobalCaseAsync("bare remote.pushdefault", "[remote]\n\tpushdefault\n", Expect.Fallback);
+        await GlobalCaseAsync("bad branch.autosetuprebase", "[branch]\n\tautosetuprebase = sometimes\n", Expect.Fallback);
+        await GlobalCaseAsync("global branch.<name> key", "[branch \"main\"]\n\tremote = origin\n", Expect.Fallback);
+        await GlobalCaseAsync("global remote.<name> key", "[remote \"other\"]\n\turl = https://other.invalid/\n", Expect.Fallback);
 
         // A relative global file or home is read against the child's working directory, not the probe's.
         await File.WriteAllTextAsync(Path.Combine(repo, "relative-global"), fromGlobal);
