@@ -107,6 +107,9 @@ namespace Antiphon.Scripts
             ["live-lane-group"] = LiveLaneGroup,
             // The rc project batches answer every input themselves: exit 0 proposed, 2 refused (one stderr line) or usage.
             [SelectRcProjectBatchesCommand.Name] = SelectRcProjectBatchesCommand.Run,
+            // CARD-1836: the offline five-run replay oracle answers every input itself: exit 0 criterion met (enables nothing), 1 a
+            // missed failure or unsafe carry, 2 bad input or usage, 3 insufficient evidence.
+            [RcSelectionReplayCommand.Name] = RcSelectionReplayCommand.Run,
             // The nightly watchdog preflight or deploy answers every input itself: exit 0 done, 1 failed (one stderr line),
             // 2 usage, 3 no or invalid deploy profile (nothing contacted).
             [DeployNightlyWatchdogCommand.Name] = DeployNightlyWatchdogCommand.Run,
@@ -346,7 +349,7 @@ namespace Antiphon.Scripts
                 + " | " + RcQualificationStatusCommand.Usage
                 + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
                 + " | " + QualificationStartSupervisorCommand.Usage + " | " + QualificationSuperviseCommand.Usage + " | " + QualificationStopCommand.Usage
-                + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage
+                + " | " + StatusSnapshotCommand.Usage + " | " + SelectRcProjectBatchesCommand.Usage + " | " + RcSelectionReplayCommand.Usage
                 + " | " + DeployNightlyWatchdogCommand.Usage + " | " + ReleaseStatusCommand.Usage + " | " + RegisterReleaseGatesCommand.Usage
                 + " | " + ReleaseCandidateCommand.Usage + " | " + ReleaseCutCommand.Usage
                 + " | " + PublishReleaseCommand.Usage + " | " + PromoteReleaseCommand.Usage
