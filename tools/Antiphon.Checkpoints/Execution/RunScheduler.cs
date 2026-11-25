@@ -470,6 +470,7 @@ public sealed class RunScheduler
         DriverResult? result = null;
         var verifyLedger = false;
         var sourceOk = true;
+        string? preLaunchSourceRefusal = null;
         var verificationParallelism = 1;
         var started = DateTimeOffset.UtcNow;
         try
@@ -591,7 +592,10 @@ public sealed class RunScheduler
                 if (request.BeforeLaunch is not null)
                     await request.BeforeLaunch(token).ConfigureAwait(false);
                 token.ThrowIfCancellationRequested();
-                return request.SourceGuard?.Observe() == false ? new DriverResult(ExitCodes.Invalid, "", "") : null;
+                if (request.SourceGuard?.Observe() != false)
+                    return null;
+                preLaunchSourceRefusal = request.SourceGuard.Reason;
+                return new DriverResult(ExitCodes.Invalid, "", "");
             }
 
             async Task<DriverResult> DriveAsync(Func<CancellationToken, Task<DriverResult?>>? beforeStart,
@@ -634,7 +638,10 @@ public sealed class RunScheduler
         {
             progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
             var succeeded = result.ExitCode == 0 && !result.TimedOut && sourceOk && outside?.Kind is null;
-            var refusal = BuildConfinement.ReportedRefusal(result.Stderr) ?? BuildConfinement.ReportedRefusal(outside?.Detail);
+            // Keep the source gate's pre-launch refusal when the post-attempt ledger also
+            // detects the same change. Both custody observations remain in the evidence.
+            var refusal = BuildConfinement.ReportedRefusal(result.Stderr) ?? preLaunchSourceRefusal
+                ?? BuildConfinement.ReportedRefusal(outside?.Detail);
             if (succeeded)
             {
                 if (request.BeforeBuildReceiptWrite is not null)

@@ -561,6 +561,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         drift.Faults.ShouldBe(1);
         driftDriver.Builds.ShouldBeEmpty();
         driftDriver.Rows.ShouldBeEmpty();
+        File.ReadAllText(fixture.Log("bin-drift")).ShouldContain("TAMPERED source.txt");
         File.ReadAllBytes(fixture.Seal).ShouldBe(bytes);
     }
 
