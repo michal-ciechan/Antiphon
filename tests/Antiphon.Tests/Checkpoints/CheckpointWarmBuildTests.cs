@@ -410,7 +410,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         var clock = new FakeTimeProvider();
         using var cancel = new CancellationTokenSource();
         var driver = new SealDriver(fixture) { Confine = boundary == "ledger-refused" };
-        var factory = new NoBuildFactory();
+        var factory = new RecordingProcessFactory();
         var refusalReached = false;
         var slots = new SealSlots((label, token) =>
         {
@@ -459,7 +459,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         refused.ExitCode.ShouldBe(expectedExit, Describe(refused));
         driver.Builds.ShouldBeEmpty();
         driver.Rows.ShouldBeEmpty();
-        factory.Starts.ShouldBe(0);
+        factory.Started.ShouldBeEmpty();
         var build = refused.State.Builds.Single();
         switch (boundary)
         {
@@ -491,6 +491,13 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 
         if (boundary == "slot-refused")
         {
+            var unleased = new SealSlots((_, _) => Task.FromResult(new SlotLease { State = "unleased" }));
+            var coldDriver = new SealDriver(fixture);
+            using (var warmCache = fixture.Open())
+                fixture.AssertGreen(await fixture.RunAsync(warmCache, coldDriver, "bin-unleased", slots: unleased),
+                    coldDriver, "bin-unleased", warm: false);
+            File.ReadAllBytes(fixture.Seal).ShouldBe(fixture.ExpectedDigest());
+
             var firstUse = NewSealFixture();
             using var cache = firstUse.Open();
             (await firstUse.RunAsync(cache, new SealDriver(firstUse), slots: slots)).ExitCode.ShouldBe(expectedExit);
@@ -519,6 +526,30 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         driver.Builds.Single().Ledger.ShouldBeSameAs(driver.Captures.Single());
         driver.Builds.Single().Ledger!.Files.Keys.ShouldContain("ledger-input.txt");
         driver.Builds.Single().GraphEvaluationParallelism.ShouldBe(1);
+        File.ReadAllBytes(fixture.Seal).ShouldBe(bytes);
+
+        var processIo = new FaultSealIo("invalidation");
+        var factory = new RecordingProcessFactory(runChildren: true);
+        var processSlots = new SealSlots();
+        using (var cache = fixture.Open(processIo))
+        {
+            var recovered = await fixture.RunAsync(cache, new ProcessDriver(factory), "bin-driver", slots: processSlots);
+            recovered.ExitCode.ShouldBe(ExitCodes.Green, Describe(recovered));
+            recovered.Rows.Single().State.ShouldBe("green");
+            recovered.Rows.Single().Source.BuildSource.ShouldBe("verified");
+        }
+        processSlots.BuildGrants.ShouldBe(1);
+        processIo.Faults.ShouldBe(1);
+        var prepared = factory.Prepared.Where(CheckpointFixtures.IsBuild).ToArray();
+        prepared.Length.ShouldBe(2);
+        prepared[0].Arguments.ShouldContain("--property:" + CheckpointIntermediateCache.RootProperty + "=" + fixture.Partition);
+        prepared[1].Arguments.Any(arg => arg.StartsWith("--property:CustomBeforeDirectoryBuildProps=", StringComparison.Ordinal)).ShouldBeFalse();
+        var started = factory.Started.Where(CheckpointFixtures.IsBuild).ShouldHaveSingleItem();
+        started.ShouldBeSameAs(prepared[1]);
+        var processRow = factory.Started.Where(CheckpointFixtures.IsRun).ShouldHaveSingleItem();
+        SealFixture.Properties(processRow).ShouldBe(SealFixture.Properties(started));
+        fixture.Binding("bin-driver", processRow).Check().ShouldBe("verified");
+        OwnedOutputLedger.Check(fixture.Output("bin-driver")).ShouldBeNull();
         File.ReadAllBytes(fixture.Seal).ShouldBe(bytes);
 
         var drift = new FaultSealIo("invalidation")
@@ -555,7 +586,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         {
             OnRow = async (request, token) =>
             {
-                if (request.Arguments.Contains("--property:OutputPath=bin-proof/"))
+                if (SealFixture.HasOutput(request, "bin-proof"))
                 {
                     rowEntered.TrySetResult();
                     await secondBuildEntered.Task.WaitAsync(token);
@@ -646,21 +677,18 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     }
 
     private static string Describe(SchedulerResult result) =>
-        string.Join(Environment.NewLine, result.Rows.Select(row => $"{row.State} {row.Line} {row.Output}"));
+        string.Join(Environment.NewLine, result.Rows.Select(row => row.State + " " + row.Line + " " + row.Output));
 
     private SealFixture NewSealFixture()
     {
-        var root = TempDir();
+        // The scope's ownership marker belongs to its parent, outside the fixture Git root.
+        var root = Path.Combine(TempDir(), "repo");
         Directory.CreateDirectory(Path.Combine(root, "App"));
         File.WriteAllText(Path.Combine(root, ".gitignore"), ".antiphon/\nbin-*/\nledger-input.txt\ngraph-refusal\n");
-        File.WriteAllText(Path.Combine(root, SealFixture.Project), """<Project><Import Project="Graph.props" /></Project>""");
-        File.WriteAllText(Path.Combine(root, "App", "Graph.props"), """
-            <Project>
-              <ItemGroup Condition="Exists('graph-refusal')">
-                <ProjectReference Include="Absent.csproj" />
-              </ItemGroup>
-            </Project>
-            """.ReplaceLineEndings("\n"));
+        File.WriteAllText(Path.Combine(root, SealFixture.Project), "<Project><Import Project=\"Graph.props\" /></Project>");
+        File.WriteAllText(Path.Combine(root, "App", "Graph.props"),
+            "<Project><ItemGroup Condition=\"Exists('graph-refusal')\">" +
+            "<ProjectReference Include=\"Absent.csproj\" /></ItemGroup></Project>");
         File.WriteAllText(Path.Combine(root, "source.txt"), "original source");
         LibGit2Sharp.Repository.Init(root);
         using var repo = new LibGit2Sharp.Repository(root);
@@ -677,6 +705,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     private sealed class SealFixture(string root, SourceObservation source)
     {
         internal const string Project = "App/App.csproj";
+        private const string OutputProperty = "--property:OutputPath=";
         private readonly IReadOnlyList<string> properties = BuildStep.PropertyArguments([], OperatingSystem.IsWindows());
         internal string Root => root;
         internal SourceObservation Source => source;
@@ -703,7 +732,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         }
 
         internal string[] PartitionFiles() => Directory.GetFiles(Partition, "*", SearchOption.AllDirectories)
-            .Order(StringComparer.Ordinal).Select(file => $"{Path.GetRelativePath(Partition, file)}={Convert.ToHexString(File.ReadAllBytes(file))}").ToArray();
+            .Order(StringComparer.Ordinal)
+            .Select(file => Path.GetRelativePath(Partition, file) + "=" + Convert.ToHexString(File.ReadAllBytes(file))).ToArray();
 
         internal byte[] ExpectedDigest()
         {
@@ -749,11 +779,12 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 
         internal void AssertGreen(SchedulerResult result, SealDriver driver, string id, bool warm)
         {
-            var build = driver.Builds.Single(request => request.Arguments.Contains("--property:OutputPath=" + id + "/"));
-            var row = driver.Rows.Single(request => request.Arguments.Contains("--property:OutputPath=" + id + "/"));
+            var build = driver.Builds.Single(request => HasOutput(request, id));
+            var row = driver.Rows.Single(request => HasOutput(request, id));
             result.ExitCode.ShouldBe(ExitCodes.Green, Describe(result));
             var rowIndex = result.State.Builds.FindIndex(item => item.Id == id);
             result.Rows.Single(item => item.Id == "CP-" + (rowIndex + 1)).State.ShouldBe("green", Describe(result));
+            result.Rows.Single(item => item.Id == "CP-" + (rowIndex + 1)).Source.BuildSource.ShouldBe("verified");
             var property = "--property:" + CheckpointIntermediateCache.RootProperty + "=" + Partition;
             build.Arguments.Contains(property).ShouldBe(warm);
             build.Arguments.Any(arg => arg.StartsWith("--property:CustomBeforeDirectoryBuildProps=", StringComparison.Ordinal)).ShouldBe(warm);
@@ -763,7 +794,19 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             File.Exists(CheckpointFixtures.TrxFile(row)).ShouldBeTrue();
         }
 
-        private static string[] Properties(DriverRequest request) => request.Arguments
+        internal static bool HasOutput(DriverRequest request, string id)
+        {
+            var value = request.Arguments.Single(arg => arg.StartsWith(OutputProperty, StringComparison.Ordinal))[OutputProperty.Length..];
+            return Path.GetFileName(Path.TrimEndingDirectorySeparator(value)) == id;
+        }
+
+        internal static string Binary(DriverRequest request)
+        {
+            var value = request.Arguments.Single(arg => arg.StartsWith(OutputProperty, StringComparison.Ordinal))[OutputProperty.Length..];
+            return Path.Combine(request.WorkingDirectory, "App", value, "App.dll");
+        }
+
+        internal static string[] Properties(DriverRequest request) => request.Arguments
             .Where(arg => arg.StartsWith("--property:", StringComparison.Ordinal) &&
                 !arg.StartsWith("--property:OutputPath=", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).ToArray();
@@ -800,11 +843,14 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
                 }
                 if (warm)
                     File.WriteAllText(fixture.Asset, "built intermediates");
-                return new DriverResult(0, "", "") { Exited = DateTimeOffset.UtcNow };
+                var binary = SealFixture.Binary(request);
+                File.WriteAllText(binary, "checkpoint test build");
+                return new DriverResult(0, "", "") { Exited = CheckpointFixtures.AfterFileClock(binary) };
             }
 
             Rows.Add(request);
             if (OnRow is not null) await OnRow(request, cancellationToken);
+            File.ReadAllText(SealFixture.Binary(request)).ShouldBe("checkpoint test build");
             CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
             return new DriverResult(0, "", "") { Exited = DateTimeOffset.UtcNow };
         }
@@ -826,18 +872,39 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         internal static SlotLease Grant() => new() { State = "granted", LeaseId = "fixture", MaxCpuCount = 4 };
     }
 
-    private sealed class NoBuildFactory : IProcessHandleFactory
+    private sealed class RecordingProcessFactory(bool runChildren = false) : IProcessHandleFactory
     {
-        internal int Starts { get; private set; }
-        public IProcessHandle Create(ProcessStartInfo startInfo) => new NoBuildHandle(this);
+        private bool RunChildren => runChildren;
+        internal List<DriverRequest> Prepared { get; } = [];
+        internal List<DriverRequest> Started { get; } = [];
 
-        private sealed class NoBuildHandle(NoBuildFactory owner) : IProcessHandle
+        public IProcessHandle Create(ProcessStartInfo startInfo)
         {
-            public bool Start() { owner.Starts++; return false; }
-            public void BeginRead(Action<string?> stdout, Action<string?> stderr) => throw new InvalidOperationException();
-            public Task WaitForExitAsync(CancellationToken cancellationToken) => throw new InvalidOperationException();
-            public bool HasExited => false;
-            public int ExitCode => throw new InvalidOperationException();
+            var request = new DriverRequest(startInfo.FileName, startInfo.ArgumentList.ToArray(), startInfo.WorkingDirectory);
+            Prepared.Add(request);
+            return new RecordedProcess(this, request);
+        }
+
+        private sealed class RecordedProcess(RecordingProcessFactory owner, DriverRequest request) : IProcessHandle
+        {
+            public bool Start()
+            {
+                owner.Started.Add(request);
+                if (!owner.RunChildren)
+                    return false;
+                if (CheckpointFixtures.IsBuild(request))
+                    File.WriteAllText(SealFixture.Binary(request), "checkpoint test build");
+                else if (CheckpointFixtures.IsRun(request))
+                {
+                    File.ReadAllText(SealFixture.Binary(request)).ShouldBe("checkpoint test build");
+                    CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+                }
+                return true;
+            }
+            public void BeginRead(Action<string?> stdout, Action<string?> stderr) { }
+            public Task WaitForExitAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+            public bool HasExited => true;
+            public int ExitCode => 0;
             public void Dispose() { }
             public void Kill(bool entireProcessTree) { }
         }
