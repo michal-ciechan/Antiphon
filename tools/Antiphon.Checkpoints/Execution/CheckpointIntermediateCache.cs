@@ -159,8 +159,9 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
     }
 
     internal Entry? Prepare(string project, IReadOnlyList<string> properties, IReadOnlySet<string>? inUse = null,
-        bool requireSealed = false)
+        bool requireSealed = false, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (OverridesLayout(properties))
             return null;
 
@@ -182,7 +183,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
             using var seal = OpenExisting(sealPath);
             if (!RequireTrustedHandle(seal).SameAs(sealIdentity))
                 throw new CheckpointCacheRefusal("seal-identity-changed");
-            if (!MatchesSeal(seal, path))
+            if (!MatchesSeal(seal, path, cancellationToken))
                 throw new CheckpointCacheRefusal("invalid-seal");
 
             return new Entry(this, path, Identity(partition), sealIdentity);
@@ -195,7 +196,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
     }
 
     internal static bool IsCacheFailure(Exception ex) =>
-        ex is IOException or UnauthorizedAccessException or ObjectDisposedException or CheckpointCacheRefusal;
+        ex is IOException or InvalidDataException or UnauthorizedAccessException or ObjectDisposedException or CheckpointCacheRefusal;
 
     private void Report(string phase, Exception ex) =>
         Note(refuse, phase + ": " + (ex is CheckpointCacheRefusal refusal ? refusal.Message : ex.GetType().Name));
@@ -369,33 +370,43 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return false;
     }
 
-    private bool MatchesSeal(FileStream seal, string path)
+    private bool MatchesSeal(FileStream seal, string path, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         Span<byte> recorded = stackalloc byte[32];
         if (seal.Length != recorded.Length)
             return false;
         seal.ReadExactly(recorded);
-        return recorded.SequenceEqual(Digest(path));
+        return recorded.SequenceEqual(Digest(path, cancellationToken));
     }
 
-    private byte[] Digest(string root)
+    private byte[] Digest(string root, CancellationToken cancellationToken)
     {
         var pending = new Stack<DirectoryInfo>();
         pending.Push(new DirectoryInfo(root));
         var files = new SortedDictionary<string, string>(StringComparer.Ordinal);
         while (pending.TryPop(out var directory))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             foreach (var item in directory.EnumerateFileSystemInfos())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("linked checkpoint intermediate");
                 if (item is DirectoryInfo child)
                     pending.Push(child);
                 else
-                    files.Add(Path.GetRelativePath(root, item.FullName), ReceiptFile.Digest(sealIo.ReadContext, item.FullName).Sha256);
+                {
+                    var member = CheckpointFileReader.Digest(sealIo.ReadContext, directory.FullName, item.FullName,
+                        CheckpointFileReader.ContentLimit, cancellationToken);
+                    files.Add(Path.GetRelativePath(root, item.FullName), member.Sha256);
+                }
             }
         }
-        return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(files));
+        cancellationToken.ThrowIfCancellationRequested();
+        var digest = SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(files));
+        cancellationToken.ThrowIfCancellationRequested();
+        return digest;
     }
 
     internal class SealIo
@@ -453,18 +464,15 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         {
             var expected = invalidSeal;
             invalidSeal = default;
-            if (!expected.IsBound || cancellationToken.IsCancellationRequested)
+            if (!expected.IsBound)
                 return;
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 cache.CheckPaths(Path, SealPath);
                 RequirePartition();
-                var digest = cache.Digest(Path);
+                var digest = cache.Digest(Path, cancellationToken);
                 cache.ReplaceSeal(this, expected, 0, digest, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                // Retain the invalid seal if the work was canceled before publication.
             }
             catch (Exception ex) when (IsCacheFailure(ex))
             {

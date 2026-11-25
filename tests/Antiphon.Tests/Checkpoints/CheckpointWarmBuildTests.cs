@@ -697,6 +697,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             result.State.Reason.ShouldBe("caller-requested");
         }
 
+        (await reads.FirstReadSawCancellation.WaitAsync(TimeSpan.FromSeconds(5))).ShouldBeTrue(
+            "the bounded reader must pass the run's cancellation signal to the active read");
         reads.MembersOpened.ShouldBe(1, "cancellation inside the first bounded read must stop the traversal");
         slots.BuildGrants.ShouldBe(duringPreparation ? 0 : 1);
         driver.Builds.Count.ShouldBe(duringPreparation ? 0 : 1);
@@ -904,28 +906,59 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 
     private sealed class CancelOnDigestIo(CancellationTokenSource cancel) : ForwardingNativeIo
     {
-        private int membersOpened;
-        internal int MembersOpened => Volatile.Read(ref membersOpened);
+        private readonly TaskCompletionSource<bool> _firstRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _membersOpened;
+        private int _readStarted;
+        internal int MembersOpened => Volatile.Read(ref _membersOpened);
+        internal Task<bool> FirstReadSawCancellation => _firstRead.Task;
 
-        public override ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request) =>
-            new CancelOnStream(base.OpenRead(path, request), () =>
-            {
-                if (Interlocked.Increment(ref membersOpened) == 1)
-                    cancel.Cancel();
-            });
+        public override ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request)
+        {
+            var handle = base.OpenRead(path, request);
+            Interlocked.Increment(ref _membersOpened);
+            return new MemberHandle(handle, CancelFirstRead);
+        }
 
-        private sealed class CancelOnStream(ICheckpointReadHandle inner, Action opened) : ICheckpointReadHandle
+        private void CancelFirstRead(CancellationToken readToken)
+        {
+            if (Interlocked.Exchange(ref _readStarted, 1) != 0)
+                return;
+            cancel.Cancel();
+            _firstRead.TrySetResult(readToken.IsCancellationRequested);
+        }
+
+        private sealed class MemberHandle(ICheckpointReadHandle inner, Action<CancellationToken> onRead) : ICheckpointReadHandle
         {
             public CheckpointHandleStat Inspect() => inner.Inspect();
+            public Stream OpenStream() => new MemberStream(inner.OpenStream(), onRead);
+            public void Dispose() => inner.Dispose();
+        }
 
-            public Stream OpenStream()
+        private sealed class MemberStream(Stream inner, Action<CancellationToken> onRead) : Stream
+        {
+            public override bool CanRead => inner.CanRead;
+            public override bool CanSeek => inner.CanSeek;
+            public override bool CanWrite => false;
+            public override long Length => inner.Length;
+            public override long Position { get => inner.Position; set => inner.Position = value; }
+            public override void Flush() => throw new NotSupportedException();
+            public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
             {
-                var stream = inner.OpenStream();
-                opened();
-                return stream;
+                onRead(cancellationToken);
+                return inner.ReadAsync(buffer, cancellationToken);
             }
 
-            public void Dispose() => inner.Dispose();
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing)
+                    inner.Dispose();
+                base.Dispose(disposing);
+            }
         }
     }
 

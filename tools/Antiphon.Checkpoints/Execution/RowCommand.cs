@@ -227,7 +227,7 @@ internal static class RowCommand
                     cancellationToken: cancellationToken);
                 try
                 {
-                    if (cache?.Prepare(project, original, requireSealed: true) is not null)
+                    if (cache?.Prepare(project, original, requireSealed: true, cancellationToken: cancellationToken) is not null)
                     {
                         var admitted = new Replay("verified", Properties: warm, Cache: cache);
                         cache = null;
