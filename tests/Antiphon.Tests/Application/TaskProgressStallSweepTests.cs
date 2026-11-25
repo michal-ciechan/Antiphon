@@ -198,6 +198,36 @@ public class TaskProgressStallSweepTests
     }
 
     /// <summary>
+    /// rc b8cbfb24 group 86 (Windows): GrokDelegateDispatchTests.Warm_grok_invalid_rules...(expected_hash)
+    /// failed with 23503 FK_AgentIncidents_Agents_AgentId out of FailAsync. AgentTasks.AgentId has no
+    /// foreign key, so a Working task can outlive its Agent row. The stall sweep then added an
+    /// incident naming that missing agent, the insert failed, and the Added row stayed tracked on
+    /// the dispatcher's context. A harness without SweepInFlightState runs the sweep on that same
+    /// context, so the next dispatch's SaveChanges re-sent the incident and the tick threw. In
+    /// production each sweep owns a scope, but the poisoned context still dropped every later
+    /// stall in the same sweep. The stall must be recorded without the vanished agent, and a
+    /// failed write must never reach the next save.
+    /// </summary>
+    [Test]
+    public async Task A_stalled_task_whose_agent_row_is_gone_records_its_stall_and_does_not_poison_the_tick()
+    {
+        var (harness, _) = CreateHarness();
+        await using var scenario = new Scenario();
+        await scenario.SeedStalledAsync();
+        await scenario.DeleteAgentRowAsync();
+        var queued = await scenario.SeedQueuedAsync();
+
+        await harness.TickAsync(CancellationToken.None);
+
+        var incident = (await scenario.IncidentsAsync()).ShouldHaveSingleItem(
+            "the stall is still visible, keyed by its session");
+        incident.AgentId.ShouldBeNull("the agent row is gone; naming it violates FK_AgentIncidents_Agents_AgentId");
+        await using var db = CreateContext();
+        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued)).Status
+            .ShouldNotBe(AgentTaskStatus.Queued, "the same tick still decided the queued task");
+    }
+
+    /// <summary>
     /// CARD-1072. The sweep used to probe every open task before the stall gates.
     /// One tick must probe a past-stall mid-turn directory once, and must not probe
     /// a younger task, an idle session, or a runner-bound desktop checkout.
@@ -554,6 +584,34 @@ public class TaskProgressStallSweepTests
             await db.SaveChangesAsync();
         }
 
+        public async Task DeleteAgentRowAsync()
+        {
+            await using var db = CreateContext();
+            await db.Agents.Where(a => a.Id == _agentId).ExecuteDeleteAsync();
+        }
+
+        public async Task<Guid> SeedQueuedAsync()
+        {
+            var id = Guid.NewGuid();
+            await using var db = CreateContext();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id,
+                RootTaskId = id,
+                Title = "queued beside a stall",
+                Goal = "fail before any session",
+                Role = AgentTaskRole.Docs,
+                ModelLevel = AgentModelLevel.Medium,
+                Workspace = WorkspaceMode.Shared,
+                WorkingDirectory = Path.Combine(Path.GetTempPath(), $"stall-missing-{Guid.NewGuid():N}"),
+                Status = AgentTaskStatus.Queued,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            _tasks.Add(id);
+            return id;
+        }
+
         public async Task AgeIncidentsAsync(int minutesAgo)
         {
             await using var db = CreateContext();
@@ -575,7 +633,7 @@ public class TaskProgressStallSweepTests
         public async ValueTask DisposeAsync()
         {
             await using var db = CreateContext();
-            await db.AgentIncidents.Where(i => i.AgentId == _agentId).ExecuteDeleteAsync();
+            await db.AgentIncidents.Where(i => i.AgentId == _agentId || i.SessionId == _sessionId).ExecuteDeleteAsync();
             await db.TranscriptEntries.Where(e => e.AgentSessionId == _sessionId).ExecuteDeleteAsync();
             await db.AgentTaskEvents.Where(e => _tasks.Contains(e.AgentTaskId)).ExecuteDeleteAsync();
             await db.AgentTasks.Where(t => _tasks.Contains(t.Id)).ExecuteDeleteAsync();
