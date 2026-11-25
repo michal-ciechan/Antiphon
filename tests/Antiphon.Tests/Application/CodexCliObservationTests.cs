@@ -26,7 +26,6 @@ using Microsoft.Extensions.Time.Testing;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Shouldly;
-using Antiphon.Tests.Application;
 using TUnit.Core;
 
 // Its own namespace, so the nightly planner (which packs by namespace) gives the Codex CLI tests their own

@@ -10,7 +10,6 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
-using Antiphon.Tests.Application;
 using TUnit.Core;
 using static Antiphon.Tests.Application.CodexCliRemoteDeliveryFixture;
 

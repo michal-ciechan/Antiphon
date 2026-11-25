@@ -1894,14 +1894,14 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Application.CodexCliObservationGapTests": {
+    "Antiphon.Tests.Application.Codex.CodexCliObservationGapTests": {
       "seconds": 439,
       "basis": "measured",
       "hostId": null,
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Application.CodexCliObservationTests": {
+    "Antiphon.Tests.Application.Codex.CodexCliObservationTests": {
       "seconds": 529,
       "basis": "measured",
       "hostId": null,

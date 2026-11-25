@@ -540,7 +540,7 @@ public sealed class C1514LandingSplitBudgetTests
             var launches = plan.Length;
             if (realCount != 19012) reasons.Add("listing");
             // Task 44a6e14e merged 702 measured rows into the same listing; the independent sum is 106343.8397645542 s,
-            // 150 listing launches plus the four suffix probes (154), then 155 below. See scripts/test-nightly-tests.ps1 history.
+            // 150 listing launches plus the four suffix probes (154). See scripts/test-nightly-tests.ps1 history.
             // 2026-11-25: +1 (155). CodexCliObservationTests and CodexCliObservationGapTests moved to their own namespace,
             // Antiphon.Tests.Application.Codex, so the planner (which packs by namespace) gives them their own launch.
             if (launches != 155) reasons.Add("launch-count");
