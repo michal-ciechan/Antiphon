@@ -423,10 +423,12 @@ public sealed class LinuxOwnedGitProcessTests
         (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Live);
         io.Stat = pid => pid == 100 ? throw new UnauthorizedAccessException() : new(pid, 1, pid, 'S');
         (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Unknown);
+        io.Stat = pid => new(pid, 1, pid, 'S');
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Live);
 
         // The PID now belongs to an unrelated foreign-UID process, like PID 101 throughout.
         io.Entries = ["100", "101"];
-        io.Stat = pid => new(pid, 1, 1000 + pid, 'S');
+        io.Stat = pid => new(pid, 1, pid == 100 ? 1100 : pid, 'S');
         var replaced = await members.ProbeAsync(root, Deadline(), default);
         replaced.State.ShouldBe(OwnedGitMembershipState.Empty);
         replaced.Survivors.ShouldBe(0);

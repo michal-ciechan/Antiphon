@@ -27,6 +27,7 @@ internal interface ILinuxProcOperations
 /// exec with a replacement environment can remove the marker. On legacy kernels there is
 /// still a non-atomic check-to-kill PID-reuse interval; a managed Process does not pin a PID.
 /// Reachable unmarked children use a freshly validated ancestry chain, never an image/path.
+/// Previously observed members of a rooted invocation also block join until their identity is gone.
 /// Detached marker discovery is cooperative within the invoking user's credential scope.
 /// </summary>
 internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwnedGitMembers
@@ -34,6 +35,8 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
     internal const int MaxEntries = 16_384;
     internal const int MaxMembers = 4_096;
     internal const int MaxEnvironmentBytes = 2 * 1024 * 1024;
+    private readonly Dictionary<int, long> _knownMembers = [];
+    private bool _knownMemberLimitExceeded;
     private byte[]? _needle;
     internal LinuxOwnedGitMembers() : this(new LinuxProcOperations()) { }
 
@@ -56,8 +59,8 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
     {
         var scan = await ScanAsync(root, deadline, cancellationToken).ConfigureAwait(false);
         return new(scan.Unknown ? OwnedGitMembershipState.Unknown
-            : scan.Members.Count == 0 ? OwnedGitMembershipState.Empty : OwnedGitMembershipState.Live,
-            scan.Members.Count);
+            : scan.Survivors == 0 ? OwnedGitMembershipState.Empty : OwnedGitMembershipState.Live,
+            scan.Survivors);
     }
 
     public async ValueTask<int> SignalAsync(OwnedGitRoot? root, OwnedGitDeadline deadline,
@@ -85,7 +88,7 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
     }
 
     private sealed record Member(LinuxProcIdentity Identity, bool Marked);
-    private sealed record Scan(List<Member> Members, Dictionary<int, LinuxProcIdentity> Rows, bool Unknown);
+    private sealed record Scan(List<Member> Members, Dictionary<int, LinuxProcIdentity> Rows, int Survivors, bool Unknown);
 
     private async ValueTask<Scan> ScanAsync(OwnedGitRoot? root, OwnedGitDeadline deadline, CancellationToken token)
     {
@@ -94,10 +97,13 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
         var members = new List<Member>();
         var rows = new Dictionary<int, LinuxProcIdentity>();
         var unknown = false;
+        var hidesProcesses = true;
+        var memberLimitExceeded = false;
         var entries = 0;
         try
         {
-            if (io.HidesProcesses()) unknown = true;
+            hidesProcesses = io.HidesProcesses();
+            if (hidesProcesses) unknown = true;
             foreach (var entry in io.EnumerateEntries())
             {
                 if (!Within(deadline, token)) { unknown = true; break; }
@@ -126,7 +132,7 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
                         || (environment.Length > 0 && environment[^1] != 0)) { unknown = true; continue; }
                     if (!Carries(environment, _needle)) continue;
                     if (!SameInstance(io.ReadIdentity(pid), identity)) { unknown = true; continue; }
-                    if (members.Count == MaxMembers) { unknown = true; break; }
+                    if (members.Count == MaxMembers) { memberLimitExceeded = true; break; }
                     members.Add(new(identity, true));
                 }
                 catch (FileNotFoundException) { /* Gone, not unreadable. */ }
@@ -140,15 +146,69 @@ internal sealed class LinuxOwnedGitMembers(ILinuxProcOperations io) : ILinuxOwne
             {
                 if (!Within(deadline, token)) { unknown = true; break; }
                 if (marked.Contains(identity.Pid) || !HasRootChain(identity, rows, root)) continue;
-                if (members.Count == MaxMembers) { unknown = true; break; }
+                if (members.Count == MaxMembers) { memberLimitExceeded = true; break; }
                 members.Add(new(identity, false));
             }
         }
         catch (Exception ex) when (ObservationFailure(ex)) { unknown = true; }
+        var survivors = members.Count;
+        if (root is { Pid: > 1, LinuxStartTicks: >= 0 })
+        {
+            var known = ReconcileKnownMembers(members, hidesProcesses, memberLimitExceeded, deadline, token);
+            survivors = known.Survivors;
+            unknown |= known.Unknown;
+        }
+        else
+        {
+            unknown |= memberLimitExceeded;
+        }
         if (!Within(deadline, token)) unknown = true;
-        phase?.SetTag("git.members", members.Count);
-        phase?.SetTag("git.observation", unknown ? "unknown" : members.Count == 0 ? "empty" : "live");
-        return new(members, rows, unknown);
+        phase?.SetTag("git.members", survivors);
+        phase?.SetTag("git.observation", unknown ? "unknown" : survivors == 0 ? "empty" : "live");
+        return new(members, rows, survivors, unknown);
+    }
+
+    private (int Survivors, bool Unknown) ReconcileKnownMembers(List<Member> observed, bool hidesProcesses,
+        bool memberLimitExceeded, OwnedGitDeadline deadline, CancellationToken token)
+    {
+        // SignalAsync and ProbeAsync share this evidence for join. Signaling still uses the
+        // current scan's marker and ancestry checks, even for PIDs remembered here.
+        lock (_knownMembers)
+        {
+            var unknown = false;
+            foreach (var (pid, startTicks) in _knownMembers)
+            {
+                if (!Within(deadline, token)) { unknown = true; break; }
+                try
+                {
+                    var current = io.ReadIdentity(pid);
+                    if (current is null)
+                    {
+                        if (!hidesProcesses) _knownMembers.Remove(pid);
+                    }
+                    else if (current.Pid != pid || current.StartTicks < 0)
+                    {
+                        unknown = true;
+                    }
+                    else if (!current.Alive || current.StartTicks != startTicks)
+                    {
+                        _knownMembers.Remove(pid);
+                    }
+                }
+                catch (Exception ex) when (ObservationFailure(ex)) { unknown = true; }
+            }
+
+            foreach (var member in observed)
+            {
+                var identity = member.Identity;
+                if (_knownMembers.ContainsKey(identity.Pid)) continue;
+                if (_knownMembers.Count == MaxMembers) { memberLimitExceeded = true; break; }
+                _knownMembers.Add(identity.Pid, identity.StartTicks);
+            }
+            // If we could not retain every observed member, a later census cannot prove join.
+            _knownMemberLimitExceeded |= memberLimitExceeded;
+            return (_knownMembers.Count, unknown || _knownMemberLimitExceeded);
+        }
     }
 
     private async ValueTask<bool> RevalidateAsync(Member member, Dictionary<int, LinuxProcIdentity> rows,
