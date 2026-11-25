@@ -684,17 +684,20 @@ public sealed class CodexCliObservationGapTests
 /// Runs independent Codex CLI (C959/C1029) world cases side by side; every case runs and every failure is reported under its label.
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
 /// in-process fakes), but each also has a Kestrel host, a harness and a schema, so this class (one strict
-/// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_C1029_WORLDS
-/// (1-4) overrides it for both the C959 and C1029 classes, and 1 runs the cases one at a time.
-/// Each world builds its own time-sensitive samples after it exists where that matters; vectors whose sample is
-/// taken before the world is built (clock-skew, staleness) keep a margin of minutes over world creation.
+/// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_CODEX_CLI_WORLDS
+/// (1-4; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset) overrides it for both the C959 and C1029
+/// classes, and 1 runs the cases one at a time (docs/testing-and-build.md, process-spawning lanes).
+/// The never-refuses vectors read their sample from their own kit's fake clock after the kit exists, so world build
+/// time does not move them.
 /// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
 /// another's routing cache; that costs a re-resolve from its own database, never a wrong answer.
 /// </summary>
 internal static class Worlds
 {
-    public const string OverrideVariable = "ANTIPHON_TEST_C1029_WORLDS";
-    public static int Degree { get; } = int.TryParse(Environment.GetEnvironmentVariable(OverrideVariable)?.Trim(), out var n)
+    public const string OverrideVariable = "ANTIPHON_TEST_CODEX_CLI_WORLDS";
+    public const string LegacyOverrideVariable = "ANTIPHON_TEST_C1029_WORLDS";
+    public static int Degree { get; } = int.TryParse(
+        (Environment.GetEnvironmentVariable(OverrideVariable) ?? Environment.GetEnvironmentVariable(LegacyOverrideVariable))?.Trim(), out var n)
         ? Math.Clamp(n, 1, 4) : Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
 
     public static Task InParallelAsync(IEnumerable<(string Name, Func<Task> Body)> cases) =>
@@ -717,12 +720,15 @@ internal static class Worlds
             throw new AggregateException($"{failures.Count} world case(s) failed", failures);
     }
 
-    // The first line, plus a Shouldly custom message (the guard id, e.g. C959-pc-190) when there is one.
+    // A short cause for the summary: up to four lines (a Shouldly expression, "should be", expected, "but was" and
+    // actual), plus the Shouldly custom message (the guard id, e.g. C959-pc-190) after the last "Additional Info:".
+    // The full message stays on the inner exception and the console line.
     private static string Cause(string message)
     {
         var lines = message.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
         if (lines.Count == 0) return "";
-        var info = lines.IndexOf("Additional Info:");
-        return info >= 0 && info + 1 < lines.Count ? lines[0] + " [" + lines[info + 1] + "]" : lines[0];
+        var info = lines.LastIndexOf("Additional Info:");
+        var head = string.Join(" ", lines.Take(info >= 0 ? Math.Min(info, 4) : 4));
+        return info >= 0 && info + 1 < lines.Count ? head + " [" + string.Join(" ", lines.Skip(info + 1)) + "]" : head;
     }
 }
