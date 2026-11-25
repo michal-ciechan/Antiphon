@@ -35,9 +35,11 @@ public class CallerWakeTests
         var agentId = Guid.NewGuid();
         var (token, hash) = AgentTaskService.NewToken();
         var now = rig.World.Clock.GetUtcNow().UtcDateTime;
+        DateTime generation;
         await using (var db = rig.World.CreateContext())
         {
             var session = await db.AgentSessions.SingleAsync(s => s.Id == rig.World.CallerSessionId);
+            generation = session.StartedAt;
             session.DelegationTokenHash = hash;
             session.StandingAgentId = agentId;
             var reminder = new SessionQueuedMessage
@@ -92,6 +94,10 @@ public class CallerWakeTests
             response.StatusCode.ShouldBe(HttpStatusCode.OK, "the independent caller wake route");
             return await response.Content.ReadFromJsonAsync<JsonElement>();
         }
+        var sessionId = rig.World.CallerSessionId;
+        string BoundPath(Guid conversation, DateTime started) =>
+            $"/api/orchestrators/{agentId}/caller-wake?conversationId={conversation}&generation={Uri.EscapeDataString(started.ToString("O"))}";
+        path = BoundPath(sessionId, generation);
         var early = await PollAsync();
         early.GetProperty("reportTaskIds").GetArrayLength().ShouldBe(0);
         early.GetProperty("shortfall").GetInt32().ShouldBe(0);
@@ -104,6 +110,20 @@ public class CallerWakeTests
             return items.Any(i => i.SessionId == rig.World.CallerSessionId);
         }
         (await HasAttentionAsync()).ShouldBeTrue();
+        await BridgeQueueHarness.InsertEntryAsync(sessionId, "AssistantText", "Busy again",
+            connectionString: rig.World.Schema.ConnectionString);
+        var busy = await PollAsync();
+        busy.GetProperty("reportTaskIds").GetArrayLength().ShouldBe(0, "a busy turn cannot consume the report");
+        busy.GetProperty("shortfall").GetInt32().ShouldBe(0);
+        await using (var db = rig.World.CreateContext())
+            await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId).ExecuteDeleteAsync();
+        (await PollAsync()).GetProperty("reportTaskIds").GetArrayLength().ShouldBe(0, "unknown turn state");
+        await rig.EndCallerTurnAsync();
+        foreach (var stale in new[] { BoundPath(Guid.NewGuid(), generation), BoundPath(sessionId, generation.AddSeconds(-1)) })
+        {
+            using var rejected = await http.PostAsync(stale, null);
+            rejected.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        }
         var checkout = C1514Support.RepoRoot();
         using var settings = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(checkout, ".claude", "settings.json")));
         var stop = settings.RootElement.GetProperty("hooks").GetProperty("Stop")[0].GetProperty("hooks")[0];
@@ -115,6 +135,8 @@ public class CallerWakeTests
         };
         var script = stop.GetProperty("args")[0].GetString()!.Replace("${CLAUDE_PROJECT_DIR}", checkout);
         start.ArgumentList.Add(script);
+        start.Environment["ANTIPHON_SESSION_ID"] = sessionId.ToString();
+        start.Environment["ANTIPHON_SESSION_GENERATION"] = generation.ToString("O");
         start.Environment["ANTIPHON_ORCHESTRATOR"] = "1";
         start.Environment.Remove("ANTIPHON_TASK_ID");
         start.Environment["ANTIPHON_HOOK_STATE_DIR"] = rig.World.CallerDirectory;
@@ -124,7 +146,7 @@ public class CallerWakeTests
         using var hook = Process.Start(start)!;
         try
         {
-            await hook.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { hook_event_name = "Stop", session_id = Guid.NewGuid() }));
+            await hook.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { hook_event_name = "Stop", session_id = sessionId }));
             hook.StandardInput.Close();
             await hook.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
             hook.ExitCode.ShouldBe(2, "Claude's native idle wake");
