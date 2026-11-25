@@ -1,6 +1,7 @@
 using Antiphon.HostCleanup.Checkpoints;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Antiphon.Checkpoints;
 
@@ -25,7 +26,7 @@ public static class EvidenceFolder
                 var rerun = new StringBuilder();
                 foreach (var failure in row.Failures)
                 {
-                    var rowCommand = RowCommand(model, row, failure.Name, replayProperties);
+                    var rowCommands = ReplayCommands(model, row, failure.Name, replayProperties);
                     rowFailures.AppendLine("## " + failure.Name);
                     rowFailures.AppendLine("outcome: Failed");
                     rowFailures.AppendLine("durationSeconds: " + failure.DurationSeconds);
@@ -37,8 +38,8 @@ public static class EvidenceFolder
                     rowFailures.AppendLine("stdout:");
                     rowFailures.AppendLine(Cap(failure.StdOut));
                     rowFailures.AppendLine("rerun:");
-                    rowFailures.AppendLine(rowCommand);
-                    rerun.AppendLine(rowCommand);
+                    rowFailures.AppendLine(rowCommands);
+                    rerun.AppendLine(rowCommands);
                     // The checkpoint row validates and holds the warm partition for the duration of replay.
                     if (row.Build is null || warmBuilds?.Contains(row.Build) != true)
                     {
@@ -85,30 +86,53 @@ public static class EvidenceFolder
         ExecutorImageGuard.IsExecutorImage(context ?? CheckpointCleanupDefaults.Context, runDirectory, imageDirectory);
 
     public static string RowCommand(ReportModel model, ReportRow row, string failureName,
-        IReadOnlyDictionary<string, string>? replayProperties = null)
+        IReadOnlyDictionary<string, string>? replayProperties = null) =>
+        RowCommand(model, row, failureName, replayProperties, powerShell: OperatingSystem.IsWindows());
+
+    private static string ReplayCommands(ReportModel model, ReportRow row, string failureName,
+        IReadOnlyDictionary<string, string>? replayProperties)
     {
-        var command = new StringBuilder("dotnet run --project tools/Antiphon.Checkpoints -- row --name ")
-            .Append(ShellArgument(row.Id)).Append(" --project ").Append(ShellArgument(ProjectOf(model, row)))
-            .Append(" --output-path ").Append(OutputOf(model, row))
-            .Append(" --filter ").Append(ShellArgument(FilterOf(failureName))).Append(" --no-build");
+        var powerShell = "# PowerShell 7.3+" + Environment.NewLine
+            + RowCommand(model, row, failureName, replayProperties, powerShell: true);
+        return OperatingSystem.IsWindows() ? powerShell
+            : "# POSIX sh" + Environment.NewLine
+                + RowCommand(model, row, failureName, replayProperties, powerShell: false)
+                + Environment.NewLine + powerShell;
+    }
+
+    private static string RowCommand(ReportModel model, ReportRow row, string failureName,
+        IReadOnlyDictionary<string, string>? replayProperties, bool powerShell)
+    {
+        string Quote(string value) => ShellArgument(value, powerShell);
+        var command = new StringBuilder();
+        if (powerShell)
+            command.Append("& { $PSNativeCommandArgumentPassing = 'Standard'; ");
+        command.Append("dotnet run --project tools/Antiphon.Checkpoints -- row --name ")
+            .Append(Quote(row.Id)).Append(" --project ").Append(Quote(ProjectOf(model, row)))
+            .Append(" --output-path ").Append(Quote(OutputOf(model, row)))
+            .Append(" --filter ").Append(Quote(FilterOf(failureName))).Append(" --no-build");
         if (row.Source.Start is { CaptureStatus: "known", DirtyFiles: 0, Commit: { } commit })
-            command.Append(" --expected-source-sha ").Append(ShellArgument(commit));
+            command.Append(" --expected-source-sha ").Append(Quote(commit));
         if (row.Repeat is { Requested: > 1 } repeat)
             command.Append(" --repeat ").Append(repeat.Requested.ToString(CultureInfo.InvariantCulture));
         if (replayProperties is not null)
         {
             foreach (var (name, value) in replayProperties)
-                command.Append(" --msbuild-property ").Append(ShellArgument(name + "=" + value));
+                command.Append(" --msbuild-property ").Append(Quote(name + "=" + value));
         }
+        if (powerShell)
+            command.Append(" }");
         return command.ToString();
     }
 
-    private static string ShellArgument(string value)
+    private static string ShellArgument(string value, bool powerShell)
     {
         if (value.Length != 0 && value.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '/' or '.' or '='))
             return value;
-        var escapedQuote = OperatingSystem.IsWindows() ? "''" : "'\"'\"'";
-        return "'" + value.Replace("'", escapedQuote, StringComparison.Ordinal) + "'";
+        var escaped = powerShell
+            ? Regex.Replace(value, "['\u2018-\u201B]", "$&$&")
+            : value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
+        return "'" + escaped + "'";
     }
 
     public static string RawCommand(ReportModel model, ReportRow row, string failureName)
