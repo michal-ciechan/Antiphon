@@ -432,8 +432,8 @@ Antiphon.Tests.Application.ClaudeLaunchArgsTests|-|4,1,1,1
 Antiphon.Tests.Application.ClaudeRemoteControlLaunchArgsTests|-|1,4,1,1,1,1,1,1
 Antiphon.Tests.Application.ClosedCardSweepApiTests(AntiphonWebAppFactory)|-|1
 Antiphon.Tests.Application.ClosedCardSweepTests|-|1,1
-Antiphon.Tests.Application.CodexCliObservationGapTests|S|1,1,1,1,1,1,1
-Antiphon.Tests.Application.CodexCliObservationTests|-|1,1,1,1,1,1,1,1
+Antiphon.Tests.Application.Codex.CodexCliObservationGapTests|S|1,1,1,1,1,1,1
+Antiphon.Tests.Application.Codex.CodexCliObservationTests|-|1,1,1,1,1,1,1,1
 Antiphon.Tests.Application.CodexDelegateDispatchTests|-|1,1,4,4,1,1,1,1,1,1,1,1,1,1,1,1,1
 Antiphon.Tests.Application.CodexLaunchArgsTests|-|4,1,1,1,1
 Antiphon.Tests.Application.CodexPhoneHomeCreateTests|-|1,1,1,1,1,1

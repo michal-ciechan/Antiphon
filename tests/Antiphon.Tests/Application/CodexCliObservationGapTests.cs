@@ -10,10 +10,13 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
+using Antiphon.Tests.Application;
 using TUnit.Core;
 using static Antiphon.Tests.Application.CodexCliRemoteDeliveryFixture;
 
-namespace Antiphon.Tests.Application;
+// Its own namespace, so the nightly planner (which packs by namespace) gives the Codex CLI tests their own
+// launch group rather than sharing one with unrelated Application classes.
+namespace Antiphon.Tests.Application.Codex;
 
 [Category("Integration")]
 [Category("Slow")]

@@ -25,7 +25,8 @@ public sealed class RcFailedFirstPlannerTests
         var ordinary = entries.Where(e => !Prior(e)).ToArray();
         var replayNodes = (object[])fx.Replay["nodes"]!;
         var replayChunks = (object[])fx.Replay["chunks"]!;
-        rows.Check(replayNodes.Length == 19012 && replayChunks.Length == 150, "FF GlobalReplayPriority.replay", "nodes=" + replayNodes.Length + " chunks=" + replayChunks.Length);
+        // 151 chunks since 2026-11-25: the Codex CLI tests moved to Antiphon.Tests.Application.Codex, their own launch.
+        rows.Check(replayNodes.Length == 19012 && replayChunks.Length == 151, "FF GlobalReplayPriority.replay", "nodes=" + replayNodes.Length + " chunks=" + replayChunks.Length);
         rows.Check(priority.Length > 4 && ordinary.Length > 0 && priority.Max(e => Ordinal(e, "dispatchOrdinal")) < ordinary.Min(e => Ordinal(e, "dispatchOrdinal")),
             "FF GlobalReplayPriority.globalPriority", "priority=" + priority.Length + " ordinary=" + ordinary.Length);
         static bool Sorted(object[] band) => band.Select(e => Ordinal(e, "canonicalOrdinal")).SequenceEqual(band.Select(e => Ordinal(e, "canonicalOrdinal")).Order());

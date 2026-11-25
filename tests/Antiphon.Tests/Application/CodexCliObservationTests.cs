@@ -26,9 +26,12 @@ using Microsoft.Extensions.Time.Testing;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Shouldly;
+using Antiphon.Tests.Application;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Application;
+// Its own namespace, so the nightly planner (which packs by namespace) gives the Codex CLI tests their own
+// launch group rather than sharing one with unrelated Application classes.
+namespace Antiphon.Tests.Application.Codex;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]

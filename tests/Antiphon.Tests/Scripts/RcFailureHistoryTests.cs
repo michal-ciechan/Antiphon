@@ -44,7 +44,8 @@ public sealed class RcFailureHistoryTests
             && H.Items(history, "fallbackChunks").Length == 1, "FF EvidenceUnion.fallback");
         var replayNodes = (object[])replay["nodes"]!;
         var replayChunks = (object[])replay["chunks"]!;
-        rows.Check(replayNodes.Length == 19012 && replayChunks.Length == 150, "FF EvidenceUnion.replay");
+        // 151 chunks since 2026-11-25: the Codex CLI tests moved to Antiphon.Tests.Application.Codex, their own launch.
+        rows.Check(replayNodes.Length == 19012 && replayChunks.Length == 151, "FF EvidenceUnion.replay");
         var suites = new List<object> { replay };
         foreach (var suite in H.Suites4)
         {

@@ -1618,13 +1618,13 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-56; 2 nodes; 8 serial test-seconds; completed 2 of 2 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-383300-aead28f1a36f416587a9c6bdd66212f8.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
     },
-    "Antiphon.Tests.Application.CodexCliObservationGapTests": {
+    "Antiphon.Tests.Application.Codex.CodexCliObservationGapTests": {
       "nodes": 7,
       "seconds": 439,
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-36; 7 nodes; 439 serial test-seconds; completed 7 of 7 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-32764-5794cc61ecd248f29dccb14021c74055.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95; may-understate: 1 failed tests in this run can end early."
     },
-    "Antiphon.Tests.Application.CodexCliObservationTests": {
+    "Antiphon.Tests.Application.Codex.CodexCliObservationTests": {
       "nodes": 8,
       "seconds": 529,
       "basis": "measured",

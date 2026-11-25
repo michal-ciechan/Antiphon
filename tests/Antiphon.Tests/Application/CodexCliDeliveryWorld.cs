@@ -17,6 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Shouldly;
+using Antiphon.Tests.Application.Codex;
 
 namespace Antiphon.Tests.Application;
 
