@@ -56,16 +56,18 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
     /// the journal's container id.
     /// </summary>
     internal IPtyCustodyContainment? CustodyContainment { get; set; }
+    private bool _captureTestPlacementIdentity;
 
     /// <summary>
     /// Test seam. The host fixture installs a fake containment before launch. Production
     /// leaves this unset and builds a <see cref="LinuxCgroupContainment"/>.
     /// </summary>
-    public void UseContainmentForTests(IPtyCustodyContainment containment)
+    public void UseContainmentForTests(IPtyCustodyContainment containment, bool capturePlacementIdentity = false)
     {
         if (_conn is not null)
             throw new InvalidOperationException("Containment is fixed once the runner has started.");
         CustodyContainment = containment;
+        _captureTestPlacementIdentity = capturePlacementIdentity;
     }
 
     /// <summary>
@@ -250,7 +252,7 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
             custody.RecordStartIntent();
             placement?.RequireOpen();
             _conn = trackedPorta = new PortaPtySession(await PtyProvider.SpawnAsync(options, ct),
-                stopSignal: DispatchStopSignal, capturePlacement: placement is not null);
+                stopSignal: DispatchStopSignal, capturePlacement: placement is not null || _captureTestPlacementIdentity);
         }
         else
         {
@@ -308,15 +310,16 @@ public sealed class PtyAgentRunner(string? backendOverride = null) : IAsyncDispo
         // fails. Nothing can release a real Linux shim until tracking has published.
         if (trackedPorta is not null && custody is not null)
         {
-            if (placement is null)
+            if (placement is null && !_captureTestPlacementIdentity)
                 custody.RecordTracking(trackedPorta.Pid);
             else
             {
                 var identity = await trackedPorta.RequirePlacementCaptureAsync(ct);
                 LinuxSpawnRoot = identity;
-                placement.RequireOpen();
+                placement?.RequireOpen();
                 custody.RecordTracking(identity);
-                await placement.ExchangeAsync(trackedPorta, identity, beforeGo, ct);
+                if (placement is not null)
+                    await placement.ExchangeAsync(trackedPorta, identity, beforeGo, ct);
             }
         }
     }

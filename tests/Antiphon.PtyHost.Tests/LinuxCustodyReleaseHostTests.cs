@@ -152,7 +152,7 @@ public sealed class LinuxCustodyReleaseHostTests
             CustodyBackend = VerificationCustodyBackends.LinuxCgroup,
             LingerTtl = TimeSpan.FromHours(24),
         }, files);
-        host.Session.UseContainmentForTests(containment);
+        host.Session.UseContainmentForTests(containment, supplyPlacementProof: true);
         var (store, binding) = Reserve(host, files);
         var release = Path.Combine(host.TempDir, "release");
         var child = 0;
@@ -164,6 +164,10 @@ public sealed class LinuxCustodyReleaseHostTests
                 ? error.Code + ": " + error.Message : "launch reply");
             var launched = (LaunchedMessage)reply;
             child = launched.ChildPid;
+            var path = store.PathFor(binding.ExecutionId, "linux-placement.json");
+            File.Exists(path).ShouldBeFalse("launch does not publish optional placement bytes");
+            (await host.Session.GetCustodyAsync(binding, false, CancellationToken.None))
+                .State.ShouldBe(VerificationCustodyState.Tracking);
             var placement = store.ReadRecord<LinuxPlacementRecord>(binding, "linux-placement.json");
             placement.ShouldNotBeNull();
             placement!.NamespaceId.ShouldBe(namespaceId);

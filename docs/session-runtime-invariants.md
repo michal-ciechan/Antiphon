@@ -1247,6 +1247,18 @@ isolates each item and reports errors after processing the remaining batch.
   after a success, and after failures on a 1 s doubling backoff capped at 60 s; every explicit
   read still re-reads accounting (CARD-1617).
 
+- **Linux tracked placement is decided at the shim boundary (CARD-2060).** The
+  runner stamps a five-second monotonic budget on the private launch frame. The
+  original PtyHost binds an abstract Unix listener before spawn and authenticates
+  the placed shim's kernel PID and UID. The shim proves its live generation and
+  singleton membership in both v1 trees before it receives GO. The host commits
+  the acknowledgement in memory after the required running manifest publishes.
+  An uncertain release keeps the tracked attempt available for reconciliation.
+  The first serialized ordinary observation publishes the committed revision-2
+  proof. Natural completion requires that proof, root exit from the original
+  PTY connection, fenced zero accounting and drained output. Ordinary reads
+  leave processes running. Historical accepted receipt bytes remain replayable.
+
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch
   enqueue, including a Fresh target whose row did not exist before the reservation.

@@ -1,4 +1,5 @@
 using Antiphon.PtyHost.Protocol;
+using System.Text.Json;
 using Shouldly;
 using TUnit.Core;
 
@@ -7,6 +8,22 @@ namespace Antiphon.PtyHost.Tests;
 [Category("PtyHost")]
 public class FramingTests
 {
+    [Test]
+    public async Task Linux_placement_deadline_is_an_append_only_launch_field()
+    {
+        const string frozenLaunch = """
+            {"$type":"launch","exe":"/bin/sh","args":[],"env":{},"cwd":"/tmp","cols":80,"rows":24,
+            "memoryLimitMb":0,"transcriptEnabled":false,"ansiLogPath":"/tmp/ansi"}
+            """;
+        var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        var old = JsonSerializer.Deserialize<PtyHostMessage>(frozenLaunch, json).ShouldBeOfType<LaunchMessage>();
+        old.LinuxPlacementDeadline.ShouldBeNull();
+        var roundTripped = (await RoundTrip(old with { LinuxPlacementDeadline = 0x0102030405060708 }))
+            .ShouldBeOfType<LaunchMessage>();
+        roundTripped.LinuxPlacementDeadline.ShouldBe(0x0102030405060708);
+        JsonSerializer.Serialize<PtyHostMessage>(old, json).ShouldNotContain("linuxPlacementDeadline");
+    }
+
     private static async Task<PtyHostMessage> RoundTrip(PtyHostMessage message)
     {
         using var stream = new MemoryStream();

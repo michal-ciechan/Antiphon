@@ -223,12 +223,13 @@ public class LinuxCgroupCustodyTests
             .ShouldBe(proof, "the original generation survives exec");
         (await launch).ChildPid.ShouldBe(proof.Pid);
         var daemon = await WaitForPidFileAsync(daemonPidFile);
+        await world.WaitForRootExitAsync();
         File.ReadAllText(daemonNonce).Trim().ShouldBe("ready");
         SessionIdOf(daemon).ShouldBe(daemon);
-        await world.WaitForRootExitAsync();
         var draining = await world.CustodyAsync();
         draining.State.ShouldBe(VerificationCustodyState.Draining);
         draining.Receipt.ShouldBeNull();
+        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
         var track = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
         var manifest = world.Store.ReadRecord<PtyHostManifest>(world.Binding, "running-manifest.json")!;
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(world.StorePath("linux-placement.json")));
@@ -242,6 +243,9 @@ public class LinuxCgroupCustodyTests
         placement.GetProperty("controllerMask").GetUInt32().ShouldBe(3u);
         placement.GetProperty("startTimeUtc").GetDateTime().ShouldBe(track.StartTimeUtc);
         manifest.ChildStartTimeUtc.ShouldBe(track.StartTimeUtc);
+        manifest.ChildPid.ShouldBe(proof.Pid);
+        track.LinuxBootId.ShouldBe(proof.Boot);
+        track.LinuxStartTicks.ShouldBe(proof.Ticks);
 
         await File.WriteAllTextAsync(world.ReleasePath, "release");
         using var receiptTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -256,7 +260,8 @@ public class LinuxCgroupCustodyTests
         receipt.ActiveProcesses.ShouldBe(0u);
         receipt.OutputDrained.ShouldBeTrue();
         receipt.TerminationSucceeded.ShouldBeNull();
-        File.Exists(world.StorePath("producer-seal.json")).ShouldBeFalse();
+        receipt.TerminationError.ShouldBeNull();
+        Directory.Exists("/proc/" + daemon).ShouldBeFalse();
         (await world.CustodyAsync()).Receipt.ShouldBe(final.Receipt);
     }
 

@@ -46,13 +46,15 @@ public sealed class HostSession : IAsyncDisposable
     private Task? _exitObserver;
     private bool _hostOutputFailed;
     private bool _hasTestContainment;
+    private bool _supplyTestPlacementProof;
     private readonly IVerificationCustodyFiles? _custodyFiles;
 
     /// <summary>Test seam. Production leaves containment null and builds the real Linux cgroup.</summary>
-    internal void UseContainmentForTests(IPtyCustodyContainment containment)
+    internal void UseContainmentForTests(IPtyCustodyContainment containment, bool supplyPlacementProof = false)
     {
-        _runner.UseContainmentForTests(containment);
+        _runner.UseContainmentForTests(containment, capturePlacementIdentity: supplyPlacementProof);
         _hasTestContainment = true;
+        _supplyTestPlacementProof = supplyPlacementProof;
     }
 
     /// <summary>CARD-1617 test seam. Production leaves the system clock.</summary>
@@ -293,6 +295,11 @@ public sealed class HostSession : IAsyncDisposable
             _manifest.SaveAtomic(_options.ManifestPath);
             if (placement?.Commit() is { } proof)
                 _custody!.CommitLinuxPlacement(proof);
+            if (_supplyTestPlacementProof && _custody is { } testJournal && _runner.LinuxSpawnRoot is { } testRoot)
+                testJournal.CommitLinuxPlacement(new(
+                    new(testJournal.Identity.RunnerStoreId, testJournal.Binding.ExecutionId, _hostInstanceId,
+                        testJournal.ContainerId, testJournal.LinuxNamespaceId),
+                    testRoot, LinuxPlacementAttempt.V1Controllers));
         }
         catch (Exception ex) when (placement is not null &&
             ex is IOException or UnauthorizedAccessException or VerificationCustodyException)
