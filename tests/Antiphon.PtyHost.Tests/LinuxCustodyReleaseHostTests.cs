@@ -51,11 +51,15 @@ public sealed class LinuxCustodyReleaseHostTests
             ns.ShouldNotBeNull();
             ns!.NamespaceId.ShouldBe(namespaceId);
 
+            var child = files.Child;
+            child.ShouldNotBeNull();
+            containment.Pids.Add(child!.Id);
+            containment.DuringTerminate = () => child.Kill(entireProcessTree: true);
             store.WriteRecord(binding, "runner-seal.json", new CustodyStamp(3, DateTime.UtcNow));
-            containment.Pids.Clear();
             var status = await host.Session.GetCustodyAsync(binding, true, CancellationToken.None);
             status.State.ShouldBe(VerificationCustodyState.Unknown);
             status.Receipt.ShouldBeNull();
+            containment.Terminations.ShouldBe(1);
             File.Exists(store.PathFor(binding.ExecutionId, "linux-release-disposition.json")).ShouldBeTrue();
             File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
 

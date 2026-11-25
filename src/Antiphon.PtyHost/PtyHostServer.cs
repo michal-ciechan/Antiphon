@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Reflection;
 using System.Threading.Channels;
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost;
 
@@ -201,7 +202,14 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
                 return false;
 
             case CustodyRequestMessage custody:
-                outbound.TryWrite(new CustodyReplyMessage(await session.GetCustodyAsync(custody.Binding, custody.Seal, ct)));
+                try
+                {
+                    outbound.TryWrite(new CustodyReplyMessage(await session.GetCustodyAsync(custody.Binding, custody.Seal, ct)));
+                }
+                catch (VerificationCustodyException ex)
+                {
+                    outbound.TryWrite(new ErrorMessage(ex.Code, ex.Message));
+                }
                 return false;
 
             case ShutdownMessage:
