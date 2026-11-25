@@ -201,6 +201,20 @@ public static class CheckpointApp
                 && sourceGuard.Observe();
             if (admitted)
             {
+                CheckpointIntermediateCache? intermediateCache = null;
+                if (driver is ProcessDriver { DotnetShim: null } && selected.Any(row => !row.IsCommand))
+                {
+                    try
+                    {
+                        intermediateCache = CheckpointIntermediateCache.TryOpen(repo, source.Start, request.ExpectedSourceSha, Note);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CheckpointCacheRefusal)
+                    {
+                        Note("checkpoint cache refused: " + (ex is CheckpointCacheRefusal refusal ? refusal.Message : ex.GetType().Name));
+                    }
+                }
+
+                using var heldCache = intermediateCache;
                 watcher = owner.WatchAsync(watchCancel.Token);
                 result = await scheduler.RunAsync(new SchedulerRequest
             {
@@ -224,6 +238,7 @@ public static class CheckpointApp
                 OwnerBound = owner.Bound,
                 SourceGuard = sourceGuard,
                 ExpectedSourceSha = request.ExpectedSourceSha,
+                IntermediateCache = heldCache,
                 TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
             }, workCancel.Token).ConfigureAwait(false);
             }

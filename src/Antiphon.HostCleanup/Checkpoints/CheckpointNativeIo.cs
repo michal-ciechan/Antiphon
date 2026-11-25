@@ -850,6 +850,69 @@ public sealed partial class CheckpointNativeIo : ICheckpointCleanupIo, ICheckpoi
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetAclInformation(IntPtr acl, ref AclSizeInformation info, int length, int infoClass);
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetAce(IntPtr acl, int index, out IntPtr ace);
     [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EqualSid(IntPtr left, IntPtr right);
+    // fstat of a handle the caller already opened. Never disposes that handle and never replaces the path.
+    public static string? Untrusted(SafeFileHandle handle)
+    {
+        if (handle.IsClosed || handle.IsInvalid)
+            return "unreadable-link-count";
+        if (OperatingSystem.IsLinux())
+            return LinuxUntrusted(handle);
+        if (OperatingSystem.IsWindows())
+            return WindowsUntrusted(handle);
+        return "unreadable-link-count";
+    }
+
+    private static string? LinuxUntrusted(SafeFileHandle handle)
+    {
+        var added = false;
+        handle.DangerousAddRef(ref added);
+        try
+        {
+            const uint mask = 0x000F; // STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_UID
+            if (Statx(handle.DangerousGetHandle().ToInt32(), "", 0x1000, mask, out var stat) != 0
+                || (stat.Mask & mask) != mask)
+                return "unreadable-link-count";
+            if ((stat.Mode & 0xF000) != 0x8000)
+                return "not-regular";
+            if (stat.Links != 1)
+                return "multiple-links";
+            if (stat.Uid != GetEuid())
+                return "foreign-owner";
+            return null;
+        }
+        finally
+        {
+            if (added)
+                handle.DangerousRelease();
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? WindowsUntrusted(SafeFileHandle handle)
+    {
+        if (GetFileType(handle) != 1)
+            return "not-regular";
+        if (!GetFileInformationByHandle(handle, out var info))
+            return "unreadable-link-count";
+        if ((info.Attributes & (0x10u | 0x400u)) != 0)
+            return "not-regular";
+        if (info.Links != 1)
+            return "multiple-links";
+        try
+        {
+            if (!TryWindowsOwner(handle, out var owner, out _))
+                return "unreadable-link-count";
+            if (owner != WindowsOwner())
+                return "foreign-owner";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            return "unreadable-link-count";
+        }
+
+        return null;
+    }
+
     private const int FileBasicInformation = 0;
     private const int SeFileObject = 6;
     private const int AclSizeInformationClass = 2;

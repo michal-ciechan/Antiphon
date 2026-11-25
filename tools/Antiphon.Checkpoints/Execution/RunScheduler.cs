@@ -26,6 +26,7 @@ public sealed class SchedulerRequest
     public SourceRunGuard? SourceGuard { get; init; }
     public string? ExpectedSourceSha { get; init; }
     public string? TimingRoot { get; init; }
+    internal CheckpointIntermediateCache? IntermediateCache { get; init; }
     internal Func<CheckpointBuildBinding, CancellationToken, Task>? BeforeBuildReceiptWrite { get; init; }
 }
 
@@ -222,7 +223,8 @@ public sealed class RunScheduler
                     var buildState = next.IsCommand
                         ? "n/a"
                         : reportedBuilds.Add(next.Build ?? "") ? "ok" : "reused";
-                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, budget, total.Token), rowProgress));
+                    var properties = next.IsCommand ? null : buildStates[next.Build!].ResolvedProperties;
+                    running.Add((next, RunRowAsync(request, next, session, rowProgress, buildState, properties, budget, total.Token), rowProgress));
                 }
             }
 
@@ -425,8 +427,21 @@ public sealed class RunScheduler
         var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
         var properties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
             repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null).ToList();
+        CheckpointIntermediateCache.Entry? opened = null;
+        try
+        {
+            opened = request.IntermediateCache?.Prepare(build.Project, properties);
+            opened?.Invalidate();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CheckpointCacheRefusal)
+        {
+            request.IntermediateCache?.Report(ex);
+            opened?.Dispose();
+            opened = null;
+        }
+        using var intermediate = opened;
         if (!string.IsNullOrWhiteSpace(build.Project) && !string.IsNullOrWhiteSpace(build.OutputPath))
-            BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath);
+            BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, build.Project, build.OutputPath, intermediate?.Path);
         var log = Path.Combine(request.RunDirectory, "builds", build.Id, "build.log");
         // CARD-1241: files outside the write roots are stamped before the slot is taken, re-checked once
         // it is granted (AdmitLedger) and verified after release (VerifyLedger).
@@ -451,6 +466,7 @@ public sealed class RunScheduler
         DriverResult? result = null;
         var launched = false;
         var sourceOk = true;
+        var verificationParallelism = 1;
         var started = DateTimeOffset.UtcNow;
         try
         {
@@ -502,6 +518,7 @@ public sealed class RunScheduler
                 return;
             }
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
+            verificationParallelism = intermediate is null ? 1 : cpu;
             var args = BuildStep.BuildArguments(build.Project, build.OutputPath, properties, cpu);
             started = DateTimeOffset.UtcNow;
             if (request.BeforeLaunch is not null)
@@ -520,7 +537,11 @@ public sealed class RunScheduler
             built = binding;
             result = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                new DriverRequest("dotnet", args, request.WorkingDirectory, log) { Ledger = ledger },
+                new DriverRequest("dotnet", args, request.WorkingDirectory, log)
+                {
+                    Ledger = ledger,
+                    GraphEvaluationParallelism = verificationParallelism,
+                },
                 TimeSpan.FromMinutes(deadlineMinutes),
                 _buildTimeProvider,
                 cancellationToken).ConfigureAwait(false);
@@ -533,7 +554,7 @@ public sealed class RunScheduler
             progress.AdmissionExitCode = ExitCodes.Timeout;
         }
 
-        var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger) : null;
+        var outside = launched && ledger is not null ? BuildConfinement.VerifyLedger(ledger, verificationParallelism) : null;
         if (outside?.Kind is not null)
             ProcessDriver.AppendLog(log, outside.Detail);
         if (result is not null)
@@ -551,6 +572,11 @@ public sealed class RunScheduler
                     succeeded = false;
                     progress.AdmissionExitCode = ExitCodes.Invalid;
                     progress.SlotReason = "refused: " + written;
+                }
+                else
+                {
+                    intermediate?.Publish();
+                    progress.ResolvedProperties = properties;
                 }
             }
             else if (refusal is not null)
@@ -592,6 +618,7 @@ public sealed class RunScheduler
         SlotSession session,
         RowProgress progress,
         string buildState,
+        IReadOnlyList<string>? properties,
         RunBudgetClock budget,
         CancellationToken cancellationToken)
     {
@@ -668,6 +695,7 @@ public sealed class RunScheduler
             Repeat = spec.Repeat,
             Expect = spec.Expect,
             Properties = request.Manifest.Build.Properties.ToList(),
+            ResolvedBuildProperties = properties,
             KnownFlaky = spec.Repeat > 1 ? [] : request.KnownFlaky,
             Commit = request.Commit,
             Source = rowSource,

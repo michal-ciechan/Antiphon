@@ -43,11 +43,18 @@ public static class BuildStep
         List<string> properties,
         string workingDirectory,
         string project,
-        string relativeOutput)
+        string relativeOutput,
+        string? intermediateRoot = null)
     {
         var layout = BuildConfinement.LayoutFor(workingDirectory, project, relativeOutput);
         AppendMissing(properties, "ArtifactsPath", layout.Artifacts);
         AppendMissing(properties, "UseArtifactsOutput", "true");
+        if (intermediateRoot is not null)
+        {
+            properties.Add("--property:CustomBeforeDirectoryBuildProps=" + Path.Combine(workingDirectory, CheckpointIntermediateCache.ProjectProps));
+            properties.Add("--property:AntiphonCheckpointRepositoryRoot=" + workingDirectory);
+            properties.Add("--property:" + CheckpointIntermediateCache.RootProperty + "=" + intermediateRoot);
+        }
         return layout;
     }
 
@@ -61,8 +68,8 @@ public static class BuildStep
 
     // The OutputPath token stays the relative manifest value. ProcessDriver and
     // run-checkpoint.ps1 rewrite a real dotnet build onto one absolute owned path.
-    // That rewrite is defence in depth. The run must receive the same absolute
-    // OutputPath, ArtifactsPath, and UseArtifactsOutput the build and the stamp use.
+    // That rewrite is defence in depth. The run and the stamp receive the same
+    // output layout and MSBuild properties as the build.
     public static List<string> BuildArguments(
         string project,
         string outputPath,

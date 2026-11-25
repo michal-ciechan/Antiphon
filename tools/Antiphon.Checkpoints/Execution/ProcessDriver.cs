@@ -110,7 +110,8 @@ public sealed class ProcessDriver : IConfinedDriver
         var workingDirectory = WorkingDirectoryOf(request);
         if (Confines(request))
         {
-            var confined = BuildConfinement.Prepare(workingDirectory, request.Arguments, request.Environment, cancellationToken, request.Ledger);
+            var confined = BuildConfinement.Prepare(workingDirectory, request.Arguments, request.Environment, cancellationToken,
+                request.Ledger, request.GraphEvaluationParallelism);
             if (confined.Refusal is not null)
             {
                 AppendLog(request.LogPath, confined.Detail);
