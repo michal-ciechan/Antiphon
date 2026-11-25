@@ -52,7 +52,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         // before the freezer hierarchy. The two pids trees remain and differ.
         var result = await StartAsync("unshare",
         [
-            "-rm", "bash", "-c", """
+            "-rm", "bash", "-c", @"
             set -euo pipefail
             library=$1
             enter=$2
@@ -66,36 +66,36 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             mkdir -p /usr/local/lib /run/antiphon-custody \
               /sys/fs/cgroup/pids/antiphon-custody \
               /sys/fs/cgroup/freezer/antiphon-custody
-            cp "$library" /usr/local/lib/antiphon-custody-common.sh
-            printf '%s\n' "$ns1" > /run/antiphon-custody/namespace
+            cp ""$library"" /usr/local/lib/antiphon-custody-common.sh
+            printf '%s\n' ""$ns1"" > /run/antiphon-custody/namespace
             set +e
-            bash "$enter" --probe
+            bash ""$enter"" --probe
             rc1=$?
             set -e
-            echo "rc1=$rc1"
+            echo ""rc1=$rc1""
             p1=/sys/fs/cgroup/pids/antiphon-custody/$ns1/$probe/tree
             f1=/sys/fs/cgroup/freezer/antiphon-custody/$ns1/$probe/tree
-            printf '%s\n' "$ns2" > /run/antiphon-custody/namespace
+            printf '%s\n' ""$ns2"" > /run/antiphon-custody/namespace
             set +e
-            bash "$enter" --probe
+            bash ""$enter"" --probe
             rc2=$?
             set -e
-            echo "rc2=$rc2"
+            echo ""rc2=$rc2""
             p2=/sys/fs/cgroup/pids/antiphon-custody/$ns2/$probe/tree
             f2=/sys/fs/cgroup/freezer/antiphon-custody/$ns2/$probe/tree
-            echo "pids_left=$p1"
-            echo "pids_right=$p2"
-            echo "freezer_left=$f1"
-            echo "freezer_right=$f2"
-            if [ -d "$p1" ] && [ -d "$p2" ] && [ ! -d "$f1" ] && [ ! -d "$f2" ] \
-              && [ "$p1" != "$p2" ] \
-              && [ "$rc1" -ne 0 ] && [ "$rc2" -ne 0 ]; then
-              echo "disjoint=yes"
+            echo ""pids_left=$p1""
+            echo ""pids_right=$p2""
+            echo ""freezer_left=$f1""
+            echo ""freezer_right=$f2""
+            if [ -d ""$p1"" ] && [ -d ""$p2"" ] && [ ! -d ""$f1"" ] && [ ! -d ""$f2"" ] \
+              && [ ""$p1"" != ""$p2"" ] \
+              && [ ""$rc1"" -ne 0 ] && [ ""$rc2"" -ne 0 ]; then
+              echo ""disjoint=yes""
               exit 0
             fi
-            echo "disjoint=no"
+            echo ""disjoint=no""
             exit 1
-            """,
+            ",
             "bash", CommonScript(), EnterScript(),
         ]);
         result.ExitCode.ShouldBe(0, result.Stdout + "\n" + result.Stderr);

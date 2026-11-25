@@ -739,8 +739,9 @@ public sealed class Card2060PlacementHandshakeTests
         /// <summary>Publishes both memberships for the connected stage PID, then sends PROVE.</summary>
         public async Task<byte[]> ProveAsync(int? freezerExtra, CancellationToken ct)
         {
-            WriteMembers("pids", $"{_stage.Id}\n");
-            WriteMembers("freezer", freezerExtra is { } extra ? $"{_stage.Id}\n{extra}\n" : $"{_stage.Id}\n");
+            var stage = _stage.Id.ToString(CultureInfo.InvariantCulture) + "\n";
+            WriteMembers("pids", stage);
+            WriteMembers("freezer", freezerExtra is { } extra ? stage + extra.ToString(CultureInfo.InvariantCulture) + "\n" : stage);
             var challenge = RandomNumberGenerator.GetBytes(16);
             var binding = new LinuxPlacementBinding(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), _container, _namespace);
             await WriteFrameAsync(Peer, ProveKind, LinuxPlacementAttempt.BuildProveBody(binding, _deadline, challenge), ct);
@@ -804,7 +805,7 @@ public sealed class Card2060PlacementHandshakeTests
     private static async Task<byte[]> ExpectFrameAsync(Socket socket, byte kind, CancellationToken ct)
     {
         var frame = await ReadFrameAsync(socket, ct);
-        frame.ShouldNotBeNull($"expected frame kind {kind}, got end of stream");
+        frame.ShouldNotBeNull("expected frame kind " + kind.ToString(CultureInfo.InvariantCulture) + ", got end of stream");
         frame.Value.Kind.ShouldBe(kind);
         return frame.Value.Body;
     }
