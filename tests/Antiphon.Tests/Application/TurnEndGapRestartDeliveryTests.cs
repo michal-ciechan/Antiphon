@@ -190,6 +190,52 @@ public sealed class TurnEndGapRestartDeliveryTests
         await h.AssertReceiptsAsync(notes, rows);
     }
 
+    // rc b8cbfb24 e2e-all-split-8, C488_ReviewDeliveryCrashMatrix(queue-committed-before-wakeup).
+    // The producer parked at queue-committed-before-wakeup has not woken the caller, but the
+    // queue insert already published its own completion-schedule hint (CARD-1360). With that
+    // hint live, an idle caller is typed while the producer is still parked, so a crash at this
+    // cut can land between the attempt claim and the prompt: the CARD-1892 unknown attempt a
+    // Grok caller holds and never retypes. Only with every in-process wakeup dropped is the
+    // row still unattempted at the cut, which is what the E2E cut must model.
+    [Test, Arguments(false), Arguments(true)]
+    public async Task C488_Wakeup_cut_holds_the_row_only_when_in_process_hints_are_dropped(bool dropHints)
+    {
+        await using var h = await TurnEndGapDeliveryHarness.CreateAsync(busy: false);
+        await h.StartCompletionWorkerAsync(minimumScans: 0);
+        if (dropHints) { h.Boundary.Drop.Add("completion-schedule"); h.Boundary.Drop.Add("completion"); }
+        h.Boundary.HoldAt = "queue-committed-before-wakeup";
+        var produce = h.ProduceAsync();
+        await h.Boundary.Held.Task.WaitAsync(h.Token);
+        await h.JoinOwnedWorkAsync();
+        produce.IsCompleted.ShouldBeFalse("the producer is still parked before its own wakeup");
+        var row = (await h.RowsAsync()).ShouldHaveSingleItem();
+        var note = (await h.NotesAsync()).ShouldHaveSingleItem();
+        note.QueueMessageId.ShouldBe(row.Id);
+        note.ConfirmedAt.ShouldBeNull();
+        if (dropHints)
+        {
+            h.Boundary.Dropped.ShouldContain(("completion-schedule", row.Id));
+            row.Status.ShouldBe(QueuedMessageStatus.Pending);
+            row.DeliveryAttempts.ShouldBe(0, "no in-process wakeup may claim the row at this cut");
+            h.Caller.SubmittedBodies.ShouldBeEmpty();
+            h.Boundary.Drop.Clear();
+        }
+        else
+        {
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryAttempts.ShouldBe(1, "the queue-side hint claimed the row before the producer's wakeup");
+            h.Caller.SubmittedBodies.ShouldHaveSingleItem();
+        }
+        h.Boundary.HoldAt = null;
+        h.Boundary.Release.TrySetResult();
+        await h.JoinDeliveryAsync(produce);
+        await h.JoinOwnedWorkAsync();
+        h.Caller.SubmittedBodies.ShouldHaveSingleItem("one typed completion in either arm");
+        var after = (await h.RowsAsync()).ShouldHaveSingleItem();
+        after.Id.ShouldBe(row.Id);
+        after.DeliveryAttempts.ShouldBe(1);
+    }
+
     // T44 -> PC-96: Unknown cannot wake/attempt; a later checked idle probe delivers.
     [Test, Arguments("wrong-generation"), Arguments("pull-fault")]
     public async Task C1205_Unknown_probe_keeps_obligations_held(string uncertainty)
