@@ -685,7 +685,9 @@ public sealed class CodexCliObservationGapTests
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
 /// in-process fakes), but each also has a Kestrel host, a harness and a schema, so this class (one strict
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_C1029_WORLDS
-/// (1-4) overrides it, and 1 runs the cases one at a time.
+/// (1-4) overrides it for both the C959 and C1029 classes, and 1 runs the cases one at a time.
+/// Each world builds its own time-sensitive samples after it exists where that matters; vectors whose sample is
+/// taken before the world is built (clock-skew, staleness) keep a margin of minutes over world creation.
 /// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
 /// another's routing cache; that costs a re-resolve from its own database, never a wrong answer.
 /// </summary>
@@ -707,11 +709,20 @@ internal static class Worlds
             try { await body(c); }
             catch (Exception ex)
             {
-                Console.WriteLine($"C1029 CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
-                failures.Enqueue(new InvalidOperationException("C1029 case " + name + ": " + ex.Message.Split('\n')[0].Trim(), ex));
+                Console.WriteLine($"WORLD CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
+                failures.Enqueue(new InvalidOperationException("World case " + name + ": " + Cause(ex.Message), ex));
             }
         });
         if (!failures.IsEmpty)
-            throw new AggregateException($"C1029 {failures.Count} case(s) failed", failures);
+            throw new AggregateException($"{failures.Count} world case(s) failed", failures);
+    }
+
+    // The first line, plus a Shouldly custom message (the guard id, e.g. C959-pc-190) when there is one.
+    private static string Cause(string message)
+    {
+        var lines = message.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        if (lines.Count == 0) return "";
+        var info = lines.IndexOf("Additional Info:");
+        return info >= 0 && info + 1 < lines.Count ? lines[0] + " [" + lines[info + 1] + "]" : lines[0];
     }
 }

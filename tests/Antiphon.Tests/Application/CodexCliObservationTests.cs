@@ -135,7 +135,7 @@ public sealed class CodexCliObservationTests
     [Test]
     public async Task C959_Compatible_launch_keeps_model_and_runner()
     {
-        // Claude is first: its measured paste path must retain the literal LF body.
+        // Claude's measured paste path must retain the literal LF body (its vectors run beside the Codex ones).
         var local = from kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex }
                     from busy in new[] { false, true }
                     from worktree in kind == AgentKind.Codex ? new[] { true, false } : new[] { false }
