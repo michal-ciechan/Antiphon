@@ -4,11 +4,13 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -599,6 +601,102 @@ public sealed class BlockedReplyReportRetentionTests
             (await CallerNotesAsync(db, world)).ShouldBe(notesBefore + 2, "the genuine completion notifies");
             (await NewCallerNoteAsync(db, world, [.. before, note.Id])).Body.ShouldContain(replacement, Case.Sensitive);
         }
+    }
+
+    /// <summary>
+    /// Review 16611b04 blocker 3. The question note's identity is the retained report plus its own
+    /// Blocked settlement event. The recipient's complete submitted prompt of that note is the
+    /// receipt for that settlement, through retention, and a later settlement with byte-identical
+    /// text owes its own receipt until its own note or an authenticated read reaches the caller.
+    /// </summary>
+    [Test]
+    [Timeout(240_000)]
+    public async Task Question_note_receipt_binds_to_its_producer_settlement()
+    {
+        await using var world = await BlockedBySyncAsync();
+        await ReplyAsync(world, "Accepted. The report is final. Stop now and do not take another turn.");
+        var wire = await ReplyWireAsync(world);
+        const string question = "Nothing changed. Should I also port the fix to the rc branch?";
+        List<Guid> before;
+        await using (var db = world.CreateContext())
+            before = await CallerNoteIdsAsync(db, world);
+        await world.SettleAsync(question, prompt: wire.Body, closingVerdict: false);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world.Task));
+        var firstSettlement = world.Task.CompletedAt.ShouldNotBeNull();
+        SessionQueuedMessage first;
+        await using (var db = world.CreateContext())
+            first = await NewCallerNoteAsync(db, world, before);
+        first.ContentDigest.ShouldNotBe(DelegationNoteDigest.Compute(world.Task.Result),
+            "fixture: the producer binds the question note to its settlement");
+        (await OwedAsync(world)).ShouldBeTrue("fixture: the caller has not received the question");
+
+        await ReceiveAndPruneAsync(world, first);
+        await world.ReloadAsync();
+        world.Task.ReceivedReportCompletedAt.ShouldBe(firstSettlement,
+            "the complete submitted question note is the receipt for its own settlement");
+        world.Task.ReceivedReportSessionId.ShouldBe(world.CallerSessionId);
+        (await OwedAsync(world)).ShouldBeFalse("the receipt outlives its pruned queue row");
+
+        // The same question again after another Reply: identical text, a new settlement.
+        await ReplyAsync(world, "Wait for the operator's rc decision, then send the complete report.");
+        var again = await ReplyWireAsync(world);
+        await using (var db = world.CreateContext())
+            before = await CallerNoteIdsAsync(db, world);
+        await world.SettleAsync(question, prompt: again.Body, closingVerdict: false);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked, Why(world.Task));
+        world.Task.CompletedAt.ShouldNotBe(firstSettlement, "fixture: a later settlement");
+        SessionQueuedMessage second;
+        await using (var db = world.CreateContext())
+            second = await NewCallerNoteAsync(db, world, before);
+        second.ContentDigest.ShouldNotBe(first.ContentDigest, "fixture: the later note has its own settlement identity");
+        (await OwedAsync(world)).ShouldBeTrue("the earlier receipt cannot close the later settlement");
+        await using (var db = world.CreateContext())
+            await CompletionNoteStamp.RecordReceiptsAsync(db, [first], CancellationToken.None);
+        (await OwedAsync(world)).ShouldBeTrue("the earlier note's prompt cannot acknowledge the later settlement");
+
+        await ReceiveAndPruneAsync(world, second);
+        await world.ReloadAsync();
+        world.Task.ReceivedReportCompletedAt.ShouldBe(world.Task.CompletedAt);
+        (await OwedAsync(world)).ShouldBeFalse("the later note's own prompt closes the later settlement");
+
+        // The recipient's authenticated read of the same settlement keeps that receipt.
+        await using (var scope = world.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .GetAsync(world.TaskId, CancellationToken.None, world.CallerSessionId);
+        await world.ReloadAsync();
+        world.Task.ReceivedReportCompletedAt.ShouldBe(world.Task.CompletedAt);
+        world.Task.ReceivedReportSessionId.ShouldBe(world.CallerSessionId);
+        (await OwedAsync(world)).ShouldBeFalse();
+    }
+
+    private static async Task<bool> OwedAsync(RunnerSettlementWorld world)
+    {
+        await using var db = world.CreateContext();
+        return await CallerWakeService.OwedReports(db, DateTime.UtcNow.AddDays(30), world.CallerSessionId)
+            .AnyAsync(t => t.Id == world.TaskId);
+    }
+
+    /// <summary>The caller's transcript records the complete note, then queue retention prunes its row.</summary>
+    private static async Task ReceiveAndPruneAsync(RunnerSettlementWorld world, SessionQueuedMessage note)
+    {
+        var floor = await BridgeQueueHarness.InsertEntryAsync(world.CallerSessionId, TranscriptKinds.AssistantText,
+            "Waiting for delegates.", connectionString: world.Schema.ConnectionString);
+        await using var db = world.CreateContext();
+        await db.SessionQueuedMessages.Where(m => m.Id == note.Id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(m => m.Status, QueuedMessageStatus.Sent)
+            .SetProperty(m => m.SentAt, note.CreatedAt)
+            .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.Delivered)
+            .SetProperty(m => m.LastDeliveryBaselineSequence, floor)
+            .SetProperty(m => m.ChannelReplyDiscoveryClosedAt, note.CreatedAt));
+        await BridgeQueueHarness.InsertEntryAsync(world.CallerSessionId, TranscriptKinds.UserPrompt, note.Body,
+            connectionString: world.Schema.ConnectionString);
+        var clock = new FakeTimeProvider(new DateTimeOffset(note.CreatedAt.AddDays(3), TimeSpan.Zero));
+        var audit = Options.Create(new AuditSettings());
+        var retention = new DataRetentionService(db,
+            Options.Create(new RetentionSettings { QueuedMessageRetentionDays = 1 }),
+            audit, clock, NullLogger<DataRetentionService>.Instance, new AuditService(db, audit));
+        await retention.PruneQueuedMessagesAsync(CancellationToken.None);
+        (await db.SessionQueuedMessages.CountAsync(m => m.Id == note.Id)).ShouldBe(0, "retention pruned the delivered note");
     }
 
     /// <summary>

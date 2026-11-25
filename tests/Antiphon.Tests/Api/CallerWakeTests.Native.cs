@@ -89,7 +89,7 @@ public partial class CallerWakeTests
         session.DelegationTokenHash = hash;
         session.StandingAgentId = agentId;
         session.Cwd = cwd;
-        db.AddRange(new Agent { Id = agentId, Name = "Native recipient", Slug = "native-recipient",
+        db.AddRange(new Agent { Id = agentId, Name = "Native recipient", Slug = "native-recipient", BoardId = world.Board.Id,
             WorkingDirectory = cwd, PersistentSessionId = sessionId.ToString(), CreatedAt = now, UpdatedAt = now },
             new AgentBundleAttachment { AgentId = agentId, BundleKey = InstructionBundles.Orchestrator, CreatedAt = now });
         await db.SaveChangesAsync(ct);
@@ -129,6 +129,7 @@ public partial class CallerWakeTests
         };
         var reportId = Guid.Empty;
         var sawNotice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mixed = false;
         stub.Script.SetResponder(StubEndpointKeys.ClaudeMessages, body =>
         {
             using var doc = JsonDocument.Parse(body);
@@ -140,6 +141,7 @@ public partial class CallerWakeTests
             var notice = conversation.LastOrDefault(t => t.Contains("[Antiphon]") && t.Contains(reportId.ToString()));
             if (notice is not null && sawNotice.TrySetResult())
             {
+                mixed = notice.Contains("keep-six shortfall", StringComparison.Ordinal);
                 // The fixture model follows the command location supplied in the native notice.
                 var instruction = notice.Split('\n').Single(line => line.Contains(" delegate status " + reportId));
                 return new ScriptedFunctionCall(shellTool, JsonSerializer.Serialize(new
@@ -189,7 +191,13 @@ public partial class CallerWakeTests
             var settled = await rig.SettleReviewAsync(transformReport: (_, report) => report.Replace("Reviewed the owner.", reportText));
             reportId = settled.TaskId;
             await rig.FlushAsync();
-            (await rig.RowAsync(reportId)).LastWithholdReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
+            var reportRow = await rig.RowAsync(reportId);
+            reportRow.LastWithholdReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
+            // A withheld keep-six reminder falls due on the same poll as the report, so one
+            // native wake carries both notices (review 16611b04 mixed wake).
+            db.AddRange(WithheldShortfall(rig, agentId, sessionId, reportRow.Sequence + 1, now,
+                now.AddMinutes(10 - KeepSixShortfall.BackoffMinutes)));
+            await db.SaveChangesAsync(ct);
             world.Clock.Advance(TimeSpan.FromMinutes(11));
             await sawNotice.Task.WaitAsync(TimeSpan.FromSeconds(80), ct);
             var transcript = Path.Combine(config, "projects");
@@ -200,6 +208,7 @@ public partial class CallerWakeTests
                 var path = Directory.EnumerateFiles(transcript, sessionId + ".jsonl", SearchOption.AllDirectories).Single();
                 result = ReadStatusResult(await File.ReadAllLinesAsync(path, ct));
             } while (result is null);
+            mixed.ShouldBeTrue("the report and the keep-six shortfall reach the caller in one wake");
             var content = result.Value.GetProperty("content").ToString();
             var error = result.Value.TryGetProperty("is_error", out var flag) && flag.GetBoolean();
             var diagnosis = error ? content.Split('\n').FirstOrDefault() : "report content absent";

@@ -15,6 +15,9 @@ public sealed class CallerWakeService(
     private static readonly object ClaimLock = new();
     public sealed record Wake(IReadOnlyList<Guid> ReportTaskIds, int Shortfall, bool Idle = true);
 
+    /// <summary>Test seam: runs after the idle observation and before any cooldown is claimed.</summary>
+    internal Func<CancellationToken, Task>? ClaimGate { get; set; }
+
     public async Task<Wake?> PollAsync(Guid agentId, Guid? conversationId, DateTime? generation, string? token, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
@@ -51,6 +54,7 @@ public sealed class CallerWakeService(
             || await SessionMessageQueueService.IsWorkingAsync(db, session.Id, ct))
             return new([], 0, Idle: false);
 
+        if (ClaimGate is { } gate) await gate(ct);
         var now = clock.GetUtcNow().UtcDateTime;
         var reportsKey = (session.Id, "caller-wake-reports");
         List<Guid> reports = [];
