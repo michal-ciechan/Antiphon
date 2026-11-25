@@ -78,6 +78,32 @@ public sealed class ReleaseImpactRelationTests
         AssertIncomplete(graph);
     }
 
+    // CARD-1868 A-1. A delegate is not a BaseTypeDeclarationSyntax, so a file declaring only
+    // delegates (top-level, generic or nested in a class no consumer names) got no type edge.
+    [Test]
+    public void DelegateOnlyFileGetsTypeEdge()
+    {
+        var sources = Sources();
+        sources["shared/Callbacks.cs"] = "namespace Shared; public delegate void ProbeCallback(int value); public delegate T ProbeFactory<T>();";
+        sources["shared/Holder.cs"] = "namespace Shared; public class ProbeHolder { public delegate void ProbeNested(); }";
+        sources["tests/A/Consumer.cs"] = """
+            namespace A;
+            public class CallbackTests { [Test] public void Runs() { ProbeCallback callback = _ => { }; } }
+            public class FactoryTests { [Test] public void Runs() { ProbeFactory<int> factory = () => 1; } }
+            public class NestedTests : Shared.ProbeBase { [Test] public void Runs() { ProbeNested nested = () => { }; } }
+            """;
+        var graph = Build(sources);
+        Members(graph, "shared/Callbacks.cs").ShouldBe(new[] { "tests/A/A.csproj::A.CallbackTests", "tests/A/A.csproj::A.FactoryTests" });
+        Kinds(graph, "shared/Callbacks.cs").ShouldBe(new[] { "type" });
+        Members(graph, "shared/Holder.cs").ShouldBe(new[] { "tests/A/A.csproj::A.NestedTests" });
+        Kinds(graph, "shared/Holder.cs").ShouldBe(new[] { "type" });
+        AssertIncomplete(graph);
+    }
+
+    private static string[] Kinds(JsonElement graph, string path) => graph.GetProperty("edges").EnumerateArray()
+        .Where(x => x.GetProperty("path").GetString() == path).SelectMany(x => x.GetProperty("classes").EnumerateArray())
+        .SelectMany(x => x.GetProperty("kinds").EnumerateArray()).Select(x => x.GetString()!).Distinct().Order(StringComparer.Ordinal).ToArray();
+
     private static Dictionary<string, string> Sources() => new(StringComparer.Ordinal)
     {
         ["tests/A/A.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />",
