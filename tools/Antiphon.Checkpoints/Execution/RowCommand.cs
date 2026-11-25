@@ -165,6 +165,7 @@ internal static class RowCommand
                 Expect = input.Expect,
                 Properties = input.Properties,
                 ResolvedBuildProperties = replay?.Properties,
+                IntermediateCache = replayCache,
                 Commit = row.Commit,
                 Source = source,
                 SourceBoundary = guard.Observe,
@@ -217,8 +218,7 @@ internal static class RowCommand
         var cold = original.ToList();
         BuildStep.AppendSharedLayout(cold, repo, project, outputPath);
         var coldCheck = CheckpointBuildBinding.Expected(repo, project, outputPath, cold, source).Check();
-        var explicitWarmRoot = input.Properties.Any(pair =>
-            string.Equals(pair.Key, CheckpointIntermediateCache.RootProperty, StringComparison.OrdinalIgnoreCase));
+        var explicitWarmRoot = CheckpointIntermediateCache.UsesManagedRoot(original);
         if (coldCheck == "verified" && !explicitWarmRoot)
             return new Replay(coldCheck, Properties: cold);
 
@@ -252,8 +252,9 @@ internal static class RowCommand
             }
         }
 
-        if (coldCheck == "verified")
-            return new Replay(coldCheck, Properties: cold);
+        // Never forward a managed root through the ordinary unverified cold replay path.
+        if (explicitWarmRoot)
+            return new Replay(coldCheck, coldCheck == "verified" ? "build_cache_unavailable" : "build_source_mismatch");
         var strict = input.ExpectedSourceSha is not null || input.Repeat > 1;
         return new Replay(coldCheck, strict ? "build_source_mismatch" : null);
     }
