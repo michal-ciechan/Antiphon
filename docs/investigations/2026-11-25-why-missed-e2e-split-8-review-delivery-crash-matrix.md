@@ -70,4 +70,10 @@ Owed on the Windows lane: `/*/*/AgentTaskLandDeliveryE2ETests/C488_ReviewDeliver
 
 ## Verification
 
-Pending.
+Checkpoint run `20261125-213033-2216` (server2, Linux), commit `4d4567efc8057dc649eac6002cb4c47bb858e766`, sourceState=clean, buildSource=verified, `validate` → `CHECKPOINT SOURCE VALID rows=1`:
+
+- CP-1 `/*/*/TurnEndGapRestartDeliveryTests/C488_Wakeup_cut_holds_the_row_only_when_in_process_hints_are_dropped`: 2 executed, 2 passed, 0 failed, 0 skipped. `(False)` shows the row claimed (Sent, attempt 1) and typed while the producer is parked at the cut. No scan service runs in the harness, so only the queue-side `completion-schedule` hint could have done it. `(True)` shows it Pending and unattempted until release.
+
+Unlisted build, with the reason: `dotnet build tests/Antiphon.E2E -p:UseAppHost=false` through `build-slot.ps1` (lease granted, 127 s), 0 errors. This is a compile check only, because the changed fixture's method skips on Linux. No new warnings on changed lines.
+
+Owed on the Windows lane: `C488_ReviewDeliveryCrashMatrix_Batch3` (both cases). It cannot be run from server2.
