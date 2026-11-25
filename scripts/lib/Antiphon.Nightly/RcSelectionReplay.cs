@@ -234,6 +234,8 @@ namespace Antiphon.Nightly
                     }
                     if (state == "run" && openFailures.Contains(chunk.ContentDigest)) reasons.Add("open-failure");
                     var origin = state == "carry" ? ledger[chunk.ContentDigest] : null;
+                    // A carry states why: no selector hit, and the receipt it carries from (the missed-failure table quotes it).
+                    if (state == "carry") reasons.AddRange(new[] { "carry:no-impact-hit", "origin-receipt:" + origin.RunId });
                     predictions.Add(new OrderedDictionary(StringComparer.Ordinal)
                     {
                         { "suite", chunk.Suite }, { "chunk", chunk.Chunk }, { "contentDigest", chunk.ContentDigest }, { "decision", state }, { "reasons", reasons.ToArray() },
