@@ -384,6 +384,8 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "Standing_grok_unavailable_native_store_never_creates", 2, "CARD-0865: Linux Grok unavailable-native-store classification awaits repair."),
         new("Antiphon.Tests.Infrastructure", "RcBridgeProbePlatformTests", "Windows_probe_reports_a_measured_count", 1, "Windows public probe runs on Windows."),
         new("Antiphon.Tests.Scripts", "WindowsUnitPlatformAdmissionTests", "C1210_Windows_linux_only_outcomes_are_exact", 1, "CARD-1210: the child skip-roster audit requires Windows placement."),
+        new("Antiphon.Tests.Scripts.Nightly", "AntiphonCliLauncherTests", "Kept_launchers_and_restart_entries_parse_and_are_ascii", 1, "CARD-2063: only the Windows PowerShell 5.1 argument requires Windows; the pwsh argument runs on Linux."),
+        new("Antiphon.Tests.Scripts", "ReleaseGateRunTests", "C599_CloneOwnership", 1, "CARD-2063: clone ownership uses the Windows canonical checkout and worktree paths."),
     ];
 
     internal static void SkipOnLinux(string className, string method)
