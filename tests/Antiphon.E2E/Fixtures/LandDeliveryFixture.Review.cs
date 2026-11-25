@@ -300,6 +300,13 @@ public sealed partial class LandDeliveryFixture
         if (cut == "queue-committed-before-wakeup")
         {
             note.ConfirmedAt.ShouldBeNull();
+            // The cut models a crash before any wakeup: nothing in the held child may have
+            // claimed the row. A claimed row here is the race rc b8cbfb24 split-8 hit.
+            queued.Status.ShouldBe(QueuedMessageStatus.Pending);
+            queued.DeliveryAttempts.ShouldBe(0, "no in-child wakeup may claim the row before the kill");
+            Directory.GetFiles(Root, "wakeup-dropped-completion-schedule-*.observation.json")
+                .Select(path => JsonDocument.Parse(File.ReadAllText(path)).RootElement.GetProperty("identity").GetGuid())
+                .ShouldContain(queued.Id, "the queue-side completion flush for this row must be dropped by the cut");
             return;
         }
 
