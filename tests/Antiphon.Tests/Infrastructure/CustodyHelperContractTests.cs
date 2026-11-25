@@ -227,6 +227,38 @@ public sealed class CustodyHelperContractTests
         stage.ShouldContain("chmod 0755 /usr/local/lib/antiphon-custody-placement");
     }
 
+    // CARD-2060 round 2: the unprivileged placement driver runs a test-only build of the stage
+    // source. Only that build may read a fixture root or record its exec; the installed stage is
+    // compiled without the adapter and is the only placement binary under /usr/local.
+    [Test]
+    public void PlacementFixtureBuildStaysTestOnly()
+    {
+        var build = Stage("custody-placement-build");
+        var compiles = build.Replace("\\\n", " ").Split('\n')
+            .Where(line => line.Contains("antiphon-custody-placement.c", StringComparison.Ordinal) && line.Contains("cc ", StringComparison.Ordinal))
+            .ToArray();
+        compiles.Length.ShouldBe(2);
+        compiles.Single(line => line.Contains("-o /antiphon-custody-placement ", StringComparison.Ordinal) || line.TrimEnd().EndsWith("-o /antiphon-custody-placement", StringComparison.Ordinal))
+            .ShouldNotContain("ANTIPHON_PLACEMENT_FIXTURE");
+        compiles.Single(line => line.Contains("-o /antiphon-custody-placement-fixture", StringComparison.Ordinal))
+            .ShouldContain("-DANTIPHON_PLACEMENT_FIXTURE");
+
+        var testing = Stage("session-testing");
+        Occurrences(testing, "/antiphon-custody-placement-fixture /opt/antiphon-tests/antiphon-custody-placement-fixture").ShouldBe(1);
+        Occurrences(testing, "/usr/local/lib/antiphon-custody-placement-fixture").ShouldBe(0);
+        Sudoers().ShouldNotContain("antiphon-custody-placement");
+
+        // Every environment read and every recorded exec sits inside the fixture-only branch.
+        var source = DockerStackDocuments.Read("docker/session-runner-grok/antiphon-custody-placement.c").Replace("\r\n", "\n");
+        var adapter = source.IndexOf("#ifdef ANTIPHON_PLACEMENT_FIXTURE\n", StringComparison.Ordinal);
+        var production = source.IndexOf("#else\n", adapter, StringComparison.Ordinal);
+        adapter.ShouldBeGreaterThanOrEqualTo(0);
+        production.ShouldBeGreaterThan(adapter);
+        Occurrences(source, "getenv(").ShouldBe(1);
+        source.IndexOf("getenv(", StringComparison.Ordinal).ShouldBeInRange(adapter, production);
+        Order(source, "#ifdef ANTIPHON_PLACEMENT_FIXTURE\n    for (char **arg = drop; *arg; ++arg)", "#else\n    execv(drop[0], drop);").ShouldBeTrue();
+    }
+
     private const string GuidPattern =
         "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
