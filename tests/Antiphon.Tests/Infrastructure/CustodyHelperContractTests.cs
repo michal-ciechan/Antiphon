@@ -34,6 +34,12 @@ public sealed class CustodyHelperContractTests
         // there is never a window in which a started process is outside it.
         Order(text, "enter_tree_v2 \"$EXECUTION_ID\"", exec).ShouldBeTrue("v2 placement precedes the exec");
         Order(text, "enter_tree_v1 \"$EXECUTION_ID\"", exec).ShouldBeTrue("v1 placement precedes the exec");
+        Order(text, "enter_tree_v1 \"$EXECUTION_ID\"",
+            "exec \"$PLACEMENT_STAGE\" \"$EXECUTION_ID\" \"$PLACEMENT_DEADLINE\" -- \"$@\"").ShouldBeTrue();
+        var stage = DockerStackDocuments.Read("docker/session-runner-grok/antiphon-custody-placement.c");
+        stage.ShouldContain("drop[4] = \"--no-new-privs\"");
+        stage.ShouldContain("drop[5] = \"--\"");
+        Order(stage, "if (!released) return refused();", "execv(drop[0], drop)").ShouldBeTrue();
     }
 
     // D-18: clearing the supplementary groups drops docker-nested (gid 1656), so a tracked
@@ -47,6 +53,11 @@ public sealed class CustodyHelperContractTests
         exec.ShouldContain("--regid=\"$APP_GID\"");
         Enter().ShouldContain("APP_UID=1654");
         Enter().ShouldContain("APP_GID=1654");
+        var stage = DockerStackDocuments.Read("docker/session-runner-grok/antiphon-custody-placement.c");
+        stage.ShouldContain("drop[0] = \"/usr/bin/setpriv\"");
+        stage.ShouldContain("drop[1] = \"--reuid=1654\"");
+        stage.ShouldContain("drop[2] = \"--regid=1654\"");
+        stage.ShouldContain("drop[3] = \"--clear-groups\"");
     }
 
     [Test]
@@ -204,6 +215,16 @@ public sealed class CustodyHelperContractTests
         stage.ShouldContain("chmod 0440 /etc/sudoers.d/antiphon-custody");
         stage.ShouldContain("visudo -c");
         stage.ShouldContain("setpriv --help | grep -F -- '--no-new-privs'");
+    }
+
+    [Test]
+    public void PlacementStageIsInstalledInTestingImage()
+    {
+        var stage = Stage("session-testing");
+        Occurrences(stage,
+            "COPY --from=custody-placement-build --chown=0:0 /antiphon-custody-placement /usr/local/lib/antiphon-custody-placement")
+            .ShouldBe(1);
+        stage.ShouldContain("chmod 0755 /usr/local/lib/antiphon-custody-placement");
     }
 
     private const string GuidPattern =

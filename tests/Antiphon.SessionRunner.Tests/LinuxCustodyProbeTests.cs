@@ -54,7 +54,8 @@ public sealed class LinuxCustodyProbeTests
         // And it probed BOTH helpers, by their absolute image-owned paths -- not "whatever is on
         // PATH", which a session could shadow.
         environment.Probed.ShouldBe([
-            LinuxCgroupCustodyProbe.EnterHelper, LinuxCgroupCustodyProbe.KillHelper]);
+            (LinuxCgroupCustodyProbe.EnterHelper, "--probe-placement-v1"),
+            (LinuxCgroupCustodyProbe.KillHelper, "--probe")]);
         LinuxCgroupCustodyProbe.EnterHelper.ShouldBe("/usr/local/bin/antiphon-custody-enter");
         LinuxCgroupCustodyProbe.KillHelper.ShouldBe("/usr/local/bin/antiphon-custody-kill");
     }
@@ -88,7 +89,7 @@ public sealed class LinuxCustodyProbeTests
         environment.RootAsked.ShouldBe("antiphon-custody");
     }
 
-    private sealed class FakeEnvironment : ILinuxCustodyEnvironment
+    internal sealed class FakeEnvironment : ILinuxCustodyEnvironment
     {
         public bool Linux { get; init; } = true;
         public bool RootExists { get; init; } = true;
@@ -97,7 +98,8 @@ public sealed class LinuxCustodyProbeTests
         public int NoNewPrivsValue { get; init; }
         public bool Qualified { get; init; } = true;
         public LinuxCustodyHierarchy Hierarchy { get; init; } = LinuxCustodyHierarchy.V1;
-        public List<string> Probed { get; } = [];
+        public bool LegacyOnly { get; init; }
+        public List<(string Path, string Argument)> Probed { get; } = [];
         public string? RootAsked { get; private set; }
 
         public bool IsLinux => Linux;
@@ -109,10 +111,25 @@ public sealed class LinuxCustodyProbeTests
             return RootExists;
         }
 
-        public bool HelperProbeSucceeds(string helperPath)
+        public bool HelperProbeSucceeds(string helperPath, string probeArgument)
         {
-            Probed.Add(helperPath);
-            return helperPath == LinuxCgroupCustodyProbe.EnterHelper ? EnterProbeOk : KillProbeOk;
+            Probed.Add((helperPath, probeArgument));
+            return helperPath == LinuxCgroupCustodyProbe.EnterHelper
+                ? EnterProbeOk && (!LegacyOnly || probeArgument == "--probe")
+                : KillProbeOk;
         }
+    }
+}
+
+[Category("Unit")]
+public sealed class Card2060PlacementLedgerTests
+{
+    [Test]
+    public void LegacyProbeCannotQualify()
+    {
+        var environment = new LinuxCustodyProbeTests.FakeEnvironment { LegacyOnly = true };
+        environment.HelperProbeSucceeds(LinuxCgroupCustodyProbe.EnterHelper, "--probe").ShouldBeTrue();
+        environment.HelperProbeSucceeds(LinuxCgroupCustodyProbe.KillHelper, "--probe").ShouldBeTrue();
+        LinuxCgroupCustodyProbe.Detect(environment).ShouldBeNull();
     }
 }

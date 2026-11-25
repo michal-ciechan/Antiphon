@@ -42,6 +42,15 @@ RUN dotnet publish src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj -c R
 
 FROM node:22-bookworm AS node22
 
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS custody-placement-build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY docker/session-runner-grok/antiphon-custody-placement.c /src/antiphon-custody-placement.c
+RUN cc -std=c11 -O2 -Wall -Wextra -Werror -D_FORTIFY_SOURCE=2 \
+      -fstack-protector-strong -fPIE -pie -Wl,-z,relro,-z,now \
+      /src/antiphon-custody-placement.c -o /antiphon-custody-placement
+
 # CARD-0913: SDK 10 knows the net9 9.0.20 packs but does not ship them. Extract only
 # the net9 reference and linux-x64 apphost packs from Microsoft's pinned SDK 9.0.318
 # archive. The official release metadata publishes this SHA-512. A changed archive
@@ -245,6 +254,7 @@ COPY docker/session-runner-grok/seed-claude-onboarding.mjs /usr/local/bin/antiph
 # else (G-35, G-40). They exist only in this stage -- the default runtime and receipt-probe
 # targets must never carry them, which is what Default_runtime_excludes_custody_helpers guards.
 COPY docker/session-runner-grok/antiphon-custody-enter.sh /usr/local/bin/antiphon-custody-enter
+COPY --from=custody-placement-build --chown=0:0 /antiphon-custody-placement /usr/local/lib/antiphon-custody-placement
 COPY docker/session-runner-grok/antiphon-custody-kill.sh /usr/local/bin/antiphon-custody-kill
 COPY docker/session-runner-grok/antiphon-custody-common.sh /usr/local/lib/antiphon-custody-common.sh
 COPY docker/session-runner-grok/sudoers-antiphon-custody /etc/sudoers.d/antiphon-custody
@@ -255,6 +265,7 @@ COPY docker/session-runner-grok/custody-containment-probe.sh /usr/local/bin/anti
 RUN chmod 0755 /usr/local/bin/antiphon-dind-entrypoint.sh \
  && chown 0:0 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill \
  && chmod 0755 /usr/local/bin/antiphon-custody-enter /usr/local/bin/antiphon-custody-kill \
+ && chmod 0755 /usr/local/lib/antiphon-custody-placement \
  && chown 0:0 /usr/local/lib/antiphon-custody-common.sh \
  && chmod 0444 /usr/local/lib/antiphon-custody-common.sh \
  && chmod 0755 /usr/local/bin/antiphon-custody-containment-probe \

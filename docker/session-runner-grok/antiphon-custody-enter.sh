@@ -28,6 +28,7 @@ V2_ROOT="/sys/fs/cgroup/$CUSTODY_ROOT"
 V1_PIDS_ROOT="/sys/fs/cgroup/pids/$CUSTODY_ROOT"
 V1_FREEZER_ROOT="/sys/fs/cgroup/freezer/$CUSTODY_ROOT"
 PROBE_ID=00000000-0000-0000-0000-00000000c604
+PLACEMENT_STAGE=/usr/local/lib/antiphon-custody-placement
 
 refuse() {
   echo "C604_CUSTODY_REFUSED $1" >&2
@@ -97,6 +98,9 @@ prepare_tree_v1() {
   local id="$1"
   local ns hierarchy dir
   ns="$(custody_read_namespace)" || refuse NamespaceUnavailable
+  if [ "$id" != "$PROBE_ID" ]; then
+    claim_tree_v1 "$ns" "$id"
+  fi
   for hierarchy in "$V1_PIDS_ROOT" "$V1_FREEZER_ROOT"; do
     dir="$hierarchy/$ns/$id"
     require_under_root "$dir" "$hierarchy"
@@ -107,6 +111,29 @@ prepare_tree_v1() {
     fi
     require_empty_tree "$dir/tree/cgroup.procs"
   done
+}
+
+# The primary directory is the exclusive claim for either real v1 syntax. A
+# partial claim (including a preexisting freezer tree) belongs to owned cleanup.
+claim_tree_v1() {
+  local primary="$V1_PIDS_ROOT/$1/$2" freezer="$V1_FREEZER_ROOT/$1/$2"
+  require_under_root "$primary" "$V1_PIDS_ROOT"
+  require_under_root "$freezer" "$V1_FREEZER_ROOT"
+  if [ -e "$primary" ] || [ -e "$freezer" ] || [ -L "$primary" ] || [ -L "$freezer" ]; then
+    refuse_existing_v1 "$primary" "$freezer"
+  fi
+  mkdir -- "$primary" 2>/dev/null || refuse_existing_v1 "$primary" "$freezer"
+  mkdir -- "$freezer" 2>/dev/null || refuse_existing_v1 "$primary" "$freezer"
+}
+
+refuse_existing_v1() {
+  local dir
+  for dir in "$@"; do
+    if [ -f "$dir/tree/cgroup.procs" ] && custody_procs_populated "$dir/tree/cgroup.procs"; then
+      refuse CustodyTreeNotEmpty
+    fi
+  done
+  refuse CustodyExecutionAlreadyClaimed
 }
 
 # Writing our own pid, not the child's: the child inherits cgroup membership at fork, so there
@@ -141,12 +168,18 @@ remove_tree() {
   fi
 }
 
-# --probe is what LinuxCgroupCustodyProbe calls at runner startup (D-17 advertisement). It
-# proves the custody root exists for the detected cgroup version and that this helper can
-# create and remove an empty tree under it; it never execs anything and never places a process.
-if [ "${1:-}" = "--probe" ]; then
+# The legacy probe still checks either hierarchy. The runner requires the v1
+# probe, which also verifies the fixed stage. Neither probe enters a cgroup.
+if [ "${1:-}" = "--probe" ] || [ "${1:-}" = "--probe-placement-v1" ]; then
   if [ "$#" -ne 1 ]; then
     refuse ProbeTakesNoArguments
+  fi
+  if [ "$1" = "--probe-placement-v1" ]; then
+    ! is_v2 || refuse PlacementRequiresV1
+    [ -f "$PLACEMENT_STAGE" ] && [ ! -L "$PLACEMENT_STAGE" ] &&
+      [ "$(stat -c '%u:%g:%a' -- "$PLACEMENT_STAGE")" = "0:0:755" ] &&
+      [ "$("$PLACEMENT_STAGE" --version)" = "antiphon-custody-placement-v1" ] ||
+      refuse PlacementStageUnavailable
   fi
   custody_acquire_probe_lock || refuse ProbeLockUnavailable
   if is_v2; then
@@ -166,12 +199,19 @@ if [ "$#" -lt 3 ]; then
 fi
 EXECUTION_ID="$1"
 shift
+PLACEMENT_DEADLINE=
+if [ "$1" = "--placement-v1" ]; then
+  [ "$#" -ge 4 ] && [[ "$2" =~ ^[1-9][0-9]{0,18}$ ]] || refuse InvalidPlacementDeadline
+  ! is_v2 || refuse PlacementRequiresV1
+  PLACEMENT_DEADLINE="$2"
+  shift 2
+fi
 if [ "$1" != "--" ]; then
   refuse UsageIdSeparatorCommand
 fi
 shift
 require_guid "$EXECUTION_ID"
-if [ "$EXECUTION_ID" = "$PROBE_ID" ]; then
+if [ "${EXECUTION_ID,,}" = "$PROBE_ID" ]; then
   refuse ProbeIdIsNotAnExecution
 fi
 
@@ -180,9 +220,15 @@ if is_v2; then
   prepare_tree_v2 "$EXECUTION_ID"
   enter_tree_v2 "$EXECUTION_ID"
 else
+  # Use the GUID's canonical form for the claim and the abstract address.
+  EXECUTION_ID="${EXECUTION_ID,,}"
   [ -d "$V1_PIDS_ROOT" ] && [ -d "$V1_FREEZER_ROOT" ] || refuse CustodyRootMissing
   prepare_tree_v1 "$EXECUTION_ID"
   enter_tree_v1 "$EXECUTION_ID"
+fi
+
+if [ -n "$PLACEMENT_DEADLINE" ]; then
+  exec "$PLACEMENT_STAGE" "$EXECUTION_ID" "$PLACEMENT_DEADLINE" -- "$@"
 fi
 
 # --clear-groups drops the docker-nested supplementary group (D-18): a tracked Mutation session

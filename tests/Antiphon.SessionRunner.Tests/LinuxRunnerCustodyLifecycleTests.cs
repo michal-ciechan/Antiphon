@@ -29,9 +29,12 @@ public sealed class LinuxRunnerCustodyLifecycleTests
     public async Task C1614_Installed_helpers_advertise_custody()
     {
         RequireHelpers();
-        foreach (var helper in new[] { EnterHelper, KillHelper })
+        var probes = new List<(string Helper, string Argument)> { (EnterHelper, "--probe"), (KillHelper, "--probe") };
+        if (!File.Exists("/sys/fs/cgroup/cgroup.controllers"))
+            probes.Add((EnterHelper, "--probe-placement-v1"));
+        foreach (var (helper, argument) in probes)
         {
-            var result = await RunAsync("sudo", "-n", helper, "--probe");
+            var result = await RunAsync("sudo", "-n", helper, argument);
             result.ExitCode.ShouldBe(0, result.Stderr);
             result.Stdout.ShouldContain("C604_CUSTODY_PROBE_OK");
         }

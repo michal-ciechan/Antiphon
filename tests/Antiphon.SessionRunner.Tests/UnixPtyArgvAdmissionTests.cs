@@ -265,7 +265,7 @@ public sealed class UnixPtyArgvAdmissionTests
         public bool IsLinux => true;
         public bool CustodyRootExists(string rootName) => false;
         public int NoNewPrivs => 0;
-        public bool HelperProbeSucceeds(string helperPath) => false;
+        public bool HelperProbeSucceeds(string helperPath, string probeArgument) => false;
         public bool Qualified => false;
         public LinuxCustodyHierarchy Hierarchy => LinuxCustodyHierarchy.V1;
     }
