@@ -29,8 +29,10 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateBranchDeliveryTests
 {
-    // Gate and reconnect waits cover a whole preparation or publication (service graph, git push, ls-remote) while
-    // up to Worlds.Degree other worlds clone and push beside it, so they allow 30s rather than the serial 10s.
+    // The gate waits cover the ClearLiveBuffer round trip and the request reaching the pump (service graph, database,
+    // git setup), and the reconnect wait the websocket handshake, while up to Worlds.Degree other worlds clone and
+    // push beside them; they allow 30s rather than the serial 10s (unmeasured under load: three times the serial
+    // bound). The release and the push itself run after the waits, in GatedAsync's unbounded `await pending`.
     private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(30);
 
     [Test]

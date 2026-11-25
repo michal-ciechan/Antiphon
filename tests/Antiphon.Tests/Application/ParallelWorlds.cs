@@ -9,7 +9,9 @@ namespace Antiphon.Tests.Application;
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_CODEX_CLI_WORLDS
 /// (1-4, clamped; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset or blank) overrides it for every caller
 /// (the C959 and C1029 classes and the C1213 queued-branch tests), and 1 runs the cases one at a time
-/// (docs/testing-and-build.md, process-spawning lanes). A cancelled token stops new cases from starting.
+/// (docs/testing-and-build.md, process-spawning lanes). For a caller that passes its test token (the C1213 tests), a
+/// cancelled token stops new cases from starting and the failures recorded before it are still reported; the
+/// no-token overloads (the C959 and C1029 classes) run every case.
 /// C959 sample timing: a never-refuses create leg reads its kit's fake clock after the kit exists, but the dispatch,
 /// warm-reuse and remote-delivery legs sample wall-clock time, the remote one before its world is built. Those
 /// vectors (clock-skew 2 minutes ahead, staleness past 15 minutes) need a margin of minutes over world creation.
@@ -36,18 +38,30 @@ internal static class Worlds
     public static async Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, string> label, CancellationToken ct, Func<T, Task> body)
     {
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
-        await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = Degree, CancellationToken = ct }, async (c, _) =>
+        OperationCanceledException? canceled = null;
+        try
         {
-            var name = label(c);
-            using var span = TestTrace.Span("world case", "world.case", name);
-            try { await body(c); }
-            catch (Exception ex)
+            await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = Degree, CancellationToken = ct }, async (c, _) =>
             {
-                span?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, ex.GetType().Name);
-                Console.WriteLine($"WORLD CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
-                failures.Enqueue(new InvalidOperationException("World case " + name + ": " + Cause(ex.Message), ex));
-            }
-        });
+                var name = label(c);
+                using var span = TestTrace.Span("world case", "world.case", name);
+                try { await body(c); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; } // the run's cancellation, not this case's failure
+                catch (Exception ex)
+                {
+                    span?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, ex.GetType().Name);
+                    Console.WriteLine($"WORLD CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
+                    failures.Enqueue(new InvalidOperationException("World case " + name + ": " + Cause(ex.Message), ex));
+                }
+            });
+        }
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested) { canceled = ex; }
+        // Cancellation keeps the labelled failures recorded before it: they are reported with it, not dropped.
+        if (canceled is not null)
+        {
+            if (failures.IsEmpty) throw canceled;
+            throw new AggregateException($"{failures.Count} world case(s) failed before cancellation", failures.Append(canceled));
+        }
         if (!failures.IsEmpty)
             throw new AggregateException($"{failures.Count} world case(s) failed", failures);
     }
