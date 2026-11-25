@@ -666,7 +666,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         using var repo = new LibGit2Sharp.Repository(root);
         LibGit2Sharp.Commands.Stage(repo, [".gitignore", SealFixture.Project, "App/Graph.props", "source.txt"]);
         var author = new LibGit2Sharp.Signature("Checkpoint Test", "checkpoint@example.invalid", DateTimeOffset.UtcNow);
-        repo.Commit("seed", author, author);
+        repo.Commit("seed", author, author, new LibGit2Sharp.CommitOptions());
         File.WriteAllText(Path.Combine(root, "ledger-input.txt"), "original input");
         var source = new SourceSnapshot().Capture(root);
         source.CaptureStatus.ShouldBe("known", source.ErrorCode);
