@@ -265,7 +265,12 @@ namespace census update is needed: the new test is in `Antiphon.Tests.Scripts`.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1035/` | script-integration-source | `/*/Antiphon.Tests.Scripts/RunCheckpointSourceScriptTests*/*` | V-1, R-1, R-2 | exactly 6 executed/passed, 0 failed/skipped | 6 | 8 | true |
-| CP-2 | S1 | CP-1 | script-integration-compatibility | `/*/Antiphon.Tests.Scripts/RunCheckpointScriptTests*/(C585_NoBuild*)\|(C585_MsBuildForwarding*)\|(C585_AsciiOnly*)` | R-3 | exactly 3 executed/passed, 0 failed/skipped | 3 | 1 | true |
+| CP-2 | S1 | CP-1 | script-integration-compatibility | `/*/*/(RowVerbTests*)\|(CheckpointLauncherTests*)/(C585_no_build_reuses_a_verified_build_and_never_builds*)\|(C671_a_property_reaches_the_build_the_run_and_a_no_build_run*)\|(The_launchers_are_thin_ascii_and_parse*)` | R-3 | exactly 3 executed/passed, 0 failed/skipped | 3 | 1 | true |
+
+Unit 20 retired `RunCheckpointScriptTests`. The CP-2 filter above selects its
+Unit no-build and property-forwarding witnesses and its Integration launcher
+ASCII witness. R-3 records the original S1 selection for the receipts already
+produced.
 
 ## Publication and handoff
 
