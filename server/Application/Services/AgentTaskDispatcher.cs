@@ -4396,10 +4396,15 @@ public sealed partial class AgentTaskDispatcher
         if (task.AgentId is not Guid agentId)
             return false;
 
-        _db.AgentIncidents.Add(new AgentIncident
+        // AgentTasks.AgentId has no foreign key, so a Working task can outlive its Agent row. Name
+        // the agent only while its row exists (the dedupe above is keyed by session), and never
+        // leave a failed insert tracked: the next SaveChanges on this context (the rest of this
+        // sweep, or the same tick's dispatch when the sweep shares the context) would resend it
+        // and fail with it (rc b8cbfb24 group 86).
+        var incident = new AgentIncident
         {
             Id = Guid.NewGuid(),
-            AgentId = agentId,
+            AgentId = await _db.Agents.AsNoTracking().AnyAsync(a => a.Id == agentId, ct) ? agentId : null,
             SessionId = sessionId,
             Kind = AgentIncidentKind.TaskProgressStalled,
             Severity = severity,
@@ -4407,8 +4412,17 @@ public sealed partial class AgentTaskDispatcher
                 ? wait.Diagnosis + " " + verdict.Summary : verdict.Summary,
             FailureReason = verdict.FailureReason,
             CreatedAt = UtcNow(),
-        });
-        await _db.SaveChangesAsync(ct);
+        };
+        _db.AgentIncidents.Add(incident);
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            _db.Entry(incident).State = EntityState.Detached;
+            throw;
+        }
         _logger.LogWarning(
             "Task {ShortId} progress stalled ({Severity}): {Summary}",
             DelegationReportFormatter.Short(task.Id), severity, verdict.Summary);
