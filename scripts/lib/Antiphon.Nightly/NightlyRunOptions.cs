@@ -50,6 +50,16 @@ namespace Antiphon.Nightly
         public string StateRoot { get; set; } = "";
 
         public string SelectionMode { get; set; } = "Full";
+
+        /// <summary>
+        /// CARD-1836 S6: the mode the cut was asked for (blank, or Incremental); not a flag. The run still executes its
+        /// SelectionMode (Full); an admitted Incremental request carries its binding below to the tests hop.
+        /// </summary>
+        public string RequestedSelectionMode { get; set; } = "";
+        public string IncrementalApprovalDigest { get; set; } = "";
+        public string IncrementalBaselineSha { get; set; } = "";
+        public string IncrementalInventoryPath { get; set; } = "";
+        public string IncrementalInventoryDigest { get; set; } = "";
         public string Repository { get; set; } = "michal-ciechan/Antiphon";
         public string BaselineSha { get; set; } = "";
         public string BaselineReceiptPath { get; set; } = "";
