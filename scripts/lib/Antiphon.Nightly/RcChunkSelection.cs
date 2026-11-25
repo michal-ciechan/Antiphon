@@ -82,7 +82,7 @@ namespace Antiphon.Nightly
             var hits = chunks.ToDictionary(c => c.Id, c => new List<string>(), StringComparer.Ordinal);
 
             var project = RcProjectSelection.Select(root, baselineSha, candidateSha);
-            var old = new Index { Binding = new RcIndexBinding { Side = "B" } }; // RED WITNESS (naive): the A index only.
+            var old = ReadIndex(root, baselineSha, "B", fallback);
             var @new = ReadIndex(root, candidateSha, "A", fallback);
             result.Index = new[] { old.Binding, @new.Binding };
 
@@ -104,7 +104,7 @@ namespace Antiphon.Nightly
                     if (index.Edges.TryGetValue(path, out var classes))
                         foreach (var cls in classes) Hit(chunks, hits, cls, "index-edge:" + side + ":" + path);
                 }
-                foreach (var entry in Array.Empty<RcReaderCensusEntry>())
+                foreach (var entry in census0)
                     foreach (var glob in entry.Globs)
                         if (RcInputInventory.Pattern(glob).IsMatch(path))
                         {
@@ -125,7 +125,7 @@ namespace Antiphon.Nightly
                 foreach (var (path, status) in changes)
                 {
                     if (discharged.Contains(path)) continue;
-                    var sides = new[] { 1 }; // RED WITNESS (naive): A graph only.
+                    var sides = status == "A" ? new[] { 1 } : status == "D" ? new[] { 0 } : new[] { 0, 1 };
                     foreach (var side in sides)
                         foreach (IDictionary p in Items(graphs[side]["projects"]))
                         {
@@ -142,7 +142,7 @@ namespace Antiphon.Nightly
             // Capped paths: widen to the owning project closure, or Full when either side's closure is unknown.
             foreach (var (path, _) in changes)
                 foreach (var (index, side) in new[] { (old, "B"), (@new, "A") })
-                    if (false && index.Capped.Contains(path))
+                    if (index.Capped.Contains(path))
                     {
                         if (graphFull || !OwnedByGraph(project, path)) fallback.Add("index-capped:" + path + ":" + side);
                         else foreach (var chunk in chunks) if (affected.Contains(chunk.Project)) hits[chunk.Id].Add("index-capped-closure:" + path + ":" + side);
