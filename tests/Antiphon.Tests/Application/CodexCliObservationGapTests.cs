@@ -708,7 +708,7 @@ internal static class Worlds
             catch (Exception ex)
             {
                 Console.WriteLine($"C1029 CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
-                failures.Enqueue(new InvalidOperationException("C1029 case " + name, ex));
+                failures.Enqueue(new InvalidOperationException("C1029 case " + name + ": " + ex.Message.Split('\n')[0].Trim(), ex));
             }
         });
         if (!failures.IsEmpty)
