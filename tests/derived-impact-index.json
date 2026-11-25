@@ -7701,6 +7701,7 @@
         "AgentTaskLandSweepTests",
         "CheckpointSourceApprovalTests",
         "DelegationWorktreeTests",
+        "LinuxCgroupCustodyTests",
         "RepairSourceLandRefusalTests",
         "RepairSourceRecoveryLandingTests",
         "WorktreeRetirementRaceTests"
@@ -17620,6 +17621,7 @@
         "Card1681PtyHangupRunnerTests",
         "Card1685LinuxCustodyRunnerTests",
         "LinuxCgroupContainmentTests",
+        "LinuxCgroupCustodyTests",
         "LinuxCustodyReleaseHostTests",
         "PtyCustodyTests",
         "RunnerCustodyReleaseTests",
