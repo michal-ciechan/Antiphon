@@ -435,6 +435,43 @@ public sealed class LinuxOwnedGitProcessTests
     }
 
     [Test]
+    public async Task Reused_pid_keeps_newly_proved_child_after_stat_failure()
+    {
+        var child = new LinuxProcIdentity(100, 40, 100, 'S');
+        var io = new FakeProc
+        {
+            Entries = ["100", "40"],
+            Stat = pid => pid == child.Pid ? child : new(pid, 1, 40, 'S'),
+            EnvironmentBytes = []
+        };
+        var root = new OwnedGitRoot(40, null, 40);
+        using var members = Census(io);
+        (await members.ProbeAsync(root, Deadline(), default)).Survivors.ShouldBe(2);
+
+        // The census proves the replacement by ancestry before the remembered PID's reread fails.
+        child = child with { StartTicks = 200 };
+        var childStatReads = 0;
+        io.Stat = pid => pid != child.Pid ? new(pid, 1, 40, 'S')
+            : ++childStatReads == 1 ? child : throw new IOException();
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Unknown);
+        childStatReads.ShouldBe(2);
+
+        child = child with { ParentPid = 1 };
+        io.Entries = ["100"];
+        io.Stat = pid => pid == child.Pid ? child : null;
+        io.EnvironmentRead = _ => throw new UnauthorizedAccessException();
+        io.DisjointUserIds = _ => true;
+        var surviving = await members.ProbeAsync(root, Deadline(), default);
+        surviving.State.ShouldBe(OwnedGitMembershipState.Live);
+        surviving.Survivors.ShouldBe(1);
+        (await members.SignalAsync(root, Deadline(), default)).ShouldBe(0);
+        io.Signals.ShouldBeEmpty();
+
+        io.Stat = _ => null;
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Empty);
+    }
+
+    [Test]
     public async Task Ancestry_backstop_revalidates_unmarked_children_and_every_parent()
     {
         var io = new FakeProc { Entries = ["100", "101"], EnvironmentBytes = [] };
