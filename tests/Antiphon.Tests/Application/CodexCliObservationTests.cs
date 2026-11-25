@@ -224,20 +224,26 @@ public sealed class CodexCliObservationTests
     [Test]
     public async Task C959_Retry_and_cancellation_recheck()
     {
-        // The save-cancellation check needs none of the vectors; it runs first so a red vector cannot hide it.
-        using (var cancel = new CancellationTokenSource())
+        // The save-cancellation check and the eight lost-claim vectors are independent (each builds its own schema;
+        // a vector also its own repository, clock and kits), so they run side by side and every failure is reported.
+        var vectors = from version in new[] { "0.156.1", "unknown" }
+                      from busy in new[] { false, true }
+                      from worktree in new[] { false, true }
+                      select (version, busy, worktree, vector: $"lost-claim/{version}/busy={busy}/worktree={worktree}");
+        var cases = new List<(string Name, Func<Task> Body)> { ("save-cancellation", SaveCancellationAsync) };
+        cases.AddRange(vectors.Select(c => (c.vector, (Func<Task>)(() => LostClaimAsync(c)))));
+        await Worlds.InParallelAsync(cases);
+
+        static async Task SaveCancellationAsync()
         {
+            using var cancel = new CancellationTokenSource();
             await using var k = await Kit.CreateAsync(cancel);
             await Should.ThrowAsync<OperationCanceledException>(() => k.Service.CreateAsync(k.Request(false), k.Caller, cancel.Token));
             (await k.Db.AgentTasks.AsNoTracking().CountAsync()).ShouldBe(0, "C959-v22-save-cancellation-no-insert");
             k.Local.Requests.ShouldBeEmpty("C959-v22-cancellation-no-probe");
         }
-        // Each vector builds its own schema, repository, clock and kits, so the vectors run side by side.
-        var vectors = from version in new[] { "0.156.1", "unknown" }
-                      from busy in new[] { false, true }
-                      from worktree in new[] { false, true }
-                      select (version, busy, worktree, vector: $"lost-claim/{version}/busy={busy}/worktree={worktree}");
-        await Worlds.InParallelAsync(vectors, c => c.vector, async c =>
+
+        static async Task LostClaimAsync((string version, bool busy, bool worktree, string vector) c)
         {
             var (version, busy, worktree, vector) = c;
             using var scenario = TestTrace.Span("scenario", "c959.vector", vector);
@@ -330,7 +336,7 @@ public sealed class CodexCliObservationTests
                 foreach (var root in roots)
                     if (System.IO.Directory.Exists(root)) System.IO.Directory.Delete(root, recursive: true);
             }
-        });
+        }
     }
 
     [Test]
