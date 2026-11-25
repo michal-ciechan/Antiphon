@@ -116,8 +116,30 @@ public sealed class RcForcedFullTests
         rows.Check(retained.Of("ServerTests").Decision == "execute" && retained.Of("ServerTests").Reasons.Contains("direct-hit") && retained.Of("RunnerTests").Decision == "carry",
             "s3-direct-hit-retained", Show(retained));
 
-        rows.ShouldAllPass(14, "s3-hold-only-dependents", "s3-release", "s3-own-red", "s3-own-skip", "s3-own-timeout", "s3-own-missing", "s3-hash-drift",
-            "s3-hash-absent", "s3-policy-edit", "s3-self-authorize", "s3-package-sdk", "s3-policy-refusals", "s3-empty-shipped-policy", "s3-direct-hit-retained");
+        // Review r1 D-5(a): only a consumer reached through a declared downstream edge is held; any other consumer executes.
+        RcTrustChunk[] withWorker = [.. chunks, new() { Id = "WorkerTests", Project = "tests/Worker/Worker.Tests.csproj", Consumes = ["src/Worker/Worker.csproj", Messaging] }];
+        var undeclaredFirst = Decide(null, with: withWorker);
+        var undeclared = Decide([Own()], with: withWorker);
+        rows.Check(undeclaredFirst.Of("WorkerTests").Decision == "execute" && undeclared.Of("WorkerTests").Decision == "execute"
+            && undeclared.Of("WorkerTests").Reasons.Contains("consumer:" + Messaging + ":undeclared-edge")
+            && undeclared.Of("ServerTests").Decision == "carry" && undeclared.Of("RunnerTests").Decision == "carry", "s3-undeclared-consumer", Show(undeclared));
+
+        // Review r1 D-5(b): packages live in each .csproj here; a project file or an imported .props/.targets change voids trust.
+        var bump = Decide([Own()], paths: [.. privateChange, "src/Messaging/Messaging.csproj"]);
+        var imported = Decide([Own()], paths: [.. privateChange, "build/Common.targets"]);
+        var bumpFirst = Decide(null, paths: [.. privateChange, "src/Messaging/Messaging.csproj"]);
+        bool Voided(RcTrustDecision d) => new[] { "ServerTests", "RunnerTests" }.All(id => d.Of(id).Decision == "execute"
+            && d.Of(id).Reasons.Any(r => r.StartsWith("consumer:" + Messaging + ":trust-void", StringComparison.Ordinal)));
+        rows.Check(Voided(bump) && Voided(imported) && Voided(bumpFirst) && bump.Reasons.Contains("trust-void:" + Messaging + ":src/Messaging/Messaging.csproj")
+            && imported.Reasons.Contains("trust-void:" + Messaging + ":build/Common.targets"), "s3-csproj-package-bump", Show(bump) + " || " + Show(imported));
+
+        // M6: an own-test roster missing a listed case fails the gate.
+        var caseMissing = Decide([Own(cases: ["m1"])]);
+        rows.Check(Expanded(caseMissing, "own-case-missing"), "s3-own-case-missing", Show(caseMissing));
+
+        rows.ShouldAllPass(17, "s3-hold-only-dependents", "s3-release", "s3-own-red", "s3-own-skip", "s3-own-timeout", "s3-own-missing", "s3-hash-drift",
+            "s3-hash-absent", "s3-policy-edit", "s3-self-authorize", "s3-package-sdk", "s3-policy-refusals", "s3-empty-shipped-policy", "s3-direct-hit-retained",
+            "s3-undeclared-consumer", "s3-csproj-package-bump", "s3-own-case-missing");
     }
 
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-13T12:00:00Z", CultureInfo.InvariantCulture);
