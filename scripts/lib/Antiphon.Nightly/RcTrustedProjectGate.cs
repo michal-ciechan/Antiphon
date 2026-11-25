@@ -180,17 +180,34 @@ namespace Antiphon.Nightly
                 foreach (var project in chunks.SelectMany(c => c.Consumes.Append(c.Project)).Distinct(StringComparer.Ordinal))
                     if (path.StartsWith(Dir(project), StringComparison.Ordinal)) changedProjects.Add(project);
 
+            // Review r1 D-5: package versions live in each project file here (no central package file), so a changed project
+            // file inside a trusted project, or any changed MSBuild import (.props/.targets, which any project may import),
+            // is an SDK/package change: trust is void for that decision and its consumers execute.
+            var voided = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in trusted)
+                foreach (var path in paths.Where(BuildInput))
+                    if (path.EndsWith(".props", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase)
+                        || path.StartsWith(Dir(entry.Project), StringComparison.Ordinal))
+                    {
+                        voided.Add(entry.Project);
+                        reasons.Add("trust-void:" + entry.Project + ":" + path);
+                    }
+
             var placed = chunks.ToDictionary(c => c.Id, c => new List<string>(), StringComparer.Ordinal);
             var held = chunks.ToDictionary(c => c.Id, c => new List<string>(), StringComparer.Ordinal);
             foreach (var project in changedProjects)
             {
-                var entry = trusted.FirstOrDefault(t => t.Project == project);
+                var entry = voided.Contains(project) ? null : trusted.FirstOrDefault(t => t.Project == project);
                 foreach (var chunk in chunks)
                 {
                     if (chunk.Project == project) { placed[chunk.Id].Add("changed-project:" + project); continue; }
                     if (!chunk.Consumes.Contains(project, StringComparer.Ordinal)) continue;
-                    if (entry == null) placed[chunk.Id].Add("consumer:" + project + (reasons.Contains("trust-policy-changed") ? ":trust-policy-changed" : ":untrusted"));
+                    if (entry == null)
+                        placed[chunk.Id].Add("consumer:" + project + (voided.Contains(project) ? ":trust-void" : reasons.Contains("trust-policy-changed") ? ":trust-policy-changed" : ":untrusted"));
                     else if (entry.OwnedTests.ContainsKey(chunk.Id)) placed[chunk.Id].Add("trust-gate-own:" + project);
+                    // Only a consumer reached through a declared downstream edge may wait for the gate (Review r1 D-5).
+                    else if (!entry.Downstream.Contains(chunk.Project, StringComparer.Ordinal) && !chunk.Consumes.Any(c => entry.Downstream.Contains(c, StringComparer.Ordinal)))
+                        placed[chunk.Id].Add("consumer:" + project + ":undeclared-edge");
                     else held[chunk.Id].Add(project);
                 }
                 if (entry != null)
@@ -201,7 +218,7 @@ namespace Antiphon.Nightly
             // Resolve each influencing gate; every one must pass for a hold to carry.
             var gate = new Dictionary<string, string>(StringComparer.Ordinal);
             if (ownResults != null)
-                foreach (var entry in trusted.Where(t => changedProjects.Contains(t.Project))) gate[entry.Project] = GateFailure(entry, ownResults, contracts);
+                foreach (var entry in trusted.Where(t => changedProjects.Contains(t.Project) && !voided.Contains(t.Project))) gate[entry.Project] = GateFailure(entry, ownResults, contracts);
 
             var answer = new List<RcTrustChunkDecision>();
             foreach (var chunk in chunks)
@@ -249,6 +266,12 @@ namespace Antiphon.Nightly
             if (b[0].ExtractorVersion != a[0].ExtractorVersion || b[0].ContractHash != a[0].ContractHash) return "contract-drift";
             return null;
         }
+
+        /// <summary>A project file or MSBuild import that can carry a package or SDK reference.</summary>
+        static bool BuildInput(string path) =>
+            path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".props", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".targets", StringComparison.OrdinalIgnoreCase) || path.EndsWith("packages.lock.json", StringComparison.OrdinalIgnoreCase);
 
         static string Dir(string project)
         {
