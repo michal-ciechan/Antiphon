@@ -53,7 +53,7 @@ public sealed class PlanCheckpointClassSelectionGuardTests
                 "| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |",
                 "|---|---|---|---|---|---|---|---:|---:|",
                 "| CP-1 | S1 | `tests/Sample.Tests -> bin-a/` | g | `/*/*/LiveTests/*` | V-1 | ok | 1 | 1 |",
-                "| CP-2 | S1 | CP-1 | g | `/*/*/(LiveTests*)\\|(GoneTests*)\\|(Other*)/*` | V-2 | ok | 1 | 1 |",
+                "| CP-2 | S1 | CP-1 | g | `/*/*/(LiveTests*)\\|(GoneTests*)\\|(Other*)\\|(L?ve*s)/*` | V-2 | ok | 1 | 1 |",
                 "| CP-3 | S1 | CP-1 | g | `/*/Sample.Moved/LiveTests*/(A*)` | V-3 | ok | 1 | 1 |",
                 "| CP-4 | S1 | CP-1 | g | `/*/*/*/*[Category=Unit]` | V-4 | ok | 1 | 1 |",
                 "| CP-5 | S1 | n/a | g | `pwsh -NoProfile -File scripts/x.ps1` | V-5 | ok | 0 | 1 |",
@@ -65,7 +65,7 @@ public sealed class PlanCheckpointClassSelectionGuardTests
 
             var bare = PlanCheckpointClassAudit.Run(root);
             bare.Plans.ShouldBe(1);
-            bare.Checked.ShouldBe(5, bare.Summary);
+            bare.Checked.ShouldBe(6, bare.Summary);
             bare.Unresolved.ShouldBe(
                 [plan + " CP-2 GoneTests* (namespace *)", plan + " CP-3 LiveTests* (namespace Sample.Moved)"], ignoreOrder: false);
             bare.UnusedRetirements.ShouldBeEmpty();
@@ -137,6 +137,7 @@ internal static class PlanCheckpointClassAudit
     public static Result Run(string root)
     {
         var classes = DeclaredClasses(root);
+        var resolved = new Dictionary<(string Operand, string Namespace), bool>();
         var ledger = ReadLedger(root);
         var used = new HashSet<(string Plan, string Row, string Operand)>();
         var unresolved = new List<string>();
@@ -171,7 +172,9 @@ internal static class PlanCheckpointClassAudit
                         continue;
                     }
                     checkedOperands++;
-                    if (Resolves(classes, operand, segments[2]))
+                    if (!resolved.TryGetValue((operand, segments[2]), out var hit))
+                        resolved[(operand, segments[2])] = hit = Resolves(classes, operand, segments[2]);
+                    if (hit)
                         continue;
                     if (ledger.TryGetValue(plan, out var planRows) && planRows.TryGetValue(row, out var operands) && operands.Contains(operand))
                     {
@@ -249,11 +252,14 @@ internal static class PlanCheckpointClassAudit
 
     private static bool Resolves(Dictionary<string, HashSet<string>> classes, string operand, string namespaceSegment)
     {
-        var name = Glob(operand);
         var space = namespaceSegment == "*" ? null : Glob(namespaceSegment);
+        if (operand.IndexOfAny(['*', '?']) < 0)
+            return classes.TryGetValue(operand, out var exact) && (space is null || exact.Any(space.IsMatch));
+        var prefix = operand.IndexOfAny(['*', '?']) == operand.Length - 1 && operand[^1] == '*' ? operand[..^1] : null;
+        var name = prefix is null ? Glob(operand) : null;
         foreach (var (simple, namespaces) in classes)
         {
-            if (!name.IsMatch(simple))
+            if (prefix is not null ? !simple.StartsWith(prefix, StringComparison.Ordinal) : !name!.IsMatch(simple))
                 continue;
             if (space is null || namespaces.Any(space.IsMatch))
                 return true;
