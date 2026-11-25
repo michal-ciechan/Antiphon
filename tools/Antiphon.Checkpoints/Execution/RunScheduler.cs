@@ -435,7 +435,8 @@ public sealed class RunScheduler
         var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
         var originalProperties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
             repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null);
-        var candidate = request.IntermediateCache?.Prepare(build.Project, originalProperties, activePartitions);
+        var candidate = request.IntermediateCache?.Prepare(build.Project, originalProperties, activePartitions,
+            cancellationToken: cancellationToken);
         List<string> LayoutProperties(string? intermediateRoot)
         {
             var arguments = originalProperties.ToList();
@@ -619,9 +620,7 @@ public sealed class RunScheduler
         catch (OperationCanceledException)
         {
             result = null;
-            progress.State = "failed";
-            progress.TerminalReason = budget.Reason;
-            progress.AdmissionExitCode = ExitCodes.Timeout;
+            MarkBuildCanceled();
         }
 
         BuildConfinement.Settlement? AdmitOriginalLedger()
@@ -656,6 +655,7 @@ public sealed class RunScheduler
                 else
                 {
                     intermediate?.Publish(cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
                     progress.CachePartition = intermediate?.Path;
                     progress.ResolvedProperties = properties;
                 }
@@ -685,11 +685,23 @@ public sealed class RunScheduler
 
         Publish(request);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            MarkBuildCanceled();
+            Publish(request);
+        }
         finally
         {
             progress.WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds;
             progress.ExecutedSeconds = admittedAt is long at ? _buildTimeProvider.GetElapsedTime(at).TotalSeconds : 0;
             OutputCleanup.RecordCreatedOutputs(request.State, request.WorkingDirectory, build.Id, before);
+        }
+
+        void MarkBuildCanceled()
+        {
+            progress.State = "failed";
+            progress.TerminalReason = budget.Reason;
+            progress.AdmissionExitCode = ExitCodes.Timeout;
         }
     }
 
