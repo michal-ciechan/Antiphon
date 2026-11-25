@@ -1293,6 +1293,15 @@ namespace Antiphon.Server.Migrations
                     b.Property<DateTime?>("ReadAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("ReceivedReportCompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long?>("ReceivedReportPromptSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("ReceivedReportSessionId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTime?>("RecoveredAt")
                         .HasColumnType("timestamp with time zone");
 
