@@ -29,6 +29,10 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class DelegateBranchDeliveryTests
 {
+    // Gate and reconnect waits cover a whole preparation or publication (service graph, git push, ls-remote) while
+    // up to Worlds.Degree other worlds clone and push beside it, so they allow 30s rather than the serial 10s.
+    private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(30);
+
     [Test]
     [Arguments(null)]
     [Arguments("windows")]
@@ -100,7 +104,7 @@ public sealed class DelegateBranchDeliveryTests
         // derive old ref / bypass mutation wait -> recipient-ref/busy-recipient fail.
         // Each case builds its own world, schema and wire, so the cases run side by side.
         await Worlds.InParallelAsync(from modern in new[] { false, true } from busy in new[] { false, true } select (modern, busy),
-            c => $"modern={c.modern}/busy={c.busy}", async c =>
+            c => $"modern={c.modern}/busy={c.busy}", ct, async c =>
         {
             var (modern, busy) = c;
             await using var world = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(cardBranch: modern);
@@ -132,7 +136,7 @@ public sealed class DelegateBranchDeliveryTests
         });
         // Each case builds its own world, schema and wire, so the cases run side by side.
         await Worlds.InParallelAsync(from modern in new[] { false, true } from busy in new[] { false, true } select (modern, busy),
-            c => $"modern={c.modern}/busy={c.busy}", async c =>
+            c => $"modern={c.modern}/busy={c.busy}", ct, async c =>
         {
             var (modern, busy) = c;
             await using var park = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true, cardBranch: modern);
@@ -150,7 +154,9 @@ public sealed class DelegateBranchDeliveryTests
     }
 
     // R5 (CARD-1638): 2x the one measured sample, 277.4s on Windows rc run d47848cc
-    // (92% of the old 300s). Provisional: n=1, no Linux sample retained.
+    // (92% of the old 300s). Provisional: n=1, no Linux sample retained. That sample is the serial run, which
+    // ANTIPHON_TEST_CODEX_CLI_WORLDS=1 still gives; the cases now run side by side (Worlds), so a normal run is
+    // well inside it and the budget is kept for the serial bisecting run.
     [Test]
     [Timeout(555_000)]
     public async Task C1213_QueuedBranchRecovery(CancellationToken ct)
@@ -158,7 +164,7 @@ public sealed class DelegateBranchDeliveryTests
         // trust lost ACK / recover with legacy ref -> enqueue-failure/lost-reply/recovered-ref fail.
         // Each case builds its own world, schema and wire, so the cases run side by side.
         await Worlds.InParallelAsync(from modern in new[] { false, true } from cut in new[] { "persisted", "before-send", "received", "effect", "reply-before-save", "saved" } select (modern, cut),
-            c => $"modern={c.modern}/cut={c.cut}", async c =>
+            c => $"modern={c.modern}/cut={c.cut}", ct, async c =>
         {
             var (modern, cut) = c;
             await using var world = await RunnerSettlementSyncTests.SyncWorld.CreateAsync(cardBranch: modern);
@@ -228,7 +234,7 @@ public sealed class DelegateBranchDeliveryTests
         });
         // Each case builds its own world, schema and wire, so the cases run side by side.
         await Worlds.InParallelAsync(from modern in new[] { false, true } from cut in new[] { "persisted", "before-send", "received", "effect", "reply-before-save", "saved" } select (modern, cut),
-            c => $"modern={c.modern}/cut={c.cut}", async c =>
+            c => $"modern={c.modern}/cut={c.cut}", ct, async c =>
         {
             var (modern, cut) = c;
             await using var park = await TaskParkPublicationTests.PublicationWorld.CreateAsync(remote: true, cardBranch: modern);
@@ -294,13 +300,13 @@ public sealed class DelegateBranchDeliveryTests
         wire.Surface.Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         wire.Surface.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var occupying = wire.Client.ClearLiveBufferAsync(Guid.NewGuid(), ct);
-        await wire.Surface.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        await wire.Surface.Entered.Task.WaitAsync(GateWait, ct);
         wire.QueuedOperation = operation; wire.Queued = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var before = Volatile.Read(ref wire.GitStarts); var parkEntries = wire.Surface.ParkEntries;
         var pending = action();
         try
         {
-            await wire.Queued.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            await wire.Queued.Task.WaitAsync(GateWait, ct);
             Volatile.Read(ref wire.GitStarts).ShouldBe(before, "busy-recipient: no Git entry before release");
             wire.Surface.ParkEntries.ShouldBe(parkEntries, "busy-recipient: no runtime entry before release");
             pending.IsCompleted.ShouldBeFalse("no premature completion");
@@ -422,7 +428,7 @@ public sealed class DelegateBranchDeliveryTests
             var dispatcher = new PhoneHomeCommandDispatcher(Surface, new PhoneHomeSettings { Enabled = true, RunnerId = Host.AllowedRunnerId, StoreIdPath = storePath, AllowedCwd = _allowed, RunnerRepository = _repository, RunnerCloneSource = _origin, LaunchGenerationsPath = Path.Combine(_root, "generations") });
             typeof(PhoneHomeCommandDispatcher).GetField("_workspace", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(dispatcher, Workspace);
             _pump = PumpAsync(dispatcher, _stop.Token);
-            _live = await _ready.Live.Task.WaitAsync(TimeSpan.FromSeconds(10), ct); Client = new(_live);
+            _live = await _ready.Live.Task.WaitAsync(GateWait, ct); Client = new(_live);
             await Client.ListAsync(ct);
         }
         private async Task PumpAsync(PhoneHomeCommandDispatcher dispatcher, CancellationToken ct)

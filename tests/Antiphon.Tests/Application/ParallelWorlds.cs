@@ -5,11 +5,12 @@ namespace Antiphon.Tests.Application;
 /// <summary>
 /// Runs independent world cases side by side (Codex CLI C959/C1029 worlds, C1213 branch-delivery worlds); every case runs and every failure is reported under its label.
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
-/// in-process fakes), but each also has a Kestrel host, a harness and a schema, so this class (one strict
+/// in-process fakes), but each also has a Kestrel host, a harness and a schema, so a calling class (one strict
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_CODEX_CLI_WORLDS
-/// (1-4, clamped; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset or blank) overrides it for both the C959
-/// and C1029 classes, and 1 runs the cases one at a time (docs/testing-and-build.md, process-spawning lanes).
-/// Sample timing: a never-refuses create leg reads its kit's fake clock after the kit exists, but the dispatch,
+/// (1-4, clamped; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset or blank) overrides it for every caller
+/// (the C959 and C1029 classes and the C1213 queued-branch tests), and 1 runs the cases one at a time
+/// (docs/testing-and-build.md, process-spawning lanes). A cancelled token stops new cases from starting.
+/// C959 sample timing: a never-refuses create leg reads its kit's fake clock after the kit exists, but the dispatch,
 /// warm-reuse and remote-delivery legs sample wall-clock time, the remote one before its world is built. Those
 /// vectors (clock-skew 2 minutes ahead, staleness past 15 minutes) need a margin of minutes over world creation.
 /// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
@@ -27,12 +28,15 @@ internal static class Worlds
             ? value : Environment.GetEnvironmentVariable(LegacyOverrideVariable);
 
     public static Task InParallelAsync(IEnumerable<(string Name, Func<Task> Body)> cases) =>
-        InParallelAsync(cases, c => c.Name, c => c.Body());
+        InParallelAsync(cases, c => c.Name, CancellationToken.None, c => c.Body());
 
-    public static async Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, string> label, Func<T, Task> body)
+    public static Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, string> label, Func<T, Task> body) =>
+        InParallelAsync(cases, label, CancellationToken.None, body);
+
+    public static async Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, string> label, CancellationToken ct, Func<T, Task> body)
     {
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
-        await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = Degree }, async (c, _) =>
+        await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = Degree, CancellationToken = ct }, async (c, _) =>
         {
             var name = label(c);
             using var span = TestTrace.Span("world case", "world.case", name);
