@@ -8,7 +8,7 @@ namespace Antiphon.Tests.Application;
 /// in-process fakes), but each also has a Kestrel host, a harness and a schema, so a calling class (one strict
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_CODEX_CLI_WORLDS
 /// (1-4, clamped; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset or blank) overrides it for every caller
-/// (the C959 and C1029 classes and the C1213 queued-branch tests), and 1 runs the cases one at a time
+/// (the C959 and C1029 classes and the C1213 queued-branch and old-runner tests), and 1 runs the cases one at a time
 /// (docs/testing-and-build.md, process-spawning lanes). For a caller that passes its test token (the C1213 tests), a
 /// cancelled token stops new cases from starting, names the cases it stopped and writes the failures recorded before it; the
 /// no-token overloads (the C959 and C1029 classes) run every case.
@@ -16,7 +16,9 @@ namespace Antiphon.Tests.Application;
 /// warm-reuse and remote-delivery legs sample wall-clock time, the remote one before its world is built. Those
 /// vectors (clock-skew 2 minutes ahead, staleness past 15 minutes) need a margin of minutes over world creation.
 /// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
-/// another's routing cache; that costs a re-resolve from its own database, never a wrong answer.
+/// another's routing cache; that costs a re-resolve from its own database, never a wrong answer. The old-runner
+/// test's dispatch graph also reaches the process-wide GitCommonDirectory cache, which is keyed by path, so each
+/// world reads only its own entries.
 /// </summary>
 internal static class Worlds
 {
