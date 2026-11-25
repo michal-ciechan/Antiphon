@@ -575,6 +575,7 @@ try
     builder.Services.AddScoped<AgentTaskPipelineStatusService>();
     builder.Services.AddScoped<HostBudgetService>();
     builder.Services.AddScoped<KeepSixShortfall>();
+    builder.Services.AddScoped<CallerWakeService>();
     builder.Services.AddScoped<KeepSixService>();
     builder.Services.AddScoped<OrchestratorInstructionsSnapshotBuilder>();
     builder.Services.AddSingleton<AgentTaskLandQueue>();

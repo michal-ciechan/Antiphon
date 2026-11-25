@@ -323,12 +323,22 @@ namespace Antiphon.Nightly
         public static JsonObject ClaudeSettings(string hookPath)
         {
             JsonArray Hook() => new JsonArray(new JsonObject { ["type"] = "command", ["command"] = "node \"" + hookPath.Replace('\\', '/') + "\"", ["timeout"] = 5 });
+            var normalized = hookPath.Replace('\\', '/');
+            var wakePath = normalized[..(normalized.LastIndexOf('/') + 1)] + "orchestrator-caller-wake.mjs";
+            JsonArray Wake() => new(new JsonObject
+            {
+                ["type"] = "command", ["command"] = "node", ["args"] = new JsonArray(wakePath),
+                ["asyncRewake"] = true, ["timeout"] = 1209600,
+            });
             return new JsonObject
             {
                 ["hooks"] = new JsonObject
                 {
                     ["PreToolUse"] = new JsonArray(new JsonObject { ["matcher"] = "Read|Grep|Glob|Bash|PowerShell", ["hooks"] = Hook() }),
-                    ["SessionStart"] = new JsonArray(new JsonObject { ["matcher"] = "startup|resume|compact", ["hooks"] = Hook() }),
+                    ["Stop"] = new JsonArray(new JsonObject { ["hooks"] = Wake() }),
+                    ["SessionStart"] = new JsonArray(
+                        new JsonObject { ["matcher"] = "startup|resume|compact", ["hooks"] = Hook() },
+                        new JsonObject { ["matcher"] = "startup|resume|compact|clear", ["hooks"] = Wake() }),
                 },
             };
         }

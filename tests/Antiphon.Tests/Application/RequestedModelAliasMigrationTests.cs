@@ -66,15 +66,17 @@ public sealed class RequestedModelAliasDatabaseMigrationTests
         var after = before.Append(RequestedModelAliasSchema.MigrationId).ToArray();
         (await db.Database.GetAppliedMigrationsAsync(ct)).ShouldBe(after);
 
+        // Seed the schema this migration produced with its own columns. The current entity also
+        // maps later additive columns, which this historical schema does not have yet.
         var id = Guid.NewGuid();
-        db.AgentTasks.Add(new AgentTask
-        {
-            Id = id,
-            RootTaskId = id,
-            CreatedAt = DateTime.UtcNow,
-            RequestedModelAlias = "gpt-6.2-astra",
-        });
-        await db.SaveChangesAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentTasks" ("Id", "RootTaskId", "Depth", "Title", "Goal", "Kind", "Role", "ModelLevel",
+                "Attempt", "MaxAttempts", "Workspace", "WorkingDirectory", "Ephemeral", "Status", "ReplyTo",
+                "ConcurrencyToken", "CreatedAt", "TokensIn", "TokensOut", "CostUsd", "RequestedModelAlias")
+            VALUES ({id}, {id}, {0}, {"alias"}, {"preserve"}, {0}, {0}, {0}, {1}, {2}, {1},
+                {"/tmp/requested-model-alias"}, {false}, {0}, {0}, {Guid.NewGuid()}, {DateTime.UtcNow}, {0L}, {0L}, {0m},
+                {"gpt-6.2-astra"})
+            """, ct);
 
         var error = await Should.ThrowAsync<NotSupportedException>(() => db.Database.MigrateAsync(Predecessor, ct));
         error.Message.ShouldBe("An explicit requested model alias cannot be discarded by a downgrade.");

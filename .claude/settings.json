@@ -38,6 +38,19 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/scripts/hooks/orchestrator-caller-wake.mjs"],
+            "asyncRewake": true,
+            "timeout": 1209600
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "startup|resume|compact",
@@ -46,6 +59,18 @@
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR}/scripts/hooks/orchestrator-investigation-hook.mjs\"",
             "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|compact|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/scripts/hooks/orchestrator-caller-wake.mjs"],
+            "asyncRewake": true,
+            "timeout": 1209600
           }
         ]
       }

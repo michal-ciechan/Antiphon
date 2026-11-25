@@ -18,7 +18,8 @@ public class SpecialistToolPolicyTests
     public async Task Card0415_V03_failed_hook_preparation_refuses_new_Check_seat()
     {
         using var workspace = new Workspace();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var spec = workspace.Spec;
         File.WriteAllText(Path.Combine(workspace.Root, ".claude"), "obstruct directory creation");
         var service = workspace.Provisioner(db);
@@ -34,7 +35,8 @@ public class SpecialistToolPolicyTests
     public async Task Card0415_V03_failed_rearming_refuses_existing_Check_seat()
     {
         using var workspace = new Workspace();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var service = workspace.Provisioner(db);
         var agent = await service.EnsureAsync(workspace.Spec, CancellationToken.None);
         var settingsPath = Path.Combine(workspace.Root, ".claude", "settings.json");
@@ -52,7 +54,8 @@ public class SpecialistToolPolicyTests
     public async Task Card0415_V03_successful_preparation_repairs_policy_before_returning_seat()
     {
         using var workspace = new Workspace();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var service = workspace.Provisioner(db);
         var first = await service.EnsureAsync(workspace.Spec, CancellationToken.None);
         var settingsPath = Path.Combine(workspace.Root, ".claude", "settings.json");
@@ -70,7 +73,8 @@ public class SpecialistToolPolicyTests
     public async Task Card0415_V03_other_specialists_keep_existing_preparation_behavior(AgentTaskRole role)
     {
         using var workspace = new Workspace();
-        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions());
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         File.WriteAllText(Path.Combine(workspace.Root, ".claude"), "obstruct directory creation");
 
         // A second standing specialist declares its own seat properties; it is not the Check spec

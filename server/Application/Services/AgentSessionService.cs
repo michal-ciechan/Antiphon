@@ -2571,6 +2571,16 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             AcceptedStartedAt = spec.AcceptedStartedAt ?? SessionGeneration.Normalize(session.StartedAt),
         };
+        if (session.AgentKind == AgentKind.ClaudeCode &&
+            (spec.Env.ContainsKey("ANTIPHON_ORCHESTRATOR") || spec.Env.GetValueOrDefault("ANTIPHON_TASK_KIND") == "Orchestrator"))
+        {
+            var env = new Dictionary<string, string>(spec.Env, StringComparer.OrdinalIgnoreCase)
+            {
+                ["ANTIPHON_SESSION_ID"] = session.Id.ToString("D"),
+                ["ANTIPHON_SESSION_GENERATION"] = spec.AcceptedStartedAt.Value.ToString("O"),
+            };
+            spec = spec with { Env = env };
+        }
         return spec;
     }
 

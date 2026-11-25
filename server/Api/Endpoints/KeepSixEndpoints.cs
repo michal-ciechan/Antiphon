@@ -14,6 +14,13 @@ public static class KeepSixEndpoints
     {
         var group = app.MapGroup("/api/orchestrators").WithTags("KeepSix");
 
+        group.MapPost("/{agentId:guid}/caller-wake", async (
+            Guid agentId, Guid? conversationId, DateTimeOffset? generation, HttpContext http, CallerWakeService wakes, CancellationToken ct) =>
+        {
+            var wake = await wakes.PollAsync(agentId, conversationId, generation?.UtcDateTime, Token(http), ct);
+            return wake is null ? Results.StatusCode(StatusCodes.Status403Forbidden) : Results.Ok(wake);
+        });
+
         group.MapGet("/keep-six", async (KeepSixService keepSix, CancellationToken ct) =>
             Results.Ok(await keepSix.ListAsync(ct)));
 

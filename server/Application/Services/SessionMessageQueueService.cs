@@ -767,8 +767,10 @@ public sealed partial class SessionMessageQueueService
                 && sourceTaskId is Guid sourced
                 && !string.IsNullOrEmpty(contentDigest))
             {
+                var completion = CompletionNoteStamp.IsCallerCompletionNote(origin, sourceLandNotificationId, sourced, conversationKey);
                 var existingQueuedAt = await db.SessionQueuedMessages.AsNoTracking()
-                    .Where(m => m.SourceTaskId == sourced
+                    .Where(m => m.SourceTaskId == sourced && m.AgentSessionId == sessionId
+                        && (!completion || !db.AgentTasks.Any(t => t.Id == sourced && t.CompletedAt > m.CreatedAt))
                         && m.SourceLandNotificationId == null
                         && m.ContentDigest == contentDigest
                         && m.Origin == QueuedMessageOrigin.Delegation)
@@ -777,7 +779,8 @@ public sealed partial class SessionMessageQueueService
                     .FirstOrDefaultAsync(ct);
                 if (existingQueuedAt is not null
                     || await db.AgentTasks.AsNoTracking().AnyAsync(
-                        t => t.Id == sourced && t.CompletionNoteDigest == contentDigest, ct))
+                        t => t.Id == sourced && t.ParentSessionId == sessionId && t.CompletionNoteDigest == contentDigest
+                            && (!completion || t.CompletedAt == null || t.CompletionNoteQueuedAt >= t.CompletedAt), ct))
                 {
                     if (existingQueuedAt is not null
                         && CompletionNoteStamp.IsCallerCompletionNote(
@@ -1217,6 +1220,8 @@ public sealed partial class SessionMessageQueueService
                 throw new ConflictException(RemoteSpillUndeliverableException.MissingBodyReason);
             if (outcome.Verdict == DeliveryVerdict.Delivered)
             {
+                if (AcceptedByCompleteUserPrompt(outcome))
+                    await CompletionNoteStamp.RecordReceiptsAsync(db, [row], ct);
                 StampAttemptVerdict([row], DeliveryVerdict.Delivered, UtcNow(),
                     releaseSpillBody: AcceptedByCompleteUserPrompt(outcome));
                 await db.SaveChangesAsync(ct);
@@ -1790,6 +1795,8 @@ public sealed partial class SessionMessageQueueService
                     + $"({Describe(outcome.Verdict)}). The message has been returned to the queue.");
             }
 
+            if (AcceptedByCompleteUserPrompt(outcome))
+                await CompletionNoteStamp.RecordReceiptsAsync(db, [message], ct);
             StampAttemptVerdict([message], DeliveryVerdict.Delivered, UtcNow(),
                 releaseSpillBody: AcceptedByCompleteUserPrompt(outcome));
             await db.SaveChangesAsync(ct);
@@ -3068,6 +3075,8 @@ public sealed partial class SessionMessageQueueService
             // UserPrompt confirms it. Screen-only Delivered is not that confirm. Ordinary keys
             // keep today's stamp.
             var transcriptConfirmed = AcceptedByCompleteUserPrompt(outcome);
+            if (transcriptConfirmed)
+                await CompletionNoteStamp.RecordReceiptsAsync(db, run, ct);
             var stamp = run.Where(m =>
                 transcriptConfirmed || !MidTurnInterruptPolicy.IsRefinementKey(m.ConversationKey)).ToList();
             if (stamp.Count > 0)
@@ -3162,6 +3171,7 @@ public sealed partial class SessionMessageQueueService
                 continue;
 
             message.RemoteSpillBody = null;
+            await CompletionNoteStamp.RecordReceiptsAsync(db, [message], ct);
             message.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
             message.DeliveryVerdictAt = UtcNow();
             confirmedIds.Add(message.Id);
@@ -3339,6 +3349,7 @@ public sealed partial class SessionMessageQueueService
 
             m.Status = QueuedMessageStatus.Sent;
             m.SentAt = UtcNow();
+            await CompletionNoteStamp.RecordReceiptsAsync(db, [m], ct);
             m.DeliveryVerdict = DeliveryVerdict.LateConfirmed;
             m.DeliveryVerdictAt = m.SentAt;
             m.RemoteSpillBody = null;
@@ -3798,6 +3809,8 @@ public sealed partial class SessionMessageQueueService
         {
             var now = UtcNow();
             var accepted = AcceptedByCompleteUserPrompt(outcome);
+            if (accepted)
+                await CompletionNoteStamp.RecordReceiptsAsync(db, run, ct);
             foreach (var message in run)
             {
                 message.Status = QueuedMessageStatus.Sent;

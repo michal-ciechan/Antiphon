@@ -269,6 +269,7 @@ public sealed partial class AttentionService
         var parkedPage = await BuildParkedMessageItemsAsync(parkedSkip, parkedLimit, ct);
         items.AddRange(parkedPage.Items);
         items.AddRange(await BuildCallerNoteUndeliveredItemsAsync(now, ct));
+        items.AddRange(await BuildUnreadReportItemsAsync(_db, now, ct));
         items.AddRange(await BuildSupervisionNoticeItemsAsync(ct));
         items.AddRange(await BuildPendingNotesAgedItemsAsync(now, ct));
         items.AddRange(await BuildLandItemsAsync(now, ct));
@@ -1991,6 +1992,20 @@ public sealed partial class AttentionService
     }
 
     // ---- CARD-0267: aging undelivered caller-session notes --------------------------------------
+
+    internal static async Task<List<AttentionItemDto>> BuildUnreadReportItemsAsync(
+        AppDbContext db, DateTime now, CancellationToken ct)
+    {
+        var groups = await CallerWakeService.OwedReports(db, now - CallerWakeService.ReportInterval)
+            .GroupBy(t => t.ParentSessionId!.Value)
+            .Select(g => new { SessionId = g.Key, Count = g.Count(), Oldest = g.Min(t => t.CompletedAt) })
+            .ToListAsync(ct);
+        return groups.Select(g => new AttentionItemDto(
+            AttentionKind.CallerNoteUndelivered, AlertSeverity.Warning, null, g.SessionId, null, null,
+            "Unread delegate reports", $"Overdue delegate reports for this caller: {g.Count}.",
+            "The caller can read the reports with authenticated delegate status. Queue receipts are tracked separately.",
+            g.Oldest, null, [AttentionAction.OpenDrawer], ConditionKey: $"caller-reports:{g.SessionId:N}")).ToList();
+    }
 
     private async Task<List<AttentionItemDto>> BuildCallerNoteUndeliveredItemsAsync(
         DateTime now, CancellationToken ct)
