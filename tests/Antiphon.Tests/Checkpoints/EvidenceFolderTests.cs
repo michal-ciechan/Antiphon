@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -64,6 +66,54 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
         rowFailures.ShouldContain("Expected 1 but was 2");
         File.Exists(Path.Combine(dir, "rows", "CP-2", "rerun.txt")).ShouldBeTrue();
         Directory.Exists(Path.Combine(dir, "tool")).ShouldBeTrue();
+    }
+
+    [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
+    public void generated_replay_preserves_native_property_arguments()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Skip.Test("Native Linux shell argument witness.");
+            return;
+        }
+
+        var dir = TempDir();
+        var recorder = Path.Combine(dir, "dotnet");
+        File.WriteAllText(recorder, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n");
+        File.SetUnixFileMode(recorder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+
+        const string label = "O'Brien's \"quoted value\" with $HOME and `ticks`";
+        var model = Model(dir, exit: 1);
+        EvidenceFolder.Write(dir, model, removeToolCopy: false,
+            replayProperties: new Dictionary<string, string> { ["Label"] = label, ["UseAppHost"] = "false" },
+            warmBuilds: new HashSet<string> { "bin-a" });
+        var lines = File.ReadAllLines(Path.Combine(dir, "rows", "CP-2", "rerun.txt"));
+        foreach (var (shell, heading, shellArgs) in new[]
+        {
+            ("/bin/sh", "# POSIX sh", new[] { "-c" }),
+            ("pwsh", "# PowerShell 7.3+", new[] { "-NoProfile", "-NonInteractive", "-Command" }),
+        })
+        {
+            var headingIndex = Array.IndexOf(lines, heading);
+            // The original single command has no shell label, so exercise it as well.
+            var command = lines[headingIndex + 1];
+            var start = new ProcessStartInfo(shell) { WorkingDirectory = dir };
+            start.Environment["PATH"] = dir + Path.PathSeparator + start.Environment["PATH"];
+            foreach (var arg in shellArgs)
+                start.ArgumentList.Add(arg);
+            start.ArgumentList.Add(command);
+            var result = CheckpointFixtureProcess.Run(start, 15_000);
+            result.Exit.ShouldBe(0, result.Stderr);
+            result.Stdout.Split('\0').ShouldBe(new[]
+            {
+                "run", "--project", "tools/Antiphon.Checkpoints", "--", "row", "--name", "CP-2",
+                "--project", "tests/Antiphon.Tests", "--output-path", "bin-a/", "--filter", "/*/*/Sample/alpha",
+                "--no-build", "--msbuild-property", "Label=" + label, "--msbuild-property", "UseAppHost=false", "",
+            }, $"{shell} must pass each producing property as a single literal native argument");
+        }
+        lines.ShouldContain("# POSIX sh");
+        lines.ShouldContain("# PowerShell 7.3+");
     }
 
     [Test]
