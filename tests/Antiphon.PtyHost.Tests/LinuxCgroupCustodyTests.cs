@@ -211,40 +211,38 @@ public class LinuxCgroupCustodyTests
         if (!File.Exists("/run/antiphon-custody/namespace"))
             throw new SkipTestException("Requires the entrypoint namespace marker.");
         await using var world = await CustodyWorld.StartAsync();
+        // CARD-1930: the execution tree is root-owned and uid 1654 cannot rmdir it, and neither
+        // allow-listed helper removes an execution tree (D-10 retains it through receipt
+        // creation). So the fault is owned by this fixture instead: from the first post-exit
+        // ordinary read, the REAL production reader is aimed at a never-created execution tree
+        // in the same live namespace, a genuinely absent kernel path. Placement and kill keep
+        // the real tracked tree.
+        var containment = new MissingTreeContainment(world);
+        world.Host.Session.UseContainmentForTests(containment);
         HostCustodyJournal.BeforeOrdinaryAccountingForTests.Value = () =>
         {
-            var tracked = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json");
-            if (tracked is null)
-                return Task.CompletedTask;
-            var procs = LinuxCgroupContainment.ExecutionProcsPath(
-                Guid.ParseExact(CurrentNamespace(), "D"), tracked.ContainerId);
-            var tree = Path.GetDirectoryName(procs)!;
-            if (Directory.Exists(tree))
-                Directory.Delete(tree, recursive: false);
+            if (world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json") is not null)
+                containment.Missing = true;
             return Task.CompletedTask;
         };
         try
         {
             await world.LaunchAsync("echo missing-tree-payload");
             await world.WaitForRootExitAsync();
-            var procs = LinuxCgroupContainment.ExecutionProcsPath(
-                Guid.ParseExact(CurrentNamespace(), "D"),
-                world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!.ContainerId);
-            var tree = Path.GetDirectoryName(procs)!;
-            VerificationCustodyStatus status = null!;
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-            do
-            {
-                status = await world.CustodyAsync(seal: false);
-                if (!Directory.Exists(tree))
-                    break;
-                await Task.Delay(100);
-            }
-            while (DateTime.UtcNow < deadline);
+            var tracked = world.Store.ReadRecord<CustodyRoot>(world.Binding, "tracking.json")!;
+            containment.ContainerId.ShouldBe(tracked.ContainerId);
+            var ns = Guid.ParseExact(CurrentNamespace(), "D");
+            var trackedTree = Path.GetDirectoryName(LinuxCgroupContainment.ExecutionProcsPath(ns, tracked.ContainerId))!;
+            var missingTree = Path.GetDirectoryName(LinuxCgroupContainment.ExecutionProcsPath(ns, containment.MissingId))!;
 
-            Directory.Exists(tree).ShouldBeFalse();
+            var status = await world.CustodyAsync(seal: false);
+            containment.Missing.ShouldBeTrue("the ordinary post-exit accounting read must have run");
+            containment.MissingReads.ShouldBeGreaterThan(0);
+            Directory.Exists(missingTree).ShouldBeFalse();
+            Directory.Exists(trackedTree).ShouldBeTrue("the real tracked tree is retained, never removed");
             status.State.ShouldBe(VerificationCustodyState.Unknown);
             status.Receipt.ShouldBeNull();
+            containment.Terminations.ShouldBe(0);
             File.Exists(world.StorePath("producer-receipt.json")).ShouldBeFalse();
             File.Exists(world.StorePath("linux-release-disposition.json")).ShouldBeFalse();
             world.Host.Session.ExitRequested.IsCompleted.ShouldBeFalse();
@@ -604,6 +602,49 @@ public class LinuxCgroupCustodyTests
         var fields = stat[(stat.LastIndexOf(')') + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
         // After comm: state(0) ppid(1) pgrp(2) session(3).
         return int.Parse(fields[3]);
+    }
+
+    /// <summary>
+    /// CARD-1930: the real Linux containment over the host's own container id, whose accounting
+    /// read can be switched to the real reader over a never-created execution tree in the same
+    /// namespace. Nothing here fabricates a population or an exception.
+    /// </summary>
+    private sealed class MissingTreeContainment(CustodyWorld world) : IPtyCustodyContainment
+    {
+        private LinuxCgroupContainment? _tracked;
+        public Guid MissingId { get; } = Guid.NewGuid();
+        public volatile bool Missing;
+        public int MissingReads;
+        public int Terminations;
+
+        // host-identity.json is written when the journal is created, before the runner places.
+        private LinuxCgroupContainment Tracked => _tracked ??= new LinuxCgroupContainment(
+            world.Store.ReadRecord<VerificationHostIdentity>(world.Binding, "host-identity.json")?.ContainerId
+            ?? throw new InvalidOperationException("The host has not recorded host-identity.json."));
+
+        public Guid ContainerId => Tracked.ContainerId;
+
+        public PtyStopCallback? StopSignal
+        {
+            get => Tracked.StopSignal;
+            set => Tracked.StopSignal = value;
+        }
+
+        public PtyTrackedLaunch Place(PtyTrackedLaunch launch) => Tracked.Place(launch);
+
+        public PtyCustodyPopulation ReadActive()
+        {
+            if (!Missing)
+                return Tracked.ReadActive();
+            Interlocked.Increment(ref MissingReads);
+            return new LinuxCgroupContainment(MissingId).ReadActive();
+        }
+
+        public PtyTerminationObservation Terminate()
+        {
+            Interlocked.Increment(ref Terminations);
+            return Tracked.Terminate();
+        }
     }
 
     /// <summary>One tracked execution against the real helpers, with its own store and snapshot.</summary>
