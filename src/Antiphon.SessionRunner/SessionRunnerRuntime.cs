@@ -532,14 +532,49 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             if (_custody.Value.ReadFinal(binding) is { } final) return NoteUnresolved(final);
             if (_sessions.TryGetValue(binding.Generation.SessionId, out var session)
                 && session.VerificationBinding == binding)
-                return NoteUnresolved(await session.CollectCustodyAsync(seal, ct));
+            {
+                var status = await session.CollectCustodyAsync(seal, ct);
+                if (status.Reason != "custody_observer_unavailable" ||
+                    binding.Backend != VerificationCustodyBackends.LinuxCgroup)
+                    return NoteUnresolved(status);
+            }
             if (_custody.Value.ReadProducer(binding) is { } producer)
                 return NoteUnresolved(_custody.Value.Accept(producer));
+            if (OperatingSystem.IsLinux() && binding.Backend == VerificationCustodyBackends.LinuxCgroup &&
+                await TryReadRetainedLinuxCustodyAsync(binding, seal, ct) is { } retained)
+                return NoteUnresolved(retained);
             if (seal && binding.Backend == VerificationCustodyBackends.LinuxCgroup)
                 return NoteUnresolved(_custody.Value.ReleaseDeadHost(binding));
             return NoteUnresolved(_custody.Value.ReadUnavailable(binding));
         }
         finally { gate.Release(); }
+    }
+
+    private async Task<VerificationCustodyStatus?> TryReadRetainedLinuxCustodyAsync(
+        VerificationExecutionBinding binding, bool seal, CancellationToken ct)
+    {
+        var ledger = _custody.Value;
+        var host = ledger.Store.ReadRecord<VerificationHostIdentity>(binding, "host-identity.json");
+        if (host is null || !_processLiveness.IsAlive(host.HostPid, host.HostStartTimeUtc))
+            return null;
+        ledger.RequireHost(binding, host);
+        var pipeName = PtyHostProtocol.PipeNameFor(binding.Generation.SessionId);
+        var policy = PtyHostPeerPolicy.Create(PtyHostPeerCheckMode.Enforce, isWindows: false, isLinux: true,
+            host.HostPid, host.HostStartTimeUtc, _processLiveness, PtyHostPeerPolicy.FileProbe,
+            PtyHostPeerCredentials.Read, _ => { });
+        try
+        {
+            await using var client = await PtyHostClient.ConnectAsync(pipeName, TimeSpan.FromSeconds(5), ct, policy);
+            if (client.Hello.SessionId != binding.Generation.SessionId ||
+                client.Hello.HostInstanceId != host.HostInstanceId)
+                throw new VerificationCustodyException("verification_custody_identity_mismatch");
+            var status = await client.GetCustodyAsync(binding, seal, ct);
+            return ledger.Accept(status);
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or PtyHostPeerRefusedException)
+        {
+            return null;
+        }
     }
 
     private VerificationCustodyStatus NoteUnresolved(VerificationCustodyStatus status)
@@ -2766,6 +2801,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private readonly SessionInputLog _inputLog = new();
 
         private PtyHostClient? _client;
+        private bool _linuxTrackedLaunchMayHaveBeenSent;
         private ISessionChild? _herdrChild;
         private string? _herdrAgentStatus;
         private DateTime? _herdrAgentStatusSinceUtc;
@@ -3577,12 +3613,16 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 {
                     using var hostProcess = System.Diagnostics.Process.GetProcessById(_hostPid);
                     if (_client.Hello.SessionId != _sessionId || _client.Hello.HostInstanceId is not { } hostInstance
-                        || _client.Hello.Features?.Contains("verificationCustodyV1") != true)
+                        || _client.Hello.Features?.Contains("verificationCustodyV1") != true
+                        || (OperatingSystem.IsLinux() && binding.Backend == VerificationCustodyBackends.LinuxCgroup &&
+                            _client.Hello.Features?.Contains(LinuxPlacementLaunch.Feature) != true))
                         throw new VerificationCustodyException("verification_custody_unsupported_backend");
                     _custodyLedger!.RecordConnectedHost(binding,
                         new(hostInstance, _hostPid, hostProcess.StartTime.ToUniversalTime()));
                 }
 
+                _linuxTrackedLaunchMayHaveBeenSent = OperatingSystem.IsLinux() &&
+                    VerificationBinding?.Backend == VerificationCustodyBackends.LinuxCgroup;
                 var launched = await _client.LaunchAsync(
                     new LaunchMessage(
                         request.Exe,
@@ -3666,7 +3706,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
         internal void TearDownFailedLaunch()
         {
-            if (_hostPid <= 0)
+            if (_hostPid <= 0 || _linuxTrackedLaunchMayHaveBeenSent)
                 return;
 
             try
@@ -5089,7 +5129,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                         var linux = binding.Backend == VerificationCustodyBackends.LinuxCgroup;
                         var runnerSeal = RunnerSealPresent(binding);
                         // Linux must not treat root exit as a seal. Windows still does.
-                        var seal = linux ? runnerSeal : HasExited || runnerSeal;
+                        var seal = linux ? explicitSeal && runnerSeal : HasExited || runnerSeal;
                         try
                         {
                             if (CustodySealProbeForTests is { } probe)

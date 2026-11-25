@@ -15,13 +15,9 @@ public interface IPtyCustodyJournal
 
     void RecordStartIntent();
     void RecordTracking(int processId);
+    void RecordTracking(LinuxSpawnIdentity root) =>
+        throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
     void RecordSeal();
-
-    /// <summary>
-    /// CARD-1614. The live tracked root was observed inside its Linux tree. Windows and test
-    /// journals keep the empty default; a missing observation is not placement.
-    /// </summary>
-    void RecordLinuxPlacement(bool containedRoot) { }
 }
 
 /// <summary>An observation of the original job; the host must still persist its bound receipt.</summary>

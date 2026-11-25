@@ -27,6 +27,9 @@ public interface IPtyCustodyContainment
     /// </summary>
     PtyTrackedLaunch Place(PtyTrackedLaunch launch);
 
+    PtyTrackedLaunch Place(PtyTrackedLaunch launch, long placementDeadline) =>
+        throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
+
     /// <summary>
     /// What the container itself reports is still alive. Never a guess, never a process-name
     /// match: a read that cannot be performed throws rather than returning zero.
@@ -77,6 +80,7 @@ public sealed class LinuxCgroupContainment : IPtyCustodyContainment
     public const string SudoExe = "sudo";
     public const string EnterHelper = "/usr/local/bin/antiphon-custody-enter";
     public const string KillHelper = "/usr/local/bin/antiphon-custody-kill";
+    public const string PlacementStage = "/usr/local/lib/antiphon-custody-placement";
     public const string CustodyRootName = "antiphon-custody";
 
     /// <summary>
@@ -101,9 +105,21 @@ public sealed class LinuxCgroupContainment : IPtyCustodyContainment
     /// `sudo -n antiphon-custody-enter &lt;id&gt; -- &lt;exe&gt; &lt;args&gt;`. The `--` is what keeps an
     /// argument of the tracked command from being read as an argument of the shim.
     /// </summary>
-    public PtyTrackedLaunch Place(PtyTrackedLaunch launch)
+    public PtyTrackedLaunch Place(PtyTrackedLaunch launch) => PlaceCore(launch, null);
+
+    public PtyTrackedLaunch Place(PtyTrackedLaunch launch, long placementDeadline) =>
+        PlaceCore(launch, placementDeadline);
+
+    private PtyTrackedLaunch PlaceCore(PtyTrackedLaunch launch, long? placementDeadline)
     {
-        var args = new List<string> { "-n", EnterHelper, ContainerId.ToString("D"), "--", launch.App };
+        var args = new List<string> { "-n", EnterHelper, ContainerId.ToString("D") };
+        if (placementDeadline is { } deadline)
+        {
+            args.Add("--placement-v1");
+            args.Add(deadline.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        args.Add("--");
+        args.Add(launch.App);
         args.AddRange(launch.CommandLine);
         return new PtyTrackedLaunch(SudoExe, args);
     }

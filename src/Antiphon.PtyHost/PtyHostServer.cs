@@ -124,7 +124,7 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
 
                 try
                 {
-                    if (await DispatchAsync(message, outbound.Writer, connectionCts.Token))
+                    if (await DispatchAsync(message, outbound.Writer, pipe, connectionCts.Token))
                         return;
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
@@ -155,10 +155,18 @@ public sealed class PtyHostServer(PtyHostOptions options, HostSession session, H
     private async Task<bool> DispatchAsync(
         PtyHostMessage message,
         ChannelWriter<PtyHostMessage> outbound,
+        NamedPipeServerStream pipe,
         CancellationToken ct)
     {
         switch (message)
         {
+            case LaunchMessage launch when LinuxPlacementLaunch.AppliesTo(launch):
+            {
+                await using var watch = new LinuxLaunchPeerWatch(pipe, ct);
+                outbound.TryWrite(await session.LaunchAsync(launch, watch.Token));
+                return false;
+            }
+
             case LaunchMessage launch:
                 outbound.TryWrite(await session.LaunchAsync(launch, ct));
                 return false;

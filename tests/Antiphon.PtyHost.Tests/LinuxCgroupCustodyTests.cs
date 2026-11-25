@@ -799,6 +799,7 @@ public class LinuxCgroupCustodyTests
             {
                 VerificationBinding = binding,
                 RunnerStoreId = Store.StoreId,
+                LinuxPlacementDeadline = LinuxPlacementLaunch.Stamp(Stopwatch.GetTimestamp(), Stopwatch.GetTimestamp()),
             };
         }
 

@@ -14,6 +14,7 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
     private bool _nativeIntent;
     private string? _failure;
     private bool _unsupported;
+    private LinuxPlacementProof? _linuxPlacement;
 
     public VerificationExecutionBinding Binding { get; }
     public VerificationHostIdentity Identity { get; }
@@ -84,6 +85,15 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
         _store.WriteRecord(Binding, "tracking.json", tracking);
         _root = tracking;
     }
+
+    public void RecordTracking(LinuxSpawnIdentity root)
+    {
+        var tracking = new CustodyRoot(2, root.Pid, root.StartTimeUtc, Identity.ContainerId);
+        _store.WriteRecord(Binding, "tracking.json", tracking);
+        _root = tracking;
+    }
+
+    internal void CommitLinuxPlacement(LinuxPlacementProof proof) => _linuxPlacement = proof;
 
     public void RecordLinuxPlacement(bool containedRoot)
     {
