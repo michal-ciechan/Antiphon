@@ -64,7 +64,7 @@ public partial class CallerWakeTests
         }
         var hooks = Path.Combine(checkout, "scripts", "hooks");
         Directory.CreateDirectory(hooks);
-        foreach (var leaf in new[] { "orchestrator-caller-wake.mjs", "orchestrator-investigation-hook.mjs" })
+        foreach (var leaf in new[] { "orchestrator-caller-wake.mjs", "orchestrator-investigation-hook.mjs", "orchestrator-investigation.mjs" })
             File.Copy(Path.Combine(source, "scripts", "hooks", leaf), Path.Combine(hooks, leaf), true);
         Directory.CreateDirectory(Path.Combine(cwd, ".claude"));
         var settingsPath = Path.Combine(cwd, ".claude", "settings.json");
@@ -76,8 +76,11 @@ public partial class CallerWakeTests
 
         // Use the built production command behind the workspace's launcher. A Bash tool turn
         // therefore exercises the real token-bearing HTTP status read without a nested build.
-        var command = Path.Combine(checkout, "scripts", "antiphon");
-        await File.WriteAllTextAsync(command, "#!/bin/sh\nexec dotnet exec \"$WAKE_TEST_CLI\" \"$@\"\n", ct);
+        var windows = OperatingSystem.IsWindows();
+        var command = Path.Combine(checkout, "scripts", windows ? "antiphon.cmd" : "antiphon");
+        var shellTool = windows ? "PowerShell" : "Bash";
+        await File.WriteAllTextAsync(command, windows ? "@echo off\r\ndotnet exec \"%WAKE_TEST_CLI%\" %*\r\n"
+            : "#!/bin/sh\nexec dotnet exec \"$WAKE_TEST_CLI\" \"$@\"\n", ct);
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(command, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         var now = world.Clock.GetUtcNow().UtcDateTime;
@@ -138,18 +141,29 @@ public partial class CallerWakeTests
             if (notice is not null && sawNotice.TrySetResult())
             {
                 // The fixture model follows the command location supplied in the native notice.
-                var launcher = notice.Contains(command, StringComparison.Ordinal) ? command : "scripts/antiphon";
-                return new ScriptedFunctionCall("Bash", JsonSerializer.Serialize(new
+                var instruction = notice.Split('\n').Single(line => line.Contains(" delegate status " + reportId));
+                return new ScriptedFunctionCall(shellTool, JsonSerializer.Serialize(new
                 {
-                    command = $"\"{launcher}\" delegate status {reportId}", description = "Read my delegate's report",
+                    command = instruction.Trim(), description = "Read my delegate's report",
                 }), "toolu_native_status");
             }
             return new ScriptedTextTurn("The caller is ready.");
         });
         await using var runner = new DirectSessionRunnerClient(Path.Combine(world.CallerDirectory, "native-runner"),
             ptyBackend: "modern", claudeTranscript: true);
-        var spec = new AgentLaunchSpec("wake", AgentKind.ClaudeCode, "claude",
-            ["Say ready and wait.", "--session-id", sessionId.ToString(), "--permission-mode", "bypassPermissions", "--tools", "Bash"], env, cwd, 120, 40, AcceptedStartedAt: session.StartedAt);
+        // The Unix pty inherits its host environment. Remove the outer delegate identity
+        // and provider credentials before exec so Claude sees exactly this standing caller.
+        string[] args = ["Say ready and wait.", "--session-id", sessionId.ToString(),
+            "--permission-mode", "bypassPermissions", "--tools", shellTool];
+        var exe = "claude";
+        if (!OperatingSystem.IsWindows())
+        {
+            exe = "/usr/bin/env";
+            args = ["-u", "ANTIPHON_TASK_ID", "-u", "ANTIPHON_TASK_KIND",
+                "-u", "ANTHROPIC_AUTH_TOKEN", "-u", "CLAUDE_CODE_OAUTH_TOKEN", "claude", .. args];
+        }
+        var spec = new AgentLaunchSpec("wake", AgentKind.ClaudeCode, exe, args,
+            env, cwd, 120, 40, AcceptedStartedAt: session.StartedAt);
         await runner.StartAsync(sessionId, spec, ct);
         try
         {
@@ -171,31 +185,60 @@ public partial class CallerWakeTests
             var runtime = world.Services.GetRequiredService<AgentSessionRuntime>();
             runtime.TryRemove(sessionId, out _);
             runtime.Register(sessionId, adapter);
-            var settled = await rig.SettleReviewAsync();
+            var reportText = $"Reviewed the owner. Native receipt {Guid.NewGuid():N}.";
+            var settled = await rig.SettleReviewAsync(transformReport: (_, report) => report.Replace("Reviewed the owner.", reportText));
             reportId = settled.TaskId;
             await rig.FlushAsync();
             (await rig.RowAsync(reportId)).LastWithholdReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
             world.Clock.Advance(TimeSpan.FromMinutes(11));
             await sawNotice.Task.WaitAsync(TimeSpan.FromSeconds(80), ct);
-            var marker = $"[antiphon-report:{reportId.ToString("N")[..8]}";
             var transcript = Path.Combine(config, "projects");
-            string[] lines;
+            JsonElement? result;
             do
             {
                 await Task.Delay(200, ct);
                 var path = Directory.EnumerateFiles(transcript, sessionId + ".jsonl", SearchOption.AllDirectories).Single();
-                lines = await File.ReadAllLinesAsync(path, ct);
-            } while (!lines.Any(l => l.Contains("tool_result") && l.Contains("toolu_native_status")));
-            lines.ShouldContain(l => l.Contains("tool_result") && l.Contains("toolu_native_status") && l.Contains(marker),
-                "the native tool result must contain the report from the real status command");
-            lines.ShouldContain(l => l.Contains("tool_use") && l.Contains("delegate status") && l.Contains(reportId.ToString()));
-            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == reportId, ct)).LastPolledResultAt.ShouldNotBeNull();
+                result = ReadStatusResult(await File.ReadAllLinesAsync(path, ct));
+            } while (result is null);
+            var content = result.Value.GetProperty("content").ToString();
+            var error = result.Value.TryGetProperty("is_error", out var flag) && flag.GetBoolean();
+            var diagnosis = error ? content.Split('\n').FirstOrDefault() : "report content absent";
+            content.Contains(reportText, StringComparison.Ordinal).ShouldBeTrue(
+                $"the native {shellTool} result must contain the actual report ({diagnosis})");
+            var received = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == reportId, ct);
+            received.LastPolledResultAt.ShouldNotBeNull();
+            received.ReceivedReportCompletedAt.ShouldBe(received.CompletedAt);
+            received.ReceivedReportSessionId.ShouldBe(sessionId);
             (await rig.NotificationAsync(reportId))!.ConfirmingPromptSequence.ShouldBeNull();
             (await rig.RowAsync(reportId)).DeliveryAttempts.ShouldBe(0);
+            Console.WriteLine($"Native parent read layout={(sibling ? "worktree" : "main")} conversation={sessionId:D} " +
+                $"task={reportId:D} tool=toolu_native_status settlement={received.ReceivedReportCompletedAt:O} terminalAttempts=0");
         }
         finally
         {
             runner.KillOnDispose = true;
         }
+    }
+
+    private static JsonElement? ReadStatusResult(IEnumerable<string> lines)
+    {
+        foreach (var line in lines.Reverse())
+        {
+            if (!line.Contains("tool_result") || !line.Contains("toolu_native_status")) continue;
+            JsonDocument entry;
+            try { entry = JsonDocument.Parse(line); }
+            catch (JsonException) { continue; } // The tailer may observe a partially written last line.
+            using (entry)
+            {
+                var root = entry.RootElement;
+                if (root.GetProperty("type").GetString() != "user"
+                    || !root.GetProperty("message").TryGetProperty("content", out var blocks)
+                    || blocks.ValueKind != JsonValueKind.Array) continue;
+                foreach (var block in blocks.EnumerateArray())
+                    if (block.GetProperty("type").GetString() == "tool_result"
+                        && block.GetProperty("tool_use_id").GetString() == "toolu_native_status") return block.Clone();
+            }
+        }
+        return null;
     }
 }
