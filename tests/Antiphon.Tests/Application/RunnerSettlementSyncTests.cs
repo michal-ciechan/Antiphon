@@ -1336,7 +1336,7 @@ public sealed class RunnerSettlementSyncTests
         public async Task<string> CloneOriginElsewhereAsync()
         {
             var elsewhere = Path.Combine(Root, "elsewhere-" + Guid.NewGuid().ToString("N")[..6] + ".git");
-            await RunAsync(Root, "clone", "--bare", Origin, elsewhere);
+            await RunAsync(Root, "clone", "--bare", "-c", "receive.autogc=false", Origin, elsewhere);
             return elsewhere;
         }
 
