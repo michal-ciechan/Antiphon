@@ -175,7 +175,7 @@ namespace Antiphon.Nightly
             var row = new OrderedDictionary(StringComparer.Ordinal);
             foreach (DictionaryEntry entry in origin) row[entry.Key] = entry.Value;
             row["disposition"] = "carried";
-            row["sha"] = candidateSha ?? "";
+            row["sha"] = PsValue.Str(origin["sha"]);
             row["candidateSha"] = candidateSha ?? "";
             row["originReceiptDigest"] = originReceiptDigest ?? "";
             return row;
@@ -191,8 +191,6 @@ namespace Antiphon.Nightly
         public static RcReuse Reusable(IDictionary row, IReadOnlyList<RcTrxCase> trx, IEnumerable<string> requiredCases)
         {
             var reasons = new List<string>();
-            // RED WITNESS (naive): a pass label and exit 0 admit.
-            if (row != null && PsValue.Str(row["result"]) == "pass" && PsOps.ToInt(row["exitCode"]) == 0) return new RcReuse { Reusable = true };
             if (row == null) return new RcReuse { Reasons = new[] { "missing-row" } };
             var disposition = PsValue.Str(row["disposition"]);
             if (disposition == "missing") reasons.Add("missing-row");
@@ -264,15 +262,14 @@ namespace Antiphon.Nightly
         public static RcChunkObligation[] Match(IEnumerable<(string Chunk, string ContentDigest)> planned, IReadOnlyList<IDictionary> priorRows,
             Func<IDictionary, RcReuse> admit)
         {
-            // RED WITNESS (naive): matched by chunk id.
-            var byContent = (priorRows ?? Array.Empty<IDictionary>()).Where(r => r != null)
-                .GroupBy(r => PsValue.Str(r["chunk"]), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
+            var byContent = (priorRows ?? Array.Empty<IDictionary>()).Where(r => r != null && IsDigest(PsValue.Str(r["contentDigest"])))
+                .GroupBy(r => PsValue.Str(r["contentDigest"]), StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.ToArray(), StringComparer.Ordinal);
             var answer = new List<RcChunkObligation>();
             foreach (var (chunk, digest) in planned)
             {
                 var obligation = new RcChunkObligation { Chunk = chunk ?? "", ContentDigest = digest ?? "" };
                 if (!IsDigest(digest)) obligation.Reasons = new[] { "content-unproven" };
-                else if (!byContent.TryGetValue(chunk ?? "", out var rows)) obligation.Reasons = new[] { "no-receipt-for-content" };
+                else if (!byContent.TryGetValue(digest, out var rows)) obligation.Reasons = new[] { "no-receipt-for-content" };
                 else if (rows.Length > 1) obligation.Reasons = new[] { "duplicate-receipt-for-content" };
                 else
                 {
@@ -440,9 +437,6 @@ namespace Antiphon.Nightly
         public static RcComparisonChoice Choose(string line, IReadOnlyList<RcComparisonInput> inputs, string explicitReleaseSha = null)
         {
             var all = (inputs ?? Array.Empty<RcComparisonInput>()).Where(i => i != null).ToArray();
-            // RED WITNESS (naive): the newest input is the baseline and nothing after it stays owed.
-            var newest = all.OrderByDescending(i => i.CompletedUtc).FirstOrDefault();
-            if (newest != null) return new RcComparisonChoice { Mode = "Incremental", Kind = newest.Kind, Sha = newest.Sha, RunId = newest.RunId, ReceiptPath = newest.ReceiptPath, ReceiptDigest = newest.ReceiptDigest };
             var reasons = new List<string>();
             foreach (var input in all)
                 if (input.RecordedRefSha.Length > 0 && !string.Equals(input.RecordedRefSha, input.ObservedRefSha, StringComparison.Ordinal))
