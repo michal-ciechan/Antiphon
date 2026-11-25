@@ -23,6 +23,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string LandFailure = "20261119045705_AddLandVerificationFailure";
     private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
     private const string ReviewEngine = "20261122173647_AddReviewEngine";
+    private const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -59,7 +60,8 @@ public sealed class C1514HostLoadMigrationTests
         chain[previous + 7].ShouldBe(LandFailure, "land-verification-failure-follows-transcript-summary");
         chain[previous + 8].ShouldBe(ModelAlias, "requested-model-alias-follows-land-verification-failure");
         chain[previous + 9].ShouldBe(ReviewEngine, "review-engine-follows-requested-model-alias");
-        (chain.Length - previous).ShouldBe(10, "review-engine-is-the-tip");
+        chain[previous + 10].ShouldBe(CallerReportReceipt, "caller-report-receipt-follows-review-engine");
+        (chain.Length - previous).ShouldBe(11, "caller-report-receipt-is-the-tip");
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
