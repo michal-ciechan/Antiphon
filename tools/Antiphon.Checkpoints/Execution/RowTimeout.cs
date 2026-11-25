@@ -37,9 +37,17 @@ public static class RowTimeout
         CancellationToken cancellationToken) =>
         RunWithDeadlineAsync(driver, request, deadline, TimeProvider.System, cancellationToken);
 
-    internal static async Task<DriverResult> RunWithDeadlineAsync(
+    internal static Task<DriverResult> RunWithDeadlineAsync(
         IDriver driver,
         DriverRequest request,
+        TimeSpan deadline,
+        TimeProvider timeProvider,
+        CancellationToken cancellationToken) =>
+        RunWithDeadlineAsync(token => driver.RunAsync(request, token), deadline, timeProvider, cancellationToken);
+
+    // The scheduled warm attempt and any cold fallback share one deadline.
+    internal static async Task<DriverResult> RunWithDeadlineAsync(
+        Func<CancellationToken, Task<DriverResult>> run,
         TimeSpan deadline,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
@@ -50,7 +58,7 @@ public static class RowTimeout
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadlineCancellation.Token);
         try
         {
-            var result = await driver.RunAsync(request, timeout.Token).ConfigureAwait(false);
+            var result = await run(timeout.Token).ConfigureAwait(false);
             if (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 if (KeepsConfinement(result))

@@ -167,15 +167,19 @@ public sealed class ProcessDriver : IConfinedDriver
         var processExit = 0;
         DateTimeOffset? exitedAt = null;
         string? earlyDetail = null;
+        DriverResult? prelaunch = null;
         OperationCanceledException? cancelled = null;
         BuildConfinement.Settlement? settlement = null;
         try
         {
-            if (!process.Start())
+            if (request.BeforeBuildStart is not null)
+                prelaunch = await request.BeforeBuildStart(cancellationToken).ConfigureAwait(false);
+
+            if (prelaunch is null && !process.Start())
             {
                 earlyDetail = "process did not start";
             }
-            else
+            else if (prelaunch is null)
             {
                 started = true;
                 _running.TryAdd(process, 0);
@@ -230,10 +234,10 @@ public sealed class ProcessDriver : IConfinedDriver
             log?.Dispose();
         }
 
-        if (settlement?.Kind == "tampered")
-            return new DriverResult(ExitCodes.Invalid, stdout.ToString(), settlement.Detail + stderr.ToString());
         if (settlement?.Kind is not null)
             return new DriverResult(ExitCodes.Invalid, stdout.ToString(), settlement.Detail + stderr.ToString());
+        if (prelaunch is not null)
+            return prelaunch;
         if (earlyDetail is not null)
             return new DriverResult(ExitCodes.Invalid, "", earlyDetail);
         if (cancelled is not null)

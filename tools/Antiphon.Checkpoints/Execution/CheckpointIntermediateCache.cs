@@ -11,6 +11,7 @@ namespace Antiphon.Checkpoints;
 internal sealed class CheckpointIntermediateCache(string root, SourceObservation source, FileStream gate,
     Action<string>? refuse, CheckpointIntermediateCache.SealIo sealIo) : IDisposable
 {
+    private FileStream? heldGate = gate;
     internal const string RootProperty = "AntiphonCheckpointIntermediateRoot";
     // Generated beside the cache. A tracked props file that sets BaseIntermediateOutputPath
     // is refused by the land-graph pre-check, including when nothing imports it.
@@ -77,19 +78,16 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         {
             throw;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsCacheFailure(ex))
         {
             Note(refuse, ex.GetType().Name);
             return null; // A concurrent run or an unavailable cache can build in its fresh output.
         }
         finally
         {
-            stream?.Dispose();
+            CloseGate(stream, refuse);
         }
     }
-
-    internal void Report(Exception ex) =>
-        Note(refuse, ex is CheckpointCacheRefusal refusal ? refusal.Message : ex.GetType().Name);
 
     private static bool WriteProps(string root, Action<string>? refuse)
     {
@@ -102,14 +100,20 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         {
             throw;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (IsCacheFailure(ex))
         {
             Note(refuse, ex.GetType().Name);
             return false;
         }
     }
 
-    public void Dispose() => gate.Dispose();
+    public void Dispose() => CloseGate(Interlocked.Exchange(ref heldGate, null), refuse);
+
+    private static void CloseGate(FileStream? stream, Action<string>? refuse)
+    {
+        try { stream?.Dispose(); }
+        catch (Exception ex) when (IsCacheFailure(ex)) { Note(refuse, "gate-close: " + ex.GetType().Name); }
+    }
 
     private static string Home(string root) => Path.Combine(root, ".antiphon", "checkpoint-obj", "obj");
 
@@ -128,72 +132,81 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return Path.Combine(Home(root), Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant());
     }
 
-    internal Entry? Prepare(string project, IReadOnlyList<string> properties)
+    internal Entry? Prepare(string project, IReadOnlyList<string> properties, IReadOnlySet<string>? inUse = null)
     {
         if (OverridesLayout(properties))
             return null;
-        var path = PathFor(root, project, properties, source);
-        var sealPath = path + ".seal";
-        FileStream? seal = null;
+
         try
         {
-            var preflight = SafeWrite.Preflight(root, [path, sealPath]);
-            if (preflight == "link-component")
-                throw new CheckpointCacheRefusal(preflight);
-            if (preflight is not null)
+            var path = PathFor(root, project, properties, source);
+            if (inUse?.Contains(path) == true)
                 return null;
-            // A FIFO or other non-regular seal is refused before open. Opening it for read can block.
-            var refusal = TrustedPath(sealPath, out var absent);
-            if (refusal is not null)
-            {
-                Note(refuse, refusal);
-                return null;
-            }
+            var sealPath = path + ".seal";
+            CheckPaths(path, sealPath);
+            var partition = ReadKind(path, "directory");
+            var sealEntry = ReadKind(sealPath, "file");
+            if (partition.Kind == "absent" && sealEntry.Kind == "absent")
+                return new Entry(this, path, default, default);
+            if (partition.Kind == "absent" || sealEntry.Kind == "absent")
+                throw new CheckpointCacheRefusal("partial-partition");
 
-            if (absent && CreateBlank(sealPath, root) is string created)
-            {
-                Note(refuse, created);
-                return null;
-            }
+            var sealIdentity = Identity(sealEntry);
+            using var seal = OpenExisting(sealPath);
+            if (!RequireTrustedHandle(seal).SameAs(sealIdentity))
+                throw new CheckpointCacheRefusal("seal-identity-changed");
+            if (!MatchesSeal(seal, path))
+                throw new CheckpointCacheRefusal("invalid-seal");
 
-            seal = OpenExisting(sealPath);
-            if (CheckpointNativeIo.Untrusted(seal.SafeFileHandle) is string handleRefusal)
-            {
-                Note(refuse, handleRefusal);
-                return null;
-            }
-
-            if (Directory.Exists(path))
-            {
-                if (!MatchesSeal(seal, path))
-                    return null;
-            }
-            else if (seal.Length != 0 || SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(root)) is not null)
-            {
-                return null;
-            }
-
-            var entry = new Entry(path, seal, sealIo);
-            seal = null;
-            return entry;
+            return new Entry(this, path, Identity(partition), sealIdentity);
         }
-        catch (CheckpointCacheRefusal)
+        catch (Exception ex) when (IsCacheFailure(ex))
         {
-            throw;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Note(refuse, ex.GetType().Name);
+            Report("prepare", ex);
             return null;
-        }
-        finally
-        {
-            seal?.Dispose();
         }
     }
 
-    private static void Note(Action<string>? refuse, string reason) =>
-        refuse?.Invoke("checkpoint cache refused: " + reason);
+    internal static bool IsCacheFailure(Exception ex) =>
+        ex is IOException or UnauthorizedAccessException or ObjectDisposedException or CheckpointCacheRefusal;
+
+    private void Report(string phase, Exception ex) =>
+        Note(refuse, phase + ": " + (ex is CheckpointCacheRefusal refusal ? refusal.Message : ex.GetType().Name));
+
+    private static void Note(Action<string>? refuse, string reason)
+    {
+        try { refuse?.Invoke("checkpoint cache refused: " + reason); }
+        catch (Exception ex) when (IsCacheFailure(ex)) { }
+    }
+
+    private void CheckPaths(params string[] paths)
+    {
+        if (SafeWrite.Preflight(root, paths) is string reason)
+            throw new CheckpointCacheRefusal(reason);
+    }
+
+    private static FilesystemIdentity Identity(CheckpointStat stat) => new(stat.Device, stat.Inode, stat.Created);
+
+    private static CheckpointStat ReadKind(string path, string kind)
+    {
+        var stat = CheckpointCleanupDefaults.Context.Io.CustodyStat(path);
+        if (stat.Kind == "absent")
+            return stat;
+        if (stat.Kind != kind || !Identity(stat).IsBound)
+            throw new CheckpointCacheRefusal(kind == "file" ? "untrusted-seal" : "untrusted-partition");
+        if (stat.Owner != OutputCustody.Owner)
+            throw new CheckpointCacheRefusal("foreign-owner");
+        if (kind == "file" && stat.Links != 1)
+            throw new CheckpointCacheRefusal("multiple-links");
+        return stat;
+    }
+
+    private static FilesystemIdentity RequireTrustedHandle(FileStream stream)
+    {
+        if (CheckpointNativeIo.Untrusted(stream.SafeFileHandle, out var identity) is string reason)
+            throw new CheckpointCacheRefusal(reason);
+        return identity;
+    }
 
     // Absent is safe to create. Anything else must already be one regular link owned by this process.
     private static string? TrustedPath(string path, out bool absent)
@@ -363,47 +376,154 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         internal virtual void Write(FileStream stream, ReadOnlySpan<byte> payload) => stream.Write(payload);
         internal virtual void Flush(FileStream stream) => stream.Flush(flushToDisk: true);
         internal virtual void Close(FileStream stream) => stream.Dispose();
-        internal virtual void Replace(string temporary, string destination) => File.Move(temporary, destination, overwrite: true);
+        internal virtual void Replace(string temporary, string destination) =>
+            CheckpointNativeIo.ReplaceSameVolumeFile(temporary, destination);
     }
 
-    internal sealed class Entry(string path, FileStream seal, SealIo io) : IDisposable
+    // Only the attempt that installed the invalid seal may publish from it.
+    internal sealed class Entry(CheckpointIntermediateCache cache, string path,
+        FilesystemIdentity partition, FilesystemIdentity originalSeal)
     {
-        private FileStream? held = seal;
+        private FilesystemIdentity ownedPartition = partition;
+        private FilesystemIdentity invalidSeal;
 
         internal string Path { get; } = path;
+        private string SealPath => Path + ".seal";
 
-        internal void Invalidate() => Replace(ReadOnlySpan<byte>.Empty);
-
-        internal void Publish()
+        internal bool Invalidate(CancellationToken cancellationToken = default)
         {
             try
             {
-                Replace(Digest(Path));
+                cancellationToken.ThrowIfCancellationRequested();
+                if (originalSeal.IsBound)
+                {
+                    invalidSeal = cache.ReplaceSeal(this, originalSeal, 32, ReadOnlySpan<byte>.Empty, cancellationToken);
+                }
+                else
+                {
+                    cache.CheckPaths(Path, SealPath);
+                    if (ReadKind(Path, "directory").Kind != "absent" || ReadKind(SealPath, "file").Kind != "absent")
+                        throw new CheckpointCacheRefusal("partition-already-present");
+                    if (SafeWrite.CreateFreshDirectory(Path, SafeWrite.Under(cache.Root)) is string reason)
+                        throw new CheckpointCacheRefusal(reason);
+                    ownedPartition = Identity(ReadKind(Path, "directory"));
+                    if (!ownedPartition.IsBound)
+                        throw new CheckpointCacheRefusal("unbound-partition");
+                    invalidSeal = cache.WriteSeal(SealPath, ReadOnlySpan<byte>.Empty, out _);
+                }
+
+                return true;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CheckpointCacheRefusal)
+            catch (Exception ex) when (IsCacheFailure(ex))
             {
-                // The already qualified owned build remains usable. An incomplete seal never
-                // authorizes a later build to reuse this partition.
+                cache.Report("invalidate", ex);
+                return false;
             }
         }
 
-        // The handle was fstat'd before use. Rewriting it cannot follow a later directory entry.
-        private void Replace(ReadOnlySpan<byte> payload)
+        internal void Publish(CancellationToken cancellationToken = default)
         {
-            if (held is null)
-                throw new IOException("cache write refused: seal-closed");
-            held.Position = 0;
-            held.SetLength(0);
-            io.Write(held, payload);
-            io.Flush(held);
+            var expected = invalidSeal;
+            invalidSeal = default;
+            if (!expected.IsBound || cancellationToken.IsCancellationRequested)
+                return;
+            try
+            {
+                cache.CheckPaths(Path, SealPath);
+                RequirePartition();
+                var digest = Digest(Path);
+                cache.ReplaceSeal(this, expected, 0, digest, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // Retain the invalid seal if the work was canceled before publication.
+            }
+            catch (Exception ex) when (IsCacheFailure(ex))
+            {
+                cache.Report("publish", ex);
+            }
         }
 
-        public void Dispose()
+        internal void RequirePartition()
         {
-            if (held is not null)
-                io.Close(held);
-            held = null;
+            if (!ownedPartition.SameAs(Identity(ReadKind(Path, "directory"))))
+                throw new CheckpointCacheRefusal("partition-identity-changed");
         }
+    }
+
+    private string Root => root;
+
+    private FilesystemIdentity ReplaceSeal(Entry entry, FilesystemIdentity expectedSeal, long expectedLength,
+        ReadOnlySpan<byte> payload, CancellationToken cancellationToken)
+    {
+        var destination = entry.Path + ".seal";
+        var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var ownedTemp = default(FilesystemIdentity);
+        try
+        {
+            CheckPaths(entry.Path, destination, temporary);
+            entry.RequirePartition();
+            var staged = WriteSeal(temporary, payload, out ownedTemp);
+            CheckPaths(entry.Path, destination, temporary);
+            entry.RequirePartition();
+            var target = ReadKind(destination, "file");
+            if (!expectedSeal.SameAs(Identity(target)) || target.Size != expectedLength)
+                throw new CheckpointCacheRefusal("seal-identity-or-length-changed");
+            var temp = ReadKind(temporary, "file");
+            if (!staged.SameAs(Identity(temp)) || temp.Size != payload.Length)
+                throw new CheckpointCacheRefusal("temporary-identity-or-length-changed");
+            cancellationToken.ThrowIfCancellationRequested();
+            sealIo.Replace(temporary, destination);
+            ownedTemp = default;
+            return staged;
+        }
+        finally
+        {
+            if (ownedTemp.IsBound)
+            {
+                try { CheckpointCleanupDefaults.Context.Io.DeleteAnchored(temporary, ownedTemp, directory: false); }
+                catch (Exception ex) when (IsCacheFailure(ex)) { Report("temporary-cleanup", ex); }
+            }
+        }
+    }
+
+    private FilesystemIdentity WriteSeal(string path, ReadOnlySpan<byte> payload, out FilesystemIdentity identity)
+    {
+        identity = default;
+        var reason = SafeWrite.OpenCreate(path, SafeWrite.Under(root), out var stream);
+        if (reason is not null || stream is null)
+            throw new CheckpointCacheRefusal(reason ?? "unopened");
+        // Obtain the native handle before buffering any bytes. Even if the close
+        // reports an error, a second stream flush cannot reach the live seal.
+        var handle = stream.SafeFileHandle;
+        var phase = "seal-handle";
+        var failed = false;
+        try
+        {
+            identity = RequireTrustedHandle(stream);
+            phase = "seal-write";
+            sealIo.Write(stream, payload);
+            phase = "seal-flush";
+            sealIo.Flush(stream);
+        }
+        catch (Exception ex) when (IsCacheFailure(ex))
+        {
+            failed = true;
+            Report(phase, ex);
+            throw;
+        }
+        finally
+        {
+            try { sealIo.Close(stream); }
+            catch (Exception ex) when (IsCacheFailure(ex))
+            {
+                Report("seal-close", ex);
+                if (!failed)
+                    throw;
+            }
+            finally { handle.Dispose(); }
+        }
+        return identity;
     }
 }
 
