@@ -181,7 +181,7 @@ public sealed class CodexCliObservationGapTests
     {
         // Each case owns its world, so the cases run side by side.
         var cases = from remote in new[] { false, true } from after in new[] { false, true } select (remote, after);
-        await Worlds.InParallelAsync(cases, async c =>
+        await Worlds.InParallelAsync(cases, c => $"remote={c.remote}/after={c.after}", async c =>
         {
             var (remote, after) = c;
             await using var w = await World.CreateAsync(busy: true, remote: remote);
@@ -244,7 +244,7 @@ public sealed class CodexCliObservationGapTests
     public async Task C1029_Old_generation_does_not_confirm()
     {
         // Each case owns its world, so the cases run side by side.
-        await Worlds.InParallelAsync(new[] { false, true }, async remote =>
+        await Worlds.InParallelAsync(new[] { false, true }, r => $"remote={r}", async remote =>
         {
             // A separately owned, actually launched prior generation supplies the negative.
             // Its current task is irrelevant; only its actual captured UserPrompt is copied.
@@ -310,7 +310,7 @@ public sealed class CodexCliObservationGapTests
     public async Task C1029_Unobservable_screen_retains_spill()
     {
         // Each case owns its world, so the cases run side by side.
-        await Worlds.InParallelAsync(new[] { AgentKind.ClaudeCode, AgentKind.Codex }, async kind =>
+        await Worlds.InParallelAsync(new[] { AgentKind.ClaudeCode, AgentKind.Codex }, k => $"kind={k}", async kind =>
         {
             await using var w = await World.CreateAsync(kind: kind);
             var id = await w.CreateTaskAsync(Body);
@@ -347,7 +347,7 @@ public sealed class CodexCliObservationGapTests
         var cases = from kind in new[] { AgentKind.ClaudeCode, AgentKind.Codex }
                     from variant in new[] { "older", "null", "equal", "newer" } select (kind, variant);
         // Each case owns its world (schema, repository, origin, recipient root), so the cases run side by side.
-        await Worlds.InParallelAsync(cases, async c =>
+        await Worlds.InParallelAsync(cases, c => $"kind={c.kind}/variant={c.variant}", async c =>
         {
             var (kind, variant) = c;
             await using var w = await World.CreateAsync(kind: kind);
@@ -416,7 +416,7 @@ public sealed class CodexCliObservationGapTests
     public async Task C1029_Durable_spill_survives_recreated_graph()
     {
         // Each case owns its world, so the cases run side by side.
-        await Worlds.InParallelAsync(new[] { false, true }, async busy =>
+        await Worlds.InParallelAsync(new[] { false, true }, b => $"busy={b}", async busy =>
         {
             // Hold the boot flush; the recovery recipient may become eligible before or after recreation.
             await using var w = await World.CreateAsync(busy: true);
@@ -448,7 +448,7 @@ public sealed class CodexCliObservationGapTests
     public async Task C1029_Post_input_crash_late_confirms_once()
     {
         // Each case owns its world, so the cases run side by side.
-        await Worlds.InParallelAsync(new[] { false, true }, async busyAfterRecreate =>
+        await Worlds.InParallelAsync(new[] { false, true }, b => $"busyAfterRecreate={b}", async busyAfterRecreate =>
         {
             await using var w = await World.CreateAsync(busy: true);
             var id = await w.CreateTaskAsync(Body);
@@ -680,26 +680,35 @@ public sealed class CodexCliObservationGapTests
     }
 }
 
-/// <summary>Runs independent C1029 world cases side by side; every case runs and every failure is reported.</summary>
+/// <summary>
+/// Runs independent C1029 world cases side by side; every case runs and every failure is reported under its label.
+/// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
+/// in-process fakes), so the extra concurrency inside this class's ProcessSpawnLimit slot is sized like the git lane:
+/// <see cref="GitProcessSpawnLimit"/>'s width, and ANTIPHON_TEST_GIT_SPAWN_LIMIT=1 runs the cases one at a time.
+/// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
+/// another's routing cache; that costs a re-resolve from its own database, never a wrong answer.
+/// </summary>
 internal static class Worlds
 {
-    public static Task InParallelAsync(IEnumerable<(string Name, Func<Task> Body)> cases, int degree = 4) =>
-        InParallelAsync(cases.Select(c => new Named(c.Name, c.Body)), c => c.Body(), degree);
+    public static int Degree => new GitProcessSpawnLimit().Limit;
 
-    private sealed record Named(string Name, Func<Task> Body) { public override string ToString() => Name; }
+    public static Task InParallelAsync(IEnumerable<(string Name, Func<Task> Body)> cases) =>
+        InParallelAsync(cases, c => c.Name, c => c.Body());
 
-    public static async Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, Task> body, int degree = 4)
+    public static async Task InParallelAsync<T>(IEnumerable<T> cases, Func<T, string> label, Func<T, Task> body)
     {
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
-        await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = degree }, async (c, _) =>
+        await Parallel.ForEachAsync(cases, new ParallelOptions { MaxDegreeOfParallelism = Degree }, async (c, _) =>
         {
+            var name = label(c);
             try { await body(c); }
             catch (Exception ex)
             {
-                Console.WriteLine($"C1029 CASE FAILED {c}: {ex.GetType().Name}: {ex.Message}");
-                failures.Enqueue(new InvalidOperationException(c?.ToString(), ex));
+                Console.WriteLine($"C1029 CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
+                failures.Enqueue(new InvalidOperationException("C1029 case " + name + ": " + ex.Message, ex));
             }
         });
-        if (!failures.IsEmpty) throw new AggregateException(failures);
+        if (!failures.IsEmpty)
+            throw new AggregateException($"C1029 {failures.Count} case(s) failed: " + string.Join(", ", failures.Select(f => f.Message)), failures);
     }
 }

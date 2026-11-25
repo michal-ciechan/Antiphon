@@ -422,6 +422,11 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
     public bool AutoReply { get; set; } = true;
     public long Epoch { get; set; } = 1;
     public Func<PhoneHomeFrame, PhoneHomeFrame?>? Reply { get; set; }
+    /// <summary>An awaited reply, used instead of <see cref="Reply"/> when set, so a reply that does real work
+    /// (a runner dispatcher's git) does not hold a thread-pool thread while it waits.</summary>
+    public Func<PhoneHomeFrame, Task<PhoneHomeFrame?>>? ReplyAsync { get; set; }
+    private async Task<PhoneHomeFrame?> AnswerAsync(PhoneHomeFrame frame) =>
+        (ReplyAsync is { } replyAsync ? await replyAsync(frame) : Reply?.Invoke(frame)) ?? DefaultReply(frame);
     public Dictionary<Guid, RunnerTranscriptDto> Transcripts { get; } = [];
     public List<RunnerSessionDto> Sessions { get; } = [];
     public int HeldLaunches { get; set; }
@@ -540,14 +545,14 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                     _ = Task.Run(async () =>
                     {
                         await _held.Task.WaitAsync(CancellationToken.None);
-                        var heldReply = Reply?.Invoke(heldFrame) ?? DefaultReply(heldFrame);
+                        var heldReply = await AnswerAsync(heldFrame);
                         if (heldReply is not null)
                             await PhoneHomeFraming.WriteFrameAsync(Socket, heldReply, 16 * 1024 * 1024, CancellationToken.None);
                     }, ct);
                     continue;
                 }
 
-                var reply = Reply?.Invoke(frame) ?? DefaultReply(frame);
+                var reply = await AnswerAsync(frame);
                 if (reply is not null)
                     await PhoneHomeFraming.WriteFrameAsync(Socket, reply, 16 * 1024 * 1024, ct);
             }

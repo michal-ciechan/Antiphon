@@ -100,9 +100,9 @@ internal static partial class CodexCliRemoteDeliveryFixture
             // independently checks the remote capabilities before its framed launch.
             Host.Local.Capabilities = Recipient.Capabilities();
             Peer = await Host.ConnectPeerAsync(storeId: _store, bootId: _boot, capabilities: Recipient.Capabilities());
-            Peer.Reply = request =>
+            Peer.ReplyAsync = async request =>
             {
-                var response = dispatcher.DispatchAsync(request, CancellationToken.None).GetAwaiter().GetResult();
+                var response = await dispatcher.DispatchAsync(request, CancellationToken.None);
                 if (response.Kind == PhoneHomeFrameKind.Error)
                     Console.WriteLine($"REMOTE_FIXTURE_REFUSAL operation={request.Operation} code={response.ErrorCode} detail={response.ErrorDetail}");
                 return response;
