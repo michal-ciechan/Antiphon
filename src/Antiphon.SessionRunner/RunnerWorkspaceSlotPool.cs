@@ -916,6 +916,7 @@ public sealed class RunnerWorkspaceSlotPool
     private async Task QuarantineAndRehomeAsync(WorkspaceSlotRecord slot, string cls, string reason, string error, CancellationToken ct)
     {
         await QuarantineDirectoryAsync(slot, cls, reason, error, ct);
+        PhaseCut?.Invoke("quarantine-recorded");
         var retired = await MutateAsync(state =>
         {
             var record = state.Slot(slot.Id)!;
