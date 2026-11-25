@@ -837,10 +837,37 @@ public sealed class LibGit2VsGitDifferentialTests
         // The machine's own system file, located by `git var GIT_CONFIG_SYSTEM`: answered exactly when it lists nothing
         // that could decide a remote (Git for Windows' own file lists none).
         var machineSystem = RemoteChild(fixture, ("GIT_CONFIG_NOSYSTEM", null), ("GIT_CONFIG_SYSTEM", null));
+        // A git older than 2.42 has no GIT_CONFIG_SYSTEM variable to locate the file by, so every read falls back there.
         var systemKeys = await GitInAsync(Path.GetTempPath(), machineSystem,
             "config", "--system", "--get-regexp", "^(remote|branch|url|include|includeif|safe)\\.");
+        var systemNamed = await GitInAsync(Path.GetTempPath(), machineSystem, "var", "GIT_CONFIG_SYSTEM");
         await CaseAsync(failures, "machine system file", () => CompareRemoteUrlAsync(repo,
-            systemKeys.Result.ExitCode == 1 ? Expect.Answered : Expect.Fallback, machineSystem, "origin"));
+            systemKeys.Result.ExitCode == 1 && systemNamed.Result.ExitCode == 0 ? Expect.Answered : Expect.Fallback,
+            machineSystem, "origin"));
+
+        // Git for Windows reads %PROGRAMDATA%\Git\config at the system level too: a view cached while it was absent
+        // must see it appear.
+        if (OperatingSystem.IsWindows())
+        {
+            var programData = Path.Combine(fixture.Root, "programdata");
+            Directory.CreateDirectory(programData);
+            var emptySystem = Path.Combine(fixture.Root, "home", "remote-url-empty-system");
+            await File.WriteAllTextAsync(emptySystem, "[core]\n\tautocrlf = false\n");
+            var programDataChild = RemoteChild(fixture, ("GIT_CONFIG_NOSYSTEM", null), ("GIT_CONFIG_SYSTEM", emptySystem),
+                ("PROGRAMDATA", programData));
+            await CaseAsync(failures, "ProgramData config absent",
+                () => CompareRemoteUrlAsync(repo, Expect.Answered, programDataChild, "origin"));
+            Directory.CreateDirectory(Path.Combine(programData, "Git"));
+            await File.WriteAllTextAsync(Path.Combine(programData, "Git", "config"),
+                "[url \"https://programdata.invalid/\"]\n\tinsteadOf = https://\n");
+            // Older Git for Windows reads it (then it is git's); 2.56 no longer does (then the answer is git's anyway).
+            var programDataRead = await GitInAsync(Path.GetTempPath(), programDataChild, "config", "--get-regexp", "^url\\.");
+            await CaseAsync(failures, "ProgramData config appears, cached view", () => CompareRemoteUrlAsync(repo,
+                programDataRead.Result.ExitCode == 0 ? Expect.Fallback : Expect.Answered, programDataChild, "origin"));
+            File.Delete(Path.Combine(programData, "Git", "config"));
+            await CaseAsync(failures, "ProgramData config gone again",
+                () => CompareRemoteUrlAsync(repo, Expect.Answered, programDataChild, "origin"));
+        }
 
         // A candidate global file that exists but cannot be read: git warns, so it is git's, both for a new view and
         // for one cached while it was readable (its write time is old, so only an open sees the lock), and nothing is

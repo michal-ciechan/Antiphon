@@ -12,7 +12,9 @@ namespace Antiphon.GitInProcess;
 /// changes.
 /// <para>
 /// The view rests on files stamped before and after git lists them: the child's system file (named by
-/// <c>git var GIT_CONFIG_SYSTEM</c> unless the environment names it or turns it off), every global candidate (Git
+/// <c>git var GIT_CONFIG_SYSTEM</c> unless the environment names it or turns it off; a git older than 2.42 has no
+/// such variable, and every read falls back), on Windows <c>%PROGRAMDATA%\Git\config</c> while the system level is
+/// on, every global candidate (Git
 /// for Windows takes HOME, else HOMEDRIVE+HOMEPATH when that directory exists, else USERPROFILE; each candidate's
 /// <c>.gitconfig</c> and <c>.config/git/config</c>, and XDG_CONFIG_HOME's), every file git names as an origin, and
 /// whether each candidate home directory exists. A stamp that differs between the two means the listing may be from
@@ -247,6 +249,14 @@ internal static class GitRemoteConfigView
             if (env("GIT_CONFIG_SYSTEM") is { Length: > 0 } system) files.Add(system);
             else if (LocateSystemFile(env) is { } located) files.Add(located);
             else return null;
+            // Older Git for Windows also reads %PROGRAMDATA%\Git\config at the system level (2.56 no longer does).
+            // Stamp it too, so a file created or edited there after this view is cached is asked of git again;
+            // absent is a stamp like any other.
+            if (OperatingSystem.IsWindows() && env("PROGRAMDATA") is { Length: > 0 } programData)
+            {
+                if (!Path.IsPathFullyQualified(programData)) return null;
+                files.Add(Path.Combine(programData, "Git", "config"));
+            }
         }
         if (env("GIT_CONFIG_GLOBAL") is { Length: > 0 } global) files.Add(global);
         else
