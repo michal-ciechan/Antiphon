@@ -331,15 +331,15 @@ public sealed class CodexCliObservationTests
     public async Task C959_Probe_failure_never_refuses()
     {
         // Each vector builds its own schemas, repositories and worlds, so the vectors run side by side.
-        await Worlds.InParallelAsync(new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" }, e => e,
-            error => NeverRefusesAsync(now => new(null, now, error, new string('a', 64)), 225, error));
+        await Worlds.InParallelAsync(new[] { "timeout", "nonzero_exit", "cleanup_unconfirmed" }
+            .SelectMany(error => NeverRefusesCases(now => new(null, now, error, new string('a', 64)), 225, error)));
     }
 
     [Test]
     public async Task C959_Stale_sample_never_refuses()
     {
-        await Worlds.InParallelAsync(new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) },
-            a => a.ToString(), age => NeverRefusesAsync(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString()));
+        await Worlds.InParallelAsync(new[] { TimeSpan.FromMinutes(15) + TimeSpan.FromTicks(1), TimeSpan.FromMinutes(16) }
+            .SelectMany(age => NeverRefusesCases(now => new("0.160.0", now - age, null, new string('a', 64)), 228, age.ToString())));
     }
 
     [Test]
@@ -353,15 +353,18 @@ public sealed class CodexCliObservationTests
             ("missing-time", _ => new("0.160.0", null, null, new string('a', 64))),
             ("fingerprint", now => new("0.160.0", now, null, "bad")),
             ("clock-skew", now => new("0.160.0", now.AddMinutes(2), null, new string('a', 64))),
-        }, c => c.Name, c => NeverRefusesAsync(c.Sample, 231, c.Name));
+        }.SelectMany(c => NeverRefusesCases(c.Sample, 231, c.Name)));
     }
 
     [Test]
     public async Task C959_Old_version_with_floor_never_refuses()
     {
-        await Worlds.InParallelAsync(new[] { "0.156.1", "0.159.0", "0.159.1-beta.1" }, v => v, async version =>
+        // One flat list of independent cases (each builds its own kits or world), so the per-level dispatches and the
+        // per-busy remote deliveries share the Worlds slots instead of running one after another inside a version.
+        var cases = new List<(string Name, Func<Task> Body)>();
+        foreach (var version in new[] { "0.156.1", "0.159.0", "0.159.1-beta.1" })
         {
-            await NeverRefusesAsync(now => new(version, now, null, new string('a', 64)), 234, version);
+            cases.AddRange(NeverRefusesCases(now => new(version, now, null, new string('a', 64)), 234, version));
             foreach (var (level, exact, expected) in new[] {
                 (AgentModelLevel.Medium, (string?)null, "gpt-6.2-sol"),
                 (AgentModelLevel.Frontier, (string?)null, "gpt-6.2-astra"),
@@ -369,21 +372,25 @@ public sealed class CodexCliObservationTests
                 (AgentModelLevel.High, "gpt-6.1-sol", "gpt-6.1-sol"),
             })
             {
-                await using var dispatch = await DispatchKit.BuildAsync();
-                dispatch.Client.Sample = new(version, DateTimeOffset.UtcNow, null, new string('a',64));
-                AgentTaskCreatedDto? created = null;
-                Exception? failure = null;
-                try { created = await dispatch.CreateAsync(level, exact); await dispatch.TickAsync(); }
-                catch (Exception ex) { failure = ex; }
-                failure.ShouldBeNull($"C959-old-model-selection/{version}/{level}/{exact}");
-                await AssertDeliveryAsync(dispatch, created!.Id, $"C959-old-model-selection/{version}/{level}/{exact}", expected);
-                dispatch.Client.Requests.ShouldBeEmpty("C959-old-model-no-probe");
+                cases.Add(($"model-selection/{version}/{level}/{exact}", async () =>
+                {
+                    await using var dispatch = await DispatchKit.BuildAsync();
+                    dispatch.Client.Sample = new(version, DateTimeOffset.UtcNow, null, new string('a',64));
+                    AgentTaskCreatedDto? created = null;
+                    Exception? failure = null;
+                    try { created = await dispatch.CreateAsync(level, exact); await dispatch.TickAsync(); }
+                    catch (Exception ex) { failure = ex; }
+                    failure.ShouldBeNull($"C959-old-model-selection/{version}/{level}/{exact}");
+                    await AssertDeliveryAsync(dispatch, created!.Id, $"C959-old-model-selection/{version}/{level}/{exact}", expected);
+                    dispatch.Client.Requests.ShouldBeEmpty("C959-old-model-no-probe");
+                }));
                 if (exact is null)
                     foreach (var busy in new[] { false, true })
-                        await CodexCliRemoteDeliveryFixture.RunAsync(Body,
-                            new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a',64)), busy, level);
+                        cases.Add(($"remote/{version}/{level}/busy={busy}", () => CodexCliRemoteDeliveryFixture.RunAsync(Body,
+                            new RunnerCodexCliVersionDto(version, DateTimeOffset.UtcNow, null, new string('a',64)), busy, level)));
             }
-        });
+        }
+        await Worlds.InParallelAsync(cases);
     }
 
     private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
@@ -484,8 +491,16 @@ public sealed class CodexCliObservationTests
         await AssertDeliveryAsync(retry, first.Id, $"C959-pc-194 retry/{vector}");
         retry.Client.Requests.ShouldBeEmpty($"C959-no-probe-after-retry/{vector}");
         await AssertWarmReuseAsync(sample, vector);
+    }
+
+    /// <summary>A never-refuses vector as independent cases: the create, dispatch, retry and warm-reuse legs, and
+    /// one remote delivery per busy state (each builds its own world).</summary>
+    private static IEnumerable<(string Name, Func<Task> Body)> NeverRefusesCases(
+        Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
+    {
+        yield return ($"never-refuses/{vector}", () => NeverRefusesAsync(sample, guard, vector));
         foreach (var busy in new[] { false, true })
-            await CodexCliRemoteDeliveryFixture.RunAsync(Body, sample(DateTimeOffset.UtcNow), busy);
+            yield return ($"remote/{vector}/busy={busy}", () => CodexCliRemoteDeliveryFixture.RunAsync(Body, sample(DateTimeOffset.UtcNow), busy));
     }
 
     private static async Task AssertWarmReuseAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, string vector)
