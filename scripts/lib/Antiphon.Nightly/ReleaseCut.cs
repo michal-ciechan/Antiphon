@@ -344,7 +344,7 @@ namespace Antiphon.Nightly
                     {
                         // The trust policy is read from the candidate's own blob; the approval must name its digest.
                         var policy = TestSelectionGit.Run(checkout, new[] { "cat-file", "blob", result.Sha + ":" + RcTrustedProjectGate.PolicyPath }, new[] { 0, 128 });
-                        admission = RcIncrementalCut.Admit(releaseRoot, result.Sha, policy.Exit == 0 ? policy.Stdout : null, host.Nightly.UtcNow);
+                        admission = RcIncrementalCut.Admit(releaseRoot, result.Sha, policy.Exit == 0 ? policy.Stdout : null, host.Nightly.UtcNow, checkout);
                         result.CoverageScope = admission.Admitted ? "Incremental" : "Full";
                         result.IncrementalReason = admission.Reason;
                         Say(admission.Admitted ? "incremental qualification admitted (qualification-only; Full remains the publication path)."
@@ -389,6 +389,8 @@ namespace Antiphon.Nightly
                 IncrementalBaselineSha = admission?.Admitted == true ? admission.BaselineSha : "",
                 IncrementalInventoryPath = admission?.Admitted == true ? admission.InventoryPath : "",
                 IncrementalInventoryDigest = admission?.Admitted == true ? admission.InventoryDigest : "",
+                IncrementalOwed = admission?.Admitted == true ? new Dictionary<string, string>(admission.Owed, StringComparer.Ordinal) : new Dictionary<string, string>(StringComparer.Ordinal),
+                IncrementalOwedDigest = admission?.Admitted == true ? admission.OwedDigest : "",
             };
             NightlyRunResult run;
             try

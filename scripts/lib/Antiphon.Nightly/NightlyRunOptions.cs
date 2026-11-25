@@ -60,6 +60,10 @@ namespace Antiphon.Nightly
         public string IncrementalBaselineSha { get; set; } = "";
         public string IncrementalInventoryPath { get; set; } = "";
         public string IncrementalInventoryDigest { get; set; } = "";
+
+        /// <summary>CARD-1836 Review r1 D-3: the comparison's later open obligations (content digest, reason) and their digest.</summary>
+        public System.Collections.Generic.Dictionary<string, string> IncrementalOwed { get; set; } = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+        public string IncrementalOwedDigest { get; set; } = "";
         public string Repository { get; set; } = "michal-ciechan/Antiphon";
         public string BaselineSha { get; set; } = "";
         public string BaselineReceiptPath { get; set; } = "";

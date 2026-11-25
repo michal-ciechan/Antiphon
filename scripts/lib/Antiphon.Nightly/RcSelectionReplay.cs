@@ -33,6 +33,9 @@ namespace Antiphon.Nightly
         public const string AlgorithmRevision = "card-1836-replay-r1";
         const string ManifestName = "MANIFEST.sha256";
 
+        /// <summary>The qualification the replay scores: Windows x64 rc runs (a receipt from elsewhere is never a clean outcome).</summary>
+        static readonly RcReceiptScope ReplayScope = new RcReceiptScope { Platform = "windows", Architecture = "x64", Profile = "rc" };
+
         /// <summary>The selector identity: algorithm revision, chunk selection format, project planner hash and content format.</summary>
         public static string SelectorHash => Digest(Encoding.UTF8.GetBytes(AlgorithmRevision + "/" + RcChunkSelectionResult.Format + "/" + RcProjectSelection.PlannerHash + "/" + RcChunkReceipt.ContentFormat));
 
@@ -499,7 +502,7 @@ namespace Antiphon.Nightly
                     if (trx == null) outcome.Outcome = "unknown";
                     else
                     {
-                        var reuse = RcChunkReceipt.Reusable(row, trx, chunk.Cases);
+                        var reuse = RcChunkReceipt.Reusable(row, trx, chunk.Cases, ReplayScope);
                         var failedCase = trx.FirstOrDefault(c => c.Outcome == "Failed" || c.Outcome == "Error");
                         outcome.FailedCase = failedCase?.CaseKey ?? "";
                         if (reuse.Reusable) outcome.Outcome = "clean";

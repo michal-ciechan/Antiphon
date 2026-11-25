@@ -30,6 +30,8 @@ namespace Antiphon.Nightly
         public string BaselineSha { get; set; } = "";
         public string InventoryPath { get; set; } = "";
         public string InventoryDigest { get; set; } = "";
+        public Dictionary<string, string> Owed { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
+        public string OwedDigest { get; set; } = "";
     }
 
     /// <summary>The tests hop's answer: what launched, what carried (with origins), the closed ledger and its scope.</summary>
@@ -59,7 +61,7 @@ namespace Antiphon.Nightly
         public static string IncrementalRoot(string releaseRoot) => Path.Combine(releaseRoot, "incremental");
 
         /// <summary>D-6 admission at the cut hop. Every refusal names why; the caller then runs Full.</summary>
-        public static RcIncrementalAdmission Admit(string releaseRoot, string candidateSha, string candidateTrustPolicy, DateTime nowUtc)
+        public static RcIncrementalAdmission Admit(string releaseRoot, string candidateSha, string candidateTrustPolicy, DateTime nowUtc, string repositoryRoot)
         {
             var dir = IncrementalRoot(releaseRoot);
             RcIncrementalAdmission No(string why) => new RcIncrementalAdmission { Reason = "incremental-not-admitted:" + why };
@@ -122,9 +124,12 @@ namespace Antiphon.Nightly
         /// the owed chunks not launched before, carries the rest from their origin receipts and closes the ledger.
         /// launch returns the executed row (result, exitCode, trx, ...) for a chunk.
         /// </summary>
-        public static RcIncrementalExecution Execute(NightlyRunOptions run, IReadOnlyList<RcPlannedChunk> roster, string attemptDirectory, Func<RcPlannedChunk, IDictionary> launch)
+        public static RcIncrementalExecution Execute(NightlyRunOptions run, IReadOnlyList<RcPlannedChunk> roster, string attemptDirectory, Func<RcPlannedChunk, IDictionary> launch,
+            string platform = null)
         {
             var answer = new RcIncrementalExecution();
+            // The qualification's own scope: a carried receipt must have run on this platform, architecture and profile.
+            var scope = new RcReceiptScope { Platform = platform ?? RcReceiptScope.CurrentPlatform(), Architecture = RcReceiptScope.CurrentArchitecture(), Profile = run.Profile ?? "" };
             var requested = string.Equals(run.RequestedSelectionMode, RequestedMode, StringComparison.Ordinal);
             var bound = !string.IsNullOrEmpty(run.IncrementalInventoryDigest);
             if (bound && (!requested || !string.Equals(run.SelectionMode, "Full", StringComparison.Ordinal)))
@@ -167,7 +172,7 @@ namespace Antiphon.Nightly
                     var chunk = roster.FirstOrDefault(c => c.ContentDigest == PsValue.Str(row["contentDigest"]));
                     var trx = PsValue.Str(row["trx"]);
                     if (trx.Length > 0 && !Path.IsPathRooted(trx)) trx = Path.Combine(trxRoot, trx);
-                    return RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadTrx(trx), chunk?.Cases ?? Array.Empty<string>());
+                    return RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadTrx(trx), chunk?.Cases ?? Array.Empty<string>(), scope);
                 });
                 var sameSource = string.Equals(run.IncrementalBaselineSha, run.ExpectedSha, StringComparison.Ordinal);
                 entries = matches.Select(m => new OrderedDictionary(StringComparer.Ordinal)

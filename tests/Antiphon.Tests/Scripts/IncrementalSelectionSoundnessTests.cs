@@ -663,6 +663,7 @@ internal sealed class ReplayWorld : IDisposable
                     ["id"] = "antiphon", ["chunk"] = id, ["result"] = result == "pass" ? "pass" : "FAIL", ["exitCode"] = result == "pass" ? 0 : 1, ["timedOut"] = false,
                     ["skipped"] = false, ["evidenceReasons"] = Array.Empty<string>(), ["trx"] = "C:\\Antiphon\\releases\\candidates\\c\\logs\\x\\" + trx,
                     ["sha"] = shas[run], ["contentDigest"] = spec.Digest, ["disposition"] = "executed",
+                    ["platform"] = "windows", ["architecture"] = "x64", ["profile"] = "rc",
                 });
             }
             Write(Path.Combine(logs, "groups-planned.json"), new Dictionary<string, object> { ["chunks"] = chunks, ["census"] = Array.Empty<object>() });

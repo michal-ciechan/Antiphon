@@ -46,6 +46,25 @@ namespace Antiphon.Nightly
         public string Outcome { get; set; } = "";
     }
 
+    /// <summary>
+    /// Where a receipt ran and where it may be carried (Review r1 D-3): the OS platform (windows, linux), the OS architecture
+    /// and the qualification profile. A Windows qualification admits only a receipt stamped windows on its own architecture
+    /// and profile; an unstamped row or an unbound scope is never reusable.
+    /// </summary>
+    public sealed class RcReceiptScope
+    {
+        public string Platform { get; set; } = "";
+        public string Architecture { get; set; } = "";
+        public string Profile { get; set; } = "";
+
+        /// <summary>The executing OS as the nightly policy names it: windows, linux, macos or unknown.</summary>
+        public static string CurrentPlatform() =>
+            OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : OperatingSystem.IsMacOS() ? "macos" : "unknown";
+
+        /// <summary>The executing OS architecture, lowercase (x64, arm64).</summary>
+        public static string CurrentArchitecture() => System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant();
+    }
+
     /// <summary>A strict admission answer: Reusable, else the reasons the chunk is owed.</summary>
     public sealed class RcReuse
     {
@@ -188,7 +207,7 @@ namespace Antiphon.Nightly
         /// 0, no timeout or tolerated exit, empty evidenceReasons, and a TRX with a positive executed count, zero failed and
         /// zero skipped/NotExecuted cases, and every required case present and passed. Anything else owes execution.
         /// </summary>
-        public static RcReuse Reusable(IDictionary row, IReadOnlyList<RcTrxCase> trx, IEnumerable<string> requiredCases)
+        public static RcReuse Reusable(IDictionary row, IReadOnlyList<RcTrxCase> trx, IEnumerable<string> requiredCases, RcReceiptScope expected)
         {
             var reasons = new List<string>();
             if (row == null) return new RcReuse { Reasons = new[] { "missing-row" } };
@@ -478,6 +497,42 @@ namespace Antiphon.Nightly
                 if (!clean) choice.Owed[pair.Key] = "later-open:" + pair.Value.Run + ":" + PsValue.Str(row["result"]);
             }
             return choice;
+        }
+
+        public const string ComparisonFormat = "antiphon-rc-comparison-v1";
+
+        /// <summary>The SHA-256 of the owed set (content digest, reason) in ordinal key order; the empty set has a digest too.</summary>
+        public static string OwedDigest(IDictionary<string, string> owed)
+        {
+            var encoder = new UTF8Encoding(false, true);
+            using var buffer = new MemoryStream();
+            var pairs = (owed ?? new Dictionary<string, string>()).OrderBy(p => p.Key, StringComparer.Ordinal).ToArray();
+            RcBoundary.AddString(buffer, ComparisonFormat + "/owed", encoder);
+            RcBoundary.AddU32(buffer, (uint)pairs.Length);
+            foreach (var pair in pairs)
+            {
+                RcBoundary.AddString(buffer, pair.Key ?? "", encoder);
+                RcBoundary.AddString(buffer, pair.Value ?? "", encoder);
+            }
+            return RcChunkReceipt.Hex(SHA256.HashData(buffer.ToArray()));
+        }
+
+        /// <summary>
+        /// Writes comparison.json from an Incremental D-1 choice: the baseline commit, run and sealed inventory, plus every
+        /// later open obligation (owed) and its digest, so the hop executes what a later attempt left open. A Full choice is
+        /// not recorded (no comparison means the cut runs Full).
+        /// </summary>
+        public static void Record(string path, RcComparisonChoice choice, string inventoryPath, string inventoryDigest)
+        {
+            if (choice == null || choice.Mode != "Incremental") throw new NightlyRefusal("comparison-not-incremental");
+            var owed = new SortedDictionary<string, string>(choice.Owed ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+            var document = new OrderedDictionary(StringComparer.Ordinal)
+            {
+                { "format", ComparisonFormat }, { "kind", choice.Kind }, { "sha", choice.Sha }, { "runId", choice.RunId }, { "inventoryPath", inventoryPath ?? "" },
+                { "inventoryDigest", inventoryDigest ?? "" }, { "owed", owed }, { "owedDigest", OwedDigest(owed) },
+            };
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path)));
+            File.WriteAllBytes(path, new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(document)));
         }
     }
 }
