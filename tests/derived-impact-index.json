@@ -146,14 +146,14 @@
       "reason": "cap",
       "owed": 108,
       "first": [
+        "AgentSessionServiceIntegrationTests",
         "AgentTaskStandingAgentDispatchTests",
         "AppHostWorktreeGuardTests",
         "ChannelE2ETests",
         "InterimVerificationPolicyTests",
         "PostLandEarlyWarningTests",
         "RunnerWorkspaceBindingTests",
-        "RunnerWorkspaceServiceTests",
-        "StartRefAvailabilityTests"
+        "RunnerWorkspaceServiceTests"
       ]
     },
     {
@@ -2810,7 +2810,6 @@
     {
       "path": "README.md",
       "classes": [
-        "AgentSessionServiceIntegrationTests",
         "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskLandStageOutcomeTests",
@@ -2819,6 +2818,7 @@
         "AgentTaskServiceIntegrationTests",
         "AgentTaskWorktreeContinuityTests",
         "BoardE2ETests",
+        "C0824WorkspaceSlotRehomeTests",
         "CapacityAdmissionLifecycleTests",
         "CardReviewServiceIntegrationTests",
         "CheckpointTaskScriptTests",
