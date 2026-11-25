@@ -283,10 +283,12 @@ public sealed class BuildSlotClientTests
         Func<TimeSpan, CancellationToken, Task>? renewalDelay = null,
         Func<TimeSpan, CancellationToken, Task>? acquisitionDelay = null)
     {
-        var now = DateTimeOffset.UtcNow;
+        // The admission deadline shares the controlled clock the acquisition delay advances, so a
+        // finite wait expires only on controlled time, never on a loaded host's real time (CARD-2072).
+        var time = new ControlledTimeProvider(DateTimeOffset.UtcNow);
         Task Delay(TimeSpan span, CancellationToken _)
         {
-            now = now.Add(span);
+            time.Advance(span);
             return acquisitionDelay?.Invoke(span, _) ?? Task.CompletedTask;
         }
 
@@ -295,13 +297,13 @@ public sealed class BuildSlotClientTests
             "http://slots.test/build-slots",
             grace,
             wait,
-            () => now,
-            Delay,
+            delay: Delay,
             pid: pid,
             processStartUtc: "2026-09-30T00:00:00.0000000Z",
             holders: holders,
-            renewalDelay: renewalDelay);
-        return (client, now);
+            renewalDelay: renewalDelay,
+            timeProvider: time);
+        return (client, time.GetUtcNow());
     }
 
     private static bool ProcessAlive(int pid)

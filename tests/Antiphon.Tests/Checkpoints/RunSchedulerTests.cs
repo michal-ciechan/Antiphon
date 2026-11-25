@@ -359,14 +359,17 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var root = TempDir();
         foreach (var row in manifest.Checkpoints)
             row.Expect = [];
+        // The 2 s admission deadline runs on the controlled clock the retry delay advances, not on
+        // a loaded host's real time (CARD-2072).
+        var time = new ControlledTimeProvider(DateTimeOffset.UtcNow);
         var client = new BuildSlotClient(
             handler,
             "http://slots.test/build-slots",
             TimeSpan.FromMilliseconds(1),
             TimeSpan.FromSeconds(2),
-            () => DateTimeOffset.UtcNow,
-            (_, _) => Task.CompletedTask,
-            holders: new SlotPids(11, 22, 33));
+            delay: (span, _) => { time.Advance(span); return Task.CompletedTask; },
+            holders: new SlotPids(11, 22, 33),
+            timeProvider: time);
         foreach (var build in manifest.Builds) Directory.CreateDirectory(ProjectWriteRoots.DirectoryOf(Path.GetFullPath(Path.Combine(root, build.Project))));
         var task = new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
         {
