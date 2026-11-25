@@ -25,8 +25,7 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class NightlyNativeOwnershipTests
 {
-    [Test, Timeout(120_000)]
-    public Task C2051_IdleCaptureAndJobTermination(CancellationToken cancellationToken) => RunAsync(nameof(C2051_IdleCaptureAndJobTermination), native =>
+    private static void IdleCaptureAndJobTermination(NativeHarness native, CancellationToken cancellationToken)
     {
         var root = native.NewRoot("idle test host");
         var heartbeat = Path.Combine(root, NightlyChunkIdleMonitor.HeartbeatFile);
@@ -54,7 +53,7 @@ public sealed class NightlyNativeOwnershipTests
         result.HangCapturePath.ShouldBe(capture);
         File.ReadAllText(capture).ShouldContain("root pid=" + result.Pid + " exited=false active=1");
         QualificationHeartbeat.Read(heartbeat).HangSuspected.ShouldBeTrue();
-    }, cancellationToken);
+    }
 
     [Test, Timeout(120_000)]
     public Task C1039_AssignBeforeResume(CancellationToken cancellationToken) => RunAsync(nameof(C1039_AssignBeforeResume), native =>
@@ -125,6 +124,8 @@ public sealed class NightlyNativeOwnershipTests
         native.Assert(ReadMarker(Path.Combine(r.Root, "breakaway-result")).Trim() == "refused", "job forbids breakaway request");
         native.Assert(!File.Exists(Path.Combine(r.Root, "breakaway-child.pid")), "no independently live breakaway descendant");
         native.Complete(r);
+
+        IdleCaptureAndJobTermination(native, cancellationToken);
     }, cancellationToken);
 
     [Test, Timeout(120_000)]
