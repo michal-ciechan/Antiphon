@@ -298,11 +298,12 @@
     {
       "id": "server-repository-mirror",
       "globs": [
-        "scripts/server2-*.ps1",
-        "tests/Antiphon.Tests/Scripts/ServerRepositoryMirrorScriptTests.cs"
+        "scripts/lib/Antiphon.Nightly/ServerRepositoryMirrors.cs",
+        "scripts/lib/Antiphon.Scripts/Server2RepositoryMirrorsCommand.cs",
+        "tests/Antiphon.Tests/Scripts/ServerRepositoryMirrorsTests.cs"
       ],
       "classes": [
-        "ServerRepositoryMirrorScriptTests"
+        "ServerRepositoryMirrorsTests"
       ],
       "windows": "required"
     },

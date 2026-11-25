@@ -312,6 +312,10 @@ namespace Antiphon.Scripts
             // The am-service gateway deploy answers every input itself (unit 50): exit 0 REMOTE DEPLOY VERDICT: ok (the preflight, and
             // with --deploy the approved deploy), 1 failed or refused (the target check before any I/O). Usage is 2.
             [DeployCommands.DeployAmServiceName] = DeployCommands.RunDeployAmService,
+            // The CARD-1776 repository mirrors answer every input themselves (unit 52): exit 0 the plan (the default, --what-if) or the
+            // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
+            // Usage is 2.
+            [Server2RepositoryMirrorsCommand.Name] = Server2RepositoryMirrorsCommand.Run,
         };
 
         public static int Main(string[] args)
@@ -352,7 +356,8 @@ namespace Antiphon.Scripts
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
                 + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
-                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage);
+                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage
+                + " | " + Server2RepositoryMirrorsCommand.Usage);
             return Usage;
         }
 

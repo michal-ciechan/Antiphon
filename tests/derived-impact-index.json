@@ -2243,18 +2243,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 55,
+      "classes": 56,
       "reason": "cap",
-      "owed": 30,
+      "owed": 31,
       "first": [
+        "ClientModeTests",
         "DaemonBuildCheckTests",
         "DesktopPostgresTests",
         "ExpectedDurationSyncTests",
         "ImpactIndexRegenerationTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
-        "NightlyDiscoveryParserTests",
-        "NightlyNativeOwnershipTests"
+        "NightlyDiscoveryParserTests"
       ]
     },
     {
@@ -4326,6 +4326,13 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/ServerRepositoryMirrors.cs",
+      "classes": [
+        "ImpactedClassesSelectorTests",
+        "ServerImagePushCredentialTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/SessionRunnerAutostart.cs",
       "classes": [
         "C1744G3PhoneHomeSupervisionTests",
@@ -4704,13 +4711,6 @@
         "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
         "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "scripts/server2-repository-mirrors.ps1",
-      "classes": [
-        "ImpactedClassesSelectorTests",
-        "ServerImagePushCredentialTests"
       ]
     },
     {
@@ -26113,7 +26113,6 @@
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ClientChecksTests",
-        "ClientModeTests",
         "DaemonSupervisorTests",
         "DeployLocalTests",
         "LandGraphCommandTests",
@@ -26125,7 +26124,8 @@
         "PostgresJitWindowTests",
         "QualificationTimingTests",
         "ReleaseGateLibraryTests",
-        "RunnerRestartOsTests"
+        "RunnerRestartOsTests",
+        "ServerRepositoryMirrorsTests"
       ]
     },
     {
@@ -27384,7 +27384,8 @@
         "CheckpointSourceStateTests",
         "RcDirtyOrderCSharpTests",
         "RunCheckpointSourceScriptTests",
-        "ServerImagePushCredentialTests"
+        "ServerImagePushCredentialTests",
+        "ServerRepositoryMirrorsTests"
       ]
     },
     {

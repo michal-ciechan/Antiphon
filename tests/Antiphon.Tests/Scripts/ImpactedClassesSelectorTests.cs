@@ -407,7 +407,8 @@ public sealed partial class ImpactedClassesSelectorTests
         ("server/Infrastructure/Git/WorktreeManager.cs", "server-git-start-sites", "ServerGitProcessTests", false),
         ("server/Infrastructure/ExternalChanges/ChangeDetectionService.cs", "server-git-start-sites", "ServerGitProcessTests", false),
         ("server/Infrastructure/Git/ServerGitIdentity.cs", "server-image-push-credentials", "ServerImagePushCredentialTests", true),
-        ("scripts/server2-repository-mirrors.ps1", "server-repository-mirror", "ServerRepositoryMirrorScriptTests", true),
+        // The note named scripts/server2-repository-mirrors.ps1; unit 52 of the remaining-ps1 plan made it this command.
+        ("scripts/lib/Antiphon.Nightly/ServerRepositoryMirrors.cs", "server-repository-mirror", "ServerRepositoryMirrorsTests", true),
         ("server/Infrastructure/Agents/SessionRunner/RunnerTerminalSession.cs", "runner-read-poll", "Card1761RunnerReadPollTests", true),
         ("tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs", "task-load-window", "C1514TaskLoadWindowTests", false),
         ("tests/Antiphon.Tests/Application/C0824SlotTransportWorld.cs", "workspace-slot-role-gate", "C0824WorkspaceSlotRoleGateTests", true),
@@ -473,7 +474,7 @@ public sealed partial class ImpactedClassesSelectorTests
     private const string WindowsTestsFilter =
         "/*/*/(AgentSessionServiceIntegrationTests*)|(C0824WorkspaceSlotRoleGateTests*)"
         + "|(Card1761RunnerReadPollTests*)|(LandGraphLandRefreshTests*)|(ServerImagePushCredentialTests*)"
-        + "|(ServerRepositoryMirrorScriptTests*)/*";
+        + "|(ServerRepositoryMirrorsTests*)/*";
 
     // CARD-1820. Linux keeps hand and derived classes that are not windowsOnly.
     private const string WhyMissedTestsFilter =
@@ -508,7 +509,7 @@ public sealed partial class ImpactedClassesSelectorTests
         + "|(ReleasePublishTests*)|(ReleaseSelectionHopSeedTests*)|(ReleaseTagAllocatorTests*)"
         + "|(RunnerStartupStaleObservationTests*)|(RunnerTerminalSessionGenerationTests*)"
         + "|(RunnerTerminalSessionInputEncodingTests*)|(ServerGitProcessTests*)|(ServerImagePushCredentialTests*)"
-        + "|(ServerRepositoryMirrorScriptTests*)|(SessionRuntimeActionRoutingTests*)"
+        + "|(ServerRepositoryMirrorsTests*)|(SessionRuntimeActionRoutingTests*)"
         + "|(SessionTerminationSourcePersistenceTests*)|(SourceRevisionStampContractTests*)"
         + "|(TestFixtureCleanupGuardTests*)|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
         + "|(TestTimingOperationLabelTests*)|(TimeoutAuditTests*)|(VerificationRoundDeliveryTests*)"

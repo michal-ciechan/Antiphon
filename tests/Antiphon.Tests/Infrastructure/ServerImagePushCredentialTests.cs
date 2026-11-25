@@ -22,7 +22,9 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class ServerImagePushCredentialTests
 {
     private const string ComposePath = "docker-compose.server2-land-credential.yml";
-    private const string ScriptPath = "scripts/server2-repository-mirrors.ps1";
+    // Unit 52 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the server2-repository-mirrors command replaced
+    // scripts/server2-repository-mirrors.ps1; ServerRepositoryMirrorsTests runs it in process.
+    private const string MirrorSourcePath = "scripts/lib/Antiphon.Nightly/ServerRepositoryMirrors.cs";
     private const string GitConfigPath = "docker/server/gitconfig";
 
     [Test]
@@ -450,12 +452,12 @@ public sealed class ServerImagePushCredentialTests
     }
 
     [Test]
-    public void Mirror_script_defaults_to_whatif_and_refuses_a_missing_credential()
+    public void Mirror_command_defaults_to_whatif_and_refuses_a_missing_credential()
     {
-        var path = Path.Combine(DockerStackDocuments.RepoRoot, ScriptPath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(DockerStackDocuments.RepoRoot, MirrorSourcePath.Replace('/', Path.DirectorySeparatorChar));
         File.Exists(path).ShouldBeTrue(path);
         var text = File.ReadAllText(path);
-        text.ShouldContain("Default is -WhatIf");
+        text.ShouldContain("Default is --what-if");
         text.ShouldContain("credential-absent");
         text.ShouldContain("remote-unrecorded");
         text.ShouldContain("ambiguous-mode");

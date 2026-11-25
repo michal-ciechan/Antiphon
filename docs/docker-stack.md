@@ -1392,7 +1392,8 @@ same fragment mounts `${RUNNER_GIT_IDENTITY_FILE}` read-only at
 image bakes the credential helper and `docker/server/gitconfig`. The token stays
 in the mounted directory. The identity file stays on the host. Land checkouts
 are `/work/repos/<name>` on the production work volume.
-`scripts/server2-repository-mirrors.ps1` defaults to `-WhatIf`. Cutover rewrites
+The `server2-repository-mirrors` command (`scripts/antiphon server2-repository-mirrors`,
+which replaced `scripts/server2-repository-mirrors.ps1`) defaults to `--what-if`. Cutover rewrites
 `Project.LocalRepositoryPath` from a recorded before column; rollback restores
 that before column. A missing credential mount refuses land with
 `push_credential_absent` before git starts. A configured but unusable identity

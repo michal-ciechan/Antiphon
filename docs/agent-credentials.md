@@ -435,12 +435,14 @@ child also loses the inherited variables that would outrank the file:
 desktop) neither reads the file nor scrubs the environment.
 
 Land checkouts live at `/work/repos/<name>` on the production work volume.
-`scripts/server2-repository-mirrors.ps1` defaults to `-WhatIf` and, with
-`-Execute`, clones or fetches those checkouts read-write. Cutover records every
+`scripts/antiphon server2-repository-mirrors --table-file <table>` (the C#
+command that replaced `scripts/server2-repository-mirrors.ps1`) defaults to
+`--what-if` and, with `--execute`, writes the allow-list and clones or fetches
+those checkouts read-write. Cutover records every
 `Project.LocalRepositoryPath` in a before column and rewrites it to the Linux
 path. Rollback restores the before column. The Antiphon project's
 `gitRepositoryUrl` is empty; its table remote is the desktop checkout's `origin`,
-recorded by the operator before `-Execute`. The script does not print the token
+recorded by the operator before `--execute`. The command does not print the token
 and does not rewrite the database.
 
 Grok's OAuth store on the runner is provisioned once, interactively, inside the persistent container
