@@ -717,6 +717,7 @@ internal static class Worlds
             try { await body(c); }
             catch (Exception ex)
             {
+                span?.SetStatus(System.Diagnostics.ActivityStatusCode.Error, ex.GetType().Name);
                 Console.WriteLine($"WORLD CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
                 failures.Enqueue(new InvalidOperationException("World case " + name + ": " + Cause(ex.Message), ex));
             }

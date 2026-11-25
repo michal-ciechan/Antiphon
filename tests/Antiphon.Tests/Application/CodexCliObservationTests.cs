@@ -393,10 +393,12 @@ public sealed class CodexCliObservationTests
         await Worlds.InParallelAsync(HeavyFirst(cases));
     }
 
-    // The never-refuses legs (two create kits, a cold dispatch with a repository, a retry and a warm reuse) are the
+    // The never-refuses legs (two create kits, a cold dispatch (with a repository in the old-version leg), a retry and a warm reuse) are the
     // longest cases; start them first so none of them starts last and runs on alone. OrderBy is stable.
     private static IEnumerable<(string Name, Func<Task> Body)> HeavyFirst(IEnumerable<(string Name, Func<Task> Body)> cases) =>
-        cases.OrderBy(c => c.Name.StartsWith("never-refuses/", StringComparison.Ordinal) ? 0 : 1);
+        cases.OrderBy(c => c.Name.StartsWith(NeverRefusesPrefix, StringComparison.Ordinal) ? 0 : 1);
+
+    private const string NeverRefusesPrefix = "never-refuses/";
 
     private static async Task NeverRefusesAsync(Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
     {
@@ -503,7 +505,7 @@ public sealed class CodexCliObservationTests
     private static IEnumerable<(string Name, Func<Task> Body)> NeverRefusesCases(
         Func<DateTimeOffset, RunnerCodexCliVersionDto?> sample, int guard, string vector)
     {
-        yield return ($"never-refuses/{vector}", () => NeverRefusesAsync(sample, guard, vector));
+        yield return (NeverRefusesPrefix + vector, () => NeverRefusesAsync(sample, guard, vector));
         foreach (var busy in new[] { false, true })
             yield return ($"remote/{vector}/busy={busy}", () => CodexCliRemoteDeliveryFixture.RunAsync(Body, sample(DateTimeOffset.UtcNow), busy));
     }
