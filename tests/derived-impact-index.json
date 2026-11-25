@@ -1854,9 +1854,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 80,
+      "classes": 81,
       "reason": "cap",
-      "owed": 55,
+      "owed": 56,
       "first": [
         "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeReadAdmissionTests",
@@ -20711,6 +20711,7 @@
     {
       "path": "src/Antiphon.SessionRunner/RunnerWorkspaceRemovalJournal.cs",
       "classes": [
+        "C0824WorkspaceSlotServerTests",
         "C1677RetentionEngineTests",
         "CompletedCardWorkspaceRemovalTests",
         "LegacyWorkspaceRemovalGateTests",
@@ -20856,6 +20857,7 @@
     {
       "path": "src/Antiphon.SessionRunner/RunnerWorkspaceUseGate.cs",
       "classes": [
+        "C0824WorkspaceSlotServerTests",
         "C1677RetentionEngineTests",
         "CompletedCardWorkspaceRemovalTests",
         "HerdrAttachWorkspaceGuardTests",
