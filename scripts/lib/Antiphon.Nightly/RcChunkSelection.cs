@@ -94,16 +94,19 @@ namespace Antiphon.Nightly
             {
                 if (path == IndexPath)
                 {
-                    // An index regeneration is not an all-chunk dirty bit: its changed edges are the positive evidence.
+                    // An index regeneration is not an all-chunk dirty bit: its changed edges (old-only and new-only) are the
+                    // positive evidence, its declared readers run (the census loop below), and a change to any non-edge field
+                    // (cap, allowlist, windowsOnly, linuxOnly, ...) changes what every edge means, so it forces Full.
                     discharged.Add(path);
                     foreach (var cls in ChangedEdgeClasses(old.Edges, @new.Edges)) Hit(chunks, hits, cls, "index-edge-changed:" + cls);
-                    continue;
+                    if (old.Fields != null && @new.Fields != null && !string.Equals(old.Fields, @new.Fields, StringComparison.Ordinal)) fallback.Add("index-fields-changed");
                 }
-                foreach (var (index, side) in new[] { (old, "B"), (@new, "A") })
-                {
-                    if (index.Edges.TryGetValue(path, out var classes))
-                        foreach (var cls in classes) Hit(chunks, hits, cls, "index-edge:" + side + ":" + path);
-                }
+                else
+                    foreach (var (index, side) in new[] { (old, "B"), (@new, "A") })
+                    {
+                        if (index.Edges.TryGetValue(path, out var classes))
+                            foreach (var cls in classes) Hit(chunks, hits, cls, "index-edge:" + side + ":" + path);
+                    }
                 foreach (var entry in census0)
                     foreach (var glob in entry.Globs)
                         if (RcInputInventory.Pattern(glob).IsMatch(path))
@@ -113,7 +116,8 @@ namespace Antiphon.Nightly
                         }
             }
 
-            // Project closures from both graphs; reasons the project planner could not resolve stay Full unless discharged.
+            // Project closures from both graphs; reasons the project planner could not resolve stay Full unless discharged. A
+            // reader-census match only discharges a planner fallback: it never narrows a path's own project closure (Review r1 D-4).
             var projectReasons = Items(project["fallbackReasons"]).Select(PsValue.Str).ToArray();
             foreach (var reason in projectReasons) if (!Discharged(reason, discharged)) fallback.Add(reason);
             var graphFull = projectReasons.Any(r => !Discharged(r, discharged));
@@ -124,7 +128,7 @@ namespace Antiphon.Nightly
             if (!graphFull)
                 foreach (var (path, status) in changes)
                 {
-                    if (discharged.Contains(path)) continue;
+                    if (path == IndexPath) continue;
                     var sides = status == "A" ? new[] { 1 } : status == "D" ? new[] { 0 } : new[] { 0, 1 };
                     foreach (var side in sides)
                         foreach (IDictionary p in Items(graphs[side]["projects"]))
@@ -190,6 +194,8 @@ namespace Antiphon.Nightly
             public RcIndexBinding Binding;
             public Dictionary<string, string[]> Edges = new Dictionary<string, string[]>(StringComparer.Ordinal);
             public HashSet<string> Capped = new HashSet<string>(StringComparer.Ordinal);
+            /// <summary>The canonical text of every field other than edges and cappedPaths (null when unbound or malformed).</summary>
+            public string Fields;
         }
 
         static Index ReadIndex(string root, string sha, string side, List<string> fallback)
@@ -208,16 +214,26 @@ namespace Antiphon.Nightly
             try
             {
                 using var doc = JsonDocument.Parse(text);
-                if (doc.RootElement.TryGetProperty("edges", out var edges) && edges.ValueKind == JsonValueKind.Array)
-                    foreach (var edge in edges.EnumerateArray())
-                        index.Edges[edge.GetProperty("path").GetString() ?? ""] = edge.GetProperty("classes").EnumerateArray().Select(c => c.GetString() ?? "").ToArray();
-                if (doc.RootElement.TryGetProperty("cappedPaths", out var capped) && capped.ValueKind == JsonValueKind.Array)
-                    foreach (var row in capped.EnumerateArray())
-                        index.Capped.Add(row.ValueKind == JsonValueKind.String ? row.GetString() : row.GetProperty("path").GetString());
+                var body = doc.RootElement;
+                // Review r1 D-4: only schema 1 with both arrays is understood; anything else is malformed and forces Full.
+                if (body.ValueKind != JsonValueKind.Object || !body.TryGetProperty("schema", out var schema) || schema.ValueKind != JsonValueKind.Number
+                    || !schema.TryGetInt32(out var version) || version != 1 || !body.TryGetProperty("edges", out var edges) || edges.ValueKind != JsonValueKind.Array
+                    || !body.TryGetProperty("cappedPaths", out var capped) || capped.ValueKind != JsonValueKind.Array)
+                {
+                    fallback.Add("index-malformed:" + side);
+                    return new Index { Binding = index.Binding };
+                }
+                foreach (var edge in edges.EnumerateArray())
+                    index.Edges[edge.GetProperty("path").GetString() ?? ""] = edge.GetProperty("classes").EnumerateArray().Select(c => c.GetString() ?? "").ToArray();
+                foreach (var row in capped.EnumerateArray())
+                    index.Capped.Add(row.ValueKind == JsonValueKind.String ? row.GetString() : row.GetProperty("path").GetString());
+                index.Fields = string.Join("\n", body.EnumerateObject().Where(p => p.Name != "edges" && p.Name != "cappedPaths")
+                    .OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => p.Name + "=" + p.Value.GetRawText()));
             }
             catch (Exception e) when (e is JsonException || e is KeyNotFoundException || e is InvalidOperationException)
             {
                 fallback.Add("index-malformed:" + side);
+                return new Index { Binding = index.Binding };
             }
             return index;
         }

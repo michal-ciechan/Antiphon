@@ -30,7 +30,7 @@ namespace Antiphon.Nightly
         public const string Name = "replay-rc-selection";
         public const string Usage = "replay-rc-selection --input-root <dir> --output <new-dir> --as-of <yyyy-MM-ddTHH:mm:ssZ> [--repository-root <git>]";
         public const string VerdictFormat = "antiphon-rc-replay-verdict-v1";
-        public const string AlgorithmRevision = "card-1836-replay-r1";
+        public const string AlgorithmRevision = "card-1836-replay-r2";
         const string ManifestName = "MANIFEST.sha256";
 
         /// <summary>The qualification the replay scores: Windows x64 rc runs (a receipt from elsewhere is never a clean outcome).</summary>
