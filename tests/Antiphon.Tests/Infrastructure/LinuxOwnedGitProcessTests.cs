@@ -391,6 +391,48 @@ public sealed class LinuxOwnedGitProcessTests
     }
 
     [Test]
+    public async Task Known_unreadable_child_prevents_empty_after_root_exit()
+    {
+        var io = new FakeProc
+        {
+            Entries = ["100", "40", "101"],
+            Stat = pid => new(pid, pid == 100 ? 40 : 1, pid, 'S'),
+            EnvironmentRead = _ => throw new UnauthorizedAccessException(),
+            DisjointUserIds = _ => true,
+            OnSignal = pid =>
+            {
+                if (pid == 100) throw new UnauthorizedAccessException();
+            }
+        };
+        var root = new OwnedGitRoot(40, null, 40);
+        using var members = Census(io);
+
+        (await members.SignalAsync(root, Deadline(), default)).ShouldBe(2);
+        io.Signals.ShouldBe([100, 40]);
+
+        // The root is gone, but the denied child has the same PID and start ticks.
+        io.Entries = ["100", "101"];
+        io.Stat = pid => pid == 40 ? null : new(pid, 1, pid, 'S');
+        var reparented = await members.ProbeAsync(root, Deadline(), default);
+        reparented.State.ShouldBe(OwnedGitMembershipState.Live);
+        reparented.Survivors.ShouldBe(1);
+        (await members.SignalAsync(root, Deadline(), default)).ShouldBe(0);
+
+        // An omitted entry or an unreadable stat is not proof of death.
+        io.Entries = ["101"];
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Live);
+        io.Stat = pid => pid == 100 ? throw new UnauthorizedAccessException() : new(pid, 1, pid, 'S');
+        (await members.ProbeAsync(root, Deadline(), default)).State.ShouldBe(OwnedGitMembershipState.Unknown);
+
+        // The PID now belongs to an unrelated foreign-UID process, like PID 101 throughout.
+        io.Entries = ["100", "101"];
+        io.Stat = pid => new(pid, 1, 1000 + pid, 'S');
+        var replaced = await members.ProbeAsync(root, Deadline(), default);
+        replaced.State.ShouldBe(OwnedGitMembershipState.Empty);
+        replaced.Survivors.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Ancestry_backstop_revalidates_unmarked_children_and_every_parent()
     {
         var io = new FakeProc { Entries = ["100", "101"], EnvironmentBytes = [] };
@@ -441,6 +483,7 @@ public sealed class LinuxOwnedGitProcessTests
         internal Func<int, LinuxProcIdentity?> Stat = pid => new(pid, 1, 100, 'S');
         internal Func<int, bool> DisjointUserIds = _ => false;
         internal Func<int, byte[]>? EnvironmentRead;
+        internal Action<int>? OnSignal;
         internal readonly List<int> Signals = [];
         public bool HidesProcesses() => Hidden;
         public IEnumerable<string> EnumerateEntries() => ListFailure ? throw new IOException() : Entries;
@@ -448,7 +491,12 @@ public sealed class LinuxOwnedGitProcessTests
         public bool HasDisjointUserIds(int pid) => DisjointUserIds(pid);
         public ValueTask<byte[]> ReadEnvironmentAsync(int pid, CancellationToken token) =>
             ValueTask.FromResult(EnvironmentRead?.Invoke(++EnvironmentReads) ?? EnvironmentBytes);
-        public ValueTask SignalAsync(int pid, CancellationToken token) { Signals.Add(pid); return ValueTask.CompletedTask; }
+        public ValueTask SignalAsync(int pid, CancellationToken token)
+        {
+            Signals.Add(pid);
+            OnSignal?.Invoke(pid);
+            return ValueTask.CompletedTask;
+        }
     }
     private sealed class LateForkOperations(OwnedProcessContainmentFixture fixture) : ILinuxProcOperations
     {
