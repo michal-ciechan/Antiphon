@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
@@ -12,6 +13,8 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -175,5 +178,70 @@ public class CallerWakeTests
         rig.Caller.SubmittedBodies.ShouldBeEmpty();
         (await rig.RowAsync(taskId)).Status.ShouldBe(QueuedMessageStatus.Pending);
         (await rig.NotificationAsync(taskId))!.ConfirmingPromptSequence.ShouldBeNull();
+    }
+
+    [Test]
+    public async Task Ordinary_report_needs_a_settlement_receipt_after_queue_retention()
+    {
+        await using var rig = await C544DeliveryRig.CreateAsync(busy: false, postEvidenceSettleMs: 0);
+        var caller = rig.World.CallerSessionId;
+        var id = Guid.NewGuid();
+        var now = rig.World.Clock.GetUtcNow().UtcDateTime;
+        const string first = "The first report is waiting for a review.";
+        await using var db = rig.World.CreateContext();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = id, RootTaskId = id, Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Debug,
+            Title = "Ordinary report", Goal = "Debug", WorkingDirectory = rig.World.CallerDirectory,
+            Status = AgentTaskStatus.Blocked, Result = first, ReplyTo = AgentTaskReplyTo.Session,
+            ParentSessionId = caller, CreatedAt = now.AddDays(-3), CompletedAt = now.AddDays(-2),
+        });
+        await db.SaveChangesAsync();
+        Task<bool> Owed() => CallerWakeService.OwedReports(db, rig.World.Clock.GetUtcNow().UtcDateTime, caller)
+            .AnyAsync(t => t.Id == id);
+        (await Owed()).ShouldBeTrue("enqueue recovery has not run");
+
+        // A pre-upgrade queue entry can be Sent/Delivered with only a screen advance.
+        var message = new SessionQueuedMessage
+        {
+            Id = Guid.NewGuid(), AgentSessionId = caller, Sequence = 1, SourceTaskId = id,
+            ConversationKey = $"task:{id:N}", Origin = QueuedMessageOrigin.Delegation,
+            Body = first, ContentDigest = DelegationNoteDigest.Compute(first),
+            CreatedAt = now.AddDays(-2).AddMinutes(1), Status = QueuedMessageStatus.Sent,
+            SentAt = now.AddDays(-2).AddMinutes(2), DeliveryVerdict = DeliveryVerdict.Delivered,
+        };
+        db.Add(message);
+        await db.SaveChangesAsync();
+        (await Owed()).ShouldBeTrue("a screen verdict cannot close an ordinary completion");
+        var audit = Options.Create(new AuditSettings());
+        var retention = new DataRetentionService(db,
+            Options.Create(new RetentionSettings { QueuedMessageRetentionDays = 1 }),
+            audit, rig.World.Clock, NullLogger<DataRetentionService>.Instance,
+            new AuditService(db, audit));
+        (await retention.PruneQueuedMessagesAsync(default)).ShouldBe(1);
+        (await Owed()).ShouldBeTrue("the enqueue stamp survived retention, the caller still owes a read");
+
+        var service = rig.World.Services.GetRequiredService<AgentTaskService>();
+        await service.GetAsync(id, default, Guid.NewGuid());
+        (await Owed()).ShouldBeTrue();
+        await service.GetAsync(id, default, caller);
+        (await Owed()).ShouldBeFalse();
+
+        rig.World.Clock.Advance(TimeSpan.FromMinutes(20));
+        var settled = rig.World.Clock.GetUtcNow().UtcDateTime;
+        const string second = "The second settlement completed the repair.";
+        await db.AgentTasks.Where(t => t.Id == id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(t => t.Status, AgentTaskStatus.Succeeded)
+            .SetProperty(t => t.Result, second)
+            .SetProperty(t => t.CompletedAt, settled));
+        (await Owed()).ShouldBeTrue("the prior settlement's parent read cannot close the new report");
+        await rig.Queue.EnqueueAsync(caller, second, MessageSendMode.WhenIdle, default,
+            QueuedMessageOrigin.Delegation, $"task:{id:N}", id, DelegationNoteDigest.Compute(second));
+        await rig.FlushAsync();
+        (await rig.CallerPromptsAsync()).ShouldContain(p => p.Text != null && p.Text.Contains(second));
+        (await Owed()).ShouldBeFalse("the complete submitted prompt closes this settlement");
+        rig.World.Clock.Advance(TimeSpan.FromDays(2));
+        (await retention.PruneQueuedMessagesAsync(default)).ShouldBeGreaterThan(0);
+        (await Owed()).ShouldBeFalse("the receipt outlives its queue row");
     }
 }
