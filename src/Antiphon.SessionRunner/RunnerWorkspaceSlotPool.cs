@@ -400,14 +400,27 @@ public sealed class RunnerWorkspaceSlotPool
     /// </summary>
     private async Task<PhoneHomeWorkspaceSlotReleaseResponse> SettleAsync(string slotId, bool allowDefer, CancellationToken ct)
     {
-        var slot = await MutateAsync(state =>
+        var (slot, alreadyQuarantined) = await MutateAsync(state =>
         {
             var record = state.Slot(slotId)!;
+            var resumingQuarantine = record.State == WorkspaceSlotStates.Releasing
+                && state.QuarantinedDirectories.Any(entry => entry.IsOpen && entry.SlotId == record.Id
+                    && entry.Path == record.Path && entry.DirectoryGeneration == record.DirectoryGeneration
+                    && entry.TaskId == record.TaskId
+                    && (entry.SettledLeaseGeneration is null || entry.SettledLeaseGeneration == record.LeaseGeneration));
             record.State = WorkspaceSlotStates.Releasing;
-            return Clone(record);
+            return (Clone(record), resumingQuarantine);
         });
         PhaseCut?.Invoke("releasing");
         var quarantined = new PhoneHomeWorkspaceSlotReleaseResponse("quarantined", slot.Id, slot.LeaseGeneration);
+
+        // Older ledgers could record the quarantine before recording the re-home transition.
+        // Complete that transition before settlement can reset the already-quarantined directory.
+        if (alreadyQuarantined)
+        {
+            await RehomeQuarantinedSlotAsync(slot.Id, quarantine: null, ct);
+            return quarantined;
+        }
 
         // D-1: a directory that is not provably this slot's own worktree is quarantined before any git runs in it.
         if (ProveOwnership(slot).Failure is { } broken)
@@ -944,10 +957,16 @@ public sealed class RunnerWorkspaceSlotPool
     private async Task QuarantineAndRehomeAsync(WorkspaceSlotRecord slot, string cls, string reason, string error, CancellationToken ct)
     {
         var quarantine = await PrepareQuarantineAsync(slot, cls, reason, error, ct);
+        await RehomeQuarantinedSlotAsync(slot.Id, quarantine, ct);
+    }
+
+    private async Task RehomeQuarantinedSlotAsync(string slotId, QuarantinedDirectoryRecord? quarantine, CancellationToken ct)
+    {
         var retired = await MutateAsync(state =>
         {
-            RecordQuarantine(state, quarantine);
-            var record = state.Slot(slot.Id)!;
+            if (quarantine is not null)
+                RecordQuarantine(state, quarantine);
+            var record = state.Slot(slotId)!;
             var now = _clock.GetUtcNow();
             record.Rehomes.RemoveAll(at => at < now - TimeSpan.FromHours(24));
             record.Rehomes.Add(now);
@@ -966,7 +985,7 @@ public sealed class RunnerWorkspaceSlotPool
         });
         PhaseCut?.Invoke("quarantine-recorded");
         if (!retired)
-            await RehomeAsync(slot.Id, ct);
+            await RehomeAsync(slotId, ct);
     }
 
     private async Task<QuarantinedDirectoryRecord> PrepareQuarantineAsync(
