@@ -26204,6 +26204,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/QualificationHeartbeatTests.cs",
       "classes": [
+        "QualificationSupervisorTests",
         "RcFullWatchdogHarnessTests"
       ]
     },
