@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -42,6 +43,23 @@ public sealed class IncrementalSelectionSoundnessTests
         _ = LoadCorpus(RepoRoot());
         cancellationToken.ThrowIfCancellationRequested();
         RcInputOwnersMapTests.HistoricalSelectionSoundness();
+    }
+
+    [Test]
+    public void Owner_globs_match_paths_with_repeated_directory_names()
+    {
+        var pattern = "tests/" + string.Concat(Enumerable.Repeat("**/part/", 16));
+        var path = "tests/" + string.Concat(Enumerable.Repeat("part/", 34));
+        var owner = RcInputInventory.Pattern(pattern + "marker/Final.cs");
+
+        owner.IsMatch(path + "changed/Final.cs").ShouldBeFalse();
+        owner.IsMatch(path + "marker/Final.cs").ShouldBeTrue();
+
+        var longPrefix = new string('x', 2046);
+        RcInputInventory.Pattern(longPrefix + "?*").IsMatch(longPrefix + "z").ShouldBeTrue();
+        RcInputInventory.Pattern("**/NuGet.config", ignoreCase: true).IsMatch("nested/nuget.CONFIG").ShouldBeTrue();
+        RcInputInventory.Pattern("src/**/a?*.cs").IsMatch("src/ab.cs").ShouldBeTrue();
+        RcInputInventory.Pattern("src/**/a?*.cs").IsMatch("src/dir/a/b.cs").ShouldBeFalse();
     }
 
     [Test, Timeout(60_000)]
