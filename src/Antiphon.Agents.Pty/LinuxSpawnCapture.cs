@@ -64,7 +64,7 @@ internal static class LinuxSpawnCapture
     {
         using var stream = File.OpenRead(path);
         var bytes = new byte[bound];
-        var count = stream.ReadAtLeast(bytes, bound, throwIfEndOfStream: false);
+        var count = stream.ReadAtLeast(bytes, bound, false);
         return count < bound && bytes.AsSpan(0, count).IndexOf((byte)0) < 0
             ? Encoding.ASCII.GetString(bytes, 0, count)
             : null;

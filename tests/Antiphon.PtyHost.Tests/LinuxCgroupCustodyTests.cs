@@ -165,7 +165,8 @@ public class LinuxCgroupCustodyTests
         var held = new TaskCompletionSource<(int Pid, int Parent, Guid Boot, ulong Ticks)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var go = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        world.Host.Session.BeforeLinuxPlacementGoForTests = async (pid, parent, boot, ticks, ct) =>
+        HostSession originalHost = world.Host.Session;
+        originalHost.BeforeLinuxPlacementGoForTests = async (pid, parent, boot, ticks, ct) =>
         {
             held.SetResult((pid, parent, boot, ticks));
             await go.Task.WaitAsync(ct);
@@ -213,7 +214,7 @@ public class LinuxCgroupCustodyTests
         {
             go.TrySetResult();
             await launch;
-            world.Host.Session.BeforeLinuxPlacementGoForTests = null;
+            originalHost.BeforeLinuxPlacementGoForTests = null;
         }
 
         using var payloadTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -693,7 +694,7 @@ public class LinuxCgroupCustodyTests
         return int.Parse(line[(key.Length + 1)..].Trim());
     }
 
-    private static IEnumerable<int[]> ActiveHierarchyMembers(Guid containerId)
+    private static IEnumerable<int[]> ActiveHierarchyMembers(Guid containerId, bool allowMissing = false)
     {
         var id = containerId.ToString("D");
         var roots = File.Exists("/sys/fs/cgroup/cgroup.controllers")
@@ -706,6 +707,11 @@ public class LinuxCgroupCustodyTests
         foreach (var root in roots)
         {
             var procs = Path.Combine(root, CurrentNamespace(), id, "tree", "cgroup.procs");
+            if (allowMissing && !File.Exists(procs))
+            {
+                yield return [];
+                continue;
+            }
             yield return File.ReadAllLines(procs)
                 .Where(line => line.Length != 0)
                 .Select(int.Parse)
@@ -759,7 +765,8 @@ public class LinuxCgroupCustodyTests
         // deleted) and opens a successor store at that root invalidates this binding; cleanup must
         // still find and drain the tree it owns instead of re-reading through the dead identity.
         private Guid? TrackedContainerId => _trackedContainerId
-            ??= Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId;
+            ??= Store.ReadRecord<CustodyRoot>(Binding, "tracking.json")?.ContainerId
+                ?? Store.ReadRecord<VerificationHostIdentity>(Binding, "host-identity.json")?.ContainerId;
 
         public IPtyCustodyContainment Containment => new LinuxCgroupContainment(
             TrackedContainerId ?? throw new InvalidOperationException("The host has not recorded tracking.json."));
@@ -811,6 +818,9 @@ public class LinuxCgroupCustodyTests
         public async Task<LaunchedMessage> LaunchAsync(params string[] lines)
         {
             var reply = await Host.Session.LaunchAsync(Spec(Binding, lines), CancellationToken.None);
+            // A failed reply can still leave a tracked native attempt to join.
+            RootPid = Host.Session.GetStatus().ChildPid ?? 0;
+            _ = TrackedContainerId;
             var launched = reply.ShouldBeOfType<LaunchedMessage>();
             RootPid = launched.ChildPid;
             return launched;
@@ -905,18 +915,15 @@ public class LinuxCgroupCustodyTests
 
         private async Task<bool> WaitUntilGoneAsync(TimeSpan bound)
         {
-            if (RootPid <= 0)
+            var container = TrackedContainerId;
+            if (RootPid <= 0 && container is null)
                 return true;
             var deadline = DateTime.UtcNow + bound;
             while (DateTime.UtcNow < deadline)
             {
-                var rootGone = !Directory.Exists("/proc/" + RootPid);
-                var treeEmpty = true;
-                if (TrackedContainerId is not null)
-                {
-                    var pids = await ReadTreeAsync();
-                    treeEmpty = pids.Count == 0;
-                }
+                var rootGone = RootPid <= 0 || !Directory.Exists("/proc/" + RootPid);
+                var treeEmpty = container is null || ActiveHierarchyMembers(container.Value, allowMissing: true)
+                    .All(members => members.Length == 0);
 
                 if (rootGone && treeEmpty)
                     return true;
