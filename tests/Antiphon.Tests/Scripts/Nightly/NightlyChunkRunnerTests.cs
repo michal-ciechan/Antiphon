@@ -127,6 +127,27 @@ public sealed class NightlyChunkRunnerTests
         rows.Check(Only(foreign, "platform:linux") && Only(unstampedReuse, "platform-absent") && Only(unbound, "scope-unbound"), "s1-foreign-platform",
             string.Join(",", foreign.Reasons) + " | " + string.Join(",", unstampedReuse.Reasons) + " | " + string.Join(",", unbound.Reasons));
 
+        // Review r2 D-7 (N1-N3): the architecture and profile stamps bind as tightly as the platform; each alone refuses reuse.
+        RcReuse Stamped(string name, string field, string? value)
+        {
+            var stamped = Row(name.ToUpperInvariant(), "pass", 0, a, dY);
+            if (value == null) stamped.Remove(field);
+            else stamped[field] = value;
+            return Alone(name, stamped);
+        }
+        var archAbsent = Stamped("aa", "architecture", null);
+        var archEmpty = Stamped("ae", "architecture", "");
+        rows.Check(Only(archAbsent, "architecture-absent") && Only(archEmpty, "architecture-absent"), "s1-architecture-absent",
+            string.Join(",", archAbsent.Reasons) + " | " + string.Join(",", archEmpty.Reasons));
+        var archForeign = Stamped("am", "architecture", "arm64");
+        rows.Check(Only(archForeign, "architecture:arm64"), "s1-architecture-mismatch", string.Join(",", archForeign.Reasons));
+        var profileAbsent = Stamped("pa", "profile", null);
+        var profileEmpty = Stamped("pe", "profile", "");
+        rows.Check(Only(profileAbsent, "profile-absent") && Only(profileEmpty, "profile-absent"), "s1-profile-absent",
+            string.Join(",", profileAbsent.Reasons) + " | " + string.Join(",", profileEmpty.Reasons));
+        var profileForeign = Stamped("pm", "profile", "nightly");
+        rows.Check(Only(profileForeign, "profile:nightly"), "s1-profile-mismatch", string.Join(",", profileForeign.Reasons));
+
         var missing = RcChunkReceipt.Missing("antiphon", "M", dY, a);
         var missingReuse = RcChunkReceipt.Reusable(missing, RcChunkReceipt.ReadTrx(Trx("m", ("y1", "Passed"))), ["y1"], scope);
         rows.Check(PsValue.Str(missing["disposition"]) == "missing" && missing["sha"] == null && !missingReuse.Reusable && missingReuse.Reasons.Contains("missing-row"),
@@ -206,10 +227,10 @@ public sealed class NightlyChunkRunnerTests
         rows.Check(movedChoice.Mode == "Full" && movedChoice.Reasons.Contains("moved-ref:run-1") && conflicting.Mode == "Full" && conflicting.Reasons.Contains("conflicting-receipts:run-1"),
             "s1-moved-ref-full", string.Join(",", movedChoice.Reasons.Concat(conflicting.Reasons)));
 
-        rows.ShouldAllPass(22, "s1-row-sha", "s1-green-sibling-of-failed", "s1-skip-under-pass", "s1-tolerated-exit", "s1-missing-row", "s1-renumber", "s1-split",
+        rows.ShouldAllPass(26, "s1-row-sha", "s1-green-sibling-of-failed", "s1-skip-under-pass", "s1-tolerated-exit", "s1-missing-row", "s1-renumber", "s1-split",
             "s1-carried-origin", "s1-legacy-unproven", "s1-case-count", "s1-duplicate-or-torn", "s1-baseline-sealed-rc", "s1-later-fail-stays-open", "s1-moved-ref-full",
             "s1-row-skipped", "s1-timed-out", "s1-evidence-reasons", "s1-nonzero-exit-pass-label", "s1-coverage-incomplete", "s1-freshness-detail", "s1-no-case-roster",
-            "s1-foreign-platform");
+            "s1-foreign-platform", "s1-architecture-absent", "s1-architecture-mismatch", "s1-profile-absent", "s1-profile-mismatch");
     }
 
     /// <summary>Content digest v1 as the plan defines it, computed here independently: tag, suite, kind, count, then ordinal-sorted members.</summary>
