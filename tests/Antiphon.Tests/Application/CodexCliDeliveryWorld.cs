@@ -77,7 +77,7 @@ internal static partial class CodexCliRemoteDeliveryFixture
             {
                 StoreIdPath = storePath,
                 AllowedCwd = Root, RunnerRepository = Path.Combine(Root, "repo"),
-                RunnerCloneSource = Git.BareOrigin ?? (await Git.GitReadAsync("remote", "get-url", "origin")).Trim(),
+                RunnerCloneSource = Git.BareOrigin!,
                 CapacityStatePath = Path.Combine(Root, "capacity"),
                 LaunchGenerationsPath = Path.Combine(Root, "generations"),
             }, new SignedInProbe());

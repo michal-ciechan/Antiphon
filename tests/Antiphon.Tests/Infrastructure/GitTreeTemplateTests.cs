@@ -175,6 +175,30 @@ public sealed class GitTreeTemplateTests
                 .Order(StringComparer.Ordinal).ToList();
     }
 
+    [Test]
+    public async Task ScratchGitRepo_seeded_copy_is_the_repository_the_git_steps_make()
+    {
+        const string file = "seed.txt", content = "C959 seeded origin\n";
+        using var copied = await ScratchGitRepo.CreateSeededWithOriginAsync("antiphon-seeded-tpl", file, content, useTemplate: true);
+        using var stepped = await ScratchGitRepo.CreateSeededWithOriginAsync("antiphon-seeded-git", file, content, useTemplate: false);
+        copied.Path.ShouldContain("antiphon-seeded-tpl-seeded-", Case.Sensitive, "the template path must have been taken");
+
+        (await copied.GitReadAsync("rev-parse", "HEAD")).ShouldBe(await stepped.GitReadAsync("rev-parse", "HEAD"));
+        (await copied.GitReadAsync("ls-files", "-s")).ShouldBe(await stepped.GitReadAsync("ls-files", "-s"));
+        (await File.ReadAllTextAsync(Path.Combine(copied.Path, file))).ShouldBe(content);
+        (await File.ReadAllTextAsync(Path.Combine(stepped.Path, file))).ShouldBe(content);
+        foreach (var repo in new[] { copied, stepped })
+        {
+            repo.BareOrigin.ShouldNotBeNull();
+            (await repo.GitReadAsync("config", "--get", "remote.origin.url")).Trim().ShouldBe(repo.BareOrigin);
+            (await repo.GitReadAsync("status", "--porcelain", "--untracked-files=all")).ShouldBeEmpty();
+        }
+        copied.BareOrigin.ShouldNotBe(stepped.BareOrigin);
+        var head = (await stepped.GitReadAsync("rev-parse", "HEAD")).Trim();
+        (await copied.GitReadAsync("ls-remote", "origin", "refs/heads/master")).ShouldBe($"{head}\trefs/heads/master\n");
+        (await stepped.GitReadAsync("ls-remote", "origin", "refs/heads/master")).ShouldBe($"{head}\trefs/heads/master\n");
+    }
+
     private static Dictionary<string, string> Tokens(Guid taskId) => new() { ["task"] = taskId.ToString("N") };
 
     private static async Task AssertEquivalentAsync(LandingGitFixture fresh, LandingGitFixture cloned)

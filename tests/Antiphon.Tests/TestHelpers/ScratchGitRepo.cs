@@ -41,50 +41,98 @@ public sealed class ScratchGitRepo : IDisposable
     /// The same repository as <c>new ScratchGitRepo(prefix)</c> followed by
     /// <see cref="CommitFileAsync"/>(<paramref name="relativePath"/>, <paramref name="content"/>) and
     /// <see cref="AddBareOriginAsync"/>: one commit on master, pushed with <c>-u</c> to a bare origin with
-    /// <c>receive.autogc=false</c>. It is copied from a <see cref="GitTreeTemplate"/> built once per process (per file
-    /// and content) by those same steps, which saves their seven git processes per repository. The copy has the
-    /// template's commit id (same author, committer, times and message), and its origin remote names the copy's own
-    /// bare origin (the template rewrites its root path). The repository is <c>&lt;temp&gt;/&lt;prefix&gt;-seeded-*/repo</c>
-    /// with the origin beside it at <c>origin</c>. <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c>, or a template that cannot be
-    /// built or cloned, runs the git steps for this repository instead.
+    /// <c>receive.autogc=false</c>. The seed commit has fixed author and committer dates (<see cref="SeedDate"/>), so
+    /// its id depends only on the file and content. The repository is copied from a <see cref="GitTreeTemplate"/>
+    /// built once per process (per file and content) by those same steps, which saves their seven git processes per
+    /// repository; the copy has the template's commit id, and its origin remote names the copy's own bare origin (the
+    /// template rewrites its root path; the copy's <c>remote.origin.url</c> is checked against
+    /// <see cref="BareOrigin"/>). The repository is <c>&lt;temp&gt;/&lt;prefix&gt;-seeded-*/repo</c> with the origin
+    /// beside it at <c>origin</c>. <c>ANTIPHON_TEST_GIT_TEMPLATE=off</c>, or any failure to build, copy or check the
+    /// template (a build or check failure is remembered for the rest of the process), runs the git steps for this
+    /// repository instead.
     /// </summary>
-    public static async Task<ScratchGitRepo> CreateSeededWithOriginAsync(string prefix, string relativePath, string content)
+    public static Task<ScratchGitRepo> CreateSeededWithOriginAsync(string prefix, string relativePath, string content) =>
+        CreateSeededWithOriginAsync(prefix, relativePath, content, GitTreeTemplate.Enabled);
+
+    /// <summary>The seed commit's author and committer date, the same with or without a template.</summary>
+    internal const string SeedDate = "2026-01-01T00:00:00+00:00";
+
+    private static readonly Dictionary<string, string> SeedDateEnv = new(StringComparer.Ordinal)
     {
-        if (GitTreeTemplate.Enabled)
+        ["GIT_AUTHOR_DATE"] = SeedDate,
+        ["GIT_COMMITTER_DATE"] = SeedDate,
+    };
+
+    // Seeded-template keys whose build or copy check failed: later repositories go straight to the git steps.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> SeededTemplateFailed =
+        new(StringComparer.Ordinal);
+
+    /// <summary><see cref="CreateSeededWithOriginAsync(string,string,string)"/> with the template switch explicit
+    /// (a test compares both paths in one process).</summary>
+    internal static async Task<ScratchGitRepo> CreateSeededWithOriginAsync(string prefix, string relativePath, string content,
+        bool useTemplate)
+    {
+        // A hash of both parts joined by NUL, so no two (file, content) pairs share a key.
+        var key = "scratch-git-repo-seeded-origin|" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(relativePath + "\0" + content)));
+        if (useTemplate && !SeededTemplateFailed.ContainsKey(key))
         {
-            string? cloneRoot = null;
+            GitTreeTemplate? template = null;
+            string? builtRoot = null;
             try
             {
-                var template = await GitTreeTemplate.BuildOnceAsync($"scratch-git-repo-seeded-origin|{relativePath}|{content}", [],
-                    async (root, _) =>
-                    {
-                        var repo = System.IO.Path.Combine(root, "repo");
-                        var origin = System.IO.Path.Combine(root, "origin");
-                        Directory.CreateDirectory(repo);
-                        Directory.CreateDirectory(origin);
-                        await InitAsync(repo);
-                        await CommitFileInAsync(repo, relativePath, content);
-                        await AddBareOriginInAsync(repo, origin);
-                        return [];
-                    });
-                using var span = TestTrace.Span("git-repo create seeded");
-                cloneRoot = Directory.CreateTempSubdirectory($"{prefix}-seeded-").FullName;
-                template.CloneTo(cloneRoot);
-                var worktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
-                return new ScratchGitRepo(System.IO.Path.Combine(cloneRoot, "repo"), worktreeRoot,
-                    System.IO.Path.Combine(cloneRoot, "origin"), cloneRoot);
+                template = await GitTreeTemplate.BuildOnceAsync(key, [], async (root, _) =>
+                {
+                    builtRoot = root;
+                    var repo = System.IO.Path.Combine(root, "repo");
+                    var origin = System.IO.Path.Combine(root, "origin");
+                    Directory.CreateDirectory(repo);
+                    Directory.CreateDirectory(origin);
+                    await InitAsync(repo);
+                    await CommitFileInAsync(repo, relativePath, content, SeedDateEnv);
+                    await AddBareOriginInAsync(repo, origin);
+                    return [];
+                });
             }
-            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException
-                or UnauthorizedAccessException or ShouldAssertException)
+            catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                Console.Error.WriteLine($"git-template disabled for this seeded scratch repo: {ex.GetType().Name}: {ex.Message}");
-                if (cloneRoot is not null) GitTreeTemplate.DeleteTree(cloneRoot);
+                SeededTemplateFailed[key] = true;
+                if (builtRoot is not null) GitTreeTemplate.DeleteTree(builtRoot);
+                Console.Error.WriteLine($"git-template disabled for seeded scratch repos: {ex.GetType().Name}: {ex.Message}");
+            }
+            if (template is not null)
+            {
+                string? cloneRoot = null;
+                try
+                {
+                    using var span = TestTrace.Span("git-repo create seeded");
+                    cloneRoot = Directory.CreateTempSubdirectory($"{prefix}-seeded-").FullName;
+                    template.CloneTo(cloneRoot);
+                    var repo = System.IO.Path.Combine(cloneRoot, "repo");
+                    var origin = System.IO.Path.Combine(cloneRoot, "origin");
+                    // The origin URL must be the copy's own origin as git stores it, or the copy would push into the
+                    // template (or nowhere) while BareOrigin names another place.
+                    var url = ReadOriginUrl(repo);
+                    if (!string.Equals(url, origin, StringComparison.Ordinal))
+                    {
+                        SeededTemplateFailed[key] = true;
+                        throw new InvalidOperationException(
+                            $"the copied remote.origin.url is '{url}', not the copy's own origin '{origin}'");
+                    }
+                    var worktreeRoot = Directory.CreateTempSubdirectory($"{prefix}-trees").FullName;
+                    return new ScratchGitRepo(repo, worktreeRoot, origin, cloneRoot);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    Console.Error.WriteLine($"git-template disabled for this seeded scratch repo: {ex.GetType().Name}: {ex.Message}");
+                    if (cloneRoot is not null) GitTreeTemplate.DeleteTree(cloneRoot);
+                }
             }
         }
         var git = new ScratchGitRepo(prefix);
         try
         {
-            await git.CommitFileAsync(relativePath, content);
+            await CommitFileInAsync(git.Path, relativePath, content, SeedDateEnv);
             await git.AddBareOriginAsync();
             return git;
         }
@@ -93,6 +141,44 @@ public sealed class ScratchGitRepo : IDisposable
             git.Dispose();
             throw;
         }
+    }
+
+    /// <summary>
+    /// <c>remote.origin.url</c> as git stores it in <paramref name="repo"/>'s <c>.git/config</c>, read from the file
+    /// (no git process): the value in the <c>[remote "origin"]</c> section with git's quotes and escapes undone;
+    /// null when there is none.
+    /// </summary>
+    private static string? ReadOriginUrl(string repo)
+    {
+        var inOrigin = false;
+        foreach (var raw in File.ReadLines(System.IO.Path.Combine(repo, ".git", "config")))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith('['))
+            {
+                inOrigin = line == "[remote \"origin\"]";
+                continue;
+            }
+            if (!inOrigin) continue;
+            var eq = line.IndexOf('=');
+            if (eq < 0 || !string.Equals(line[..eq].Trim(), "url", StringComparison.OrdinalIgnoreCase)) continue;
+            var value = line[(eq + 1)..].Trim();
+            var text = new System.Text.StringBuilder(value.Length);
+            for (var i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (c == '"') continue;
+                if (c == '\\' && i + 1 < value.Length)
+                {
+                    var next = value[++i];
+                    text.Append(next switch { 'n' => '\n', 't' => '\t', 'b' => '\b', _ => next });
+                    continue;
+                }
+                text.Append(c);
+            }
+            return text.ToString();
+        }
+        return null;
     }
 
     /// <summary>The starting repository: <c>git init -b master</c> plus the test identity.</summary>
@@ -136,11 +222,12 @@ public sealed class ScratchGitRepo : IDisposable
 
     public Task CommitFileAsync(string relativePath, string content) => CommitFileInAsync(Path, relativePath, content);
 
-    private static async Task CommitFileInAsync(string repo, string relativePath, string content)
+    private static async Task CommitFileInAsync(string repo, string relativePath, string content,
+        IReadOnlyDictionary<string, string>? env = null)
     {
         await File.WriteAllTextAsync(System.IO.Path.Combine(repo, relativePath), content);
         foreach (var args in new[] { new[] { "add", "." }, ["commit", "-m", $"edit {relativePath}"] })
-            (await GitInAsync(repo, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");
+            (await GitInAsync(repo, env, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");
     }
 
     public async Task GitAsync(params string[] args) =>
@@ -251,10 +338,11 @@ public sealed class ScratchGitRepo : IDisposable
     public void Dispose()
     {
         using var span = TestTrace.Span("git-repo delete");
-        // A seeded copy's repo and origin are both under its clone root.
-        foreach (var dir in _cloneRoot is null ? new[] { WorktreeRoot, Path, _bareOrigin } : [WorktreeRoot, _cloneRoot])
+        // A seeded copy's repo and origin go one by one, then their clone root (an origin added later by
+        // AddBareOriginAsync is outside that root and goes too).
+        foreach (var dir in new[] { WorktreeRoot, Path, _bareOrigin, _cloneRoot })
         {
-            if (dir is null) continue;
+            if (dir is null || !Directory.Exists(dir)) continue;
             try
             {
                 // git object files are read-only on Windows; strip attributes or Delete throws.
