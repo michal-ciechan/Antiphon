@@ -436,7 +436,10 @@ public class LinuxCgroupCustodyTests
         RequireLinuxCustody();
         await using var world = await CustodyWorld.StartAsync();
         var launched = await world.LaunchAsync("echo hold-marker", world.HoldLine());
-        var members = await world.WaitForTreeAsync(atLeast: 1);
+        // CARD-1932: two members means the root and one of its `sleep 0.1` children, so the sample
+        // always holds a transient that exits on its own during the one-second drain below.
+        var members = await world.WaitForTreeAsync(atLeast: 2);
+        members.ShouldContain(launched.ChildPid);
         var procs = LinuxCgroupContainment.ExecutionProcsPath(
             Guid.ParseExact(CurrentNamespace(), "D"), world.Containment.ContainerId);
         new FileInfo(procs).Length.ShouldBe(0L, "a live cgroup.procs seq_file reports size zero");
