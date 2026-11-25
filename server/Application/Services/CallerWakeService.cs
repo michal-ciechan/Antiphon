@@ -12,7 +12,6 @@ public sealed class CallerWakeService(
     AppDbContext db, KeepSixShortfall shortfall, TimeProvider clock, IMemoryCache cache)
 {
     internal static readonly TimeSpan ReportInterval = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan ReminderInterval = TimeSpan.FromMinutes(KeepSixShortfall.BackoffMinutes);
     private static readonly object ClaimLock = new();
     public sealed record Wake(IReadOnlyList<Guid> ReportTaskIds, int Shortfall, bool Idle = true);
 
@@ -54,7 +53,6 @@ public sealed class CallerWakeService(
 
         var now = clock.GetUtcNow().UtcDateTime;
         var reportsKey = (session.Id, "caller-wake-reports");
-        var reminderKey = (session.Id, "caller-wake-keep-six");
         List<Guid> reports = [];
         if (Due(reportsKey, now))
         {
@@ -64,23 +62,30 @@ public sealed class CallerWakeService(
             if (reports.Count > 0 && !Claim(reportsKey, now, ReportInterval)) reports.Clear();
         }
 
-        var count = 0;
-        if (standing && KeepSixShortfall.Accepts(agent, session) && Due(reminderKey, now))
-        {
-            var row = await db.KeepSixOrchestrators.AsNoTracking()
-                .SingleOrDefaultAsync(r => r.AgentId == agentId && r.Enabled
-                    && (r.HoldUntil == null || r.HoldUntil <= now), ct);
-            if (row is not null && !(row.LastAcknowledgedAt + ReminderInterval > now))
-            {
-                var counts = await shortfall.ReadAsync([agent], new Dictionary<Guid, KeepSixOrchestrator> { [agentId] = row }, ct);
-                if (counts.TryGetValue(agentId, out var fleet) && fleet.Shortfall > 0
-                    && KeepSixShortfall.GraceElapsed(row, fleet, now) && !KeepSixShortfall.InBackoff(row, fleet, now)
-                    && Claim(reminderKey, now, ReminderInterval))
-                    count = fleet.Shortfall;
-            }
-        }
-
+        var count = standing && KeepSixShortfall.Accepts(agent, session)
+            ? await ClaimWithheldReminderAsync(agent, session.Id, now, ct) : 0;
         return new(reports, count);
+    }
+
+    private async Task<int> ClaimWithheldReminderAsync(Agent agent, Guid sessionId, DateTime now, CancellationToken ct)
+    {
+        // Only the job creates a reminder. Native delivery can repeat that same outstanding
+        // reminder when terminal input was withheld and its durable interval has elapsed.
+        var cutoff = now.AddMinutes(-KeepSixShortfall.BackoffMinutes);
+        var eligible = db.KeepSixOrchestrators.Where(r => r.AgentId == agent.Id && r.Enabled
+            && (r.HoldUntil == null || r.HoldUntil <= now)
+            && r.LastReminderEnqueuedAt <= cutoff && (r.LastAcknowledgedAt == null || r.LastAcknowledgedAt <= cutoff)
+            && db.SessionQueuedMessages.Any(m => m.Id == r.OutstandingMessageId && m.AgentSessionId == sessionId
+                && m.NoteHeader == KeepSixReminderText.NoteHeader && m.Origin == QueuedMessageOrigin.System
+                && m.Status == QueuedMessageStatus.Pending && m.WithholdCount > 0));
+        var row = await eligible.AsNoTracking().SingleOrDefaultAsync(ct);
+        if (row is null) return 0;
+        var counts = await shortfall.ReadAsync([agent], new Dictionary<Guid, KeepSixOrchestrator> { [agent.Id] = row }, ct);
+        if (!counts.TryGetValue(agent.Id, out var fleet) || fleet.Shortfall == 0
+            || !KeepSixShortfall.GraceElapsed(row, fleet, now)) return 0;
+        var claimed = await eligible.Where(r => r.OutstandingMessageId == row.OutstandingMessageId && r.Revision == row.Revision)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.LastReminderEnqueuedAt, now), ct);
+        return claimed == 1 ? fleet.Shortfall : 0;
     }
 
     // A fresh server process may repeat an advisory once. The durable receipt and the

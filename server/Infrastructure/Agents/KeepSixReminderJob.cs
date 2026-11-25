@@ -23,7 +23,7 @@ public sealed class KeepSixReminderJob(
     public const string RecurringJobId = "antiphon:keep-six";
     public const int GraceMinutes = KeepSixShortfall.GraceMinutes;
     public const int BackoffMinutes = KeepSixShortfall.BackoffMinutes;
-    public const string AdvisoryLockKey = "antiphon.keep-six.reminder";
+    public const string AdvisoryLockKey = KeepSixShortfall.ReminderLock;
 
     [AutomaticRetry(Attempts = 0)]
     public async Task ExecuteAsync(CancellationToken ct)
@@ -37,8 +37,7 @@ public sealed class KeepSixReminderJob(
         var pipeline = provider.GetRequiredService<AgentTaskPipelineStatusService>();
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT pg_advisory_xact_lock(hashtext({AdvisoryLockKey}))", ct);
+        await KeepSixShortfall.LockReminderAsync(db, ct);
 
         var now = clock.GetUtcNow().UtcDateTime;
         var agents = await keepSix.ListStandingOrchestratorsAsync(ct).ConfigureAwait(false);
@@ -101,21 +100,39 @@ public sealed class KeepSixReminderJob(
         {
             if (!stored.TryGetValue(agent.Id, out var row) || !row.Enabled)
                 continue;
-            if (!counts.TryGetValue(agent.Id, out var count) || count.Shortfall <= 0)
+            if (!counts.TryGetValue(agent.Id, out var count))
                 continue;
+
             if (row.HoldUntil is DateTime holdUntil && now < holdUntil)
                 continue;
             if (ParseSession(agent.PersistentSessionId) is not Guid sessionId)
                 continue;
             if (!sessions.TryGetValue(sessionId, out var session) || !KeepSixShortfall.Accepts(agent, session))
                 continue;
+            var pending = await db.SessionQueuedMessages.AsNoTracking().Where(m =>
+                    m.AgentSessionId == sessionId && m.Origin == QueuedMessageOrigin.System
+                    && m.NoteHeader == KeepSixReminderText.NoteHeader && m.Status == QueuedMessageStatus.Pending)
+                .OrderBy(m => m.Sequence).Select(m => new { m.Id, m.CreatedAt }).FirstOrDefaultAsync(ct);
+            if (count.CountedOpen >= count.EffectiveTarget && (row.OutstandingMessageId != null || pending != null))
+            {
+                await keepSix.RetireOutstandingAsync(agent, ct);
+                continue;
+            }
+            if (count.Shortfall <= 0) continue;
+            if (pending is not null)
+            {
+                // Queue insertion uses its own transaction. Repair the pointer after an interrupted job.
+                if (row.OutstandingMessageId != pending.Id)
+                    await db.KeepSixOrchestrators.Where(r => r.AgentId == agent.Id).ExecuteUpdateAsync(setters => setters
+                        .SetProperty(r => r.OutstandingMessageId, pending.Id)
+                        .SetProperty(r => r.LastReminderEnqueuedAt, pending.CreatedAt), ct);
+                continue;
+            }
             if (agent.BoardId is not Guid boardId || !boardProjects.TryGetValue(boardId, out var projectId))
                 continue;
             if (!KeepSixShortfall.GraceElapsed(row, count, now))
                 continue;
-            if (KeepSixShortfall.InBackoff(row, count, now))
-                continue;
-            if (await PendingAsync(db, sessionId, ct).ConfigureAwait(false))
+            if (KeepSixShortfall.InBackoff(row, now))
                 continue;
 
             AgentTaskPipelineDto snapshot;
@@ -193,12 +210,6 @@ public sealed class KeepSixReminderJob(
             hosts,
             stages);
     }
-
-    private static async Task<bool> PendingAsync(AppDbContext db, Guid sessionId, CancellationToken ct) =>
-        await db.SessionQueuedMessages.AsNoTracking().AnyAsync(message =>
-            message.AgentSessionId == sessionId
-            && message.NoteHeader == KeepSixReminderText.NoteHeader
-            && message.Status == QueuedMessageStatus.Pending, ct).ConfigureAwait(false);
 
     private static Guid? ParseSession(string? persistentSessionId) =>
         Guid.TryParse(persistentSessionId, out var sessionId) ? sessionId : null;

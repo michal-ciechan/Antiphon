@@ -16,6 +16,10 @@ public sealed class KeepSixShortfall(
     DispatchConcurrencySettingsService concurrency,
     TimeProvider clock)
 {
+    internal const string ReminderLock = "antiphon.keep-six.reminder";
+    internal static Task LockReminderAsync(AppDbContext db, CancellationToken ct) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtext({ReminderLock}))", ct);
+
     internal const int GraceMinutes = 3;
     internal const int BackoffMinutes = 15;
 
@@ -31,13 +35,9 @@ public sealed class KeepSixShortfall(
         return anchor is DateTime from && now >= from.AddMinutes(GraceMinutes);
     }
 
-    internal static bool InBackoff(KeepSixOrchestrator row, KeepSixShortfall.Counts count, DateTime now)
-    {
-        if (row.LastReminderEnqueuedAt is not DateTime enqueued)
-            return false;
-        var createdAfter = count.LastDispatchAt is DateTimeOffset created && created.UtcDateTime > enqueued;
-        return now < enqueued.AddMinutes(BackoffMinutes) && !createdAfter;
-    }
+    internal static bool InBackoff(KeepSixOrchestrator row, DateTime now) =>
+        row.LastReminderEnqueuedAt > now.AddMinutes(-BackoffMinutes)
+        || row.LastAcknowledgedAt > now.AddMinutes(-BackoffMinutes);
 
     private static DateTime? Latest(DateTime? enabledAt, DateTimeOffset? lastCreate, DateTimeOffset? lastCompletion)
     {

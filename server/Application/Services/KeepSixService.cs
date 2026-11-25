@@ -140,12 +140,17 @@ public sealed class KeepSixService(
 
         var agent = await RequireAgentAsync(agentId, ct).ConfigureAwait(false);
         await EnsureWriterAsync(agent, token, ct).ConfigureAwait(false);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await KeepSixShortfall.LockReminderAsync(db, ct);
         var row = await RequireRowAsync(agentId, ct).ConfigureAwait(false);
+        await CancelPendingReminderAsync(agent, ct);
+        row.OutstandingMessageId = null;
         row.HoldReason = reason;
         row.HoldUntil = until.UtcDateTime;
         row.Revision += 1;
         row.UpdatedAt = now.UtcDateTime;
         await SaveRowAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct);
         instructions.Signal("keep-six hold " + agent.Name);
         return await ReadBackAsync(agent, row, ct).ConfigureAwait(false);
     }
@@ -169,12 +174,17 @@ public sealed class KeepSixService(
     {
         var agent = await RequireAgentAsync(agentId, ct).ConfigureAwait(false);
         await EnsureWriterAsync(agent, token, ct).ConfigureAwait(false);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await KeepSixShortfall.LockReminderAsync(db, ct);
         var row = await RequireRowAsync(agentId, ct).ConfigureAwait(false);
+        await CancelPendingReminderAsync(agent, ct);
         var now = clock.GetUtcNow().UtcDateTime;
+        row.OutstandingMessageId = null;
         row.LastAcknowledgedAt = now;
         row.Revision += 1;
         row.UpdatedAt = now;
         await SaveRowAsync(ct).ConfigureAwait(false);
+        await tx.CommitAsync(ct);
         return await ReadBackAsync(agent, row, ct).ConfigureAwait(false);
     }
 
@@ -266,6 +276,13 @@ public sealed class KeepSixService(
             [agent.Id] = row,
         }, ct).ConfigureAwait(false);
         return ToDto(agent, row, counts[agent.Id]);
+    }
+
+    internal async Task RetireOutstandingAsync(Agent agent, CancellationToken ct)
+    {
+        await CancelPendingReminderAsync(agent, ct);
+        await db.KeepSixOrchestrators.Where(r => r.AgentId == agent.Id)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.OutstandingMessageId, (Guid?)null), ct);
     }
 
     private async Task CancelPendingReminderAsync(Agent agent, CancellationToken ct)
