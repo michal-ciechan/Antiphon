@@ -421,7 +421,9 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
         await using var held = await holder.AcquireAsync(session, "held-control", CancellationToken.None);
         held.State.ShouldBe("granted");
         var now = DateTimeOffset.UtcNow;
-        var queued = new BuildSlotClient(broker.Recording(), endpoint, pid: 101, processStartUtc: start,
+        // A loaded host (Windows rc b8cbfb24) answered the first queued acquire after the 1 s wait.
+        var queued = new BuildSlotClient(new SlowFirstAcquire(broker.Recording(), TimeSpan.FromMilliseconds(1500)),
+            endpoint, pid: 101, processStartUtc: start,
             wait: TimeSpan.FromSeconds(1), clock: () => now,
             delay: (_, _) => { now += TimeSpan.FromSeconds(1); return Task.CompletedTask; });
         var root = TempDir();
@@ -640,6 +642,18 @@ public sealed class CheckpointAdmissionContractTests : CheckpointTestBase
             Entered.TrySetResult();
             try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); return new HttpResponseMessage(HttpStatusCode.OK); }
             finally { Exited = true; }
+        }
+    }
+    /// <summary>Answers the first acquire POST only after a real delay, as a loaded host does.</summary>
+    private sealed class SlowFirstAcquire(HttpMessageHandler inner, TimeSpan delay) : DelegatingHandler(inner)
+    {
+        private int _acquires;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/build-slots"
+                && Interlocked.Increment(ref _acquires) == 1)
+                await Task.Delay(delay, ct);
+            return await base.SendAsync(request, ct);
         }
     }
     private sealed class HeldSlots : IBuildSlotClient
