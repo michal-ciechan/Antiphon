@@ -47,6 +47,11 @@ public sealed class CallerWakeService(
         if (session is null || session.AgentKind != AgentKind.ClaudeCode || session.Id != conversationId
             || !SessionGeneration.Equal(session.StartedAt, generation)) return null;
 
+        // The claim is bound to this observed turn boundary: any transcript entry after it, a
+        // working turn or a new session generation before the claim commits spends nothing.
+        var observed = await db.TranscriptEntries.Where(e => e.AgentSessionId == session.Id)
+            .MaxAsync(e => (long?)e.Sequence, ct) ?? 0;
+
         // An empty transcript and a restart boundary both look non-working to the queue.
         // A wake needs positive end-of-turn evidence from this process before it spends a claim.
         if (!await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == session.Id
@@ -57,39 +62,65 @@ public sealed class CallerWakeService(
         if (ClaimGate is { } gate) await gate(ct);
         var now = clock.GetUtcNow().UtcDateTime;
         var reportsKey = (session.Id, "caller-wake-reports");
-        List<Guid> reports = [];
-        if (Due(reportsKey, now))
-        {
-            reports = await OwedReports(db, now - ReportInterval, session.Id)
+        List<Guid> reports = Due(reportsKey, now)
+            ? await OwedReports(db, now - ReportInterval, session.Id)
                 .OrderBy(t => t.CompletedAt).ThenBy(t => t.Id)
-                .Select(t => t.Id).Take(16).ToListAsync(ct);
-            if (reports.Count > 0 && !Claim(reportsKey, now, ReportInterval)) reports.Clear();
-        }
+                .Select(t => t.Id).Take(16).ToListAsync(ct)
+            : [];
+        var reminder = standing && KeepSixShortfall.Accepts(agent, session)
+            ? await WithheldReminderAsync(agent, session.Id, now, ct) : null;
+        if (reports.Count == 0 && reminder is null) return new([], 0);
 
-        var count = standing && KeepSixShortfall.Accepts(agent, session)
-            ? await ClaimWithheldReminderAsync(agent, session.Id, now, ct) : 0;
+        var sessionId = session.Id;
+        var started = session.StartedAt;
+        await using var claim = await db.Database.BeginTransactionAsync(ct);
+        var reportsClaimed = reports.Count > 0 && Claim(reportsKey, now, ReportInterval);
+        if (!reportsClaimed) reports.Clear();
+        var count = 0;
+        if (reminder is { } held)
+        {
+            var (row, fleetShortfall) = held;
+            var claimed = await EligibleReminder(agent.Id, sessionId, now)
+                .Where(r => r.OutstandingMessageId == row.OutstandingMessageId && r.Revision == row.Revision
+                    && !db.TranscriptEntries.Any(e => e.AgentSessionId == sessionId && e.Sequence > observed))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.LastReminderEnqueuedAt, now), ct);
+            count = claimed == 1 ? fleetShortfall : 0;
+        }
+        if (await db.TranscriptEntries.AnyAsync(e => e.AgentSessionId == sessionId && e.Sequence > observed, ct)
+            || await SessionMessageQueueService.IsWorkingAsync(db, sessionId, ct)
+            || !await db.AgentSessions.AnyAsync(s => s.Id == sessionId && s.Status == SessionStatus.Running
+                && s.StartedAt == started, ct))
+        {
+            await claim.RollbackAsync(ct);
+            if (reportsClaimed) Release(reportsKey, now + ReportInterval);
+            return new([], 0, Idle: false);
+        }
+        await claim.CommitAsync(ct);
         return new(reports, count);
     }
 
-    private async Task<int> ClaimWithheldReminderAsync(Agent agent, Guid sessionId, DateTime now, CancellationToken ct)
+    private IQueryable<KeepSixOrchestrator> EligibleReminder(Guid agentId, Guid sessionId, DateTime now)
     {
         // Only the job creates a reminder. Native delivery can repeat that same outstanding
         // reminder when terminal input was withheld and its durable interval has elapsed.
         var cutoff = now.AddMinutes(-KeepSixShortfall.BackoffMinutes);
-        var eligible = db.KeepSixOrchestrators.Where(r => r.AgentId == agent.Id && r.Enabled
+        return db.KeepSixOrchestrators.Where(r => r.AgentId == agentId && r.Enabled
             && (r.HoldUntil == null || r.HoldUntil <= now)
             && r.LastReminderEnqueuedAt <= cutoff && (r.LastAcknowledgedAt == null || r.LastAcknowledgedAt <= cutoff)
             && db.SessionQueuedMessages.Any(m => m.Id == r.OutstandingMessageId && m.AgentSessionId == sessionId
                 && m.NoteHeader == KeepSixReminderText.NoteHeader && m.Origin == QueuedMessageOrigin.System
                 && m.Status == QueuedMessageStatus.Pending && m.WithholdCount > 0));
-        var row = await eligible.AsNoTracking().SingleOrDefaultAsync(ct);
-        if (row is null) return 0;
+    }
+
+    private async Task<(KeepSixOrchestrator Row, int Shortfall)?> WithheldReminderAsync(
+        Agent agent, Guid sessionId, DateTime now, CancellationToken ct)
+    {
+        var row = await EligibleReminder(agent.Id, sessionId, now).AsNoTracking().SingleOrDefaultAsync(ct);
+        if (row is null) return null;
         var counts = await shortfall.ReadAsync([agent], new Dictionary<Guid, KeepSixOrchestrator> { [agent.Id] = row }, ct);
         if (!counts.TryGetValue(agent.Id, out var fleet) || fleet.Shortfall == 0
-            || !KeepSixShortfall.GraceElapsed(row, fleet, now)) return 0;
-        var claimed = await eligible.Where(r => r.OutstandingMessageId == row.OutstandingMessageId && r.Revision == row.Revision)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(r => r.LastReminderEnqueuedAt, now), ct);
-        return claimed == 1 ? fleet.Shortfall : 0;
+            || !KeepSixShortfall.GraceElapsed(row, fleet, now)) return null;
+        return (row, fleet.Shortfall);
     }
 
     // A fresh server process may repeat an advisory once. The durable receipt and the
@@ -104,6 +135,15 @@ public sealed class CallerWakeService(
             if (!Due(key, now)) return false;
             cache.Set(key, now + interval, interval);
             return true;
+        }
+    }
+
+    // Undo only this poll's own claim. Any earlier value was already due, so removal restores it.
+    private void Release((Guid, string) key, DateTime claimedUntil)
+    {
+        lock (ClaimLock)
+        {
+            if (cache.TryGetValue(key, out DateTime next) && next == claimedUntil) cache.Remove(key);
         }
     }
 
