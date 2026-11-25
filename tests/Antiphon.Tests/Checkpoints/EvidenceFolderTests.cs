@@ -69,7 +69,7 @@ public sealed class EvidenceFolderTests : CheckpointTestBase
     }
 
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
+    [ParallelLimiter<CheckpointToolSpawnLimit>]
     public void generated_replay_preserves_native_property_arguments()
     {
         if (!OperatingSystem.IsLinux())
