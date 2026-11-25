@@ -68,13 +68,19 @@ Replace `<user>@<confirmed-host>` in both examples before use:
 
 ```powershell
 # Read-only preflight: validates the Dockerfile-derived archive manifest and the remote Compose build contract.
-pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'
+scripts\antiphon.cmd deploy-am-service --ssh-target '<user>@<confirmed-host>'
 
-# Production only after explicit authorization. -Confirm gives the final interactive confirmation.
-pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>' -Deploy -Confirm
+# Production only after explicit authorization. --deploy asks for the final interactive confirmation.
+scripts\antiphon.cmd deploy-am-service --ssh-target '<user>@<confirmed-host>' --deploy --confirm
 ```
 
-The script derives its archive entries from local
+On Linux or macOS run `scripts/antiphon deploy-am-service` with the same flags. `--deploy --what-if`
+names the write and stays a read-only preflight; `--no-confirm` skips the question and is only for a
+deployment a Deploy-role brief has explicitly authorized. `--skip-real-traffic-check` and
+`--timeout-sec <10-3600>` (default 180) keep their meaning. The command replaced
+`scripts/deploy-am-service.ps1` (2026-11-25) with the same steps, order, refusals and exit codes.
+
+The command derives its archive entries from local
 `src/Antiphon.Messaging.Service/Dockerfile` `COPY` sources. There is intentionally no manually
 maintained project/tar list: a source dependency added to the Dockerfile enters the archive, while
 unsupported `COPY` syntax refuses before upload. It validates the remote Compose build context and
@@ -88,7 +94,7 @@ use `max.message.bytes=20971520`. Historical contracts:
 [remote deploy helper](superpowers/plans/2026-08-31-card-0270-am-service-remote-deploy-plan.md) and
 [consumer identity](superpowers/plans/2026-09-06-card-0410-gateway-consumer-group-plan.md).
 
-The script technically verifies the running container, registered adapters, migration history, and
+The command technically verifies the running container, registered adapters, migration history, and
 a bounded redacted startup-log scan on the selected instance. The real Telegram round-trip check
 is a separate manual, operator-initiated check in **Family**, whose binding is configured in the
 channel settings. A test message to Family reaches a real family group. An agent must not send
@@ -189,14 +195,14 @@ enabled, and broker host/port pairs. `/api/version` provides separate build prov
 Deploy the server endpoint first, with operator authorization; a missing endpoint refuses
 rather than falling back to a guessed group.
 
-The existing deploy script reads `ANTIPHON_API` (default `http://localhost:17202`) and
+The existing deploy command reads `ANTIPHON_API` (default `http://localhost:17202`) and
 `ANTIPHON_TASK_TOKEN`, previews repository/server/gateway/proposed groups, and verifies
 broker cluster identity through read-only metadata on both listeners. Internal/external
 listener strings may differ. Metadata must identify the same cluster; an unavailable
 listener or missing identity refuses. The rpk JSON field `cluster_name` contains Kafka's
 cluster identity ([rpk implementation](https://github.com/redpanda-data/redpanda/blob/v25.3.4/src/go/rpk/pkg/cli/cluster/info.go)).
 
-Only the existing `-Deploy` and ShouldProcess gate writes. It persists two environment keys
+Only the existing `--deploy` and its confirmation gate writes. It persists two environment keys
 in the ordinary Compose override matching the base filename (`docker-compose.yml` becomes
 `docker-compose.override.yml`; `compose.yaml` becomes `compose.override.yaml`). Ambiguous
 base/override names and unmarked existing overrides refuse. Marked overrides and source

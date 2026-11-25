@@ -33,9 +33,8 @@ public sealed class SelectorLineEndingAttributeTests
         "scripts/lib/Antiphon.Nightly/ReleaseImpactEvidence.cs",
     ];
 
-    private const string PreservedBytes =
-        "tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1";
-
+    // Unit 50 of the remaining-ps1 plan deleted the one -text -eol exemption, the frozen c504 deploy baseline
+    // (AmServiceDeployReadinessTests now builds its red verification from the command's own script).
     [Test]
     public async Task C1313_live_scripts_are_forced_lf()
     {
@@ -57,10 +56,6 @@ public sealed class SelectorLineEndingAttributeTests
         }
 
         problems.ShouldBeEmpty(string.Join("\n", problems));
-
-        var preserved = (await Git(root, "check-attr", "-z", "text", "eol", "--", PreservedBytes))
-            .Split('\0', StringSplitOptions.RemoveEmptyEntries);
-        preserved.ShouldBe([PreservedBytes, "text", "unset", PreservedBytes, "eol", "unset"]);
     }
 
     private static async Task<string> Git(string root, params string[] arguments)

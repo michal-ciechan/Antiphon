@@ -50,7 +50,11 @@ aggregate inner. `Cleanup_joins_owned_child_even_when_body_or_stop_fails` covers
 and permanent holds. These witnesses do not replace the Windows ConPTY run.
 
 CARD-1049: `AmServiceDeployReadinessTests` uses native loopback and real curl on
-Windows. The held, non-listening fixture admits raw curl 7/28 on Windows (7 on
+Windows. It runs the `deploy-am-service` command in process (unit 50 of the
+[remaining-ps1 plan](superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md); no pwsh
+child) and only the verification script the command sends runs, under Git's sh; its red
+baseline is that script with the retry swapped for the pre-retry single curl. The other
+deploy cases are `DeployAmServiceTests` (Unit). The held, non-listening fixture admits raw curl 7/28 on Windows (7 on
 Linux); accepted stalls remain exact 28 and HTTP 503 remains exact 22. Its
 timeout-then-ready case distinguishes accepted requests from delayed refusal.
 Git sh/sleep/cygpath are discovered in one installation's `usr/bin` from supplied

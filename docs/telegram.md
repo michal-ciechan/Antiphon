@@ -39,7 +39,7 @@ The startup migration creates the replacement unique index before dropping the
 old index in one transaction, preserving existing rows and monitoring stamps.
 Index creation takes a table write lock. Downgrade recreates the old index first
 and safely refuses when newer cross-chat rows collide under that old key; it does
-not delete them. Deploy the gateway separately through `scripts/deploy-am-service.ps1`.
+not delete them. Deploy the gateway separately through the `deploy-am-service` command (`scripts\antiphon.cmd deploy-am-service`).
 Historical receipts already suppressed by the old key are not reconstructed.
 
 ## Durable inbound handoff (CARD-0593)

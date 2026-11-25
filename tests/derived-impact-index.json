@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 360,
+      "classes": 361,
       "reason": "allowlist"
     },
     {
@@ -487,18 +487,18 @@
     },
     {
       "path": "server/Application/Interfaces/ISessionRunnerDirectory.cs",
-      "classes": 49,
+      "classes": 48,
       "reason": "cap",
-      "owed": 24,
+      "owed": 23,
       "first": [
-        "SeatOccupancySamplerTests",
         "C1514HostLoadHistoryTests",
         "C1744G2PlacementTests",
         "TaskPlatformPlacementTests",
         "CodexCliObservationTests",
         "DispatchConcurrencyPipelineTests",
         "DispatchHoldVisibilityTests",
-        "GhostSeatReleaseTests"
+        "GhostSeatReleaseTests",
+        "HostBudgetServiceTests"
       ]
     },
     {
@@ -2099,9 +2099,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 145,
+      "classes": 146,
       "reason": "cap",
-      "owed": 120,
+      "owed": 121,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2179,34 +2179,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 37,
+      "classes": 38,
       "reason": "cap",
-      "owed": 12,
+      "owed": 13,
       "first": [
+        "PgQpsTests",
         "PostgresJitWindowTests",
         "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseStatusTests",
         "ReviewEngineScriptsTests",
-        "RunnerRestartOsTests",
-        "ServerDockerInputsTests"
+        "RunnerRestartOsTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
+        "QualificationEtaTests",
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
         "ReviewEngineScriptsTests",
         "RunnerRestartOsTests",
-        "ServerDockerInputsTests",
-        "StageValueReportTests"
+        "ServerDockerInputsTests"
       ]
     },
     {
@@ -2243,18 +2243,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 54,
+      "classes": 55,
       "reason": "cap",
-      "owed": 29,
+      "owed": 30,
       "first": [
+        "DaemonBuildCheckTests",
         "DesktopPostgresTests",
         "ExpectedDurationSyncTests",
         "ImpactIndexRegenerationTests",
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "NightlyDiscoveryParserTests",
-        "NightlyNativeOwnershipTests",
-        "NightlyRunTests"
+        "NightlyNativeOwnershipTests"
       ]
     },
     {
@@ -2796,8 +2796,10 @@
     {
       "path": "Dockerfile",
       "classes": [
+        "AmServiceDeployReadinessTests",
         "ChannelOutboundIsolatedTests",
         "CustodyNamespaceBootstrapTests",
+        "DeployAmServiceTests",
         "DockerStackContractTests",
         "IncrementalSelectionSoundnessTests",
         "RcInputManifestTests",
@@ -4026,6 +4028,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/AmServiceDeploy.cs",
+      "classes": [
+        "DeployAmServiceTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
       "classes": [
         "LinuxServerRestartGateTests",
@@ -4464,6 +4472,12 @@
       "classes": [
         "BuildSlotScriptTests",
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Scripts/DeployCommands.cs",
+      "classes": [
+        "DeployAmServiceTests"
       ]
     },
     {
@@ -6733,7 +6747,7 @@
         "RunnerCatalogueTests",
         "RunnerGrokCredentialProbeDispatcherTests",
         "RunnerSeatOrphanSweepTests",
-        "SessionMessageQueueDeliveredSpillRecoveryTests",
+        "SeatOccupancySamplerTests",
         "SessionRuntimeActionTemporaryBlockTests",
         "TaskParkPublicationTests",
         "TaskPlatformDispatchTests",
@@ -25436,12 +25450,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1",
-      "classes": [
-        "SelectorLineEndingAttributeTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Infrastructure/GitDiffSpikeTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -25877,6 +25885,7 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
       "classes": [
         "AgentTuiSmokeScriptTests",
+        "AmServiceDeployReadinessTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
@@ -25897,7 +25906,6 @@
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
-        "PgQpsTests",
         "ReleaseGateLibraryTests",
         "StageValueReportTests",
         "VerifyDindRunnerScriptTests"
@@ -25907,6 +25915,7 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
       "classes": [
         "AgentTuiSmokeScriptTests",
+        "AmServiceDeployReadinessTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
@@ -25929,8 +25938,7 @@
         "OrchestrationWatcherTests",
         "PgQpsTests",
         "PostgresJitWindowTests",
-        "PtyHostReaperTests",
-        "QualificationEtaTests"
+        "PtyHostReaperTests"
       ]
     },
     {
@@ -26094,6 +26102,7 @@
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
       "classes": [
         "AgentTuiSmokeScriptTests",
+        "AmServiceDeployReadinessTests",
         "AntiphonLogsTests",
         "AppHostWorktreeGuardTests",
         "AutostartInstallTests",
@@ -26105,7 +26114,6 @@
         "ClaudeSessionCleanupTests",
         "ClientChecksTests",
         "ClientModeTests",
-        "DaemonBuildCheckTests",
         "DaemonSupervisorTests",
         "DeployLocalTests",
         "LandGraphCommandTests",

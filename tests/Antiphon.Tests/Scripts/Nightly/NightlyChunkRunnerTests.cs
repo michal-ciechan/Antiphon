@@ -210,14 +210,24 @@ public sealed class NightlyChunkRunnerTests
     [Test]
     public void A_scripts_chunk_runs_each_unattended_census_script()
     {
-        var unattended = NightlyPolicy.ScriptCensus(NightlyChunkWorld.Policy.Object).Where(r => string.Equals(r.Disposition, "unattended", StringComparison.OrdinalIgnoreCase)).ToArray();
-        unattended.ShouldNotBeEmpty();
+        // Unit 50 of the remaining-ps1 plan deleted scripts/test-deploy-am-service.ps1, the shipped census's last unattended row
+        // (test-client's row is a wrapper, which the chunk never runs), so two unattended rows are added to a copy of the policy.
+        var policy = ExecutionPolicy.Parse(File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "tests", "test-execution-policy.json")));
+        NightlyPolicy.ScriptCensus(policy).ShouldNotContain(row => string.Equals(row.Disposition, "unattended", StringComparison.OrdinalIgnoreCase));
+        policy.ScriptCensus = [.. policy.ScriptCensus,
+            new PolicyCensusRow { Id = "test-census-a", Path = "scripts/test-census-a.ps1", Disposition = "unattended" },
+            new PolicyCensusRow { Id = "test-census-b", Path = "scripts/test-census-b.ps1", Disposition = "unattended" }];
+        var unattended = NightlyPolicy.ScriptCensus(policy).Where(r => string.Equals(r.Disposition, "unattended", StringComparison.OrdinalIgnoreCase)).ToArray();
+        unattended.Length.ShouldBe(2);
         var failing = unattended[0].Id;
         using var world = new NightlyChunkWorld(launch => launch.LogPath!.EndsWith("script-" + failing + ".log", StringComparison.Ordinal)
             ? new NightlyLaunchResult { ExitCode = 1, ChildrenExited = true } : RecordingLauncher.Passed());
-        var outcome = NightlyChunkRunner.Run(world.Context(), world.Suite("scripts", native: false), NightlyChunkWorld.Chunk());
+        var context = world.Context();
+        context.Policy = policy;
+        var outcome = NightlyChunkRunner.Run(context, world.Suite("scripts", native: false), NightlyChunkWorld.Chunk());
         outcome.Error.ShouldBeNull();
         world.Launcher.Launches.Count.ShouldBe(unattended.Length);
+        world.Launcher.Launches[1].Arguments[3].ShouldBe(Path.Combine(world.Fixture.Root, "scripts", "test-census-b.ps1"), "a failed script does not stop the next");
         var first = world.Launcher.Launches[0];
         first.FileName.ShouldBe("pwsh");
         first.Arguments.Take(4).ShouldBe(new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(world.Fixture.Root, unattended[0].Path.Replace('/', Path.DirectorySeparatorChar)) });

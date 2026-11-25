@@ -2204,11 +2204,12 @@ do not reconstruct the former multi-command deploy sequence by hand.
 
 For a separately scoped `am-service` remote instance in the fixed
 `/home/mc/antiphon-messaging` layout, select its SSH destination explicitly:
-`pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'`.
+`scripts\antiphon.cmd deploy-am-service --ssh-target '<user>@<confirmed-host>'`.
 Replace the placeholders with the confirmed destination; there is no default target.
 See [remote messaging operations](telegram-bot-ops.md#deploying-an-optional-remote-messaging-service).
 Once a Deploy-role brief explicitly
-authorizes `-Deploy`, that Deploy-role delegate may run this script and report its final
+authorizes `--deploy`, that Deploy-role delegate may run this command (with `--no-confirm` only
+under that authorization) and report its final
 `REMOTE DEPLOY VERDICT`; it may not reconstruct the SSH/tar/Compose sequence ad hoc. Its default
 run is a read-only preflight. Its Telegram round-trip check is manual and operator-initiated
 in Family, whose binding is configured in the channel settings (CARD-1243, 2026-10-14).

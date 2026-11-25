@@ -176,7 +176,7 @@ sidecar's deploy tool. Follow
 Replace `<user>@<confirmed-host>` before this read-only preflight (there is no default target):
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'
+scripts\antiphon.cmd deploy-am-service --ssh-target '<user>@<confirmed-host>'
 ```
 
 Compose interpolates

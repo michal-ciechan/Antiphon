@@ -1,31 +1,60 @@
 using System.Diagnostics;
+using System.IO.Abstractions;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Infrastructure;
 
+/// <summary>
+/// CARD-0504/CARD-1049: the am-service deploy's technical verification retries /api/channels. Since unit 50 of
+/// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md the deploy is the deploy-am-service command (AmServiceDeploy), run here
+/// in process (the deleted driver scripts/test-deploy-am-service-readiness.ps1 ran the script in pwsh): the remote is a recording
+/// launcher, except that the verification script the command sends runs locally under Git's sh against a loopback fixture, with
+/// real curl and sleep and a journaling docker. The red baseline is that script with the retry replaced by the pre-retry single
+/// curl (the frozen tests/Antiphon.Tests/Infrastructure/Fixtures/c504-deploy-am-service-baseline.ps1's verification, byte for byte).
+/// The other cases of the deleted scripts/test-deploy-am-service.ps1 are DeployAmServiceTests.
+/// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AmServiceDeployReadinessTests
 {
     private const string Body = "[{\"channel\":\"telegram\"},{\"channel\":\"slack\"}]";
+    private const string TargetHost = "operator@gateway.example.invalid";
     private static string Root => DelegateScriptRunner.RepoRoot;
+
+    // The retry block of AmServiceDeploy.VerifyScript, and what the pre-retry deploy-am-service.ps1 (commit 10fe51b0, blob 3a7f8565, the
+    // deleted c504 fixture) ran instead: one curl, no connect timeout, no retry.
+    private const string RetryBlock = "attempt=1\nwhile :; do\n  if channels=$(curl --connect-timeout 2 --max-time 3 -fsS http://localhost:18090/api/channels 2>/dev/null); then\n"
+        + "    printf '%s\\n' \"$channels\"\n    break\n  fi\n  [ \"$attempt\" -lt 5 ] || exit 44\n  sleep 2\n  attempt=$((attempt + 1))\ndone\n";
+
+    private const string BaselineBlock = "channels=$(curl -fsS http://localhost:18090/api/channels)\nprintf '%s\\n' \"$channels\"\n";
+
+    // The baseline's verification with PollTimeoutSec 10, as that script built it.
+    private const string BaselineVerify = """
+        set -eu
+        cd '/home/mc/antiphon-messaging'
+        deadline=$(($(date +%s) + 10))
+        while [ "$(docker inspect --format '{{.State.Running}}' am-service 2>/dev/null || true)" != true ]; do [ "$(date +%s)" -lt "$deadline" ] || exit 41; sleep 2; done
+        channels=$(curl -fsS http://localhost:18090/api/channels)
+        printf '%s\n' "$channels"
+        docker compose exec -T am-postgres sh -c 'psql -X -At -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c '\''SELECT "MigrationId" FROM "__EFMigrationsHistory" ORDER BY "MigrationId";'\'''
+        if docker logs --since 5m --tail 100 am-service 2>&1 | grep -Eiq 'Unhandled exception|fail:|crit:'; then exit 42; fi
+        """;
 
     [Test]
     public async Task RetriesUntilHttpReadyAsync()
     {
-        var baseline = await LoadBaselineAsync();
-        try
+        AmServiceDeploy.VerifyScript(10).Replace(RetryBlock, BaselineBlock).ShouldBe(BaselineVerify.ReplaceLineEndings("\n"), "the red baseline is the pre-retry verification");
+        using (var probe = new ReadinessFixture(2, "ready"))
         {
-            using var probe = new ReadinessFixture(2, "ready");
-            var red = await probe.RunAsync("V-1-baseline", baseline);
+            var red = await probe.RunAsync("V-1-baseline", baseline: true);
             red.ShellExit.ShouldBe(7, red.Detail);
             red.CurlExits.ShouldBe(new[] { 7 }, red.Detail);
             red.SleepArguments.ShouldBeEmpty(red.Detail);
@@ -35,11 +64,10 @@ public sealed class AmServiceDeployReadinessTests
             red.Journal.Contains("inspect").ShouldBeTrue(red.Detail);
             Console.WriteLine("C504 baseline: 1 expected failure, 1 curl exit 7, 0 sleeps");
         }
-        finally { File.Delete(baseline); }
 
         using (var fixture = new ReadinessFixture(2, "timeout-ready"))
         {
-            var run = await fixture.RunAsync("V-1-accepted-timeout", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
+            var run = await fixture.RunAsync("V-1-accepted-timeout");
             run.ShellExit.ShouldBe(0, "C1049-timeout-transition-succeeds: " + run.Detail);
             run.CurlExits.ShouldBe(new[] { 28, 28, 0 }, run.Detail);
             run.RequestsBeforeTransition.ShouldBe(2, run.Detail);
@@ -50,7 +78,7 @@ public sealed class AmServiceDeployReadinessTests
         foreach (var readyAt in new[] { 3, 5 })
         {
             using var fixture = new ReadinessFixture(readyAt - 1, "ready");
-            var run = await fixture.RunAsync("V-1", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
+            var run = await fixture.RunAsync("V-1");
             AssertSuccess(run, readyAt, readyAt - 1);
             run.RequestsBeforeTransition.ShouldBe(0, run.Detail);
             run.ServedRequests.ShouldBe(1, run.Detail);
@@ -63,7 +91,7 @@ public sealed class AmServiceDeployReadinessTests
         foreach (var mode in new[] { "refused", "timeout", "unavailable" })
         {
             using var fixture = new ReadinessFixture(0, mode);
-            var run = await fixture.RunAsync("V-2", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
+            var run = await fixture.RunAsync("V-2");
             var allowed = mode switch { "refused" => InitialRefusalCodes, "timeout" => new[] { 28 }, _ => new[] { 22 } };
             run.ShellExit.ShouldBe(44, run.Detail);
             run.CurlExits.Length.ShouldBe(5, run.Detail);
@@ -89,27 +117,16 @@ public sealed class AmServiceDeployReadinessTests
     [Test]
     public async Task SucceedsImmediatelyAndPreservesDeployContractAsync()
     {
-        using (var fixture = new ReadinessFixture(0, "ready"))
-        {
-            var run = await fixture.RunAsync("V-3", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
-            AssertSuccess(run, 1, 0);
-            run.ServedRequests.ShouldBe(1, run.Detail);
-        }
-        var legacy = await RunLegacyAsync();
-        legacy.ShouldContain("DEPLOY-AM-SERVICE TESTS EXIT CODE: 0", Case.Sensitive);
-        foreach (var name in new[] {
-            "broker identity probe execs Compose service redpanda",
-            "preflight accepts redpanda.",
-            "identity, compose, and container output never leak",
-            "deploy writes the managed override and verifies the merge before recreate",
-            "marked existing override is backed up and reported",
-            "remote seam parses endpoint adapters after recreate",
-            "postdeploy verification refuses degraded",
-            "CARD-1261 skipped traffic check names Family as manual operator-initiated only",
-            "CARD-1261 required traffic check names Family as manual operator-initiated only",
-            "CARD-1261 deploy script stays ASCII-only and names no retired destination or chat id" })
-            legacy.ShouldContain(name, Case.Sensitive);
-        legacy.ShouldNotContain("FAIL ", Case.Sensitive);
+        using var fixture = new ReadinessFixture(0, "ready");
+        var run = await fixture.RunAsync("V-3");
+        AssertSuccess(run, 1, 0);
+        run.ServedRequests.ShouldBe(1, run.Detail);
+        // The deploy contract after a real verification run (the remaining driver cases are DeployAmServiceTests).
+        foreach (var line in new[] { "Retained source backup: /home/mc/antiphon-messaging/build/src.bak-",
+                     "Monitor build marker verified: readiness route Ready; sampled offsets numeric; ageSeconds=12.",
+                     "Endpoint verified: 2 registered adapter(s): telegram, slack", "Startup-log scan verified: last 100 lines, no startup exception (redacted scan).",
+                     AmServiceDeploy.SkippedTrafficLine })
+            run.ChildOutput.ShouldContain(line, Case.Sensitive, run.Detail);
         Console.WriteLine("PASS C504 R-1");
     }
 
@@ -158,7 +175,7 @@ public sealed class AmServiceDeployReadinessTests
             child.ExitCode.ShouldBe(0, await stderr);
             (await stdout).ShouldBe("C1049-real-path-sentinel");
             using var fixture = new ReadinessFixture(0, "ready", suppliedPath);
-            var run = await fixture.RunAsync("V-3-sanitized-path", Path.Combine(Root, "scripts", "deploy-am-service.ps1"));
+            var run = await fixture.RunAsync("V-3-sanitized-path");
             AssertSuccess(run, 1, 0);
             run.ServedRequests.ShouldBe(1, run.Detail);
             Environment.GetEnvironmentVariable("PATH").ShouldBe(parentPath, "Parent PATH must remain byte-for-byte unchanged");
@@ -234,9 +251,45 @@ public sealed class AmServiceDeployReadinessTests
             error.ShouldContain("Skipped incomplete Git installation " + incompleteRoot + ": missing sleep.exe, cygpath.exe", Case.Insensitive);
             error.ShouldNotContain("missing sh.exe", Case.Insensitive);
             using var fixture = new ReadinessFixture(0, "ready", privatePath);
-            var exception = await Should.ThrowAsync<InvalidOperationException>(() =>
-                fixture.RunAsync("V-2-no-complete-git", Path.Combine(Root, "scripts", "deploy-am-service.ps1")));
+            var exception = await Should.ThrowAsync<InvalidOperationException>(() => fixture.RunAsync("V-2-no-complete-git"));
             exception.Message.ShouldBe(error, "C1060-incomplete-only-fixture-throws");
+        }
+        finally { Directory.Delete(directory, recursive: true); }
+    }
+
+    // The driver's real-archive rows: the production tar (resolved on PATH, as the command does) archives this checkout's
+    // Dockerfile-derived sources without bin, obj or bin-* at any depth.
+    [Test]
+    public void ArchivesTheRealDockerfileSourcesWithTheProductionTar()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "am-service-archive-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var files = new FileSystem();
+            var context = Path.Combine(Root, "src");
+            var manifest = AmServiceDeploy.Manifest(files, Path.Combine(context, "Antiphon.Messaging.Service", "Dockerfile"), context);
+            var host = new NightlyHost
+            {
+                Clock = TimeProvider.System,
+                Git = new FakeGit().Run,
+                Launcher = new WatchedLauncher(),
+                Processes = new FakeProcessTable(),
+                Probe = new FakeHostProbe(),
+                Out = TextWriter.Null,
+                Error = TextWriter.Null,
+                Trace = TextWriter.Null,
+                Variables = _ => null,
+            };
+            var seams = new AmServiceDeploySeams { Http = (_, _) => throw new InvalidOperationException("no HTTP"), TempDirectory = () => directory };
+            var archive = AmServiceDeploy.CreateArchive(host, files, seams, context, manifest);
+            Path.GetDirectoryName(archive.Path).ShouldBe(directory);
+            archive.Entries.ShouldNotBeEmpty("real Dockerfile archive is non-empty");
+            archive.Entries.Where(entry => entry.TrimEnd('/').Split('/').Any(segment => segment.Equals("bin", StringComparison.OrdinalIgnoreCase)
+                    || segment.Equals("obj", StringComparison.OrdinalIgnoreCase) || segment.StartsWith("bin-", StringComparison.OrdinalIgnoreCase)))
+                .ShouldBeEmpty("real Dockerfile archive excludes bin/obj/bin-* at every depth");
+            manifest.Where(source => !archive.Entries.Any(entry => entry.TrimEnd('/') == source.Path || entry.StartsWith(source.Path + "/", StringComparison.Ordinal)))
+                .ShouldBeEmpty("real Dockerfile archive contains every derived source");
         }
         finally { Directory.Delete(directory, recursive: true); }
     }
@@ -292,36 +345,6 @@ public sealed class AmServiceDeployReadinessTests
             item.ShouldContain("-fsS", Case.Sensitive, run.Detail);
             item.ShouldContain(run.Endpoint, Case.Sensitive, run.Detail);
         }
-    }
-
-    // Blob 3a7f8565a47c174daaaa1d28eac6a4b2347d996e from 10fe51b0. That commit is on no branch.
-    private const string BaselineSha256 = "ed51126d218d2848bcce0aaa274d6c61d8c65c5fbfbb3fea9b57499a75180b67";
-
-    private static string BaselineFixture => Path.Combine(
-        Root, "tests", "Antiphon.Tests", "Infrastructure", "Fixtures", "c504-deploy-am-service-baseline.ps1");
-
-    private static async Task<string> LoadBaselineAsync()
-    {
-        var bytes = await File.ReadAllBytesAsync(BaselineFixture);
-        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant().ShouldBe(BaselineSha256);
-        var path = Path.Combine(Path.GetTempPath(), "c504-baseline-" + Guid.NewGuid().ToString("N") + ".ps1");
-        await File.WriteAllBytesAsync(path, bytes);
-        return path;
-    }
-
-    private static async Task<string> RunLegacyAsync()
-    {
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(Root, "scripts", "test-deploy-am-service.ps1") }) start.ArgumentList.Add(arg);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(300));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch (OperationCanceledException) { process.Kill(entireProcessTree: true); throw; }
-        var output = await stdout + await stderr;
-        process.ExitCode.ShouldBe(0, output);
-        return output;
     }
 
     private sealed record ToolPaths(string Curl, string Sh, string Sleep, string? Cygpath, string Directory);
@@ -449,7 +472,7 @@ public sealed class AmServiceDeployReadinessTests
             return reader.ReadToEnd().Split('\n').SkipLast(1).Select(line => line.TrimEnd('\r')).ToList();
         }
 
-        public async Task<Run> RunAsync(string caseName, string deploymentScript)
+        public async Task<Run> RunAsync(string caseName, bool baseline = false)
         {
             var tools = ResolveTools(_originalPath, out var toolError)
                 ?? throw new InvalidOperationException(toolError);
@@ -504,25 +527,26 @@ public sealed class AmServiceDeployReadinessTests
                     File.WriteAllText(Path.Combine(wrappers, name + ".cmd"), "@echo off\r\nexit /b 94\r\n");
             }
 
-            var start = new ProcessStartInfo("pwsh") { WorkingDirectory = Root, RedirectStandardOutput = true, RedirectStandardError = true };
-            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", Path.Combine(Root, "scripts", "test-deploy-am-service.ps1"), "-ReadinessCase", caseName, "-FixtureDirectory", _directory, "-DeploymentScript", deploymentScript }) start.ArgumentList.Add(arg);
-            start.Environment["PATH"] = string.Join(Path.PathSeparator, new[] { wrappers, tools.Directory, _originalPath });
-            start.Environment["C504_ENDPOINT"] = Endpoint;
-            start.Environment["C504_JOURNAL"] = ToPosixPath(JournalPath, tools);
-            start.Environment["C504_MIGRATIONS"] = ToPosixPath(Path.Combine(_directory, "migrations.txt"), tools);
-            start.Environment["C504_COUNT"] = ToPosixPath(Path.Combine(_directory, "curl-count.txt"), tools);
-            start.Environment["C504_ACK"] = ToPosixPath(Path.Combine(_directory, "listen-ack.txt"), tools);
-            start.Environment["C504_REFUSALS"] = _refusals.ToString();
-            start.Environment["C504_MODE"] = _mode;
-            start.Environment["C504_INITIAL_CODES"] = "|" + string.Join('|', initialCodes) + "|";
-            start.Environment["C504_REAL_CURL"] = ToPosixPath(tools.Curl, tools);
-            start.Environment["C504_REAL_SLEEP"] = ToPosixPath(tools.Sleep, tools);
-            start.Environment["C504_POSIX_FIXTURE"] = ToPosixPath(_directory, tools);
-            foreach (var key in start.Environment.Keys.Where(x => x.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) || x.Contains("SECRET", StringComparison.OrdinalIgnoreCase) || x.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase) || x.Contains("API_KEY", StringComparison.OrdinalIgnoreCase)).ToArray()) start.Environment.Remove(key);
-            using var child = Process.Start(start) ?? throw new InvalidOperationException("PowerShell did not start");
-            var stdout = child.StandardOutput.ReadToEndAsync();
-            var stderr = child.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(300));
+            // The verification shell's environment: this process's, without secrets, with the wrappers and Git's tools first.
+            var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
+                environment[(string)entry.Key] = (string?)entry.Value ?? "";
+            foreach (var key in environment.Keys.Where(x => x.Contains("TOKEN", StringComparison.OrdinalIgnoreCase) || x.Contains("SECRET", StringComparison.OrdinalIgnoreCase) || x.Contains("PASSWORD", StringComparison.OrdinalIgnoreCase) || x.Contains("API_KEY", StringComparison.OrdinalIgnoreCase)).ToArray())
+                environment.Remove(key);
+            environment["PATH"] = string.Join(Path.PathSeparator, new[] { wrappers, tools.Directory, _originalPath });
+            environment["C504_ENDPOINT"] = Endpoint;
+            environment["C504_JOURNAL"] = ToPosixPath(JournalPath, tools);
+            environment["C504_MIGRATIONS"] = ToPosixPath(Path.Combine(_directory, "migrations.txt"), tools);
+            environment["C504_COUNT"] = ToPosixPath(Path.Combine(_directory, "curl-count.txt"), tools);
+            environment["C504_ACK"] = ToPosixPath(Path.Combine(_directory, "listen-ack.txt"), tools);
+            environment["C504_REFUSALS"] = _refusals.ToString();
+            environment["C504_MODE"] = _mode;
+            environment["C504_INITIAL_CODES"] = "|" + string.Join('|', initialCodes) + "|";
+            environment["C504_REAL_CURL"] = ToPosixPath(tools.Curl, tools);
+            environment["C504_REAL_SLEEP"] = ToPosixPath(tools.Sleep, tools);
+            environment["C504_POSIX_FIXTURE"] = ToPosixPath(_directory, tools);
+
+            var remote = new Remote(_directory, Endpoint, tools, environment, baseline);
             if ((_mode == "ready" || _mode == "timeout-ready") && _refusals > 0)
                 _transition = Task.Run(async () => {
                     try
@@ -544,28 +568,27 @@ public sealed class AmServiceDeployReadinessTests
                     }
                     catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
                 });
-            try
+
+            // The command, in process: one deploy pass (performDeploy, skipped traffic check, a 10 s container poll).
+            var outerError = "";
+            AmServiceDeployResult? result = null;
+            await Task.Run(() =>
             {
-                await child.WaitForExitAsync(timeout.Token);
-                if (_transition is not null)
-                {
-                    if (File.Exists(Path.Combine(_directory, "listen-ack.txt"))) await _transition.WaitAsync(TimeSpan.FromSeconds(10));
-                    else _stop.Cancel(); // The baseline stops after its first refusal.
-                }
-                var output = await stdout + await stderr;
-                child.ExitCode.ShouldBe(0, output);
-                output.ShouldContain("PASS C504 " + caseName, Case.Sensitive);
-                output.ShouldContain("DEPLOY-AM-SERVICE TESTS EXIT CODE: 0", Case.Sensitive);
-                output.ShouldNotContain("FAIL ", Case.Sensitive);
-                var result = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(_directory, "result.json"))).RootElement;
-                var journal = ReadJournal();
-                journal.Any(x => x.StartsWith("unexpected-", StringComparison.Ordinal)).ShouldBeFalse(output);
-                var shellOutput = result.GetProperty("shellOutput").EnumerateArray().Select(x => x.GetString()!).ToArray();
-                return new Run(result.GetProperty("shellExit").GetInt32(), shellOutput,
-                    result.GetProperty("outerError").GetString()!, result.GetProperty("adapterNames").EnumerateArray().Select(x => x.GetString()!).ToArray(),
-                    result.GetProperty("laterCalls").GetInt32(), journal, output, Endpoint, _served, _requestsBeforeTransition, _mode);
+                try { result = AmServiceDeploy.Deploy(Root, true, true, 10, TargetHost, remote.Host, new FileSystem(), remote.Seams); }
+                catch (Exception e) { outerError = e.Message; }
+            }).WaitAsync(TimeSpan.FromSeconds(300));
+            if (_transition is not null)
+            {
+                if (File.Exists(Path.Combine(_directory, "listen-ack.txt"))) await _transition.WaitAsync(TimeSpan.FromSeconds(10));
+                else _stop.Cancel(); // The baseline stops after its first refusal.
             }
-            catch (OperationCanceledException) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); throw; }
+            var output = remote.Output;
+            Console.WriteLine("C504 verification result: case=" + caseName + " shellExit=" + remote.ShellExit + " laterCalls=" + remote.LaterCalls + " outerError=" + outerError);
+            var shellExit = remote.ShellExit ?? throw new InvalidOperationException("Verification shell did not execute. " + outerError + "\n" + output);
+            var journal = ReadJournal();
+            journal.Any(x => x.StartsWith("unexpected-", StringComparison.Ordinal)).ShouldBeFalse(output);
+            return new Run(shellExit, remote.ShellOutput, outerError, result?.AdapterNames.ToArray() ?? Array.Empty<string>(), remote.LaterCalls, journal, output,
+                Endpoint, _served, _requestsBeforeTransition, _mode);
         }
 
         private void Listen()
@@ -626,6 +649,156 @@ public sealed class AmServiceDeployReadinessTests
                 _stop.Dispose();
                 Directory.Delete(_directory, recursive: true);
             }
+        }
+    }
+
+    /// <summary>
+    /// The remote of one readiness run (the deleted readiness driver's runners): ssh answers each preflight and deploy command as a
+    /// healthy gateway would, except the technical verification, which runs locally under Git's sh with the working directory and the
+    /// /api/channels URL substituted (each exactly once) and its output and exit returned; scp checks the destination; tar writes a
+    /// small archive and lists the manifest. The server identity and version are fixed answers.
+    /// </summary>
+    private sealed class Remote
+    {
+        private readonly string _directory;
+        private readonly string _endpoint;
+        private readonly ToolPaths _tools;
+        private readonly IReadOnlyDictionary<string, string> _environment;
+        private readonly bool _baseline;
+        private readonly StringWriter _output = new();
+        private readonly IReadOnlyList<AmServiceManifestEntry> _manifest;
+        private bool _persisted;
+
+        public Remote(string directory, string endpoint, ToolPaths tools, IReadOnlyDictionary<string, string> environment, bool baseline)
+        {
+            _directory = directory;
+            _endpoint = endpoint;
+            _tools = tools;
+            _environment = environment;
+            _baseline = baseline;
+            _manifest = AmServiceDeploy.Manifest(new FileSystem(), Path.Combine(Root, "src", "Antiphon.Messaging.Service", "Dockerfile"), Path.Combine(Root, "src"));
+        }
+
+        public int? ShellExit { get; private set; }
+
+        public string[] ShellOutput { get; private set; } = Array.Empty<string>();
+
+        public int LaterCalls { get; private set; }
+
+        public string Output => _output.ToString().ReplaceLineEndings("\n");
+
+        public NightlyHost Host => new()
+        {
+            Clock = TimeProvider.System,
+            Git = new FakeGit().Run,
+            Launcher = new RecordingLauncher(Answer),
+            Processes = new FakeProcessTable(),
+            Probe = new FakeHostProbe(),
+            Out = _output,
+            Error = _output,
+            Trace = TextWriter.Null,
+            Variables = _ => null,
+        };
+
+        public AmServiceDeploySeams Seams => new()
+        {
+            Http = (url, _) =>
+            {
+                if (url.EndsWith("/api/version", StringComparison.Ordinal)) return new(200, "{\"version\":\"0123456789012345678901234567890123456789\"}");
+                if (url.EndsWith("/api/channels/consumer", StringComparison.Ordinal))
+                    return new(200, "{\"enabled\":true,\"consumerGroup\":\"antiphon-server-bridge\",\"inboundTopic\":\"channels.inbound\",\"brokers\":[{\"host\":\"am-redpanda\",\"port\":9092}]}");
+                throw new InvalidOperationException("Unexpected HTTP runner request.");
+            },
+            TempDirectory = () => _directory,
+            Resolve = name => name,
+        };
+
+        private static NightlyLaunchResult Lines(int exit, params string[] lines) =>
+            new() { ExitCode = exit, LogText = lines.Length == 0 ? "" : string.Join("\n", lines) + "\n" };
+
+        private NightlyLaunchResult Answer(NightlyLaunch launch)
+        {
+            switch (launch.FileName)
+            {
+                case "scp":
+                    if (!launch.Arguments[1].StartsWith(TargetHost + ":/tmp/am-service-src-", StringComparison.Ordinal)) throw new InvalidOperationException("Unexpected SCP destination.");
+                    return Lines(0);
+                case "tar":
+                    if (launch.Arguments[0] == "-czf")
+                    {
+                        File.WriteAllText(Path.Combine(launch.WorkingDirectory, launch.Arguments[1]), "owned fake archive");
+                        return Lines(0);
+                    }
+                    return Lines(0, _manifest.Select(entry => entry.Path).ToArray());
+                case "ssh":
+                    return Ssh(launch.Arguments[1]);
+                default:
+                    throw new InvalidOperationException("Unexpected native command: " + launch.FileName);
+            }
+        }
+
+        private NightlyLaunchResult Ssh(string command)
+        {
+            if (command.Contains("C0410_GATEWAY_SETTINGS", StringComparison.Ordinal))
+                return Lines(0, "{\"AntiphonConsumerGroup\":\"" + (_persisted ? "antiphon-server-bridge" : "antiphon-consumer") + "\",\"ExpectedAntiphonConsumerGroup\":"
+                    + (_persisted ? "\"antiphon-server-bridge\"" : "null") + ",\"InboundTopic\":\"channels.inbound\",\"ConsumerGroup\":\"antiphon-messaging-service\",\"BootstrapServers\":\"am-redpanda:9092\"}");
+            if (command.Contains("C0410_OVERRIDE", StringComparison.Ordinal)) return Lines(0, "{\"name\":\"docker-compose.override.yml\",\"exists\":false,\"managed\":true}");
+            if (command.Contains("rpk cluster info", StringComparison.Ordinal)) return Lines(0, "{\"cluster_name\":\"redpanda.c504\"}");
+            if (command.StartsWith("cd /home/mc/antiphon-messaging && docker compose config --no-interpolate", StringComparison.Ordinal))
+                return Lines(0, "{\"context\":\"/home/mc/antiphon-messaging/build/src\",\"dockerfile\":\"Antiphon.Messaging.Service/Dockerfile\"}");
+            if (command.StartsWith("docker inspect", StringComparison.Ordinal) && command.Contains("&& cd ", StringComparison.Ordinal))
+                return Lines(0, "aaaaaaaaaaaa sha256:aaaaaaaaaaaa running", "{\"State\":\"running\"}");
+            if (command.Contains("C0410_MANAGED", StringComparison.Ordinal)) { _persisted = true; return Lines(0); }
+            if (command.Contains("docker compose build messaging-service", StringComparison.Ordinal)) return Lines(0);
+            if (command.Contains("http://localhost:18090/api/channels", StringComparison.Ordinal)) return Shell(command);
+            if (command.Contains("/health/inbound-unconsumed", StringComparison.Ordinal))
+            {
+                LaterCalls++;
+                return Lines(0, "{\"state\":\"Ready\",\"watchedGroup\":\"antiphon-server-bridge\",\"expectedGroup\":\"antiphon-server-bridge\",\"topic\":\"channels.inbound\",\"ageSeconds\":12,\"partitions\":[{\"partition\":0,\"status\":\"CommittedOffset\",\"committedNextOffset\":12}]}", "200");
+            }
+            if (command.Contains("rpk group describe", StringComparison.Ordinal)) { LaterCalls++; return Lines(0, "channels.inbound 0 12 0 12 0"); }
+            if (command.StartsWith("docker inspect", StringComparison.Ordinal)) { LaterCalls++; return Lines(0, "bbbbbbbbbbbb sha256:bbbbbbbbbbbb running"); }
+            if (command.StartsWith("rm -f -- ", StringComparison.Ordinal)) return Lines(0);
+            throw new InvalidOperationException("Unexpected remote runner command.");
+        }
+
+        // Invoke-C504Shell: the verification under Git's sh, with the deployment directory and the /api/channels URL substituted.
+        private NightlyLaunchResult Shell(string command)
+        {
+            const string working = "cd '/home/mc/antiphon-messaging'";
+            const string url = "http://localhost:18090/api/channels";
+            static int Count(string text, string part) => (text.Length - text.Replace(part, "", StringComparison.Ordinal).Length) / part.Length;
+            if (Count(command, working) != 1 || Count(command, url) != 1) throw new InvalidOperationException("Verification command substitution count was not one.");
+            if (_baseline)
+            {
+                if (Count(command, RetryBlock) != 1) throw new InvalidOperationException("The retry block is not in the verification exactly once.");
+                command = command.Replace(RetryBlock, BaselineBlock, StringComparison.Ordinal);
+            }
+            var posix = _environment["C504_POSIX_FIXTURE"];
+            var text = command.Replace(working, "cd '" + posix + "' ", StringComparison.Ordinal).Replace(url, _endpoint, StringComparison.Ordinal);
+            var shellFile = Path.Combine(_directory, "verification.sh");
+            File.WriteAllText(shellFile, text.ReplaceLineEndings("\n") + "\n");
+            var start = new ProcessStartInfo(_tools.Sh) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add("exec sh '" + posix + "/verification.sh' 2>&1");
+            start.Environment.Clear();
+            foreach (var pair in _environment) start.Environment[pair.Key] = pair.Value;
+            Console.WriteLine("C504 shell launch: executable=" + _tools.Sh + " script=" + shellFile);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("sh did not start");
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(45000))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new InvalidOperationException("Verification shell watchdog expired.");
+            }
+            Task.WaitAll(new Task[] { stdout, stderr }, 10000);
+            var output = stdout.Result.TrimEnd('\r', '\n');
+            if (stderr.Result.Length > 0)
+                throw new InvalidOperationException("Shell launch wrote unexpected stderr: " + stderr.Result[..Math.Min(4096, stderr.Result.Length)]);
+            ShellOutput = output.Length > 0 ? output.Split('\n').Select(line => line.TrimEnd('\r')).ToArray() : Array.Empty<string>();
+            ShellExit = process.ExitCode;
+            return Lines(process.ExitCode, ShellOutput);
         }
     }
 

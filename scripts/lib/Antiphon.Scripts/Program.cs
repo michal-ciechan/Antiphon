@@ -309,6 +309,9 @@ namespace Antiphon.Scripts
             // failure, the restart and the verification included), 3 refused (a linked or unverifiable worktree; nothing touched).
             // Usage is 2.
             [DeployCommands.DeployLocalName] = DeployCommands.RunDeployLocal,
+            // The am-service gateway deploy answers every input itself (unit 50): exit 0 REMOTE DEPLOY VERDICT: ok (the preflight, and
+            // with --deploy the approved deploy), 1 failed or refused (the target check before any I/O). Usage is 2.
+            [DeployCommands.DeployAmServiceName] = DeployCommands.RunDeployAmService,
         };
 
         public static int Main(string[] args)

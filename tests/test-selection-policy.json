@@ -3036,9 +3036,6 @@
       "members": [
         {
           "script": "scripts/test-client.ps1"
-        },
-        {
-          "script": "scripts/test-deploy-am-service.ps1"
         }
       ],
       "prerequisites": [],
@@ -3577,7 +3574,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "665b3fd487ac112ad6088f4472716a5e45b2551565b612ac8532f96ce7540695",
+  "catalogHash": "f385cc7c7f0530679cbee20b942ca9ebdf2a2e6e6abed116993ee85d35163491",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

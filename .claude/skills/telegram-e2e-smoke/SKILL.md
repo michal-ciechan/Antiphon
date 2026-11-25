@@ -105,6 +105,6 @@ cdp("Page.setInterceptFileChooserDialog", enabled=False)
   for dispatcher/bridge changes. Real gateways have an independent lifecycle outside AppHost.
   For an explicitly chosen remote gateway in the fixed `/home/mc/antiphon-messaging` layout,
   follow [remote deployment operations](../../../docs/telegram-bot-ops.md#deploying-an-optional-remote-messaging-service)
-  and the `deploy-am-service.ps1 -SshTarget '<user>@<confirmed-host>'` helper. Replace the
-  placeholders before use; default/WhatIf is read-only preflight, while writes require
-  separate deployment authorization and `-Deploy` with ShouldProcess.
+  and the `scripts\antiphon.cmd deploy-am-service --ssh-target '<user>@<confirmed-host>'` command. Replace the
+  placeholders before use; default/`--what-if` is read-only preflight, while writes require
+  separate deployment authorization and `--deploy` with its confirmation.

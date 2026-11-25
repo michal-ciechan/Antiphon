@@ -512,7 +512,6 @@ public sealed class NightlyTestsRunTests
     private static readonly string[] ScriptCensusInventory =
     [
         "test-client scripts/test-client.ps1",
-        "test-deploy-am-service scripts/test-deploy-am-service.ps1",
     ];
 
     private static string[] CensusDrift(IEnumerable<(string Id, string Path)> census, string[] expected)
