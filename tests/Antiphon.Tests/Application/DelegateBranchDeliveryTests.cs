@@ -305,12 +305,12 @@ public sealed class DelegateBranchDeliveryTests
         var occupying = wire.Client.ClearLiveBufferAsync(Guid.NewGuid(), ct);
         await wire.Surface.Entered.Task.WaitAsync(GateWait, ct);
         wire.QueuedOperation = operation; wire.Queued = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        var before = Volatile.Read(ref wire.GitStarts); var parkEntries = wire.Surface.ParkEntries;
+        var before = Volatile.Read(ref wire.GitCalls); var parkEntries = wire.Surface.ParkEntries;
         var pending = action();
         try
         {
             await wire.Queued.Task.WaitAsync(GateWait, ct);
-            Volatile.Read(ref wire.GitStarts).ShouldBe(before, "busy-recipient: no Git entry before release");
+            Volatile.Read(ref wire.GitCalls).ShouldBe(before, "busy-recipient: no Git entry before release");
             wire.Surface.ParkEntries.ShouldBe(parkEntries, "busy-recipient: no runtime entry before release");
             pending.IsCompleted.ShouldBeFalse("no premature completion");
         }
@@ -384,7 +384,7 @@ public sealed class DelegateBranchDeliveryTests
         public bool BeforeMirrorCapture { get; set; }
         public PhoneHomeOperation? QueuedOperation { get; set; }
         public TaskCompletionSource Queued { get; set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int GitStarts;
+        public int GitCalls;
         private Wire(string root, string repository, string allowed, string origin, Guid store, bool old, string? reportedPlatform = null)
         { _reportedPlatform = reportedPlatform; _root = root; _repository = repository; _allowed = allowed; _origin = origin; _store = store; _old = old; }
         public static async Task<Wire> CreateAsync(RunnerSettlementSyncTests.SyncWorld world, bool old, CancellationToken ct, string? reportedPlatform = null)
@@ -406,7 +406,13 @@ public sealed class DelegateBranchDeliveryTests
         {
             Directory.CreateDirectory(_root); Directory.CreateDirectory(_allowed);
             _runtime = new(Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings { SessionLogPath = _root }), NullLogger<SessionRunnerRuntime>.Instance);
-            Workspace = new(_repository, _allowed, _origin, start => { Interlocked.Increment(ref GitStarts); TaskParkPublicationTests.ParkGit.Isolate(start); return Process.Start(start); });
+            // The real starter (a lambda turns the runner's in-process reads off): config isolation goes through the
+            // environment seam, and every git entry, answered in process or not, is counted through the call seam.
+            Workspace = new(_repository, _allowed, _origin, Process.Start)
+            {
+                GitEnvironmentForTest = TaskParkPublicationTests.ParkGit.IsolatedEnvironment,
+                GitCallForTest = _ => Interlocked.Increment(ref GitCalls),
+            };
             Surface = new RuntimeSurface(this, new PhoneHomeRuntimeAdapter(_runtime, RunnerBuildIdentity.Resolve()));
             Host = await PhoneHomeTestHost.StartAsync(observer: _ready, configureServices: s => s.AddSingleton<ILoggerProvider>(_ready));
             _ready.Directory = Host.Directory;

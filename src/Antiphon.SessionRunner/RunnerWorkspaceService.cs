@@ -106,8 +106,18 @@ public sealed partial class RunnerWorkspaceService
     /// <summary>CARD-1817. Shared with the maintenance pass. Null in a test that does not install one.</summary>
     internal RunnerRepositoryActivity? Activity { get; set; }
 
-    /// <summary>CARD-1817. Extra environment applied to this service's non-inspection git children. Tests plant an invalid <c>GIT_CONFIG_COUNT</c> here.</summary>
+    /// <summary>
+    /// CARD-1817. Extra environment applied to this service's git children before their own set-up (an inspection run
+    /// then still strips and replaces every config key). Tests plant an invalid <c>GIT_CONFIG_COUNT</c> here, or
+    /// isolate a world's config while keeping the real process starter, so reads are still answered in process.
+    /// </summary>
     internal IReadOnlyDictionary<string, string>? GitEnvironmentForTest { get; set; }
+
+    /// <summary>
+    /// Called with the arguments of every git command this service runs, whether libgit2 answers it in process or a
+    /// git child starts. A test counts git entries here instead of injecting a starter, which turns the in-process reads off.
+    /// </summary>
+    internal Action<string[]>? GitCallForTest { get; set; }
 
     public async Task<PhoneHomeWorkspaceMirrorResponse> MirrorAsync(
         PhoneHomeWorkspaceMirrorRequest request, CancellationToken ct)
@@ -973,13 +983,18 @@ public sealed partial class RunnerWorkspaceService
         // Held for the whole call, including an in-process read: that is still this task's git call.
         using var git = Activity?.EnterGit();
         using var add = args is ["worktree", "add", ..] ? Activity?.EnterWorktreeOrLand() : null;
+        GitCallForTest?.Invoke(args);
         return await RunGitCoreAsync(workingDirectory, _startProcess, _timeout, ct, args, inspection: false,
             extraEnvironment: GitEnvironmentForTest);
     }
 
     internal Task<(int ExitCode, string Stdout, string Stderr)> InspectionGitAsync(
-        string workingDirectory, CancellationToken ct, params string[] args) =>
-        RunGitCoreAsync(workingDirectory, _startProcess, _timeout, ct, args, inspection: true);
+        string workingDirectory, CancellationToken ct, params string[] args)
+    {
+        GitCallForTest?.Invoke(args);
+        return RunGitCoreAsync(workingDirectory, _startProcess, _timeout, ct, args, inspection: true,
+            extraEnvironment: GitEnvironmentForTest);
+    }
 
     internal static Task<(int ExitCode, string Stdout, string Stderr)> RunGitAsync(
         string workingDirectory, Func<ProcessStartInfo, Process?> startProcess, TimeSpan budget,
