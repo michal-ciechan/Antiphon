@@ -114,12 +114,13 @@ namespace Antiphon.Nightly
                     else
                         foreach (var h in held)
                         {
-                            run.Expanded.Add(h.Key); // RED WITNESS (naive): not re-queued.
+                            run.Expanded.Add(h.Key);
+                            ready.Add(h);
                         }
                 }
             }
             // A gate that never launched leaves its holds owed: expand them rather than lose them.
-            foreach (var pending in waiting.Values.SelectMany(v => v).Where(v => false)) throw new InvalidOperationException("held-gate-not-launched:" + pending.Key);
+            foreach (var pending in waiting.Values.SelectMany(v => v)) throw new InvalidOperationException("held-gate-not-launched:" + pending.Key);
             return run;
         }
 
