@@ -46,6 +46,14 @@ internal static class ReleaseImpactGraphBuilder
         var pieces = new Dictionary<ReleaseImpactIdentity, List<(string Path, TypeDeclarationSyntax Type)>>();
         foreach (var scan in scans)
         {
+            // A delegate is a type but not a BaseTypeDeclarationSyntax (CARD-1868 A-1). Its
+            // simple name is a positive target only; it never joins the class universe.
+            foreach (var callback in scan.Root.DescendantNodes().OfType<DelegateDeclarationSyntax>())
+            {
+                if (!typeFiles.TryGetValue(callback.Identifier.ValueText, out var paths))
+                    typeFiles[callback.Identifier.ValueText] = paths = new HashSet<string>(StringComparer.Ordinal);
+                paths.Add(scan.Path);
+            }
             foreach (var type in scan.Root.DescendantNodes().OfType<BaseTypeDeclarationSyntax>())
             {
                 if (!typeFiles.TryGetValue(type.Identifier.ValueText, out var paths))
