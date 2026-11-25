@@ -49,7 +49,23 @@ public sealed class C1514HostLoadMigrationTests
     public void ChainIsLinearAndSnapshotMatchesModel()
     {
         using var db = Metadata();
-        var chain = db.Database.GetMigrations().ToArray();
+        AssertChain(db.Database.GetMigrations().ToArray());
+        db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
+    }
+
+    /// <summary>
+    /// CARD-2074 witness. The pin is this card's linear window; a migration added after it
+    /// (the next card's) must not break the pin, which the Merge task had to repair by hand.
+    /// </summary>
+    [Test]
+    public void C2074_Chain_pin_accepts_a_newer_migration()
+    {
+        using var db = Metadata();
+        AssertChain([.. db.Database.GetMigrations(), "29991231235959_C2074FutureMigration"]);
+    }
+
+    private static void AssertChain(string[] chain)
+    {
         var previous = Array.IndexOf(chain, Previous);
         previous.ShouldBeGreaterThanOrEqualTo(0);
         chain.Skip(previous).Take(3).ShouldBe([Previous, Telemetry, Membership], "linear-after-current-master");
@@ -62,7 +78,6 @@ public sealed class C1514HostLoadMigrationTests
         chain[previous + 9].ShouldBe(ReviewEngine, "review-engine-follows-requested-model-alias");
         chain[previous + 10].ShouldBe(CallerReportReceipt, "caller-report-receipt-follows-review-engine");
         (chain.Length - previous).ShouldBe(11, "caller-report-receipt-is-the-tip");
-        db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
     [Test]

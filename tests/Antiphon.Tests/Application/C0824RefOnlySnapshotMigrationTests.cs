@@ -44,7 +44,8 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     public async Task PrepareHistoricalBaseline()
     {
         var name = TestContext.Current!.Metadata.TestDetails.TestName;
-        if (name == nameof(Migration_chain_is_linear_and_snapshot_matches_the_final_model)) return;
+        if (name is nameof(Migration_chain_is_linear_and_snapshot_matches_the_final_model)
+            or nameof(C2074_Chain_pin_accepts_a_newer_migration)) return;
         // These round trips exercise the historical migrations. Starting from
         // the current template would first hit the later telemetry Down guard.
         // Completes when the baseline migration is applied. The budget is only the backstop.
@@ -65,10 +66,23 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     {
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
-        var chain = db.Database.GetMigrations().ToArray();
-        chain.TakeLast(12).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure, ModelAlias, ReviewEngine, CallerReportReceipt }, "linear-after-master-with-original-ids");
+        AssertChain(db.Database.GetMigrations().ToArray());
         db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
     }
+
+    /// <summary>
+    /// CARD-2074 witness. A migration added after this card's window must not break the pin.
+    /// </summary>
+    [Test]
+    public void C2074_Chain_pin_accepts_a_newer_migration()
+    {
+        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
+            .UseNpgsql("Host=localhost;Database=metadata_only").Options);
+        AssertChain([.. db.Database.GetMigrations(), "29991231235959_C2074FutureMigration"]);
+    }
+
+    private static void AssertChain(string[] chain) =>
+        chain.TakeLast(12).ShouldBe(new[] { Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure, ModelAlias, ReviewEngine, CallerReportReceipt }, "linear-after-master-with-original-ids");
 
     [Test]
     public async Task Additive_upgrade_and_empty_downgrade_preserve_legacy_rows(CancellationToken ct)
