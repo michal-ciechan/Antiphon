@@ -683,14 +683,17 @@ public sealed class CodexCliObservationGapTests
 /// <summary>
 /// Runs independent C1029 world cases side by side; every case runs and every failure is reported under its label.
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
-/// in-process fakes), so the extra concurrency inside this class's ProcessSpawnLimit slot is sized like the git lane:
-/// <see cref="GitProcessSpawnLimit"/>'s width, and ANTIPHON_TEST_GIT_SPAWN_LIMIT=1 runs the cases one at a time.
+/// in-process fakes), but each also has a Kestrel host, a harness and a schema, so this class (one strict
+/// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_C1029_WORLDS
+/// (1-4) overrides it, and 1 runs the cases one at a time.
 /// Shared across worlds: RunnerBindingInvalidation's process-wide listeners, so one world's binding write drops
 /// another's routing cache; that costs a re-resolve from its own database, never a wrong answer.
 /// </summary>
 internal static class Worlds
 {
-    public static int Degree => new GitProcessSpawnLimit().Limit;
+    public const string OverrideVariable = "ANTIPHON_TEST_C1029_WORLDS";
+    public static int Degree { get; } = int.TryParse(Environment.GetEnvironmentVariable(OverrideVariable)?.Trim(), out var n)
+        ? Math.Clamp(n, 1, 4) : Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
 
     public static Task InParallelAsync(IEnumerable<(string Name, Func<Task> Body)> cases) =>
         InParallelAsync(cases, c => c.Name, c => c.Body());
@@ -705,10 +708,10 @@ internal static class Worlds
             catch (Exception ex)
             {
                 Console.WriteLine($"C1029 CASE FAILED {name}: {ex.GetType().Name}: {ex.Message}");
-                failures.Enqueue(new InvalidOperationException("C1029 case " + name + ": " + ex.Message, ex));
+                failures.Enqueue(new InvalidOperationException("C1029 case " + name, ex));
             }
         });
         if (!failures.IsEmpty)
-            throw new AggregateException($"C1029 {failures.Count} case(s) failed: " + string.Join(", ", failures.Select(f => f.Message)), failures);
+            throw new AggregateException($"C1029 {failures.Count} case(s) failed", failures);
     }
 }

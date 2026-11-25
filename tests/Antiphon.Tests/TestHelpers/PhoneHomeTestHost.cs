@@ -422,11 +422,20 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
     public bool AutoReply { get; set; } = true;
     public long Epoch { get; set; } = 1;
     public Func<PhoneHomeFrame, PhoneHomeFrame?>? Reply { get; set; }
-    /// <summary>An awaited reply, used instead of <see cref="Reply"/> when set, so a reply that does real work
-    /// (a runner dispatcher's git) does not hold a thread-pool thread while it waits.</summary>
+    /// <summary>An awaited reply, so a reply that does real work (a runner dispatcher's git) does not hold a
+    /// thread-pool thread while it waits. A frame is answered by <see cref="ReplyAsync"/>, then <see cref="Reply"/>,
+    /// then the default reply: the first that returns a frame.</summary>
     public Func<PhoneHomeFrame, Task<PhoneHomeFrame?>>? ReplyAsync { get; set; }
     private async Task<PhoneHomeFrame?> AnswerAsync(PhoneHomeFrame frame) =>
-        (ReplyAsync is { } replyAsync ? await replyAsync(frame) : Reply?.Invoke(frame)) ?? DefaultReply(frame);
+        (ReplyAsync is { } replyAsync ? await replyAsync(frame) : null) ?? Reply?.Invoke(frame) ?? DefaultReply(frame);
+    // A ClientWebSocket allows one send at a time; held-launch replies are written beside the read loop's.
+    private readonly SemaphoreSlim _send = new(1, 1);
+    private async Task SendAsync(PhoneHomeFrame frame, CancellationToken ct)
+    {
+        await _send.WaitAsync(ct);
+        try { await PhoneHomeFraming.WriteFrameAsync(Socket, frame, 16 * 1024 * 1024, ct); }
+        finally { _send.Release(); }
+    }
     public Dictionary<Guid, RunnerTranscriptDto> Transcripts { get; } = [];
     public List<RunnerSessionDto> Sessions { get; } = [];
     public int HeldLaunches { get; set; }
@@ -492,7 +501,7 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
 
     public async Task EmitAsync(PhoneHomeFrame frame)
     {
-        await PhoneHomeFraming.WriteFrameAsync(Socket, frame, 16 * 1024 * 1024, CancellationToken.None);
+        await SendAsync(frame, CancellationToken.None);
     }
 
     public async Task EmitTranscriptAsync(RunnerTranscriptEvent entry, long epoch)
@@ -547,14 +556,14 @@ internal sealed class PhoneHomeScriptedPeer : IAsyncDisposable
                         await _held.Task.WaitAsync(CancellationToken.None);
                         var heldReply = await AnswerAsync(heldFrame);
                         if (heldReply is not null)
-                            await PhoneHomeFraming.WriteFrameAsync(Socket, heldReply, 16 * 1024 * 1024, CancellationToken.None);
+                            await SendAsync(heldReply, CancellationToken.None);
                     }, ct);
                     continue;
                 }
 
                 var reply = await AnswerAsync(frame);
                 if (reply is not null)
-                    await PhoneHomeFraming.WriteFrameAsync(Socket, reply, 16 * 1024 * 1024, ct);
+                    await SendAsync(reply, ct);
             }
         }
         catch (OperationCanceledException)
