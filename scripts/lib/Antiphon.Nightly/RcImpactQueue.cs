@@ -69,7 +69,8 @@ namespace Antiphon.Nightly
             {
                 if (string.IsNullOrWhiteSpace(o.Key) || byKey.ContainsKey(o.Key)) throw new InvalidOperationException("duplicate-obligation");
                 if (o.Disposition != "Dirty" && o.Disposition != "Held" && o.Disposition != "Carry") throw new InvalidOperationException("invalid-disposition");
-                if (o.Disposition == "Held" && (string.IsNullOrEmpty(o.Gates.FirstOrDefault()) || !obligations.Any(g => g.Key == o.Gates.FirstOrDefault() && g.Disposition == "Dirty")))
+                if (o.Disposition == "Held" && ((o.Gates ?? Array.Empty<string>()).Length == 0
+                    || o.Gates.Any(gate => string.IsNullOrEmpty(gate) || !obligations.Any(g => g.Key == gate && g.Disposition == "Dirty"))))
                     throw new InvalidOperationException("held-without-gate");
                 byKey.Add(o.Key, o);
             }
@@ -82,14 +83,17 @@ namespace Antiphon.Nightly
 
             var run = new RcImpactRun();
             var ready = new List<RcImpactObligation>();
-            var waiting = new Dictionary<string, List<RcImpactObligation>>(StringComparer.Ordinal);
+            // Review r1 D-6: a held consumer waits for EVERY gate that holds it; it carries only when all of them passed with
+            // equal contracts, and the first gate that fails expands it into the attempt (once).
+            var pendingGates = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var heldOrder = new List<RcImpactObligation>();
             foreach (var o in obligations)
             {
                 if (o.Disposition == "Carry") run.Carried.Add(new RcImpactCarry { Key = o.Key, Origin = o.Origin });
                 else if (o.Disposition == "Held")
                 {
-                    if (!waiting.TryGetValue(o.Gates.First(), out var list)) waiting[o.Gates.First()] = list = new List<RcImpactObligation>();
-                    list.Add(o);
+                    pendingGates[o.Key] = new HashSet<string>(o.Gates, StringComparer.Ordinal);
+                    heldOrder.Add(o);
                 }
                 else ready.Add(o);
             }
@@ -106,21 +110,25 @@ namespace Antiphon.Nightly
                 {
                     Key = next.Key, Tier = Tier(next, open), Rank = run.Launches.Count + 1, CostSource = cost.Source, Cost = cost.Cost, Outcome = outcome,
                 });
-                if (waiting.TryGetValue(next.Key, out var held))
+                var gatePassed = outcome == "pass" && next.ContractsEqual;
+                foreach (var h in heldOrder.Where(w => pendingGates.TryGetValue(w.Key, out var waitingOn) && waitingOn.Contains(next.Key)).ToArray())
                 {
-                    waiting.Remove(next.Key);
-                    if (outcome == "pass" && next.ContractsEqual)
-                        foreach (var h in held) run.Carried.Add(new RcImpactCarry { Key = h.Key, Origin = "trust-gate-passed:" + next.Key });
-                    else
-                        foreach (var h in held)
-                        {
-                            run.Expanded.Add(h.Key);
-                            ready.Add(h);
-                        }
+                    var gates = pendingGates[h.Key];
+                    if (!gatePassed)
+                    {
+                        pendingGates.Remove(h.Key);
+                        run.Expanded.Add(h.Key);
+                        ready.Add(h);
+                        continue;
+                    }
+                    gates.Remove(next.Key);
+                    if (gates.Count > 0) continue;
+                    pendingGates.Remove(h.Key);
+                    run.Carried.Add(new RcImpactCarry { Key = h.Key, Origin = "trust-gate-passed:" + string.Join(",", h.Gates) });
                 }
             }
-            // A gate that never launched leaves its holds owed: expand them rather than lose them.
-            foreach (var pending in waiting.Values.SelectMany(v => v)) throw new InvalidOperationException("held-gate-not-launched:" + pending.Key);
+            // A gate that never launched leaves its holds owed: refuse rather than lose them.
+            foreach (var pending in pendingGates.Keys) throw new InvalidOperationException("held-gate-not-launched:" + pending);
             return run;
         }
 
