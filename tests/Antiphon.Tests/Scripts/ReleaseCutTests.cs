@@ -34,7 +34,8 @@ public sealed class ReleaseCutTests
 
         // One world per scenario: a prior attempt at the same SHA sealed c1 and c4 clean, c2 FAIL, c3 a skip under a pass label, c5 missing.
         (ReleaseCutWorld World, string Inventory, List<string> Launches, Func<RcIncrementalExecution?> Last) Setup(string prefix, bool approve = true, TimeSpan? sweepAge = null,
-            bool withdrawn = false, Action<NightlyRunOptions>? beforeTests = null, string? inventorySha = null, Func<int, string>? platformOf = null, bool laterFail = false)
+            bool withdrawn = false, Action<NightlyRunOptions>? beforeTests = null, string? inventorySha = null, Func<int, string>? platformOf = null, bool laterFail = false,
+            Func<int, string>? profileOf = null)
         {
             var world = ReleaseCutWorld.Real(prefix);
             var dir = RcIncrementalCut.IncrementalRoot(world.Release);
@@ -48,7 +49,7 @@ public sealed class ReleaseCutTests
                     ["id"] = "antiphon", ["chunk"] = "c" + i, ["result"] = result, ["exitCode"] = exit, ["timedOut"] = false, ["skipped"] = false,
                     ["evidenceReasons"] = Array.Empty<object>(), ["trx"] = "c" + i + ".trx", ["sha"] = world.Sha, ["contentDigest"] = roster[i - 1].ContentDigest,
                     ["disposition"] = "executed", ["runId"] = "prior-run", ["platform"] = platformOf?.Invoke(i) ?? "windows",
-                    ["architecture"] = RcReceiptScope.CurrentArchitecture(), ["profile"] = "rc",
+                    ["architecture"] = RcReceiptScope.CurrentArchitecture(), ["profile"] = profileOf?.Invoke(i) ?? "rc",
                 };
             }
             var inventory = Path.Combine(prior, "rc-chunk-receipts.json");
@@ -225,6 +226,42 @@ public sealed class ReleaseCutTests
                 cut.CoverageScope + " " + cut.IncrementalReason + " " + string.Join(",", inventoryMoved.Launches));
         }
 
+        // Review r2 D-8 (N6): a comparison whose owed set is absent, not an object, or edited after its digest never admits;
+        // the cut runs the whole roster Full and publishes nothing. An absent owed set is never read as "no later obligations".
+        string Comparison(ReleaseCutWorld w) => Path.Combine(RcIncrementalCut.IncrementalRoot(w.Release), "comparison.json");
+        void EditComparison(ReleaseCutWorld w, Action<JsonObject> edit)
+        {
+            var node = JsonNode.Parse(File.ReadAllText(Comparison(w)))!.AsObject();
+            edit(node);
+            File.WriteAllText(Comparison(w), node.ToJsonString());
+        }
+        (string Reason, string Detail) Refused(string prefix, string runId, Action<JsonObject> edit, bool laterFail = false)
+        {
+            var world = Setup(prefix, laterFail: laterFail);
+            using (world.World)
+            {
+                EditComparison(world.World, edit);
+                var cut = world.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = runId; });
+                var ranFull = cut.CoverageScope == "Full" && world.World.Runs.Single().SelectionMode == "Full" && world.Launches.SequenceEqual(roster.Select(c => c.Id))
+                    && world.Last()?.Carried.Count == 0 && cut.Tested && !cut.Published && NoPublisher(world.World);
+                return (ranFull ? cut.IncrementalReason : "not-full:" + cut.CoverageScope + ":" + cut.IncrementalReason,
+                    runId + "=" + cut.CoverageScope + " " + cut.IncrementalReason + " launched=" + string.Join(",", world.Launches) + " carried=" + Carried(world.Last()));
+            }
+        }
+        var emptyOwedDigest = RcComparisonBaseline.OwedDigest(new Dictionary<string, string>());
+        // Both fields dropped (a pre-r2 or torn writer), and the owed set dropped while the empty-set digest is kept.
+        var owedGone = Refused("c1836-owed-gone", "owed-gone-run", c => { c.Remove("owed"); c.Remove("owedDigest"); });
+        var owedGoneDigestKept = Refused("c1836-owed-empty", "owed-empty-run", c => { c.Remove("owed"); c["owedDigest"] = emptyOwedDigest; });
+        var owedNull = Refused("c1836-owed-null", "owed-null-run", c => { c["owed"] = null; c["owedDigest"] = emptyOwedDigest; });
+        rows.Check(new[] { owedGone, owedGoneDigestKept, owedNull }.All(r => r.Reason == "incremental-not-admitted:comparison-owed-absent"), "s6-comparison-owed-absent",
+            owedGone.Detail + " | " + owedGoneDigestKept.Detail + " | " + owedNull.Detail);
+
+        // Group 136's shape hidden by hand: the later c4 FAIL is deleted from the owed set but the recorded digest kept; and a digest dropped.
+        var owedEdited = Refused("c1836-owed-edit", "owed-edit-run", c => c["owed"]!.AsObject().Remove(roster[3].ContentDigest), laterFail: true);
+        var digestGone = Refused("c1836-owed-digest", "owed-digest-run", c => c.Remove("owedDigest"));
+        rows.Check(owedEdited.Reason == "incremental-not-admitted:comparison-owed-digest" && digestGone.Reason == "incremental-not-admitted:comparison-owed-digest",
+            "s6-comparison-owed-digest", owedEdited.Detail + " | " + digestGone.Detail);
+
         // Group 136's shape: an earlier clean inventory at the same SHA, then a later partial attempt where c4 FAILed.
         var later = Setup("c1836-later", laterFail: true);
         using (later.World)
@@ -244,6 +281,17 @@ public sealed class ReleaseCutTests
             rows.Check(cut.CoverageScope == "Incremental" && Sorted(linux.Launches).SequenceEqual(["c1", "c2", "c3", "c5"]) && Carried(linux.Last()) == "c4"
                 && reasons.Contains("platform:linux"), "s6-foreign-platform-owed",
                 "launched=" + string.Join(",", linux.Launches) + " carried=" + Carried(linux.Last()) + " c1=" + string.Join(",", reasons));
+        }
+
+        // Review r2 D-7: a same-SHA receipt sealed under another profile (nightly) is owed in an rc hop.
+        var nightly = Setup("c1836-profile", profileOf: i => i == 1 ? "nightly" : "rc");
+        using (nightly.World)
+        {
+            var cut = nightly.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "profile-run"; });
+            var reasons = nightly.Last() == null ? Array.Empty<string>() : PlanReasons(nightly.World, "profile-run", "c1");
+            rows.Check(cut.CoverageScope == "Incremental" && Sorted(nightly.Launches).SequenceEqual(["c1", "c2", "c3", "c5"]) && Carried(nightly.Last()) == "c4"
+                && reasons.Contains("profile:nightly"), "s6-foreign-profile-owed",
+                "launched=" + string.Join(",", nightly.Launches) + " carried=" + Carried(nightly.Last()) + " c1=" + string.Join(",", reasons));
         }
 
         // The hop itself: clean receipts from another commit, and a carried row whose origin is not the bound baseline.
@@ -284,18 +332,24 @@ public sealed class ReleaseCutTests
                 origin.Exec.Refusal + " launched=" + string.Join(",", origin.Launched) + " carried=" + Carried(origin.Exec));
 
             // Full: AllGreen is computed from the launched rows, never a constant.
-            RcIncrementalExecution FullRun(string name, string red) => RcIncrementalCut.Execute(new NightlyRunOptions(), roster, Path.Combine(hop.World.CandidateRoot, "attempts", name),
-                c => new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = c.Id == red ? "FAIL" : "pass", ["exitCode"] = c.Id == red ? 1 : 0 },
+            // Review r2 A-8 (N9): a launch that returns no row is not green either.
+            RcIncrementalExecution FullRun(string name, string red, bool noRow = false) => RcIncrementalCut.Execute(new NightlyRunOptions(), roster,
+                Path.Combine(hop.World.CandidateRoot, "attempts", name),
+                c => noRow && c.Id == red ? null!
+                    : new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = c.Id == red ? "FAIL" : "pass", ["exitCode"] = c.Id == red ? 1 : 0 },
                 platform: "windows");
             var fullRed = FullRun("full-red", "c3");
             var fullGreen = FullRun("full-green", "");
-            rows.Check(fullRed.CoverageScope == "Full" && fullRed.Launched.Count == roster.Length && !fullRed.AllGreen && fullGreen.AllGreen, "s6-full-red-is-red",
-                "red=" + fullRed.AllGreen + " green=" + fullGreen.AllGreen);
+            var fullNoRow = FullRun("full-no-row", "c3", noRow: true);
+            rows.Check(fullRed.CoverageScope == "Full" && fullRed.Launched.Count == roster.Length && !fullRed.AllGreen && fullGreen.AllGreen
+                && fullNoRow.Launched.Count == roster.Length && !fullNoRow.AllGreen, "s6-full-red-is-red",
+                "red=" + fullRed.AllGreen + " green=" + fullGreen.AllGreen + " no-row=" + fullNoRow.AllGreen);
         }
 
-        rows.ShouldAllPass(16, "s6-gate-closed-full", "s6-gate-admitted-owed-only", "s6-no-publication", "s6-explicit-full-publishes", "s6-default-full",
+        rows.ShouldAllPass(19, "s6-gate-closed-full", "s6-gate-admitted-owed-only", "s6-no-publication", "s6-explicit-full-publishes", "s6-default-full",
             "s6-stale-plan-digest", "s6-hop-mismatch", "s6-age-boundary", "s6-crash-resume", "s6-rollback", "s6-inventory-sha-mismatch", "s6-later-fail-same-sha",
-            "s6-foreign-platform-owed", "s6-cross-source-executes", "s6-origin-sha-mismatch", "s6-full-red-is-red");
+            "s6-foreign-platform-owed", "s6-cross-source-executes", "s6-origin-sha-mismatch", "s6-full-red-is-red", "s6-comparison-owed-absent",
+            "s6-comparison-owed-digest", "s6-foreign-profile-owed");
     }
 
     [Test]
