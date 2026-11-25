@@ -670,6 +670,43 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task cache_digest_stops_on_cancellation_during_a_member_read(bool duringPreparation)
+    {
+        var fixture = NewSealFixture();
+        if (duringPreparation)
+            fixture.Seed(extraMember: true);
+        byte[] originalSeal = duringPreparation ? File.ReadAllBytes(fixture.Seal) : [];
+        var driver = new SealDriver(fixture)
+        {
+            OnBuild = (_, _) =>
+            {
+                File.WriteAllText(Path.Combine(fixture.Partition, "second.txt"), "second intermediate");
+                return Task.FromResult(new DriverResult(0, "", ""));
+            },
+        };
+        using var cancel = new CancellationTokenSource();
+        var reads = new CancelOnDigestIo(cancel);
+        var context = new CheckpointCleanupContext(reads, CheckpointCleanupDefaults.Context.Git);
+        var slots = new SealSlots();
+        using (var cache = fixture.Open(new DigestSealIo(context)))
+        {
+            var result = await fixture.RunAsync(cache, driver, slots: slots, cancellationToken: cancel.Token);
+            result.ExitCode.ShouldBe(ExitCodes.Canceled, Describe(result));
+            result.State.Reason.ShouldBe("caller-requested");
+        }
+
+        reads.MembersOpened.ShouldBe(1, "cancellation inside the first bounded read must stop the traversal");
+        slots.BuildGrants.ShouldBe(duringPreparation ? 0 : 1);
+        driver.Builds.Count.ShouldBe(duringPreparation ? 0 : 1);
+        driver.Rows.ShouldBeEmpty();
+        File.ReadAllBytes(fixture.Seal).ShouldBe(originalSeal);
+        using var reopened = fixture.Open();
+        (fixture.Prepare(reopened) is not null).ShouldBe(duringPreparation);
+    }
+
+    [Test]
     [Arguments("nonzero", ExitCodes.Invalid, "build-failed")]
     [Arguments("timeout", ExitCodes.Timeout, "build-deadline-exceeded")]
     [Arguments("source-drift", ExitCodes.Invalid, "source_changed")]
@@ -764,16 +801,18 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         internal string Output(string id) => Path.Combine(root, "App", id);
         internal string Log(string id) => Path.Combine(root, ".antiphon", id, "builds", id, "build.log");
 
-        internal CheckpointIntermediateCache Open(FaultSealIo? io = null) =>
+        internal CheckpointIntermediateCache Open(CheckpointIntermediateCache.SealIo? io = null) =>
             CheckpointIntermediateCache.TryOpen(root, source, source.Commit, sealIo: io).ShouldNotBeNull();
         internal CheckpointIntermediateCache.Entry? Prepare(CheckpointIntermediateCache cache) =>
             cache.Prepare(Project, properties);
-        internal void Seed()
+        internal void Seed(bool extraMember = false)
         {
             using var cache = Open();
             var entry = Prepare(cache).ShouldNotBeNull();
             entry.Invalidate().ShouldBeTrue();
             File.WriteAllText(Asset, "seeded intermediates");
+            if (extraMember)
+                File.WriteAllText(Path.Combine(Partition, "second.txt"), "second intermediate");
             entry.Publish();
         }
 
@@ -856,6 +895,38 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             .Where(arg => arg.StartsWith("--property:", StringComparison.Ordinal) &&
                 !arg.StartsWith("--property:OutputPath=", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private sealed class DigestSealIo(CheckpointCleanupContext context) : CheckpointIntermediateCache.SealIo
+    {
+        internal override CheckpointCleanupContext ReadContext => context;
+    }
+
+    private sealed class CancelOnDigestIo(CancellationTokenSource cancel) : ForwardingNativeIo
+    {
+        private int membersOpened;
+        internal int MembersOpened => Volatile.Read(ref membersOpened);
+
+        public override ICheckpointReadHandle OpenRead(string path, CheckpointReadOpen request) =>
+            new CancelOnStream(base.OpenRead(path, request), () =>
+            {
+                if (Interlocked.Increment(ref membersOpened) == 1)
+                    cancel.Cancel();
+            });
+
+        private sealed class CancelOnStream(ICheckpointReadHandle inner, Action opened) : ICheckpointReadHandle
+        {
+            public CheckpointHandleStat Inspect() => inner.Inspect();
+
+            public Stream OpenStream()
+            {
+                var stream = inner.OpenStream();
+                opened();
+                return stream;
+            }
+
+            public void Dispose() => inner.Dispose();
+        }
     }
 
     private sealed class SealDriver(SealFixture fixture) : IConfinedDriver

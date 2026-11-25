@@ -369,7 +369,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return false;
     }
 
-    private static bool MatchesSeal(FileStream seal, string path)
+    private bool MatchesSeal(FileStream seal, string path)
     {
         Span<byte> recorded = stackalloc byte[32];
         if (seal.Length != recorded.Length)
@@ -378,7 +378,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return recorded.SequenceEqual(Digest(path));
     }
 
-    private static byte[] Digest(string root)
+    private byte[] Digest(string root)
     {
         var pending = new Stack<DirectoryInfo>();
         pending.Push(new DirectoryInfo(root));
@@ -392,7 +392,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
                 if (item is DirectoryInfo child)
                     pending.Push(child);
                 else
-                    files.Add(Path.GetRelativePath(root, item.FullName), ReceiptFile.Digest(CheckpointCleanupDefaults.Context, item.FullName).Sha256);
+                    files.Add(Path.GetRelativePath(root, item.FullName), ReceiptFile.Digest(sealIo.ReadContext, item.FullName).Sha256);
             }
         }
         return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(files));
@@ -400,6 +400,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
 
     internal class SealIo
     {
+        internal virtual CheckpointCleanupContext ReadContext => CheckpointCleanupDefaults.Context;
         internal virtual void Write(FileStream stream, ReadOnlySpan<byte> payload) => stream.Write(payload);
         internal virtual void Flush(FileStream stream) => stream.Flush(flushToDisk: true);
         internal virtual void Close(FileStream stream) => stream.Dispose();
@@ -458,7 +459,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
             {
                 cache.CheckPaths(Path, SealPath);
                 RequirePartition();
-                var digest = Digest(Path);
+                var digest = cache.Digest(Path);
                 cache.ReplaceSeal(this, expected, 0, digest, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
