@@ -67,7 +67,11 @@ public sealed class ScratchGitRepo : IDisposable
     // Seeded-template keys whose build or copy check failed: later repositories go straight to the git steps.
     // The failures the template can meet as a matter of course; anything else is a bug and must not hide behind the
     // slower git steps.
-    private static bool ExpectedTemplateFailure(Exception ex) => ex is IOException or UnauthorizedAccessException
+    // CloneTo copies in Parallel.ForEach, which wraps a copy failure in an AggregateException: expected when every
+    // failure inside is.
+    private static bool ExpectedTemplateFailure(Exception ex) => ex is AggregateException aggregate
+        ? aggregate.Flatten().InnerExceptions.All(ExpectedTemplateFailure)
+        : ex is IOException or UnauthorizedAccessException
         or InvalidOperationException or InvalidDataException or System.Text.Json.JsonException
         or System.ComponentModel.Win32Exception or LibGit2Sharp.LibGit2SharpException or Shouldly.ShouldAssertException;
 
