@@ -633,6 +633,60 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task ordinary_warm_replay_requires_a_verified_binding_and_gate()
+    {
+        var fixture = NewSealFixture();
+        fixture.Seed();
+        var producer = new SealDriver(fixture);
+        using (var cache = fixture.Open())
+            fixture.AssertGreen(await fixture.RunAsync(cache, producer), producer, "bin-proof", warm: true);
+
+        var replay = new SealDriver(fixture)
+        {
+            OnRow = (_, _) =>
+            {
+                using var contender = CheckpointIntermediateCache.TryOpen(fixture.Root, fixture.Source, fixture.Source.Commit);
+                contender.ShouldBeNull("a warm replay host must run under the worktree gate");
+                return Task.CompletedTask;
+            },
+        };
+        using var output = new StringWriter();
+        var runtime = new CheckpointApp.Runtime
+        {
+            RepoRoot = fixture.Root, Driver = replay, Slots = new SealSlots(), Output = output,
+        };
+        string[] args =
+        [
+            "row", "--name", "replay", "--project", SealFixture.Project, "--output-path", "bin-proof/",
+            "--filter", "/*/*/Sample/alpha", "--no-build",
+        ];
+        var properties = SealFixture.Properties(producer.Builds.Single());
+        var explicitLayout = args.Concat(properties.SelectMany(property =>
+            new[] { "--msbuild-property", property["--property:".Length..] })).ToArray();
+        var mismatched = explicitLayout.Concat(new[] { "--msbuild-property", "Label=stale" }).ToArray();
+
+        using (fixture.Open())
+        {
+            var refused = await Antiphon.Checkpoints.Program.RunAsync(mismatched, runtime);
+            replay.Rows.ShouldBeEmpty("an ordinary stale-binding replay must refuse before the host starts");
+            refused.ShouldBe(ExitCodes.Invalid, output.ToString());
+            output.ToString().ShouldContain("reason=build_source_mismatch");
+            output.GetStringBuilder().Clear();
+
+            var contended = await Antiphon.Checkpoints.Program.RunAsync(explicitLayout, runtime);
+            contended.ShouldBe(ExitCodes.Invalid, output.ToString());
+            output.ToString().ShouldContain("reason=build_cache_unavailable");
+            replay.Rows.ShouldBeEmpty();
+        }
+
+        output.GetStringBuilder().Clear();
+        var admitted = await Antiphon.Checkpoints.Program.RunAsync(explicitLayout, runtime);
+        admitted.ShouldBe(ExitCodes.Green, output.ToString());
+        SealFixture.Properties(replay.Rows.ShouldHaveSingleItem()).ShouldBe(properties);
+        output.ToString().ShouldContain("buildSource=verified");
+    }
+
+    [Test]
     public async Task overlapping_build_keeps_first_rows_partition()
     {
         var fixture = NewSealFixture();
