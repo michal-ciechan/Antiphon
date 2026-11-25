@@ -4365,8 +4365,7 @@ public sealed partial class AgentTaskReplyService
     /// </summary>
     private sealed record RetainedQuestionBlock(Guid SettlementEventId, string Question)
     {
-        public string NoteDigest(string report) =>
-            DelegationNoteDigest.Compute($"{report}\n\n[retained-question-block {SettlementEventId:D}]");
+        public string NoteDigest(string report) => CompletionNoteStamp.RetainedQuestionDigest(report, SettlementEventId);
     }
 
     /// <summary>

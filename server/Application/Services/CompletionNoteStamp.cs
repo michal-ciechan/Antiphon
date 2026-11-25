@@ -25,6 +25,13 @@ internal static class CompletionNoteStamp
         && conversationKey is not null
         && conversationKey.StartsWith("task:", StringComparison.Ordinal);
 
+    /// <summary>
+    /// CARD-1503 note identity for a question that Blocks with a report the caller already holds:
+    /// the report plus that settlement's Blocked event, so the note is not dropped as a duplicate.
+    /// </summary>
+    public static string RetainedQuestionDigest(string report, Guid settlementEventId) =>
+        DelegationNoteDigest.Compute($"{report}\n\n[retained-question-block {settlementEventId:D}]");
+
     // Called only after the recipient's complete submitted prompt has been matched.
     // A delayed queue attempt for an earlier settlement must not acknowledge a later one.
     public static async Task RecordReceiptsAsync(AppDbContext db, IEnumerable<SessionQueuedMessage> messages,
@@ -38,7 +45,18 @@ internal static class CompletionNoteStamp
                 .Where(t => t.Id == message.SourceTaskId && t.ParentSessionId == message.AgentSessionId
                     && t.CompletedAt != null && t.CompletedAt <= message.CreatedAt)
                 .Select(t => new { t.Result, t.CompletedAt }).SingleOrDefaultAsync(ct);
-            if (task?.Result is null || DelegationNoteDigest.Compute(task.Result) != message.ContentDigest) continue;
+            if (task?.Result is null) continue;
+            if (DelegationNoteDigest.Compute(task.Result) != message.ContentDigest)
+            {
+                // A retained-question note is identified by the report and its own Blocked
+                // settlement event. Only the event of the settlement being closed can match, so a
+                // later settlement with identical text still needs its own note or read.
+                var settlement = await db.AgentTaskEvents.AsNoTracking()
+                    .Where(e => e.AgentTaskId == message.SourceTaskId && e.At == task.CompletedAt
+                        && e.Type == AgentTaskEventType.Blocked)
+                    .Select(e => e.Id).ToListAsync(ct);
+                if (!settlement.Any(id => RetainedQuestionDigest(task.Result, id) == message.ContentDigest)) continue;
+            }
 
             var prompts = db.TranscriptEntries.AsNoTracking().Where(e =>
                 e.AgentSessionId == message.AgentSessionId && e.Kind == TranscriptKinds.UserPrompt && e.Text != null);
