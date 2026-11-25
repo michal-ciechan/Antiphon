@@ -1,12 +1,19 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Time.Testing;
+using Microsoft.Win32.SafeHandles;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
 public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 {
     [Test]
@@ -340,6 +347,562 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             cache?.Dispose();
             if (!OperatingSystem.IsWindows() && Directory.Exists(lockPath))
                 File.SetUnixFileMode(lockPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Test]
+    [Arguments("write-and-close")]
+    [Arguments("flush-and-close")]
+    [Arguments("close-only")]
+    [Arguments("rename")]
+    public async Task publication_fault_keeps_verified_row(string fault)
+    {
+        var fixture = NewSealFixture();
+        var driver = new SealDriver(fixture);
+        var io = new FaultSealIo(fault)
+        {
+            BeforePublication = () =>
+            {
+                fixture.Binding("bin-proof", driver.Builds.Single()).Check().ShouldBe("verified");
+                OwnedOutputLedger.Check(fixture.Output("bin-proof")).ShouldBeNull();
+                new FileInfo(fixture.Seal).Length.ShouldBe(0);
+            },
+        };
+        Exception? escaped = null;
+        SchedulerResult? result = null;
+        using (var cache = fixture.Open(io))
+        {
+            try { result = await fixture.RunAsync(cache, driver); }
+            catch (IOException error) { escaped = error; }
+        }
+
+        io.PublicationWrites.ShouldBe(1);
+        io.PublicationCloses.ShouldBe(1, "publication must close its file even when a write or flush failed");
+        io.PublicationHandle.ShouldNotBeNull().IsClosed.ShouldBeTrue();
+        escaped.ShouldBeNull("a second exception from seal disposal must not escape a qualified build");
+        io.Faults.ShouldBe(fault is "write-and-close" or "flush-and-close" ? 2 : 1);
+        if (fault is "close-only" or "rename")
+            io.AcceptedDigest.ShouldBe(fixture.ExpectedDigest());
+        fixture.AssertGreen(result!, driver, "bin-proof", warm: true);
+        File.ReadAllBytes(fixture.Seal).ShouldBeEmpty();
+        Directory.GetFiles(Path.GetDirectoryName(fixture.Seal)!, "*.tmp").ShouldBeEmpty();
+        using var reopened = fixture.Open();
+        using var entry = fixture.Prepare(reopened);
+        entry.ShouldBeNull("a failed publication cannot grant reuse, even if it staged the complete digest");
+    }
+
+    [Test]
+    [Arguments("slot-refused", ExitCodes.Invalid)]
+    [Arguments("slot-timeout", ExitCodes.SlotTimeout)]
+    [Arguments("canceled-wait", ExitCodes.Canceled)]
+    [Arguments("ended-owner", ExitCodes.OwnerEnded)]
+    [Arguments("source-refused", ExitCodes.Invalid)]
+    [Arguments("output-exists", ExitCodes.Invalid)]
+    [Arguments("ledger-refused", ExitCodes.Invalid)]
+    [Arguments("graph-refused", ExitCodes.Invalid)]
+    public async Task unlaunched_build_preserves_partition(string boundary, int expectedExit)
+    {
+        var fixture = NewSealFixture();
+        fixture.Seed();
+        var seal = File.ReadAllBytes(fixture.Seal);
+        seal.Length.ShouldBe(32);
+        var partition = fixture.PartitionFiles();
+        var clock = new FakeTimeProvider();
+        using var cancel = new CancellationTokenSource();
+        var driver = new SealDriver(fixture) { Confine = boundary == "ledger-refused" };
+        var factory = new NoBuildFactory();
+        var refusalReached = false;
+        var slots = new SealSlots((label, token) =>
+        {
+            refusalReached = true;
+            switch (boundary)
+            {
+                case "slot-refused":
+                    return Task.FromResult(new SlotLease { State = "refused", ExitCode = ExitCodes.Invalid, SlotReason = "fixture-refused" });
+                case "slot-timeout":
+                    clock.Advance(TimeSpan.FromMinutes(1));
+                    return Task.FromCanceled<SlotLease>(token);
+                case "canceled-wait":
+                    cancel.Cancel();
+                    return Task.FromCanceled<SlotLease>(token);
+                case "source-refused":
+                    File.WriteAllText(fixture.SourceFile, "changed source");
+                    break;
+                case "output-exists":
+                    Directory.CreateDirectory(fixture.Output("bin-proof"));
+                    break;
+            }
+            return Task.FromResult(SealSlots.Grant());
+        });
+        if (boundary == "graph-refused")
+            File.WriteAllText(fixture.GraphToggle, "request a missing reference");
+
+        SchedulerResult refused;
+        using (var cache = fixture.Open())
+        {
+            refused = await fixture.RunAsync(cache, boundary == "graph-refused" ? new ProcessDriver(factory) : driver,
+                slots: slots, clock: clock, cancellationToken: cancel.Token, ownerBound: boundary == "ended-owner",
+                beforeLaunch: token =>
+                {
+                    if (boundary == "ended-owner")
+                    {
+                        cancel.Cancel();
+                        token.ThrowIfCancellationRequested();
+                    }
+                    if (boundary == "ledger-refused")
+                        File.WriteAllText(fixture.LedgerFile, "changed ignored input");
+                    return Task.CompletedTask;
+                });
+        }
+
+        refusalReached.ShouldBeTrue();
+        refused.ExitCode.ShouldBe(expectedExit, Describe(refused));
+        driver.Builds.ShouldBeEmpty();
+        driver.Rows.ShouldBeEmpty();
+        factory.Starts.ShouldBe(0);
+        var build = refused.State.Builds.Single();
+        switch (boundary)
+        {
+            case "slot-refused": build.SlotReason.ShouldBe("fixture-refused"); break;
+            case "slot-timeout": build.TerminalReason.ShouldBe("slot-admission-deadline-exceeded"); break;
+            case "canceled-wait": refused.State.Reason.ShouldBe("caller-requested"); break;
+            case "ended-owner": refused.State.Reason.ShouldBe("owner-ended"); break;
+            case "source-refused": build.SlotReason.ShouldBe("source_changed"); break;
+            case "output-exists": build.SlotReason.ShouldBe("refused: pre-existing-output"); break;
+            case "ledger-refused":
+                build.SlotReason.ShouldBe("refused: tampered");
+                File.ReadAllText(fixture.Log("bin-proof")).ShouldContain("TAMPERED ledger-input.txt");
+                break;
+            case "graph-refused":
+                build.SlotReason.ShouldBe("refused: graph-unevaluated");
+                File.ReadAllText(fixture.Log("bin-proof")).ShouldContain("referenced project missing:");
+                break;
+        }
+
+        File.ReadAllBytes(fixture.Seal).ShouldBe(seal, boundary + " must preserve the valid seal");
+        fixture.PartitionFiles().ShouldBe(partition);
+        File.WriteAllText(fixture.SourceFile, "original source");
+        File.WriteAllText(fixture.LedgerFile, "original input");
+        File.Delete(fixture.GraphToggle);
+        var retryDriver = new SealDriver(fixture);
+        using (var cache = fixture.Open())
+            fixture.AssertGreen(await fixture.RunAsync(cache, retryDriver, "bin-retry"), retryDriver, "bin-retry", warm: true);
+        File.ReadAllBytes(fixture.Seal).ShouldBe(fixture.ExpectedDigest());
+
+        if (boundary == "slot-refused")
+        {
+            var firstUse = NewSealFixture();
+            using var cache = firstUse.Open();
+            (await firstUse.RunAsync(cache, new SealDriver(firstUse), slots: slots)).ExitCode.ShouldBe(expectedExit);
+            File.Exists(firstUse.Seal).ShouldBeFalse();
+            Directory.Exists(firstUse.Partition).ShouldBeFalse();
+            var initialDriver = new SealDriver(firstUse);
+            firstUse.AssertGreen(await firstUse.RunAsync(cache, initialDriver), initialDriver, "bin-proof", warm: true);
+            File.ReadAllBytes(firstUse.Seal).ShouldBe(firstUse.ExpectedDigest());
+        }
+    }
+
+    [Test]
+    public async Task invalidation_refusal_rebinds_cold()
+    {
+        var fixture = NewSealFixture();
+        fixture.Seed();
+        var bytes = File.ReadAllBytes(fixture.Seal);
+        var io = new FaultSealIo("invalidation");
+        var driver = new SealDriver(fixture) { Confine = true };
+        var slots = new SealSlots();
+        using (var cache = fixture.Open(io))
+            fixture.AssertGreen(await fixture.RunAsync(cache, driver, slots: slots), driver, "bin-proof", warm: false);
+        slots.BuildGrants.ShouldBe(1);
+        io.Faults.ShouldBe(1);
+        driver.Captures.Count.ShouldBe(1, "the ledger must precede the slot and cannot be replaced during fallback");
+        driver.Builds.Single().Ledger.ShouldBeSameAs(driver.Captures.Single());
+        driver.Builds.Single().Ledger!.Files.Keys.ShouldContain("ledger-input.txt");
+        driver.Builds.Single().GraphEvaluationParallelism.ShouldBe(1);
+        File.ReadAllBytes(fixture.Seal).ShouldBe(bytes);
+
+        var drift = new FaultSealIo("invalidation")
+        {
+            OnInvalidationRefusal = () => File.WriteAllText(fixture.SourceFile, "changed during fallback"),
+        };
+        var driftDriver = new SealDriver(fixture) { Confine = true };
+        using (var cache = fixture.Open(drift))
+        {
+            var refused = await fixture.RunAsync(cache, driftDriver, "bin-drift");
+            refused.ExitCode.ShouldBe(ExitCodes.Invalid, Describe(refused));
+            refused.State.Builds.Single().SlotReason.ShouldBe("source_changed");
+        }
+        drift.Faults.ShouldBe(1);
+        driftDriver.Builds.ShouldBeEmpty();
+        driftDriver.Rows.ShouldBeEmpty();
+        File.ReadAllBytes(fixture.Seal).ShouldBe(bytes);
+    }
+
+    [Test]
+    public async Task overlapping_build_keeps_first_rows_partition()
+    {
+        var fixture = NewSealFixture();
+        fixture.Seed();
+        var rowEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondBuildEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slots = new SealSlots(async (label, token) =>
+        {
+            if (label == "build:bin-second")
+                await rowEntered.Task.WaitAsync(token);
+            return SealSlots.Grant();
+        });
+        var driver = new SealDriver(fixture)
+        {
+            OnRow = async (request, token) =>
+            {
+                if (request.Arguments.Contains("--property:OutputPath=bin-proof/"))
+                {
+                    rowEntered.TrySetResult();
+                    await secondBuildEntered.Task.WaitAsync(token);
+                }
+            },
+            OnBuild = (request, _) =>
+            {
+                if (request.Arguments.Contains("--property:OutputPath=bin-second/"))
+                {
+                    using var contender = CheckpointIntermediateCache.TryOpen(fixture.Root, fixture.Source, fixture.Source.Commit);
+                    contender.ShouldBeNull("the first test host still owns borrowed intermediates");
+                    secondBuildEntered.TrySetResult();
+                }
+                return Task.FromResult(new DriverResult(0, "", ""));
+            },
+        };
+        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using (var cache = fixture.Open())
+        {
+            var result = await fixture.RunAsync(cache, driver, slots: slots, cancellationToken: watchdog.Token, second: true);
+            result.ExitCode.ShouldBe(ExitCodes.Green, Describe(result));
+            result.Rows.Count.ShouldBe(2);
+            fixture.AssertGreen(result, driver, "bin-proof", warm: true);
+            fixture.AssertGreen(result, driver, "bin-second", warm: false);
+        }
+
+        rowEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        secondBuildEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
+        driver.Builds.Count.ShouldBe(2);
+        using var reopened = fixture.Open();
+        using (var entry = fixture.Prepare(reopened))
+            entry.ShouldNotBeNull().Path.ShouldBe(fixture.Partition);
+        File.ReadAllBytes(fixture.Seal).ShouldBe(fixture.ExpectedDigest());
+    }
+
+    [Test]
+    [Arguments("nonzero", ExitCodes.Invalid, "build-failed")]
+    [Arguments("timeout", ExitCodes.Timeout, "build-deadline-exceeded")]
+    [Arguments("source-drift", ExitCodes.Invalid, "source_changed")]
+    [Arguments("post-build-ledger", ExitCodes.Invalid, "slot-refused")]
+    [Arguments("receipt-refused", ExitCodes.Invalid, "slot-refused")]
+    public async Task unqualified_build_keeps_invalid_seal(string failure, int expectedExit, string expectedRowState)
+    {
+        var fixture = NewSealFixture();
+        fixture.Seed();
+        var clock = new FakeTimeProvider();
+        var io = new FaultSealIo("observe");
+        var driver = new SealDriver(fixture)
+        {
+            Confine = failure == "post-build-ledger",
+            OnBuild = (request, token) =>
+            {
+                new FileInfo(fixture.Seal).Length.ShouldBe(0, "invalidate before the build's first write to the partition");
+                File.WriteAllText(fixture.Asset, "first write by build");
+                if (failure == "source-drift") File.WriteAllText(fixture.SourceFile, "changed during build");
+                if (failure == "post-build-ledger") File.WriteAllText(fixture.LedgerFile, "changed during build");
+                if (failure == "timeout")
+                {
+                    clock.Advance(TimeSpan.FromMinutes(1));
+                    token.ThrowIfCancellationRequested();
+                }
+                return Task.FromResult(new DriverResult(failure == "nonzero" ? 1 : 0, "", ""));
+            },
+        };
+        using (var cache = fixture.Open(io))
+        {
+            var result = await fixture.RunAsync(cache, driver, clock: clock, beforeReceipt: (binding, _) =>
+            {
+                if (failure == "receipt-refused")
+                    File.WriteAllText(binding.PathName, "foreign receipt");
+                return Task.CompletedTask;
+            });
+            result.ExitCode.ShouldBe(expectedExit, Describe(result));
+            result.Rows.Single().State.ShouldBe(expectedRowState, Describe(result));
+            if (failure == "receipt-refused")
+                result.State.Builds.Single().SlotReason.ShouldBe("refused: pre-existing-build-source");
+            if (failure == "post-build-ledger")
+                File.ReadAllText(fixture.Log("bin-proof")).ShouldContain("TAMPERED ledger-input.txt");
+        }
+
+        driver.Builds.Count.ShouldBe(1);
+        driver.Rows.ShouldBeEmpty();
+        io.PublicationWrites.ShouldBe(0);
+        File.ReadAllBytes(fixture.Seal).ShouldBeEmpty();
+        using var reopened = fixture.Open();
+        using var entry = fixture.Prepare(reopened);
+        entry.ShouldBeNull();
+    }
+
+    private static string Describe(SchedulerResult result) =>
+        string.Join(Environment.NewLine, result.Rows.Select(row => $"{row.State} {row.Line} {row.Output}"));
+
+    private SealFixture NewSealFixture()
+    {
+        var root = TempDir();
+        Directory.CreateDirectory(Path.Combine(root, "App"));
+        File.WriteAllText(Path.Combine(root, ".gitignore"), ".antiphon/\nbin-*/\nledger-input.txt\ngraph-refusal\n");
+        File.WriteAllText(Path.Combine(root, SealFixture.Project), """<Project><Import Project="Graph.props" /></Project>""");
+        File.WriteAllText(Path.Combine(root, "App", "Graph.props"), """
+            <Project>
+              <ItemGroup Condition="Exists('graph-refusal')">
+                <ProjectReference Include="Absent.csproj" />
+              </ItemGroup>
+            </Project>
+            """.ReplaceLineEndings("\n"));
+        File.WriteAllText(Path.Combine(root, "source.txt"), "original source");
+        LibGit2Sharp.Repository.Init(root);
+        using var repo = new LibGit2Sharp.Repository(root);
+        LibGit2Sharp.Commands.Stage(repo, [".gitignore", SealFixture.Project, "App/Graph.props", "source.txt"]);
+        var author = new LibGit2Sharp.Signature("Checkpoint Test", "checkpoint@example.invalid", DateTimeOffset.UtcNow);
+        repo.Commit("seed", author, author);
+        File.WriteAllText(Path.Combine(root, "ledger-input.txt"), "original input");
+        var source = new SourceSnapshot().Capture(root);
+        source.CaptureStatus.ShouldBe("known", source.ErrorCode);
+        source.DirtyFiles.ShouldBe(0);
+        return new SealFixture(root, source);
+    }
+
+    private sealed class SealFixture(string root, SourceObservation source)
+    {
+        internal const string Project = "App/App.csproj";
+        private readonly IReadOnlyList<string> properties = BuildStep.PropertyArguments([], OperatingSystem.IsWindows());
+        internal string Root => root;
+        internal SourceObservation Source => source;
+        internal string Partition => CheckpointIntermediateCache.PathFor(root, Project, properties, source);
+        internal string Seal => Partition + ".seal";
+        internal string Asset => Path.Combine(Partition, "asset.txt");
+        internal string SourceFile => Path.Combine(root, "source.txt");
+        internal string LedgerFile => Path.Combine(root, "ledger-input.txt");
+        internal string GraphToggle => Path.Combine(root, "App", "graph-refusal");
+        internal string Output(string id) => Path.Combine(root, "App", id);
+        internal string Log(string id) => Path.Combine(root, ".antiphon", id, "builds", id, "build.log");
+
+        internal CheckpointIntermediateCache Open(FaultSealIo? io = null) =>
+            CheckpointIntermediateCache.TryOpen(root, source, source.Commit, sealIo: io).ShouldNotBeNull();
+        internal CheckpointIntermediateCache.Entry? Prepare(CheckpointIntermediateCache cache) =>
+            cache.Prepare(Project, properties);
+        internal void Seed()
+        {
+            using var cache = Open();
+            using var entry = Prepare(cache).ShouldNotBeNull();
+            entry.Invalidate();
+            File.WriteAllText(Asset, "seeded intermediates");
+            entry.Publish();
+        }
+
+        internal string[] PartitionFiles() => Directory.GetFiles(Partition, "*", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal).Select(file => $"{Path.GetRelativePath(Partition, file)}={Convert.ToHexString(File.ReadAllBytes(file))}").ToArray();
+
+        internal byte[] ExpectedDigest()
+        {
+            var files = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var file in Directory.GetFiles(Partition, "*", SearchOption.AllDirectories))
+                files.Add(Path.GetRelativePath(Partition, file),
+                    ReceiptFile.Digest(CheckpointCleanupDefaults.Context, file).Sha256);
+            return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(files));
+        }
+
+        internal CheckpointBuildBinding Binding(string id, DriverRequest request) =>
+            CheckpointBuildBinding.Expected(root, Project, id + "/", Properties(request), source);
+
+        internal Task<SchedulerResult> RunAsync(CheckpointIntermediateCache cache, IDriver driver,
+            string id = "bin-proof", SealSlots? slots = null, FakeTimeProvider? clock = null,
+            CancellationToken cancellationToken = default, bool ownerBound = false,
+            Func<CancellationToken, Task>? beforeLaunch = null,
+            Func<CheckpointBuildBinding, CancellationToken, Task>? beforeReceipt = null, bool second = false)
+        {
+            var manifest = new CheckpointManifest();
+            manifest.Build.SlotWaitMinutes = 1;
+            manifest.Build.AdmissionHash = "strict";
+            foreach (var build in second ? new[] { id, "bin-second" } : [id])
+            {
+                manifest.Builds.Add(new BuildSpec { Id = build, Project = Project, OutputPath = build + "/" });
+                var row = CheckpointFixtures.Row("CP-" + manifest.Builds.Count, build);
+                row.Expect = [];
+                manifest.Checkpoints.Add(row);
+            }
+            var state = new RunState { RunId = id, StartedAt = DateTimeOffset.UtcNow };
+            state.Source.Start = source;
+            return new RunScheduler(driver, new RuntimePlatform(), clock ?? TimeProvider.System).RunAsync(new SchedulerRequest
+            {
+                Manifest = manifest, Rows = manifest.Checkpoints, State = state,
+                RunDirectory = Path.Combine(root, ".antiphon", id), WorkingDirectory = root,
+                Slots = slots ?? new SealSlots(), Width = 2,
+                Commit = source.Commit!, ExpectedSourceSha = source.Commit,
+                SourceGuard = new SourceRunGuard(root, state.Source),
+                IntermediateCache = cache, BeforeLaunch = beforeLaunch, BeforeBuildReceiptWrite = beforeReceipt,
+                OwnerBound = ownerBound, RowTimeoutOverride = TimeSpan.FromMinutes(1),
+            }, cancellationToken);
+        }
+
+        internal void AssertGreen(SchedulerResult result, SealDriver driver, string id, bool warm)
+        {
+            var build = driver.Builds.Single(request => request.Arguments.Contains("--property:OutputPath=" + id + "/"));
+            var row = driver.Rows.Single(request => request.Arguments.Contains("--property:OutputPath=" + id + "/"));
+            result.ExitCode.ShouldBe(ExitCodes.Green, Describe(result));
+            var rowIndex = result.State.Builds.FindIndex(item => item.Id == id);
+            result.Rows.Single(item => item.Id == "CP-" + (rowIndex + 1)).State.ShouldBe("green", Describe(result));
+            var property = "--property:" + CheckpointIntermediateCache.RootProperty + "=" + Partition;
+            build.Arguments.Contains(property).ShouldBe(warm);
+            build.Arguments.Any(arg => arg.StartsWith("--property:CustomBeforeDirectoryBuildProps=", StringComparison.Ordinal)).ShouldBe(warm);
+            Properties(row).ShouldBe(Properties(build));
+            Binding(id, row).Check().ShouldBe("verified");
+            OwnedOutputLedger.Check(Output(id)).ShouldBeNull();
+            File.Exists(CheckpointFixtures.TrxFile(row)).ShouldBeTrue();
+        }
+
+        private static string[] Properties(DriverRequest request) => request.Arguments
+            .Where(arg => arg.StartsWith("--property:", StringComparison.Ordinal) &&
+                !arg.StartsWith("--property:OutputPath=", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private sealed class SealDriver(SealFixture fixture) : IConfinedDriver
+    {
+        internal bool Confine { get; init; }
+        internal Func<DriverRequest, CancellationToken, Task<DriverResult>>? OnBuild { get; init; }
+        internal Func<DriverRequest, CancellationToken, Task>? OnRow { get; init; }
+        internal List<DriverRequest> Builds { get; } = [];
+        internal List<DriverRequest> Rows { get; } = [];
+        internal List<BuildConfinement.Ledger> Captures { get; } = [];
+
+        public BuildConfinement.LedgerCapture CaptureLedger(DriverRequest request)
+        {
+            if (!Confine) return BuildConfinement.LedgerCapture.None;
+            var capture = BuildConfinement.CaptureLedger(request.WorkingDirectory, request.Arguments);
+            capture.Refusal.ShouldBeNull(capture.Detail);
+            Captures.Add(capture.Value.ShouldNotBeNull());
+            return capture;
+        }
+
+        public async Task<DriverResult> RunAsync(DriverRequest request, CancellationToken cancellationToken)
+        {
+            if (CheckpointFixtures.IsBuild(request))
+            {
+                Builds.Add(request);
+                var warm = request.Arguments.Any(arg => arg == "--property:" + CheckpointIntermediateCache.RootProperty + "=" + fixture.Partition);
+                if (OnBuild is not null)
+                {
+                    var result = await OnBuild(request, cancellationToken);
+                    if (result.ExitCode != 0) return result;
+                }
+                if (warm)
+                    File.WriteAllText(fixture.Asset, "built intermediates");
+                return new DriverResult(0, "", "") { Exited = DateTimeOffset.UtcNow };
+            }
+
+            Rows.Add(request);
+            if (OnRow is not null) await OnRow(request, cancellationToken);
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+            return new DriverResult(0, "", "") { Exited = DateTimeOffset.UtcNow };
+        }
+
+        public void Kill(bool entireProcessTree) { }
+    }
+
+    private sealed class SealSlots(Func<string, CancellationToken, Task<SlotLease>>? onBuild = null) : IBuildSlotClient
+    {
+        internal int BuildGrants { get; private set; }
+        public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) => Task.FromResult(new SlotSession("enabled", 4));
+        public async Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
+        {
+            if (!label.StartsWith("build:", StringComparison.Ordinal)) return Grant();
+            var lease = onBuild is null ? Grant() : await onBuild(label, cancellationToken);
+            if (lease.State == "granted") BuildGrants++;
+            return lease;
+        }
+        internal static SlotLease Grant() => new() { State = "granted", LeaseId = "fixture", MaxCpuCount = 4 };
+    }
+
+    private sealed class NoBuildFactory : IProcessHandleFactory
+    {
+        internal int Starts { get; private set; }
+        public IProcessHandle Create(ProcessStartInfo startInfo) => new NoBuildHandle(this);
+
+        private sealed class NoBuildHandle(NoBuildFactory owner) : IProcessHandle
+        {
+            public bool Start() { owner.Starts++; return false; }
+            public void BeginRead(Action<string?> stdout, Action<string?> stderr) => throw new InvalidOperationException();
+            public Task WaitForExitAsync(CancellationToken cancellationToken) => throw new InvalidOperationException();
+            public bool HasExited => false;
+            public int ExitCode => throw new InvalidOperationException();
+            public void Dispose() { }
+            public void Kill(bool entireProcessTree) { }
+        }
+    }
+
+    private sealed class FaultSealIo(string fault) : CheckpointIntermediateCache.SealIo
+    {
+        private FileStream? publication;
+        internal int Faults { get; private set; }
+        internal int PublicationWrites { get; private set; }
+        internal int PublicationCloses { get; private set; }
+        internal SafeFileHandle? PublicationHandle { get; private set; }
+        internal byte[]? AcceptedDigest { get; private set; }
+        internal Action? BeforePublication { get; init; }
+        internal Action? OnInvalidationRefusal { get; init; }
+
+        internal override void Write(FileStream stream, ReadOnlySpan<byte> payload)
+        {
+            if (payload.Length == 32)
+            {
+                PublicationWrites++;
+                publication = stream;
+                PublicationHandle = stream.SafeFileHandle;
+                BeforePublication?.Invoke();
+                if (fault == "write-and-close") Fail("write");
+            }
+            base.Write(stream, payload);
+            if (ReferenceEquals(publication, stream)) AcceptedDigest = payload.ToArray();
+        }
+
+        internal override void Flush(FileStream stream)
+        {
+            if (ReferenceEquals(publication, stream) && fault == "flush-and-close") Fail("flush");
+            base.Flush(stream);
+        }
+
+        internal override void Close(FileStream stream)
+        {
+            // Report a close failure after releasing the real handle, including a buffered flush if any.
+            base.Close(stream);
+            if (!ReferenceEquals(publication, stream)) return;
+            PublicationCloses++;
+            if (fault is "write-and-close" or "flush-and-close" or "close-only") Fail("close");
+        }
+
+        internal override void Replace(string temporary, string destination)
+        {
+            var bytes = File.ReadAllBytes(temporary);
+            if (fault == "rename" && bytes.Length == 32)
+            {
+                bytes.ShouldBe(AcceptedDigest);
+                Fail("rename");
+            }
+            if (fault == "invalidation" && bytes.Length == 0)
+            {
+                OnInvalidationRefusal?.Invoke();
+                Fail("invalidate");
+            }
+            base.Replace(temporary, destination);
+        }
+
+        private void Fail(string operation)
+        {
+            Faults++;
+            throw new IOException("fixture seal " + operation + " failure");
         }
     }
 

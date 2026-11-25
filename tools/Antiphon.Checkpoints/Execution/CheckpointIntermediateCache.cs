@@ -8,7 +8,8 @@ namespace Antiphon.Checkpoints;
 // Cache authority is independent of the disposable output ledger. A matching partition is
 // reusable only after a clean build sealed its contents. The gate covers all builds and hosts
 // in the executor, including dotnet run's evaluation of the project's restored assets.
-internal sealed class CheckpointIntermediateCache(string root, SourceObservation source, FileStream gate, Action<string>? refuse = null) : IDisposable
+internal sealed class CheckpointIntermediateCache(string root, SourceObservation source, FileStream gate,
+    Action<string>? refuse, CheckpointIntermediateCache.SealIo sealIo) : IDisposable
 {
     internal const string RootProperty = "AntiphonCheckpointIntermediateRoot";
     // Generated beside the cache. A tracked props file that sets BaseIntermediateOutputPath
@@ -33,7 +34,8 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         "CustomAfterDirectoryBuildProps", RootProperty, "AntiphonCheckpointRepositoryRoot",
     };
 
-    internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected, Action<string>? refuse = null)
+    internal static CheckpointIntermediateCache? TryOpen(string root, SourceObservation source, string? expected,
+        Action<string>? refuse = null, SealIo? sealIo = null)
     {
         if (expected is null || source.Commit != expected || source.CaptureStatus != "known"
             || source.DirtyFiles != 0 || string.IsNullOrEmpty(source.Fingerprint))
@@ -67,7 +69,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
 
             if (!WriteProps(root, refuse))
                 return null;
-            var opened = new CheckpointIntermediateCache(root, source, stream, refuse);
+            var opened = new CheckpointIntermediateCache(root, source, stream, refuse, sealIo ?? new SealIo());
             stream = null;
             return opened;
         }
@@ -171,7 +173,7 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
                 return null;
             }
 
-            var entry = new Entry(path, seal);
+            var entry = new Entry(path, seal, sealIo);
             seal = null;
             return entry;
         }
@@ -356,7 +358,15 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
         return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(files));
     }
 
-    internal sealed class Entry(string path, FileStream seal) : IDisposable
+    internal class SealIo
+    {
+        internal virtual void Write(FileStream stream, ReadOnlySpan<byte> payload) => stream.Write(payload);
+        internal virtual void Flush(FileStream stream) => stream.Flush(flushToDisk: true);
+        internal virtual void Close(FileStream stream) => stream.Dispose();
+        internal virtual void Replace(string temporary, string destination) => File.Move(temporary, destination, overwrite: true);
+    }
+
+    internal sealed class Entry(string path, FileStream seal, SealIo io) : IDisposable
     {
         private FileStream? held = seal;
 
@@ -384,13 +394,14 @@ internal sealed class CheckpointIntermediateCache(string root, SourceObservation
                 throw new IOException("cache write refused: seal-closed");
             held.Position = 0;
             held.SetLength(0);
-            held.Write(payload);
-            held.Flush(flushToDisk: true);
+            io.Write(held, payload);
+            io.Flush(held);
         }
 
         public void Dispose()
         {
-            held?.Dispose();
+            if (held is not null)
+                io.Close(held);
             held = null;
         }
     }
