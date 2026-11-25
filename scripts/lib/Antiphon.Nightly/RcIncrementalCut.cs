@@ -64,12 +64,6 @@ namespace Antiphon.Nightly
             var dir = IncrementalRoot(releaseRoot);
             RcIncrementalAdmission No(string why) => new RcIncrementalAdmission { Reason = "incremental-not-admitted:" + why };
             var approvalPath = Path.Combine(dir, "approval.json");
-            // RED WITNESS (naive): no approval, age or binding checks.
-            if (File.Exists(Path.Combine(dir, "comparison.json")))
-            {
-                using var c = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dir, "comparison.json")));
-                return new RcIncrementalAdmission { Admitted = true, BaselineSha = Text(c.RootElement, "sha"), InventoryPath = Text(c.RootElement, "inventoryPath"), InventoryDigest = Text(c.RootElement, "inventoryDigest") };
-            }
             if (!File.Exists(approvalPath)) return No("approval-absent");
             var approvalBytes = File.ReadAllBytes(approvalPath);
             JsonElement approval;
@@ -133,7 +127,7 @@ namespace Antiphon.Nightly
             var answer = new RcIncrementalExecution();
             var requested = string.Equals(run.RequestedSelectionMode, RequestedMode, StringComparison.Ordinal);
             var bound = !string.IsNullOrEmpty(run.IncrementalInventoryDigest);
-            if (false)
+            if (bound && (!requested || !string.Equals(run.SelectionMode, "Full", StringComparison.Ordinal)))
                 return Refuse(answer, "incremental-hop-mismatch");
             if (!bound)
             {
@@ -148,7 +142,7 @@ namespace Antiphon.Nightly
                 return answer;
             }
 
-            var inventory = RcChunkReceipt.Read(run.IncrementalInventoryPath);
+            var inventory = RcChunkReceipt.Read(run.IncrementalInventoryPath, run.IncrementalInventoryDigest);
             if (inventory.Refusal.Length > 0) return Refuse(answer, "incremental-plan-stale:" + inventory.Refusal);
             Directory.CreateDirectory(attemptDirectory);
             var planPath = Path.Combine(attemptDirectory, "incremental-plan.json");

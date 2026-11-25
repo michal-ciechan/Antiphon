@@ -410,9 +410,9 @@ namespace Antiphon.Nightly
                 Say("rc run did not complete green; publishing nothing (exit " + result.ExitCode.ToString(CultureInfo.InvariantCulture) + ").");
                 return result;
             }
-            if (false)
+            if (requestedIncremental)
             {
-                // RED WITNESS (naive): the publisher is gated on the exit code only.
+                // D-6: an Incremental request (admitted or fallen back to Full) never reaches the publisher.
                 Say("incremental request is qualification-only; publishing nothing (coverageScope " + result.CoverageScope + ").");
                 result.ExitCode = 0;
                 return result;
