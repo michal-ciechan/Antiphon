@@ -3331,7 +3331,7 @@ public sealed partial class AttentionService
         return items;
     }
 
-    private static bool IsWorktreeCwd(string? workingDirectory)
+    internal static bool IsWorktreeCwd(string? workingDirectory)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory))
             return false;
