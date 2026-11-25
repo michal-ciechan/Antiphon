@@ -307,7 +307,7 @@ public partial class CallerWakeTests
             wake.ClaimGate = gate;
             return await wake.PollAsync(agentId, sessionId, generation, token, CancellationToken.None);
         }
-        async Task<DateTime> ReminderClaimAsync()
+        async Task<DateTime?> ReminderClaimAsync()
         {
             await using var db = rig.World.CreateContext();
             return await db.KeepSixOrchestrators.Where(r => r.AgentId == agentId)
