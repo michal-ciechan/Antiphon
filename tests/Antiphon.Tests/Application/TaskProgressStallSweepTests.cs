@@ -20,8 +20,8 @@ namespace Antiphon.Tests.Application;
 
 /// <summary>
 /// CARD-0153 S1 — <c>AgentTaskDispatcher.DetectStalledProgressAsync</c>. Fleet-global sweep
-/// against the shared test Postgres, so <c>[NotInParallel]</c> with NO group key, and every
-/// assertion is scoped to the session this test seeded.
+/// cases on the shared test Postgres run with <c>[NotInParallel]</c> and scope assertions to
+/// the seeded session. The same-tick dispatch witnesses each use a cloned database.
 /// </summary>
 [Category("Integration")]
 [NotInParallel]
@@ -211,8 +211,10 @@ public class TaskProgressStallSweepTests
     [Test]
     public async Task A_stalled_task_whose_agent_row_is_gone_records_its_stall_and_does_not_poison_the_tick()
     {
-        var (harness, _) = CreateHarness();
-        await using var scenario = new Scenario();
+        // Admission counts local Working rows across the database, including rows left by other tests.
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var scenario = new Scenario(schema.ConnectionString);
+        var (harness, _) = CreateHarness(connectionString: schema.ConnectionString);
         await scenario.SeedStalledAsync();
         await scenario.DeleteAgentRowAsync();
         var queued = await scenario.SeedQueuedAsync();
@@ -222,7 +224,7 @@ public class TaskProgressStallSweepTests
         var incident = (await scenario.IncidentsAsync()).ShouldHaveSingleItem(
             "the stall is still visible, keyed by its session");
         incident.AgentId.ShouldBeNull("the agent row is gone; naming it violates FK_AgentIncidents_Agents_AgentId");
-        await AssertQueuedTaskDecidedAsync(queued, "the same tick still decided the queued task");
+        await AssertQueuedTaskDecidedAsync(scenario, queued, "the same tick still decided the queued task");
     }
 
     /// <summary>
@@ -233,9 +235,10 @@ public class TaskProgressStallSweepTests
     [Test]
     public async Task An_agent_row_deleted_under_the_stall_insert_does_not_poison_the_tick()
     {
-        await using var scenario = new Scenario();
-        var deleter = new DeleteAgentBeforeIncidentInsert();
-        var (harness, _) = CreateHarness(interceptor: deleter);
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var scenario = new Scenario(schema.ConnectionString);
+        var deleter = new DeleteAgentBeforeIncidentInsert(scenario.CreateContext);
+        var (harness, _) = CreateHarness(interceptor: deleter, connectionString: schema.ConnectionString);
         await scenario.SeedStalledAsync();
         var queued = await scenario.SeedQueuedAsync();
         deleter.Arm(scenario.AgentId);
@@ -244,27 +247,23 @@ public class TaskProgressStallSweepTests
 
         deleter.Fired.ShouldBeTrue("the agent row vanished between the existence check and the insert");
         (await scenario.IncidentsAsync()).ShouldBeEmpty("that tick's stall write failed");
-        await AssertQueuedTaskDecidedAsync(queued, "the failed stall write did not reach the dispatch's save");
+        await AssertQueuedTaskDecidedAsync(scenario, queued, "the failed stall write did not reach the dispatch's save");
 
         await harness.DetectStalledProgressAsync(CancellationToken.None);
         (await scenario.IncidentsAsync()).ShouldHaveSingleItem().AgentId
             .ShouldBeNull("the next pass records the stall without the vanished agent");
     }
 
-    private static async Task AssertQueuedTaskDecidedAsync(Guid taskId, string because)
+    private static async Task AssertQueuedTaskDecidedAsync(Scenario scenario, Guid taskId, string because)
     {
-        await using var db = CreateContext();
+        await using var db = scenario.CreateContext();
         var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
         if (task.Status == AgentTaskStatus.Queued)
         {
             var holds = await db.AgentTaskEvents.AsNoTracking()
                 .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
                 .OrderBy(e => e.At).Select(e => e.Detail).ToListAsync();
-            var occupants = await db.AgentTasks.AsNoTracking().Where(AgentTaskRoles.NotSpecialist)
-                .Where(t => (t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Dispatched)
-                    && !t.CapacityWaitRetained && (t.RunnerId == null || t.RunnerId == ""))
-                .OrderBy(t => t.CreatedAt).Select(t => t.Title).ToListAsync();
-            because += $". Held events [{string.Join(" | ", holds)}]. Counted local rows [{string.Join(" | ", occupants)}].";
+            because += $". Held events [{string.Join(" | ", holds)}].";
         }
 
         task.Status.ShouldNotBe(AgentTaskStatus.Queued, because);
@@ -456,7 +455,8 @@ public class TaskProgressStallSweepTests
 
     private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper) CreateHarness(
         Action<DelegationSettings>? configure = null,
-        DbCommandInterceptor? interceptor = null)
+        DbCommandInterceptor? interceptor = null,
+        string? connectionString = null)
     {
         var stopper = new RecordingSessionStopper();
         var settings = new DelegationSettings();
@@ -465,7 +465,7 @@ public class TaskProgressStallSweepTests
         services.AddLogging();
         services.AddDbContext<AppDbContext>(o =>
         {
-            o.UseNpgsql(TestDbFixture.ConnectionString);
+            o.UseNpgsql(connectionString ?? TestDbFixture.ConnectionString);
             if (interceptor is not null)
                 o.AddInterceptors(interceptor);
         });
@@ -496,7 +496,7 @@ public class TaskProgressStallSweepTests
 
     private static AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions());
 
-    private sealed class Scenario : IAsyncDisposable
+    private sealed class Scenario(string? connectionString = null) : IAsyncDisposable
     {
         private readonly Guid _sessionId = Guid.NewGuid();
         private readonly Guid _agentId = Guid.NewGuid();
@@ -505,6 +505,8 @@ public class TaskProgressStallSweepTests
         public Guid AgentId => _agentId;
         private readonly List<Guid> _channels = [];
         private long _seq;
+
+        public AppDbContext CreateContext() => new(TestDbFixture.CreateDbContextOptions(connectionString));
 
         public async Task<Guid> SeedStalledAsync(
             bool channelBound = false, int dispatchedMinutesAgo = 50, int spanMinutes = 40)
@@ -899,7 +901,7 @@ public class TaskProgressStallSweepTests
     }
 
     /// <summary>One shot: deletes the armed agent row just before the next AgentIncidents insert runs.</summary>
-    private sealed class DeleteAgentBeforeIncidentInsert : DbCommandInterceptor
+    private sealed class DeleteAgentBeforeIncidentInsert(Func<AppDbContext> createContext) : DbCommandInterceptor
     {
         private Guid? _agentId;
 
@@ -917,7 +919,7 @@ public class TaskProgressStallSweepTests
                 && command.CommandText.Contains("INSERT INTO \"AgentIncidents\"", StringComparison.Ordinal))
             {
                 _agentId = null;
-                await using var db = CreateContext();
+                await using var db = createContext();
                 await db.Agents.Where(a => a.Id == agentId).ExecuteDeleteAsync(cancellationToken);
                 Fired = true;
             }
