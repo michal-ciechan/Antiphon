@@ -46,7 +46,7 @@ public static class InvariantCensus {
         if (m is PropertyDeclarationSyntax p) yield return (p.Identifier.ValueText,m);
         if (m is FieldDeclarationSyntax f) foreach(var v in f.Declaration.Variables) yield return (v.Identifier.ValueText,m);
     }
-    public static void Scan(string[] tracked) {
+    public static IEnumerable<string> Scan(string repository, string[] tracked) {
         var paths = tracked.ToHashSet(StringComparer.Ordinal);
         var leaves = tracked.GroupBy(p => Path.GetFileName(p)).ToDictionary(g => g.Key,g => g.ToArray());
         var members = new List<Member>();
@@ -54,7 +54,7 @@ public static class InvariantCensus {
         var fixtures = new Dictionary<string,string[]>();
         var bases = new Dictionary<string,string[]>();
         foreach(var file in tracked.Where(s=>s.StartsWith("tests/") && s.EndsWith(".cs"))) {
-            var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(file), new CSharpParseOptions(LanguageVersion.Preview), file);
+            var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(Path.Combine(repository, file)), new CSharpParseOptions(LanguageVersion.Preview), file);
             var root=tree.GetCompilationUnitRoot();
             usings[file]=root.DescendantNodes().OfType<UsingDirectiveSyntax>().Where(u=>!u.StaticKeyword.IsKind(SyntaxKind.None))
                 .Select(u=>u.Name.ToString().Split('.').Last()).ToArray();
@@ -92,7 +92,8 @@ public static class InvariantCensus {
                     foreach(var inv in nodes.OfType<InvocationExpressionSyntax>()) {
                         var expr=inv.Expression.ToString();
                         if(expr.EndsWith("Directory.EnumerateFiles") || expr.EndsWith("Directory.GetFiles")) row.Signals.Add("directory walk");
-                        if(expr.EndsWith("PlanImporter.Import") || expr.EndsWith("PlanImport.Parse")) row.Signals.Add("plan importer");
+                        if(expr.EndsWith("PlanTableImporter.ImportFile") || expr.EndsWith("PlanTableImporter.Import")
+                            || expr.EndsWith("PlanTableImporter.Parse")) row.Signals.Add("plan importer");
                         if(expr.EndsWith("DockerStackDocuments.Read")) row.Signals.Add("DockerStackDocuments.Read");
                     }
                     // File names in bare assertion messages and synthetic source literals alone are insufficient.
@@ -142,12 +143,12 @@ public static class InvariantCensus {
                     }
                 }
             }
-            Console.WriteLine(JsonSerializer.Serialize(new {key=g.Key,methodCount=entry.Length,methods=entry.Select(m=>m.Name).ToArray(),files=g.Value.Select(m=>m.File).Distinct().ToArray(),signals=signs,inputs,sites,direct=g.Value.Where(m=>m.Signals.Count>0 || m.Paths.Count>0).Select(m=>new {m.Name,m.Line,m.File,m.Signals,m.Paths})}));
+            yield return JsonSerializer.Serialize(new {key=g.Key,methodCount=entry.Length,methods=entry.Select(m=>m.Name).ToArray(),files=g.Value.Select(m=>m.File).Distinct().ToArray(),signals=signs,inputs,sites,direct=g.Value.Where(m=>m.Signals.Count>0 || m.Paths.Count>0).Select(m=>new {m.Name,m.Line,m.File,m.Signals,m.Paths})});
         }
     }
 }
 '@
 $tracked = @(git -c core.quotepath=false ls-files)
 if ($LASTEXITCODE -ne 0 -or -not ($tracked -contains 'Antiphon.sln')) { throw 'Run at the repository root.' }
-[InvariantCensus]::Scan($tracked)
+[InvariantCensus]::Scan((Get-Location).ProviderPath, $tracked)
 ```
