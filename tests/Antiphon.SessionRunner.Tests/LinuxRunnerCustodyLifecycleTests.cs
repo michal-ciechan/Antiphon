@@ -119,14 +119,32 @@ public sealed class LinuxRunnerCustodyLifecycleTests
     public async Task C1614_Root_exit_read_does_not_seal_live_descendant()
     {
         RequireNativeLifecycle();
-        await using var fx = await NativeHold.StartAsync();
-        await fx.WaitForDescendantAsync();
-        await fx.WaitForRootExitAsync();
-        var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, false, CancellationToken.None);
-        status.State.ShouldBe(VerificationCustodyState.Draining);
-        status.Receipt.ShouldBeNull();
-        File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
-        Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
+        var fx = await NativeHold.StartAsync();
+        try
+        {
+            fx.HostCountBeforeLaunch.ShouldBe(0);
+            fx.OwnedHosts().Select(host => host.Pid).ShouldBe([fx.HostPid]);
+            await fx.WaitForDescendantAsync();
+            await fx.WaitForRootExitAsync();
+            var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, false, CancellationToken.None);
+            status.State.ShouldBe(VerificationCustodyState.Draining);
+            status.Receipt.ShouldBeNull();
+            File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
+            Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
+        }
+        finally
+        {
+            try
+            {
+                await fx.DisposeAsync();
+                fx.OwnedHosts().Length.ShouldBe(0, "no detached native PtyHost may outlive the fixture");
+            }
+            finally
+            {
+                // The witness itself must not leak a host when teardown regresses.
+                fx.KillHost();
+            }
+        }
     }
 
     [Test]
@@ -242,6 +260,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         public int RootPid { get; private set; }
         public int DescendantPid { get; private set; }
         public int HostPid { get; private set; }
+        public int HostCountBeforeLaunch { get; private set; }
 
         public static async Task<NativeHold> StartAsync(bool hold = true)
         {
@@ -271,13 +290,16 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             await File.WriteAllTextAsync(script, body);
             var request = new RunnerLaunchRequest(binding.Generation.SessionId, "/bin/sh", [script],
                 new Dictionary<string, string>(), snapshot, 80, 24, VerificationBinding: binding);
-            var started = await runtime.StartAsync(request, CancellationToken.None);
-            return new NativeHold
+            var fixture = new NativeHold
             {
                 Runtime = runtime, Binding = binding, Store = runtime.CustodyForTests.Store,
                 ReleasePath = release, DescendantPath = descendant, RootPath = root,
-                RootPid = started.Pid ?? 0, HostPid = started.HostPid ?? 0,
             };
+            fixture.HostCountBeforeLaunch = fixture.OwnedHosts().Length;
+            var started = await runtime.StartAsync(request, CancellationToken.None);
+            fixture.RootPid = started.Pid ?? 0;
+            fixture.HostPid = started.HostPid ?? 0;
+            return fixture;
         }
 
         public async Task WaitForDescendantAsync()
@@ -307,10 +329,54 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             throw new System.TimeoutException("tracked root did not exit");
         }
 
+        // The detached host is reparented. The exact session and paths from this launch
+        // identify the fixture's processes even after its runtime or files are gone.
+        public (int Pid, LinuxProcessIdentity Identity)[] OwnedHosts()
+        {
+            var hostRoot = Path.Combine(RootPath, "logs", "pty-hosts");
+            var binPrefix = Path.Combine(hostRoot, "bin") + Path.DirectorySeparatorChar;
+            var manifestDir = Path.Combine(hostRoot, "manifests");
+            var sessionId = Binding.Generation.SessionId.ToString("D");
+            var hosts = new List<(int, LinuxProcessIdentity)>();
+            foreach (var directory in Directory.EnumerateDirectories("/proc"))
+            {
+                if (!int.TryParse(Path.GetFileName(directory), out var pid))
+                    continue;
+                try
+                {
+                    var image = File.ResolveLinkTarget(Path.Combine(directory, "exe"), returnFinalTarget: false);
+                    if (image is null || !image.FullName.StartsWith(binPrefix, StringComparison.Ordinal))
+                        continue;
+                    var identity = LinuxProcessIdentity.TryRead(pid);
+                    var argv = File.ReadAllText(Path.Combine(directory, "cmdline")).Split('\0');
+                    var arguments = argv.Zip(argv.Skip(1)).ToArray();
+                    if (identity is not null && Path.GetFileName(argv[0]) == "Antiphon.PtyHost"
+                        && arguments.Contains(("--session", sessionId))
+                        && arguments.Contains(("--manifest-dir", manifestDir))
+                        && LinuxProcessIdentity.TryRead(pid) == identity)
+                        hosts.Add((pid, identity));
+                }
+                catch (IOException) { /* Process exited during the census. */ }
+                catch (UnauthorizedAccessException) { /* Another user's process. */ }
+            }
+            return hosts.ToArray();
+        }
+
         public void KillHost()
         {
-            try { Process.GetProcessById(HostPid).Kill(entireProcessTree: false); }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { }
+            foreach (var (pid, identity) in OwnedHosts())
+            {
+                try
+                {
+                    using var process = Process.GetProcessById(pid);
+                    if (LinuxProcessIdentity.TryRead(pid) != identity)
+                        continue;
+                    process.Kill(entireProcessTree: false);
+                    process.WaitForExit(5_000).ShouldBeTrue($"fixture PtyHost {pid} must exit");
+                }
+                catch (Exception ex) when ((ex is ArgumentException or InvalidOperationException)
+                    && LinuxProcessIdentity.TryRead(pid) != identity) { /* Already gone. */ }
+            }
         }
 
         public async ValueTask DisposeAsync()
