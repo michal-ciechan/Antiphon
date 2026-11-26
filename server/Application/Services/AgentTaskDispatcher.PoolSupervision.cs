@@ -334,7 +334,7 @@ public sealed partial class AgentTaskDispatcher
             attempts++; // Failed runner calls also consume the per-sweep API budget.
             try
             {
-                await RunnerSlotService.ReleaseAsync(_runners, _db, runnerId, sessionId, reason, ct);
+                await RunnerSlotService.ReleaseForGhostSweepAsync(_runners, _db, runnerId, sessionId, reason, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {

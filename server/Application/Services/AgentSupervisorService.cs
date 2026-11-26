@@ -951,7 +951,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
     /// keys cannot be read, every <c>standingBoot:v1;</c> receipt is retained this pass: uncertainty
     /// never deletes dedup evidence. Nothing here touches restart or counter logic.</para>
     ///
-    /// <para>CARD-2074: the per-agent cap never deletes a pending runner slot release intent.</para>
+    /// <para>CARD-2074 / CARD-2078: pending runner slot release intents are exempt from both deletes.</para>
     /// </summary>
     public async Task<int> PruneIncidentsAsync(CancellationToken ct)
     {
@@ -974,17 +974,14 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 || !i.FailureReason.StartsWith(StandingBootWatchPolicy.KeyPrefix))
             : _db.AgentIncidents.Where(i => i.FailureReason == null || !protectedKeys.Contains(i.FailureReason));
 
+        // Pending release intents are durable obligations until reconciled or closed by an operator.
+        // They still count toward the number of kept rows in their AgentId bucket.
+        prunable = prunable.Where(i => i.Kind != AgentIncidentKind.RunnerSlotReleaseIntent
+            || i.FailureReason == null
+            || !i.FailureReason.StartsWith(RunnerSlotService.PendingIntentPrefix));
         var cutoff = UtcNow().AddDays(-_settings.IncidentRetentionDays);
         var removed = await prunable.Where(i => i.CreatedAt < cutoff).ExecuteDeleteAsync(ct);
 
-        // CARD-2074: every incident with a null AgentId shares one cap bucket (fleet notices, stall
-        // incidents whose agent row is gone, runner slot release intents). A PENDING release intent
-        // is not history: it is the only durable record of a release audit or deferred kill that
-        // RunnerSlotService.ReconcilePendingReleasesAsync still owes, so newer unrelated rows never
-        // cap it away. It still counts toward the kept rows, and age retention above still applies.
-        var cappable = prunable.Where(i => i.Kind != AgentIncidentKind.RunnerSlotReleaseIntent
-            || i.FailureReason == null
-            || !i.FailureReason.StartsWith(RunnerSlotService.PendingIntentPrefix));
         var overCap = await _db.AgentIncidents
             .GroupBy(i => i.AgentId)
             .Where(g => g.Count() > _settings.IncidentCapPerAgent)
@@ -997,7 +994,7 @@ public sealed class AgentSupervisorService : IAgentIncidentRecorder
                 .OrderByDescending(i => i.CreatedAt)
                 .Take(_settings.IncidentCapPerAgent)
                 .Select(i => i.Id);
-            removed += await cappable
+            removed += await prunable
                 .Where(i => i.AgentId == agentId && !keepIds.Contains(i.Id))
                 .ExecuteDeleteAsync(ct);
         }

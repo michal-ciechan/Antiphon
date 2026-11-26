@@ -273,6 +273,44 @@ public static class SessionRunnerEndpoints
             Results.Ok(await RunnerSlotService.ListAsync(directory, db, runnerId, ct)))
             .WithTags("SessionRunners");
 
+        const string releaseIntentsPath = "/api/session-runners/slots/release-intents";
+        app.MapGet(releaseIntentsPath, async (
+            HttpContext http, string? runnerId, Guid? sessionId, Guid? after, int? limit,
+            IOptions<PhoneHomeRunnerSettings> settings, [FromServices] AppDbContext db, CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Listing pending release intents requires the operator token.");
+            if (limit is < 1 or > 200)
+                throw new ValidationException("limit", "Give a page limit between 1 and 200.");
+            return Results.Ok(await RunnerSlotService.ListPendingIntentsAsync(db, runnerId, sessionId, after, limit ?? 100, ct));
+        }).WithTags("SessionRunners");
+
+        const string releaseIntentPath = releaseIntentsPath + "/{intentId:guid}";
+        app.MapGet(releaseIntentPath, async (
+            HttpContext http, Guid intentId, IOptions<PhoneHomeRunnerSettings> settings,
+            [FromServices] AppDbContext db, CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Reading release intent history requires the operator token.");
+            return Results.Ok(await RunnerSlotService.GetIntentAsync(db, intentId, ct));
+        }).WithTags("SessionRunners");
+
+        app.MapPost(releaseIntentPath + "/close", async (
+            HttpContext http, Guid intentId, RunnerSlotIntentCloseRequest body,
+            IOptions<PhoneHomeRunnerSettings> settings, [FromServices] AppDbContext db,
+            TimeProvider clock, CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Closing a release intent requires the operator token.");
+            var requester = body.Requester?.Trim() ?? "";
+            var evidence = body.Evidence?.Trim() ?? "";
+            var presented = http.Request.Headers[OperatorTokenFile.Header].ToString();
+            if (requester.Length == 0 || !WorkspaceSlotReleaseService.IsAcceptableRequester(requester, presented))
+                throw new ValidationException("requester",
+                    $"Give a requester of 1 to {WorkspaceSlotReleaseService.MaxRequesterLength} printable characters that holds no credential.");
+            if (evidence.Length is < 1 or > 2000 || evidence.Contains('\0')
+                || evidence.Contains(presented, StringComparison.OrdinalIgnoreCase))
+                throw new ValidationException("evidence", "Give 1 to 2000 characters of closure evidence that holds no credential.");
+            return Results.Ok(await RunnerSlotService.CloseIntentAsync(db, intentId, requester, evidence, clock, ct));
+        }).WithTags("SessionRunners");
+
         app.MapPost("/api/session-runners/{runnerId}/slots/{sessionId:guid}/release", async (
             HttpContext http,
             string runnerId,
