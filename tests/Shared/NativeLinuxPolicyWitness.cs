@@ -91,7 +91,6 @@ public static class NativeLinuxPolicyWitness
         "antiphon\nGithubCredentialHelperTests\n",
         "antiphon\nGitMinimumVersionGuardTests\n",
         "antiphon\nRetiredTempContainerHostTests\n",
-        "antiphon\nRetiredTempContainerHostInvariantTests\n",
         "antiphon\nHostJqPrerequisiteScriptTests\n",
         "antiphon\nScriptHarnessLinuxOwnershipTests\n",
         "antiphon\nNightlyProbeSupervisorTests\n",

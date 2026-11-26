@@ -233,6 +233,7 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "C1364BoundLandWaitProofTests", "C1364_Host_recycle_post_removal_reports_waited_main_volumes", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "C1364BoundLandWaitProofTests", "C1364_Host_recycle_post_removal_reports_waited_temp_volumes", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RetiredTempContainerHostTests", "RequireNativeLinux", 1, ExistingReason),
+        new("Antiphon.Tests.Invariants", "RetiredTempContainerHostInvariantTests", "Production_compose_mount_roster_is_complete", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RollingProductionMountTests", "RequireNativeLinux", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RetiredTempContainerScriptTests", "C994_Host_strict_volume_admission_remains_independent", 1, ExistingReason),
         new("Antiphon.Tests.Scripts", "RetiredTempContainerScriptTests", "C994_Host_resume_never_runs_container_cleanup", 1, ExistingReason),

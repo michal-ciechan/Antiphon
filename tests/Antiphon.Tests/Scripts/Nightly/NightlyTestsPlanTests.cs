@@ -37,8 +37,8 @@ public sealed class NightlyTestsPlanTests
                 exclusions = [new PlainObject(("Class", "SharedGuardTests"), ("Methods", new object[] { "Paid" }))];
             }
             var b = new[] { Case("Beta", "SharedGuardTests", "Check", "beta-argument-1", true) };
-            var alpha = NightlyTestsPlan.SuiteChunks(a.ToArray(), AllChunk(), exclusions, true, true, "antiphon", Policy(), Costs());
-            var beta = NightlyTestsPlan.SuiteChunks(b, AllChunk(), [], true, true, "messaging", Policy(), Costs());
+            var alpha = NightlyTestsPlan.SuiteChunks(a.ToArray(), AllChunk(), exclusions, true, true, "antiphon", Policy().Object, Costs());
+            var beta = NightlyTestsPlan.SuiteChunks(b, AllChunk(), [], true, true, "messaging", Policy().Object, Costs());
             string[] Uids(IEnumerable<object> chunks) => chunks.SelectMany(c =>
                 PsValue.AsArray(PsValue.Prop(c, "plannedInvariantUids") ?? Array.Empty<object>()).Select(PsValue.Str)).ToArray();
             Uids(alpha).ShouldBe(["alpha-argument-1", "alpha-argument-2"], ignoreOrder: true);
