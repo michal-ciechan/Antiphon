@@ -24,5 +24,7 @@
   <ItemGroup>
     <!-- The rc commands call the compiled core's plain C# (ledger, admission, plans); PowerShell is never loaded. -->
     <ProjectReference Include="../Antiphon.Nightly/Antiphon.Nightly.csproj" />
+    <!-- The live lane's isolated project (W2 slice S21): its commands bind its seams here; it references nothing back. -->
+    <ProjectReference Include="../Antiphon.LiveLane/Antiphon.LiveLane.csproj" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The live Claude lane's own code (CARD-1545; W2 slice S21 of docs/superpowers/plans/2026-11-21-w2-nightly-port-slices.md):
+    the run admission and its outcome classifier, the native runner's child environment, and the protected-input pin.
+    The owner's decision (2026-11-26): the source files behind the lane's digest live in one isolated project dedicated to
+    running real Claude. tests/live-lane-inputs.json names this directory and the build inputs below as the lane's
+    contractFiles, so the lane fingerprint moves only when live-lane code moves.
+
+    Self-contained on purpose: no ProjectReference and no PackageReference (the framework only), and no Compile item
+    outside this directory. The CLI (Antiphon.Scripts) references this project and binds its seams; the direction is
+    Scripts -> LiveLane, never the reverse. LiveLaneProjectIsolationTests holds both rules.
+
+    Build inputs that can change this project's output, all named in contractFiles: this directory (its sources and this
+    file), the repository's Directory.Build.props, Directory.Build.targets (and the tests/Shared/CheckpointRepeat.targets
+    it imports), Directory.Build.rsp, global.json (the SDK) and .editorconfig (analyzer severities). There is no NuGet.config
+    or Directory.Packages.props in the repository, and no package to restore.
+
+    S22 (receipt, attestation, fingerprint and status, with the Claude version as its own axis) adds its code here.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Antiphon.LiveLane</RootNamespace>
+    <AssemblyName>Antiphon.LiveLane</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

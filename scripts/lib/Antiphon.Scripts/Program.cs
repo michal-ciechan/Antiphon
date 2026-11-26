@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Antiphon.Checkpoints;
+using Antiphon.LiveLane;
 
 namespace Antiphon.Scripts
 {
@@ -340,6 +341,9 @@ namespace Antiphon.Scripts
             [OperatorToolCommands.RefreshServer2GithubToken] = OperatorToolCommands.RunRefreshServer2GithubToken,
             [OperatorToolCommands.DesktopSlotProvisionName] = OperatorToolCommands.RunDesktopSlotProvision,
             [OperatorToolCommands.DesktopWinPhase1SecretsName] = OperatorToolCommands.RunDesktopWinPhase1Secrets,
+            // The live lane's pin command (W2 slice S21, the isolated Antiphon.LiveLane project) answers every input itself:
+            // exit 0 the digest printed; with --check 1 when it is not the pin or the census sentinels fail. Usage is 2.
+            [LiveLaneInputDigestCommand.Name] = LiveLaneCommands.RunInputDigest,
         };
 
         public static int Main(string[] args)
@@ -354,6 +358,12 @@ namespace Antiphon.Scripts
             catch (Antiphon.Nightly.NightlyUsageException e)
             {
                 // A command that parses its flags with NightlyArgs: the reason and the command, one line.
+                Console.Error.WriteLine("usage: antiphon-scripts " + args[0] + ": " + e.Message);
+                return Usage;
+            }
+            catch (LiveLaneUsageException e)
+            {
+                // The live-lane commands parse their flags with the isolated project's own LiveLaneArgs.
                 Console.Error.WriteLine("usage: antiphon-scripts " + args[0] + ": " + e.Message);
                 return Usage;
             }
@@ -382,7 +392,7 @@ namespace Antiphon.Scripts
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
                 + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage
                 + " | " + Server2RepositoryMirrorsCommand.Usage + " | " + PostgresSnapshotCommands.Usage
-                + " | " + OperatorToolCommands.Usage);
+                + " | " + OperatorToolCommands.Usage + " | " + LiveLaneCommands.Usage);
             return Usage;
         }
 

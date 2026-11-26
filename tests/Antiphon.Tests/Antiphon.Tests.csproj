@@ -90,6 +90,8 @@
     <ProjectReference Include="..\..\src\Antiphon.Resilience\Antiphon.Resilience.csproj" />
     <!-- The nightly core, called in-process (plain C# types only: PowerShell is not loaded here). -->
     <ProjectReference Include="..\..\scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj" />
+    <!-- The live lane's isolated project (W2 slice S21), called in-process: the run, the outcome and the input pin. -->
+    <ProjectReference Include="..\..\scripts\lib\Antiphon.LiveLane\Antiphon.LiveLane.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
     <ProjectReference Include="../Antiphon.FileUseTestChild/Antiphon.FileUseTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
@@ -280,6 +282,8 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneEvidence.cs" Link="Scripts/LiveLaneEvidence.cs" />
+    <!-- The CLI's census read for the live lane's input pin (LiveLaneRunnerTests); the CLI binds the same reader. -->
+    <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneInputCensusReader.cs" Link="Scripts/LiveLaneInputCensusReader.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcTagBacking.cs" Link="Scripts/RcTagBacking.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcPort.cs" Link="Scripts/RcPort.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcShadowSample.cs" Link="Scripts/RcShadowSample.cs" />
