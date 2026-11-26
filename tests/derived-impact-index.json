@@ -2313,15 +2313,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/TestHelpers/C1514Support.cs",
-      "classes": 26,
-      "reason": "cap",
-      "owed": 1,
-      "first": [
-        "C1677TempFamilyRegistryTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
       "classes": 44,
       "reason": "cap",
@@ -26924,6 +26915,7 @@
       "classes": [
         "AstraFixesBTests",
         "C1677RetentionSettingsTests",
+        "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
         "CallerWakeTests",
@@ -26938,7 +26930,6 @@
         "RcManifestJournalTests",
         "RcManifestRecoveryTests",
         "RcManifestScaleTests",
-        "RcProjectSelectionTests",
         "ReleaseAuthorityTests",
         "TestDurationTripwireTests",
         "TestPhaseSummaryTests",
