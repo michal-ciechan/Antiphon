@@ -513,6 +513,20 @@ public class GitWorkspaceService
     }
 
     /// <summary>
+    /// Commits on <c><paramref name="from"/>..<paramref name="to"/></c>, null when git could not answer. One git
+    /// child: for a caller that does not use the changed-file count of <see cref="CountRangeAsync"/>. Read-only.
+    /// </summary>
+    public async Task<int?> CountCommitsAsync(string workingDirectory, string from, string to, CancellationToken ct)
+    {
+        var (commitCode, commitOut, commitErr) = await RunReadOnlyAsync(
+            workingDirectory, ct, "rev-list", "--count", $"{from}..{to}");
+        if (commitCode == 0 && int.TryParse(commitOut.Trim(), out var n))
+            return n;
+        _logger.LogDebug("git rev-list --count failed in {Dir}: {Err}", workingDirectory, commitErr);
+        return null;
+    }
+
+    /// <summary>
     /// Commits and changed-file counts on <c><paramref name="from"/>..<paramref name="to"/></c>
     /// (CARD-0159 S3). Null either counter when that git command could not answer, so a caller can
     /// tell "zero commits" apart from "the question could not be asked". Read-only.
@@ -521,13 +535,7 @@ public class GitWorkspaceService
         string workingDirectory, string from, string to, CancellationToken ct)
     {
         var range = $"{from}..{to}";
-        var (commitCode, commitOut, commitErr) = await RunReadOnlyAsync(
-            workingDirectory, ct, "rev-list", "--count", range);
-        int? commits = null;
-        if (commitCode == 0 && int.TryParse(commitOut.Trim(), out var n))
-            commits = n;
-        else
-            _logger.LogDebug("git rev-list --count failed in {Dir}: {Err}", workingDirectory, commitErr);
+        var commits = await CountCommitsAsync(workingDirectory, from, to, ct);
 
         var (fileCode, fileOut, fileErr) = await RunReadOnlyAsync(
             workingDirectory, ct, "diff", "--name-only", range);

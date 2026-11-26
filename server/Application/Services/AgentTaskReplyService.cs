@@ -5552,8 +5552,8 @@ public sealed partial class AgentTaskReplyService
             var db = services.GetRequiredService<AppDbContext>();
             var source = await RefOnlyCommittedSource.ResolveAsync(db, git, task, ct);
             if (source is null) return null;
-            var (count, _) = await git.CountRangeAsync(source.Workspace.GitWorkingDirectory, source.BaselineSha, source.Sha, ct);
-            return count;
+            // Commits only: the changed-file count would cost a git diff nobody reads.
+            return await git.CountCommitsAsync(source.Workspace.GitWorkingDirectory, source.BaselineSha, source.Sha, ct);
         }
 
         var directory = task.WorktreePath is { Length: > 0 } wt && Directory.Exists(wt)
@@ -5566,8 +5566,7 @@ public sealed partial class AgentTaskReplyService
         if (string.IsNullOrWhiteSpace(gitBase))
             return null;
 
-        var (commits, _) = await git.CountRangeAsync(directory, gitBase, "HEAD", ct);
-        return commits;
+        return await git.CountCommitsAsync(directory, gitBase, "HEAD", ct);
     }
 
     internal static AgentTaskEvent NewEvent(Guid taskId, AgentTaskEventType type, string detail, DateTime at) =>
