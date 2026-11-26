@@ -59,7 +59,7 @@
     { "path": "tests/**/*.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tools/Antiphon.MarkdownPdf/MarkdownPdfRenderer.cs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
-    { "path": "tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"], "reason": "runtime-reader-scan" },
+    { "path": "tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs", "consumers": ["tests/Antiphon.Tests/Antiphon.Tests.csproj", "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.Launch.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" },
     { "path": "tests/Antiphon.LiveClaude.Tests/ClaudeDialogCanaryDiagnostics.cs", "consumers": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"], "reason": "runtime-reader-scan" },

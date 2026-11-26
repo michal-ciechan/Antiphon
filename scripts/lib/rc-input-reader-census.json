@@ -163,7 +163,7 @@
     {
       "group": "scan-11",
       "paths": ["tests/Antiphon.Agents.Pty.Tests/probes/settings-source-witness.mjs"],
-      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj", "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj"]
     },
     {
       "group": "scan-12",
