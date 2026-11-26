@@ -49,7 +49,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             ? await MigrationTestDatabase.CreateReversibleTipAsync()
             : await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
-        await SeedAsync();
+        await SeedAsync(reversibleTip);
     }
 
     /// <summary>
@@ -116,9 +116,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         await SeedAsync();
     }
 
-    private async Task SeedAsync()
+    private async Task SeedAsync(bool reversibleTip = false)
     {
-        await using var db = CreateContext();
+        var options = CreateContextOptions();
+        await using var db = reversibleTip
+            ? MigrationTestDatabase.CreateReversibleTipSeedContext(options)
+            : new AppDbContext(options);
         db.AgentTasks.Add(new AgentTask
         {
             Id = Fixture.TaskId, RootTaskId = Fixture.TaskId, Title = "C448 fixture", Goal = "fixture",
@@ -260,7 +263,9 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         throw new InvalidOperationException("Crash boundary was not reached: " + cut);
     }
 
-    public AppDbContext CreateContext()
+    public AppDbContext CreateContext() => new(CreateContextOptions());
+
+    private DbContextOptions<AppDbContext> CreateContextOptions()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>(
             TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(
@@ -268,7 +273,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         if (LandCutInterceptor is not null) options.AddInterceptors(LandCutInterceptor);
         if (CommandInterceptor is not null) options.AddInterceptors(CommandInterceptor);
         if (TransactionInterceptor is not null) options.AddInterceptors(TransactionInterceptor);
-        return new(options.Options);
+        return options.Options;
     }
 
     public Task<LandRunResult> RunAsync() => RunAsync(CancellationToken.None);
