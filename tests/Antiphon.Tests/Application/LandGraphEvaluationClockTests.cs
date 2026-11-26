@@ -81,6 +81,17 @@ public sealed partial class LandGraphEvaluationTests
     }
 
     [Test]
+    public void LoadedCanaryCopyCanCompleteBeforeTheProductionDeadline()
+    {
+        var observed = RunPhaseTimeout(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(1),
+            EvaluationBudget.CopyTimeout);
+        observed.Code.ShouldBe(0, observed.Text);
+        observed.Pass2Ran.ShouldBeTrue();
+        observed.Timeouts.ShouldBe(0);
+        observed.Text.ShouldContain("approved", Case.Sensitive);
+    }
+
+    [Test]
     [Timeout(180_000)]
     public async Task RealGraphChangeStillRefusesCheck()
     {
@@ -219,14 +230,14 @@ public sealed partial class LandGraphEvaluationTests
     private static int ApprovedLines(StringWriter output) =>
         output.ToString().Split('\n').Count(line => line.Trim() == "approved");
 
-    private static PhaseTimeout RunPhaseTimeout(TimeSpan pass1, TimeSpan copy, TimeSpan pass2)
+    private static PhaseTimeout RunPhaseTimeout(TimeSpan pass1, TimeSpan copy, TimeSpan pass2, TimeSpan? copyBudget = null)
     {
         var clock = new ManualPhaseClock();
         var output = new StringWriter();
         var budget = TimeSpan.FromSeconds(10);
         var timeouts = 0;
         var pass2Ran = false;
-        var code = AuditPhases.Run("Antiphon.sln", output, clock, budget, budget,
+        var code = AuditPhases.Run("Antiphon.sln", output, clock, budget, copyBudget ?? budget,
             () => { clock.Advance(pass1); return 0; },
             () => { clock.Advance(copy); return 0; },
             () => { pass2Ran = true; clock.Advance(pass2); return 0; },
