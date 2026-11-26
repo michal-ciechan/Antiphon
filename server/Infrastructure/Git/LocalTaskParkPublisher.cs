@@ -102,9 +102,10 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
                         if (!observed.Known) return Unknown();
                         if (observed.Sha is { } old && old != sha)
                         {
-                            var present = await git.RunAsync(path, ["cat-file", "-e", old], ct);
-                            if (present.ExitCode == 1) return Held("park_remote_not_ancestor");
-                            if (!present.Succeeded) return Unknown();
+                            // Park repositories are full (never shallow), so a missing commit is no ancestor.
+                            var present = await git.HasObjectAsync(path, old, ct);
+                            if (present is false) return Held("park_remote_not_ancestor");
+                            if (present is null) return Unknown();
                             var ff = await git.RunAsync(path, ["merge-base", "--is-ancestor", old, sha], ct);
                             if (ff.ExitCode == 1) return Held("park_remote_not_ancestor");
                             if (!ff.Succeeded) return Unknown();

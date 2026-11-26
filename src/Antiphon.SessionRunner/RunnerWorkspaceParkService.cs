@@ -306,6 +306,8 @@ public sealed class RunnerWorkspaceParkService
         if (remote.Failure is { } readFailure) return readFailure;
         if (remote.Sha is { } sha && sha != tip)
         {
+            // The mirror is never shallow, so a commit it lacks is no ancestor of the tip. In a blobless partial clone
+            // a missing commit is lazily fetched first; it then exists, and merge-base names the relation instead.
             var present = await GitAsync(path, ct, "cat-file", "-e", sha);
             if (present.ExitCode == 1) return Held("park_remote_not_ancestor");
             if (present.ExitCode != 0) return Unknown();

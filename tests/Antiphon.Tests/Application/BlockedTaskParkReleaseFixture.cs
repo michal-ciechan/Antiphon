@@ -155,7 +155,7 @@ internal sealed partial class RunnerSeatReleaseFixture
                 var clone = template.CloneTo(root, new Dictionary<string, string> { ["task"] = token });
                 return clone.Map(template.Values["sha"]);
             }
-            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException)
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException or UnauthorizedAccessException)
             {
                 Console.Error.WriteLine($"park source template not used: {ex.GetType().Name}: {ex.Message}");
                 foreach (var entry in System.IO.Directory.EnumerateFileSystemEntries(root))
