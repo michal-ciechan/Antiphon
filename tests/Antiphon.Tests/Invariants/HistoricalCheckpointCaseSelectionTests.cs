@@ -20,14 +20,27 @@ public sealed class HistoricalCheckpointCaseSelectionTests
     public void C2082_Historical_rows_keep_their_expanded_cases()
     {
         var root = DockerStackDocuments.RepoRoot;
+        var failures = PlanCheckpointClassAudit.CheckHistoricalCases(root, CompiledCheckoutCases.Main);
+        failures.ShouldBeEmpty(string.Join('\n', failures));
+    }
+}
+
+internal static class CompiledCheckoutCases
+{
+    private static readonly Lazy<IReadOnlyList<LiveLaneNode>> CurrentMain = new(DiscoverMain);
+
+    internal static IReadOnlyList<LiveLaneNode> Main => CurrentMain.Value;
+
+    private static IReadOnlyList<LiveLaneNode> DiscoverMain()
+    {
+        var root = DockerStackDocuments.RepoRoot;
         var scratch = OwnedTempRoot.CreateOwned();
         try
         {
             var assembly = typeof(HistoricalCheckpointCaseSelectionTests).Assembly;
             var discovery = LiveLaneDiscovery.Run(root, assembly.GetName().Name!, assembly.Location, scratch);
             discovery.Ok.ShouldBeTrue(discovery.Error);
-            var failures = PlanCheckpointClassAudit.CheckHistoricalCases(root, discovery.Nodes);
-            failures.ShouldBeEmpty(string.Join('\n', failures));
+            return discovery.Nodes;
         }
         finally
         {

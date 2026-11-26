@@ -21,6 +21,7 @@ namespace Antiphon.Tests.Invariants;
 public sealed class PlanCheckpointClassSelectionGuardTests
 {
     [Test]
+    [ParallelLimiter<ProcessSpawnLimit>]
     public void C2082_Repository_readers_belong_to_the_invariant_namespace()
     {
         var root = DockerStackDocuments.RepoRoot;
@@ -58,6 +59,23 @@ public sealed class PlanCheckpointClassSelectionGuardTests
         var classAudit = PlanCheckpointClassAudit.Run(root);
         classAudit.Unresolved.ShouldBeEmpty(string.Join('\n', classAudit.Unresolved));
         classAudit.UnusedRetirements.ShouldBeEmpty(string.Join('\n', classAudit.UnusedRetirements));
+
+        var cases = CompiledCheckoutCases.Main;
+        var rosterFailures = RepositoryInvariantRosterAudit.Check(root, "Antiphon.Tests", cases);
+        rosterFailures.ShouldBeEmpty(string.Join('\n', rosterFailures));
+        foreach (var (type, count) in new[]
+        {
+            (typeof(C0824RefOnlySnapshotMigrationInvariantTests), 4),
+            (typeof(C1514HostLoadMigrationInvariantTests), 4),
+            (typeof(LandNonCodeSkipInvariantTests), 1),
+            (typeof(SessionTranscriptSummaryMigrationInvariantTests), 2),
+        })
+        {
+            var migrated = cases.Where(test => test.Namespace + "." + test.TypeOrClass == type.FullName).ToArray();
+            migrated.Length.ShouldBe(count, type.FullName);
+            foreach (var test in migrated)
+                test.Categories.Order(StringComparer.Ordinal).ShouldBe(["Integration", "RepositoryInvariant", "Slow"], test.Uid);
+        }
     }
 
     [Test]
