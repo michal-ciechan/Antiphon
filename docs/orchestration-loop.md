@@ -2816,13 +2816,15 @@ measured on server2 at `8004259c` (22.328 s to the first `not-built` line under 
 burners, so 45 s), and on Windows at least the 120 s one-pass floor from qualification
 `28bbb58e`, which finished a pass and then refused because both passes and the canary copy
 shared one 120 s wait. That Windows 120 s floor is provisional until a Windows pass
-duration is recorded. The canary is a plain byte copy, not a hard link. Its Linux budget is
-twice the plain-copy p95 measured on server2 on 2026-11-19 at base `42d7af1f`
-(20 `-Check` runs; nearest-rank p50 2315 ms, p95 3751 ms, so 8 s; see
-`EvaluationBudget.MeasuredLinuxCopyP95Milliseconds`). Solution evaluation dominated
-those runs (pass 1 about 10-23 s). The 2026-10-29 samples 1957 ms, 2253 ms and 2249 ms
+duration is recorded. The canary uses a byte copy. Its 77 s Linux budget is twice the
+copy-phase p95 rounded up. Debug task `9695a5d3` measured the copy inside `--check`
+on server2 at `77ba2e55` on 2026-11-26, with one-minute start loads of 19.62 to 68.19.
+Of 21 samples, 20 completed and one hit the 90 s diagnostic cutoff. Counting that
+timeout above the completed copies, nearest-rank p95 was 38,305 ms. The earlier
+2026-11-19 measurement at `42d7af1f` had 20 completions, p50 2,315 ms and p95 3,751 ms,
+which gave the 8 s deadline. The 2026-10-29 samples 1957 ms, 2253 ms and 2249 ms
 remain the Windows multiplier base in `EvaluationBudget.MeasuredCopyP95Milliseconds`.
-The Linux clock is the 2026-11-19 sample. The Windows copy budget is PROVISIONAL with three native
+The Windows copy budget is PROVISIONAL with three native
 samples: task `0a72f317` on DESKTOP-KTLKPIF measured the existing `CanaryRepository.Create`
 at 33515.1436, 25745.3282 and 25641.6397 ms on 2026-10-29. The prior 12 s budget failed
 on the combined tree. Nearest-rank p95 is 33515.1436 ms;

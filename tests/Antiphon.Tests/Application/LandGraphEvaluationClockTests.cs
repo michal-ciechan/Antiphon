@@ -28,7 +28,7 @@ public sealed partial class LandGraphEvaluationTests
     [Test]
     public void Pass1TimeoutExits2AndNamesThePass()
     {
-        var observed = RunPhaseTimeout(pass1: TimeSpan.FromSeconds(11), copy: TimeSpan.FromSeconds(1), pass2: TimeSpan.FromSeconds(1));
+        var observed = RunTimedPhases(pass1: TimeSpan.FromSeconds(11), copy: TimeSpan.FromSeconds(1), pass2: TimeSpan.FromSeconds(1));
         observed.Code.ShouldBe(2);
         observed.Text.ShouldContain("evaluation-failed: evaluating Antiphon.sln pass 1 exceeded 10 s", Case.Sensitive);
         observed.Text.ShouldNotContain("approved", Case.Sensitive);
@@ -40,7 +40,7 @@ public sealed partial class LandGraphEvaluationTests
     [Test]
     public void Pass2TimeoutExits2NamesThePassAndRemovesCanary()
     {
-        var observed = RunPhaseTimeout(pass1: TimeSpan.FromSeconds(1), copy: TimeSpan.FromSeconds(1), pass2: TimeSpan.FromSeconds(11));
+        var observed = RunTimedPhases(pass1: TimeSpan.FromSeconds(1), copy: TimeSpan.FromSeconds(1), pass2: TimeSpan.FromSeconds(11));
         observed.Code.ShouldBe(2);
         observed.Text.ShouldContain("evaluation-failed: evaluating Antiphon.sln pass 2 exceeded 10 s", Case.Sensitive);
         observed.Text.ShouldNotContain("approved", Case.Sensitive);
@@ -51,16 +51,16 @@ public sealed partial class LandGraphEvaluationTests
     [Test]
     public void CopyTimeoutExits2NamesTheCopyAndRemovesCanary()
     {
-        var observed = RunPhaseTimeout(pass1: TimeSpan.FromSeconds(1), copy: TimeSpan.FromSeconds(11), pass2: TimeSpan.FromSeconds(1));
+        var copyBudget = EvaluationBudget.CopyTimeout;
+        var observed = RunTimedPhases(TimeSpan.FromSeconds(1), copyBudget + TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), copyBudget);
         observed.Code.ShouldBe(2);
-        observed.Text.ShouldContain("evaluation-failed: evaluating Antiphon.sln copy exceeded 10 s", Case.Sensitive);
+        observed.Text.ShouldContain($"evaluation-failed: evaluating Antiphon.sln copy exceeded {copyBudget.TotalSeconds:0} s", Case.Sensitive);
         observed.Text.ShouldNotContain("approved", Case.Sensitive);
         observed.Timeouts.ShouldBe(1);
         observed.Pass2Ran.ShouldBeFalse();
     }
 
-    // CARD-1991: an unchanged graph still evaluates. The production copy clock must
-    // admit an 8 s copy (twice the 2026-11-19 Linux p95, which lands on 8 s).
+    // CARD-1991: an unchanged graph still evaluates after a copy at the prior 8 s deadline.
     [Test]
     public void UnchangedDigestEightSecondCopyStaysApproved()
     {
@@ -83,7 +83,7 @@ public sealed partial class LandGraphEvaluationTests
     [Test]
     public void LoadedCanaryCopyCanCompleteBeforeTheProductionDeadline()
     {
-        var observed = RunPhaseTimeout(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(1),
+        var observed = RunTimedPhases(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(1),
             EvaluationBudget.CopyTimeout);
         observed.Code.ShouldBe(0, observed.Text);
         observed.Pass2Ran.ShouldBeTrue();
@@ -230,7 +230,7 @@ public sealed partial class LandGraphEvaluationTests
     private static int ApprovedLines(StringWriter output) =>
         output.ToString().Split('\n').Count(line => line.Trim() == "approved");
 
-    private static PhaseTimeout RunPhaseTimeout(TimeSpan pass1, TimeSpan copy, TimeSpan pass2, TimeSpan? copyBudget = null)
+    private static PhaseOutcome RunTimedPhases(TimeSpan pass1, TimeSpan copy, TimeSpan pass2, TimeSpan? copyBudget = null)
     {
         var clock = new ManualPhaseClock();
         var output = new StringWriter();
@@ -242,10 +242,10 @@ public sealed partial class LandGraphEvaluationTests
             () => { clock.Advance(copy); return 0; },
             () => { pass2Ran = true; clock.Advance(pass2); return 0; },
             () => timeouts++);
-        return new PhaseTimeout(code, output.ToString(), timeouts, pass2Ran);
+        return new PhaseOutcome(code, output.ToString(), timeouts, pass2Ran);
     }
 
-    private readonly record struct PhaseTimeout(int Code, string Text, int Timeouts, bool Pass2Ran);
+    private readonly record struct PhaseOutcome(int Code, string Text, int Timeouts, bool Pass2Ran);
 
     /// <summary>Reports completion without running the work. Approval must stay refused.</summary>
     private sealed class SkippingClock : IPhaseClock

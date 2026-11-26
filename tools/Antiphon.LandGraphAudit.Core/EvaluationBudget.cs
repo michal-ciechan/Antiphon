@@ -19,7 +19,6 @@ internal static class EvaluationBudget
     // tracked set (9138 paths, 182462478 bytes): 1957, 2253, 2249 ms. Userspace
     // read/write, so this is slower than File.Copy. Nearest-rank p95 for n=3 is
     // rank 3, so 2253. This sample stays the Windows multiplier base.
-    // Linux uses MeasuredLinuxCopyP95Milliseconds (2026-11-19, n=20, p95 3751, 8 s).
     // PROVISIONAL calibration from three native Windows CanaryRepository.Create runs,
     // DESKTOP-KTLKPIF, 2026-10-29, task 0a72f317, tool SHA-256
     // 5EBF83ADDF00F41391AC6AD5C19EF19FA754BE215F70A06560E3922817C853BB:
@@ -29,12 +28,12 @@ internal static class EvaluationBudget
     // Re-measure on the next native qualification; see docs/orchestration-loop.md.
     public const int MeasuredCopyP95Milliseconds = 2253;
 
-    // server2 Linux, 24 CPUs, HEAD 42d7af1f, Antiphon.sln, 2026-11-19.
-    // Twenty -Check runs. Each waited until the 1-minute load was below 16;
-    // the end load reached 31.31. Copy phase ms, nearest-rank for n=20:
-    // p50 rank ceil(0.50*20)=10 is 2315; p95 rank ceil(0.95*20)=19 is 3751.
-    // TwiceSeconds(3751) is 8. Pass 1 (max 23044 ms) dominated the wall time.
-    public const int MeasuredLinuxCopyP95Milliseconds = 3751;
+    // server2 Linux, 24 CPUs, Antiphon.sln at 77ba2e55, 2026-11-26 (Debug task 9695a5d3).
+    // Timed CanaryRepository.Create inside the audit with a 90 s diagnostic copy deadline.
+    // Start load ranged from 19.62 to 68.19. Of 21 samples, 20 finished and one exceeded 90 s.
+    // With that timeout ranked above all completions, nearest-rank p95 is rank 20: 38305 ms.
+    // TwiceSeconds(38305) is 77 s. The 2026-11-19 sample at 42d7af1f gave the prior 8 s budget.
+    public const int MeasuredLinuxCopyP95Milliseconds = 38305;
 
     public const int WindowsCopyMeasurementMultiplier = 30;
 
