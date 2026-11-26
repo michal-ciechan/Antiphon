@@ -301,7 +301,9 @@ different task branch at the observed SHA. A pending sibling land holds dispatch
 base is automatic or a symbolic ref such as master. A StartRef that is a 40- or
 64-character commit id dispatches at once and keeps the ordinary sibling warning when
 that sibling is not contained; an inspection that stops at the inventory cap dispatches
-with the incomplete-inspection warning. Divergent
+with the incomplete-inspection warning. The same hold exception applies when a CARD-0644
+continuation tip or a ref-only parent's `FrozenSourceSha` supplies that fixed commit ID.
+Divergent
 eligible tips refuse creation with `worktree_base_ambiguous`; choose one with `--base-task <id>`
 or explicitly omit the history with `--fresh-worktree`. An invalid, dirty, active or unavailable
 explicit source is refused. Inspect the create preview and the dispatch event for changes
