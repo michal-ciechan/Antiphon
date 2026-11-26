@@ -109,18 +109,19 @@ internal static class GitStatusConfigAgreement
           ?? (child.Inherited.TryGetValue(key, out var i) ? i : null);
 
     /// <summary>
-    /// The git child's value for <paramref name="key"/> (one the agreement lists from the child), or null when unset
-    /// or the child's config cannot be listed.
+    /// The git child's value for <paramref name="key"/> (one the agreement lists from the child): Known false when the
+    /// child's config cannot be listed, so a caller can refuse rather than read a failure as unset. The probe runs
+    /// outside the repository, so an includeIf that matches only there is libgit2's merged value to show.
     /// </summary>
-    internal static string? ChildValue(Configuration config, IReadOnlyDictionary<string, string?>? childEnvironment,
+    internal static (bool Known, string? Value) ChildValue(Configuration config, IReadOnlyDictionary<string, string?>? childEnvironment,
         IReadOnlyList<KeyValuePair<string, string>> overrides, string key)
     {
         string? Env(string name) => childEnvironment is null ? Environment.GetEnvironmentVariable(name)
             : childEnvironment.TryGetValue(name, out var v) ? v : null;
-        if (View(Env) is not { } child) return null;
+        if (View(Env) is not { } child) return (false, null);
         var command = new Dictionary<string, string>(child.Command, StringComparer.OrdinalIgnoreCase);
         foreach (var (k, value) in overrides) command[k] = value;
-        return Resolved(config, command, child, key);
+        return (true, Resolved(config, command, child, key));
     }
 
     private static string? Level(Configuration config, string key, ConfigurationLevel level)
@@ -246,10 +247,9 @@ internal static class GitStatusConfigAgreement
     }
 
     /// <summary>
-    /// The child's system attributes file: <c>git var GIT_ATTR_SYSTEM</c> (git 2.42+). An older git outside Windows
-    /// names it by its prefix (<c>git --exec-path</c> is <c>&lt;prefix&gt;/libexec/git-core</c>; the file is
-    /// <c>/etc/gitattributes</c> for prefix <c>/usr</c>, else <c>&lt;prefix&gt;/etc/gitattributes</c>). Unknown when
-    /// neither answers; a view with an unknown file is asked again after <see cref="UnknownRetry"/>.
+    /// The child's system attributes file: <c>git var GIT_ATTR_SYSTEM</c> (git 2.42+). Unknown otherwise: an older git's
+    /// file depends on how it was built (prefix, sysconfdir), so its statuses stay with git; a view with an unknown
+    /// file is asked again after <see cref="UnknownRetry"/>.
     /// </summary>
     private static (string? File, bool Known) SystemAttributesFile(ProcessStartInfo start)
     {
@@ -257,15 +257,7 @@ internal static class GitStatusConfigAgreement
         foreach (var arg in new[] { "var", "GIT_ATTR_SYSTEM" }) start.ArgumentList.Add(arg);
         var probe = Run(start);
         if (probe is ({ } named, 0) && named.Trim() is { Length: > 0 } trimmed) return (Path.GetFullPath(trimmed), true);
-        if (probe is null || OperatingSystem.IsWindows()) return (null, false);
-        start.ArgumentList.Clear();
-        start.ArgumentList.Add("--exec-path");
-        if (Run(start) is not ({ } exec, 0)) return (null, false);
-        const string suffix = "/libexec/git-core";
-        var path = exec.Trim().TrimEnd('/');
-        if (!path.EndsWith(suffix, StringComparison.Ordinal)) return (null, false);
-        var prefix = path[..^suffix.Length];
-        return (prefix is "/usr" or "" ? "/etc/gitattributes" : prefix + "/etc/gitattributes", true);
+        return (null, false);
     }
 
     private static readonly TimeSpan UnknownRetry = TimeSpan.FromMinutes(1);

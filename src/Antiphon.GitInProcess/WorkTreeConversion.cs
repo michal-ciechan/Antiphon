@@ -39,7 +39,7 @@ internal static class WorkTreeConversion
             : childEnvironment.TryGetValue("GIT_ATTR_SOURCE", out var source) ? source : null;
         if (!string.IsNullOrEmpty(attributeSource)) return "GIT_ATTR_SOURCE is set";
         // The child's own value (a -c on the command is TryAnswer's to refuse), and libgit2's in case they differ.
-        if (config.Get<string>("attr.tree") is not null || GitStatusConfigAgreement.ChildValue(config, childEnvironment, [], "attr.tree") is not null)
+        if (config.Get<string>("attr.tree") is not null || GitStatusConfigAgreement.ChildValue(config, childEnvironment, [], "attr.tree") is not (true, null))
             return "attr.tree is set";
         var files = new List<string>();
         if (outside.System is { } system) files.Add(system);

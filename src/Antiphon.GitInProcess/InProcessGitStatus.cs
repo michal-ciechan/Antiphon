@@ -87,7 +87,7 @@ internal static class InProcessGitStatus
         if (StatusForm(a) is { } form)
         {
             Func<Configuration, bool> listable = config => agrees(config) && !CopyDetection(config, childEnvironment, overrides)
-                && GitStatusConfigAgreement.ChildValue(config, childEnvironment, overrides, "attr.tree") is null;
+                && GitStatusConfigAgreement.ChildValue(config, childEnvironment, overrides, "attr.tree") is (true, null);
             if (StatusEntries(checkout, form.Untracked, form.Ignored, listable, childEnvironment) is not { } entries) return null;
             if (entries.Count == 0) return Ok("");
             // A tree with changes is libgit2's listing in git's porcelain v1 layout (operator, 2026-11-25): the
@@ -139,13 +139,20 @@ internal static class InProcessGitStatus
     /// <summary>
     /// Whether the git child's status detects copies (its status.renames, else its diff.renames, is copies/copy): git
     /// then pairs an added path with a modified source as <c>C  new\0src\0</c>, which libgit2's listing cannot show.
-    /// Only the listing refuses it; the path sets and unpaired rows the verdict readers compare are the same.
+    /// Only the listing refuses it; the path sets and unpaired rows the verdict readers compare are the same. Also true
+    /// when the child's config cannot be listed, or libgit2's merged value (which follows an includeIf matching only
+    /// inside the repository) is copies.
     /// </summary>
     private static bool CopyDetection(Configuration config, IReadOnlyDictionary<string, string?>? childEnvironment,
-        IReadOnlyList<KeyValuePair<string, string>> overrides) =>
-        (GitStatusConfigAgreement.ChildValue(config, childEnvironment, overrides, "status.renames")
-            ?? GitStatusConfigAgreement.ChildValue(config, childEnvironment, overrides, "diff.renames"))
-            ?.Trim().ToLowerInvariant() is "copies" or "copy";
+        IReadOnlyList<KeyValuePair<string, string>> overrides)
+    {
+        static bool Copies(string? value) => value?.Trim().ToLowerInvariant() is "copies" or "copy";
+        var status = GitStatusConfigAgreement.ChildValue(config, childEnvironment, overrides, "status.renames");
+        var diff = GitStatusConfigAgreement.ChildValue(config, childEnvironment, overrides, "diff.renames");
+        if (!status.Known || !diff.Known) return true;
+        return Copies(status.Value ?? diff.Value)
+            || Copies(config.Get<string>("status.renames")?.Value ?? config.Get<string>("diff.renames")?.Value);
+    }
 
     /// <summary>Whether ordinal UTF-16 order is git's byte (UTF-8) order for this path: no surrogate or U+E000-U+FFFF char.</summary>
     private static bool GitOrdered(string path) => !path.Any(c => c >= '\uD800');
