@@ -1,12 +1,14 @@
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.TestHelpers;
+namespace Antiphon.Tests.Invariants;
 
 // CARD-1238: under the checkpoint tool's one absolute OutputPath every helper project built into
 // this assembly's own output, so each Copy* target in Antiphon.Tests.csproj copied the whole output
 // (with the earlier helper copies) into the next helper folder: 97,818 files, 38 GB.
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class BuildOutputNestingTests
 {
     // Helper folders Antiphon.Tests.csproj stages beside this assembly.
@@ -95,32 +97,5 @@ public sealed class BuildOutputNestingTests
         {
             Directory.Delete(root, recursive: true);
         }
-    }
-}
-
-internal static class BuildOutputNesting
-{
-    // Returns paths, relative to root, of a helper folder or a copy of this test assembly found
-    // inside a helper folder.
-    public static List<string> Find(string root, IReadOnlyCollection<string> helperFolders)
-    {
-        var found = new List<string>();
-        foreach (var helper in helperFolders)
-        {
-            var dir = Path.Combine(root, helper);
-            if (!Directory.Exists(dir))
-                continue;
-            foreach (var entry in Directory.EnumerateFileSystemEntries(dir, "*", SearchOption.AllDirectories))
-            {
-                var name = Path.GetFileName(entry);
-                var nested = Directory.Exists(entry)
-                    ? helperFolders.Contains(name, StringComparer.OrdinalIgnoreCase)
-                    : name.Equals("Antiphon.Tests.dll", StringComparison.OrdinalIgnoreCase);
-                if (nested)
-                    found.Add(Path.GetRelativePath(root, entry));
-            }
-        }
-
-        return found;
     }
 }
