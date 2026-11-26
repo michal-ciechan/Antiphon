@@ -143,6 +143,8 @@ public sealed class LinuxRunnerCustodyLifecycleTests
                 await Task.Delay(100, timeout.Token);
         } while (status.Receipt is null);
         var receipt = fx.Store.ValidateReceipt(status.Receipt, fx.Binding, status.Host!);
+        fx.Store.ReadReceipt(fx.Binding, status.Host!, accepted: false).ShouldBe(status.Receipt);
+        fx.Store.ReadReceipt(fx.Binding, status.Host!, accepted: true).ShouldBe(status.Receipt);
         receipt.Disposition.ShouldBe(VerificationCustodyState.Exited);
         receipt.ActiveProcesses.ShouldBe(0u);
         receipt.TerminationSucceeded.ShouldBeNull();
