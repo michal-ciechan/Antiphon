@@ -624,6 +624,55 @@ public sealed class Card2060PlacementHandshakeTests
 
     private const byte ProveKind = 1, PlacedKind = 2, GoKind = 3, ReleasingKind = 4;
 
+    [Test]
+    [NativeLinuxOnly("Linux placement sends GO over the authenticated Unix socket.")]
+    public async Task SlowFirstPlacementSucceedsAndStuckPeerExpires()
+    {
+        RequireLinux();
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var deadline = LinuxPlacementLaunch.ClampAtReceipt(LinuxPlacementLaunch.Stamp(0, 0), 0);
+        var budget = Stopwatch.GetElapsedTime(0, deadline);
+
+        var clock = new FakeTimeProvider();
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId, clock, budget))
+        {
+            using var ct = CancellationTokenSource.CreateLinkedTokenSource(bound.Token, world.Attempt.Token);
+            var exchange = world.ExchangeAsync(ct.Token);
+            using var peer = world.Connect();
+            var go = await world.ProveAndPlaceAsync(peer, _ => clock.Advance(TimeSpan.FromSeconds(6)), bound.Token);
+            if (go is { Kind: GoKind })
+                await WriteFrameAsync(peer, ReleasingKind, go.Value.Body, bound.Token);
+            await Should.NotThrowAsync(async () => await exchange);
+            go.ShouldNotBeNull();
+            go.Value.Kind.ShouldBe(GoKind);
+            world.Attempt.Commit().ShouldNotBeNull();
+        }
+
+        budget.ShouldBe(TimeSpan.FromSeconds(16));
+        LinuxPlacementLaunch.ClampAtReceipt(long.MaxValue, 0).ShouldBe(deadline);
+        var delayedSend = 20 * Stopwatch.Frequency;
+        var cappedDeadline = LinuxPlacementLaunch.Stamp(0, delayedSend);
+        Stopwatch.GetElapsedTime(0, cappedDeadline).ShouldBe(TimeSpan.FromSeconds(29));
+        LinuxPlacementLaunch.ClampAtReceipt(cappedDeadline, delayedSend + Stopwatch.Frequency).ShouldBe(cappedDeadline);
+
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId, clock, budget))
+        {
+            using var ct = CancellationTokenSource.CreateLinkedTokenSource(bound.Token, world.Attempt.Token);
+            var exchange = world.ExchangeAsync(ct.Token);
+            using var peer = world.Connect();
+            var prove = await ReadFrameAsync(peer, bound.Token);
+            prove.ShouldNotBeNull();
+            prove.Value.Kind.ShouldBe(ProveKind);
+            clock.Advance(budget - TimeSpan.FromTicks(1));
+            ct.IsCancellationRequested.ShouldBeFalse();
+            clock.Advance(TimeSpan.FromTicks(1));
+            ct.IsCancellationRequested.ShouldBeTrue("a silent peer must hit the absolute placement cutoff");
+            await Should.ThrowAsync<OperationCanceledException>(async () => await exchange);
+            (await ReadFrameAsync(peer, bound.Token)).ShouldBeNull();
+            world.Attempt.Commit().ShouldBeNull();
+        }
+    }
+
     /// <summary>The original host's attempt against a fixture socket peer in this process.</summary>
     private sealed class HostAttemptWorld : IDisposable
     {
@@ -641,12 +690,13 @@ public sealed class Card2060PlacementHandshakeTests
         public LinuxSpawnIdentity Root { get; }
         public LinuxPlacementAttempt Attempt { get; }
 
-        public static HostAttemptWorld Start(int rootPid, TimeProvider? clock = null)
+        public static HostAttemptWorld Start(int rootPid, TimeProvider? clock = null, TimeSpan? budget = null)
         {
             clock ??= TimeProvider.System;
             var binding = new LinuxPlacementBinding(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
             var root = new LinuxSpawnIdentity(rootPid, Environment.ProcessId, Boot, Ticks, DateTime.UtcNow);
-            var deadline = clock.GetTimestamp() + 10 * clock.TimestampFrequency;
+            var duration = budget ?? TimeSpan.FromSeconds(10);
+            var deadline = clock.GetTimestamp() + duration.Ticks * clock.TimestampFrequency / TimeSpan.TicksPerSecond;
             return new(binding, root, new LinuxPlacementAttempt(binding, deadline, CancellationToken.None, clock)
             {
                 ExpectedPeerUid = GetUid(),

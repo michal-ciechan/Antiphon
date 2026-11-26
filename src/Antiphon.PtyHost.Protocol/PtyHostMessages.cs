@@ -66,7 +66,8 @@ public static class LinuxPlacementLaunch
     public const string Feature = "linuxPlacementV1";
     public static readonly TimeSpan RequestLimit = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ReplyReserve = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan PlacementLimit = TimeSpan.FromSeconds(5);
+    // CARD-2080 measured an eight-second cold p95 under runner CPU contention.
+    private static readonly TimeSpan PlacementLimit = TimeSpan.FromSeconds(16);
 
     public static bool AppliesTo(LaunchMessage launch) => OperatingSystem.IsLinux() &&
         launch.VerificationBinding?.Backend == VerificationCustodyBackends.LinuxCgroup;
