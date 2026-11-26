@@ -46,27 +46,45 @@ public sealed class ReleaseCutTests
         });
         var inventory = Path.Combine(root, "inventory.json");
         var scope = new RcReceiptScope { Platform = "windows", Architecture = RcReceiptScope.CurrentArchitecture(), Profile = "rc" };
-        OrderedDictionary Prior(string chunk, string type, string[] cases)
+        OrderedDictionary Prior(string suite, string assembly, string chunk, string type, string[] cases)
         {
             var trx = Path.Combine(root, chunk + ".trx");
             NightlyFixture.WriteTrx(trx, cases.Select(id => new NightlyTrxRow(id, type, "Check")));
             var row = new OrderedDictionary
             {
-                ["id"] = "antiphon", ["chunk"] = chunk, ["result"] = "pass", ["exitCode"] = 0, ["trx"] = trx, ["runId"] = "prior",
+                ["id"] = suite, ["chunk"] = chunk, ["result"] = "pass", ["exitCode"] = 0, ["trx"] = trx, ["runId"] = "prior",
             };
-            var content = RcChunkReceipt.ContentDigest("antiphon", "native",
-                cases.Select(id => new RcCaseIdentity("Antiphon.Tests", type, "Check", id)));
+            var content = RcChunkReceipt.ContentDigest(suite, "native",
+                cases.Select(id => new RcCaseIdentity(assembly, type, "Check", id)));
             RcChunkReceipt.Stamp(row, world.Sha, content, scope);
             return row;
         }
-        var prior = new[] { Prior("prior-guard", invariantClass, [guardA, guardB]), Prior("prior-ordinary", ordinaryClass, [ordinary]) };
-        var digest = RcChunkReceipt.Seal(inventory, world.Sha, 1, prior);
-        var comparison = RcComparisonBaseline.Choose("rc/fixture", [new RcComparisonInput
+        var prior = new[]
         {
-            Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "prior", Attempt = "1",
-            CompletedUtc = NightlyFixture.DefaultNow.AddHours(-1), ReceiptPath = inventory, ReceiptDigest = digest,
-            Sealed = true, Ancestor = true, Rows = prior,
-        }]);
+            Prior("antiphon", "Antiphon.Tests", "prior-guard", invariantClass, [guardA, guardB]),
+            Prior("antiphon", "Antiphon.Tests", "prior-ordinary", ordinaryClass, [ordinary]),
+            Prior("messaging", "Antiphon.Messaging.Tests", "prior-owed", owedClass, [owed]),
+        };
+        var digest = RcChunkReceipt.Seal(inventory, world.Sha, 1, prior);
+        var laterFailure = new OrderedDictionary
+        {
+            ["contentDigest"] = prior[2]["contentDigest"], ["result"] = "FAIL", ["disposition"] = "executed",
+        };
+        var comparison = RcComparisonBaseline.Choose("rc/fixture",
+        [
+            new RcComparisonInput
+            {
+                Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "prior", Attempt = "1",
+                CompletedUtc = NightlyFixture.DefaultNow.AddHours(-1), ReceiptPath = inventory, ReceiptDigest = digest,
+                Sealed = true, Ancestor = true, Rows = prior,
+            },
+            new RcComparisonInput
+            {
+                Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "later", Attempt = "1",
+                CompletedUtc = NightlyFixture.DefaultNow.AddMinutes(-30), Ancestor = true, Rows = [laterFailure],
+            },
+        ]);
+        comparison.Owed.ShouldHaveSingleItem().Key.ShouldBe(PsValue.Str(prior[2]["contentDigest"]));
         RcComparisonBaseline.Record(Path.Combine(root, "comparison.json"), comparison, inventory, digest);
 
         var testsHops = new List<NightlyTestsOptions>();
@@ -125,7 +143,8 @@ public sealed class ReleaseCutTests
         });
         var processes = new FakeProcessTable();
         processes.Start(processes.CurrentPid, NightlyRunWorld.ProcessStart);
-        nightly = world.Fixture.Host(git: world.HostGit, launcher: launcher, processes: processes);
+        var probe = new FakeHostProbe();
+        nightly = world.Fixture.Host(git: world.HostGit, launcher: launcher, processes: processes, probe: probe);
         NightlyRunBindings Bindings(string productRoot) => new()
         {
             CliPath = NightlyRunWorld.StagedCli,
@@ -193,6 +212,12 @@ public sealed class ReleaseCutTests
         testsHops.Last().IncrementalInventoryDigest.ShouldBeEmpty();
         results.Last().CoverageScope.ShouldBe("Full");
         executed.ShouldBe([invariantClass, ordinaryClass, owedClass], ignoreOrder: true);
+
+        probe.PlatformName = "linux";
+        executed.Clear();
+        Cut("c2082-linux").Tested.ShouldBeFalse();
+        results.Last().Refusal.ShouldBe("incremental-windows-required");
+        executed.ShouldBeEmpty();
     }
 
     // CARD-1836 S6 (CP-6, V-6, G-20..G-24): an Incremental cut reconciles the owed roster and never reaches the publisher.
