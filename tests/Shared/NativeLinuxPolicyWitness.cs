@@ -55,8 +55,8 @@ public static class NativeLinuxPolicyWitness
     // Review a5ebf1e9: that record's reason now names the disposition seam; the record is otherwise unchanged.
     // Unit 24 of the 2026-11-22 PowerShell-to-C# plan (f0c837046): the CARD-1811 CapabilityScriptTests record's reason
     // names the capability command (capability.ps1 was ported); the record is otherwise unchanged.
-    // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
-    public const string LegacyExclusionDigest = "6b6b2ed28fb86f46fde0bd318a2b1b7d60a5fd0dac82c1c37e60f908ba6512ab";
+    // CARD-2077 adds one Linux exclusion for the Windows Git UNC test. The native Windows test remains required.
+    public const string LegacyExclusionDigest = "b63f7c0eabb46635273fb0d57df54390888cac874f59d6b7afcf4a09afcdbafe";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";
