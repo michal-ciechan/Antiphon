@@ -228,8 +228,9 @@ public sealed class IncrementalSelectionSoundnessTests
         using var invalidRecord = Read(wrongTargetOutput, invalidCarry);
         var invalidObservation = invalidRecord.RootElement.GetProperty("observation");
         invalidObservation.GetProperty("chunk").GetString().ShouldBe("renumbered-left", "P.roster presentation ordinal");
+        // v1 content vector for native antiphon cases (L, L.LeftTests, M, l1/l2).
         invalidObservation.GetProperty("contentDigest").GetString().ShouldBe(
-            unknownRecord.RootElement.GetProperty("observation").GetProperty("contentDigest").GetString(), "P.roster stable content");
+            "1645f49fecef4f856b6ac7d4d11c81d1ecb417ffa405ae8084673428df05eeb5", "P.roster stable content");
         invalidObservation.GetProperty("case").GetProperty("kind").GetString()
             .ShouldBe("chunk-unknown-case", "P.unknown wrong-target evidence cannot name a case");
 

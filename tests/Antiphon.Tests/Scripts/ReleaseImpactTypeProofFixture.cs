@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Reflection.Metadata;
 using System.Security.Cryptography;
 using System.Text;
@@ -25,6 +26,9 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         """;
 
     private static readonly Signature Author = new("fixture", "fixture@antiphon.test", DateTimeOffset.UnixEpoch);
+    private static readonly Lazy<MethodInfo> ReleaseGraphEntryPoint = new(() =>
+        Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll"))
+            .EntryPoint ?? throw new InvalidOperationException("The staged release graph driver has no entry point."));
     private readonly ReportTempWorkspace _workspace = new();
     private readonly Repository _repository;
     private Repository? _permutedRepository;
@@ -149,13 +153,23 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         finally { File.WriteAllBytes(payload, source); }
     }
 
-    internal (string Path, string Digest) PinEndpoint(string repositoryRoot, string sha, IReadOnlyDictionary<string, string> files,
-        Context[] contexts)
+    // Reuse the staged driver in this host for multi-endpoint fixtures. S1
+    // exercises its standalone process and command-line wiring separately.
+    internal void WriteReleaseGraph(string repositoryRoot, string sha, string output, IReadOnlyDictionary<string, string> files,
+        Context[] contexts, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        var clock = Stopwatch.StartNew();
         using var repository = new Repository(repositoryRoot);
         var tree = repository.Lookup<Commit>(sha).Tree;
         var blobs = files.Keys.ToDictionary(path => path, path => tree[path].Target.Id.Sha, StringComparer.Ordinal);
-        return WriteManifest(sha, files, new Dictionary<string, string>(), contexts, blobs, null, _workspace.Path);
+        var (manifest, digest) = WriteManifest(sha, files, new Dictionary<string, string>(), contexts, blobs, null, _workspace.Path);
+        string[] arguments = ["--release-graph", repositoryRoot, sha, output,
+            "--proven-subtraction", "--compiler-manifest", manifest, "--expected-compiler-manifest-sha256", digest];
+        var exit = (int)ReleaseGraphEntryPoint.Value.Invoke(null, [arguments])!;
+        Console.WriteLine($"C2076 fixture phase=release-graph elapsedMs={clock.ElapsedMilliseconds}");
+        exit.ShouldBe(0, $"release graph fixture {Path.GetFileName(output)}");
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private (string Path, string Digest) WriteManifest(string sha, IReadOnlyDictionary<string, string> files,

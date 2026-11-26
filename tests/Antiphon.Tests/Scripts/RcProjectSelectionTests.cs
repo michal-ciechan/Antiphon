@@ -22,20 +22,20 @@ public sealed class RcProjectSelectionTests
 {
 
     [Test, Timeout(30_000)]
-    public Task BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken) =>
+    public void BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken);
 
     [Test, Timeout(30_000)]
-    public Task EndpointProofsPreserveOwnedAndUnownedCaps(CancellationToken cancellationToken) =>
+    public void EndpointProofsPreserveOwnedAndUnownedCaps(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken, ProofScenario.Caps);
 
     [Test, Timeout(30_000)]
-    public Task EndpointProofsPreserveIndependentReadersAndAddedConsumers(CancellationToken cancellationToken) =>
+    public void EndpointProofsPreserveIndependentReadersAndAddedConsumers(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken, ProofScenario.Readers);
 
     private enum ProofScenario { Standard, Caps, Readers }
 
-    private async Task CheckEndpointProofs(CancellationToken cancellationToken, ProofScenario scenario = ProofScenario.Standard)
+    private void CheckEndpointProofs(CancellationToken cancellationToken, ProofScenario scenario = ProofScenario.Standard)
     {
         const string leftProject = "tests/L/L.csproj";
         const string rightProject = "tests/R/R.csproj";
@@ -72,11 +72,11 @@ public sealed class RcProjectSelectionTests
             new(leftProject, "L", [north, leftSource], [], [pack.Core, tunit]),
             new(rightProject, "R", [south, rightSource], [], [pack.Core, tunit]),
         ];
-        var baselineArtifact = await ProduceAsync(baseline, "baseline");
+        var baselineArtifact = Produce(baseline, "baseline");
         files[south] = "namespace South; public class Probe { public int Value; }\n";
         repo.Put(south, files[south]);
         var candidate = repo.Commit();
-        var candidateArtifact = await ProduceAsync(candidate, "candidate");
+        var candidateArtifact = Produce(candidate, "candidate");
 
         var chunks = new[]
         {
@@ -128,12 +128,12 @@ public sealed class RcProjectSelectionTests
         on.Of("left").Reasons.ShouldBeEmpty("C.delta left owes nothing");
         if (scenario == ProofScenario.Caps)
         {
-            await CheckCaps();
+            CheckCaps();
             return;
         }
         if (scenario == ProofScenario.Readers)
         {
-            await CheckReadersAndAddedConsumer();
+            CheckReadersAndAddedConsumer();
             return;
         }
 
@@ -217,7 +217,7 @@ public sealed class RcProjectSelectionTests
         changedEdge!["classes"] = new System.Text.Json.Nodes.JsonArray("RightTests");
         repo.Put(index, files[index] = changedIndex.ToJsonString());
         var indexCandidate = repo.Commit();
-        var indexArtifact = await ProduceAsync(indexCandidate, "candidate-index");
+        var indexArtifact = Produce(indexCandidate, "candidate-index");
         var indexProof = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
             indexArtifact.Path, indexArtifact.Digest, indexCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
         var changed = RcChunkSelection.Select(repo.Root, baseline, indexCandidate, chunks, receipts, [], Admit, indexProof);
@@ -234,12 +234,12 @@ public sealed class RcProjectSelectionTests
         repo.Put(south, files[south]);
         var linkedBaseline = repo.Commit();
         contexts[0] = contexts[0] with { SourcePaths = [north, leftSource, south] };
-        var linkedArtifact = await ProduceAsync(linkedBaseline, "baseline-linked");
+        var linkedArtifact = Produce(linkedBaseline, "baseline-linked");
         repo.Put(leftProject, files[leftProject] = unlinkedProject);
         repo.Put(south, files[south] = currentSouth);
         var unlinkedCandidate = repo.Commit();
         contexts[0] = contexts[0] with { SourcePaths = [north, leftSource] };
-        var unlinkedArtifact = await ProduceAsync(unlinkedCandidate, "candidate-link-removed");
+        var unlinkedArtifact = Produce(unlinkedCandidate, "candidate-link-removed");
         var linkProof = RcTypeProofComparison.Read(linkedArtifact.Path, linkedArtifact.Digest, linkedBaseline,
             unlinkedArtifact.Path, unlinkedArtifact.Digest, unlinkedCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
         var linked = RcChunkSelection.Select(repo.Root, linkedBaseline, unlinkedCandidate, chunks, receipts, [], Admit, linkProof);
@@ -248,7 +248,7 @@ public sealed class RcProjectSelectionTests
         linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
         linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
 
-        async Task CheckCaps()
+        void CheckCaps()
         {
             const string uncatalogued = "docs/capped.md";
             var southAtCandidate = files[south];
@@ -260,10 +260,10 @@ public sealed class RcProjectSelectionTests
             Put(index, cappedIndex.ToJsonString());
             Put(uncatalogued, "baseline\n");
             var capBaseline = repo.Commit();
-            var capBaselineArtifact = await ProduceAsync(capBaseline, "baseline-cap");
+            var capBaselineArtifact = Produce(capBaseline, "baseline-cap");
             Put(south, southAtCandidate);
             var capCandidate = repo.Commit();
-            var capCandidateArtifact = await ProduceAsync(capCandidate, "candidate-cap");
+            var capCandidateArtifact = Produce(capCandidate, "candidate-cap");
             var capPair = Compare(capBaseline, capBaselineArtifact, capCandidate, capCandidateArtifact);
             var ownedCap = RcChunkSelection.Select(repo.Root, capBaseline, capCandidate, chunks, receipts, [], Admit, capPair);
             ownedCap.Mode.ShouldBe("Scoped", "C.cap owned");
@@ -277,7 +277,7 @@ public sealed class RcProjectSelectionTests
             files[south] = southAtBaseline;
             Put(uncatalogued, "changed\n");
             var unknownCandidate = repo.Commit();
-            var unknownArtifact = await ProduceAsync(unknownCandidate, "candidate-unknown-cap");
+            var unknownArtifact = Produce(unknownCandidate, "candidate-unknown-cap");
             var unknownPair = Compare(capBaseline, capBaselineArtifact, unknownCandidate, unknownArtifact);
             var unownedCap = RcChunkSelection.Select(repo.Root, capBaseline, unknownCandidate, chunks, receipts,
                 [new() { Reader = "L.LeftTests", Globs = [uncatalogued] }], Admit, unknownPair);
@@ -286,7 +286,7 @@ public sealed class RcProjectSelectionTests
             unownedCap.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.cap unowned set");
         }
 
-        async Task CheckReadersAndAddedConsumer()
+        void CheckReadersAndAddedConsumer()
         {
             const string hand = "tests/impacted-classes.json";
             const string script = "scripts/test-startup.ps1";
@@ -296,10 +296,10 @@ public sealed class RcProjectSelectionTests
             Put(hand, JsonSerializer.Serialize(new { kinds = new[] { new { globs = new[] { south }, classes = new[] { "LeftTests" } } } }));
             Put(script, "Write-Output 'baseline'\n");
             var readerBaseline = repo.Commit();
-            var readerBaselineArtifact = await ProduceAsync(readerBaseline, "baseline-readers");
+            var readerBaselineArtifact = Produce(readerBaseline, "baseline-readers");
             Put(south, southAtCandidate);
             var readerCandidate = repo.Commit();
-            var readerArtifact = await ProduceAsync(readerCandidate, "candidate-hand");
+            var readerArtifact = Produce(readerCandidate, "candidate-hand");
             var readerPair = Compare(readerBaseline, readerBaselineArtifact, readerCandidate, readerArtifact);
             var handRule = RcChunkSelection.Select(repo.Root, readerBaseline, readerCandidate, chunks, receipts, [], Admit, readerPair);
             handRule.Of("left").Reasons.ShouldContain("hand:A:" + south, "C.owed hand rule");
@@ -311,7 +311,7 @@ public sealed class RcProjectSelectionTests
             files[south] = southAtBaseline;
             Put(script, "Write-Output 'candidate'\n");
             var scriptCandidate = repo.Commit();
-            var scriptArtifact = await ProduceAsync(scriptCandidate, "candidate-script");
+            var scriptArtifact = Produce(scriptCandidate, "candidate-script");
             var scriptPair = Compare(readerBaseline, readerBaselineArtifact, scriptCandidate, scriptArtifact);
             var scriptReader = RcChunkSelection.Select(repo.Root, readerBaseline, scriptCandidate, chunks, receipts,
                 [new() { Reader = "L.LeftTests", Globs = ["scripts/test-*.ps1"] }], Admit, scriptPair);
@@ -326,7 +326,7 @@ public sealed class RcProjectSelectionTests
             Put(added, "namespace R; public class AddedTests { [TUnit.Core.Test] public void M() { _ = typeof(South.Probe); } }\n");
             contexts[1] = contexts[1] with { SourcePaths = [south, rightSource, added] };
             var addedCandidate = repo.Commit();
-            var addedArtifact = await ProduceAsync(addedCandidate, "candidate-added-consumer");
+            var addedArtifact = Produce(addedCandidate, "candidate-added-consumer");
             var addedPair = Compare(baseline, baselineArtifact, addedCandidate, addedArtifact);
             var addedChunk = Chunk("added", rightProject, "R.AddedTests");
             addedChunk.Suite = "antiphon";
@@ -347,21 +347,10 @@ public sealed class RcProjectSelectionTests
             (string Path, string Digest) lastGraph) => RcTypeProofComparison.Read(firstGraph.Path, firstGraph.Digest, first,
                 lastGraph.Path, lastGraph.Digest, last, Digest("fixture-algorithm"), Digest("fixture-policy"));
 
-        async Task<(string Path, string Digest)> ProduceAsync(string sha, string label)
+        (string Path, string Digest) Produce(string sha, string label)
         {
-            var (manifest, pin) = pack.PinEndpoint(repo.Root, sha, files, contexts);
-            var driver = Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll");
             var output = repo.PathOf(".antiphon", "selector-replay", label + ".json");
-            var start = new System.Diagnostics.ProcessStartInfo("dotnet", [driver, "--release-graph", repo.Root, sha, output,
-                "--proven-subtraction", "--compiler-manifest", manifest, "--expected-compiler-manifest-sha256", pin])
-            {
-                WorkingDirectory = repo.Root,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            var run = await C1514Support.RunProcess(start, cancellationToken);
-            run.ExitCode.ShouldBe(0, label + " producer " + run.Text);
+            pack.WriteReleaseGraph(repo.Root, sha, output, files, contexts, cancellationToken);
             var bytes = File.ReadAllBytes(output);
             using var graph = JsonDocument.Parse(bytes);
             graph.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeTrue(

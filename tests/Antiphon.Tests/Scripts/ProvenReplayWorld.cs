@@ -119,7 +119,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             if (run is 3 or 4) Put(Changed, files[Changed] = RightSource(run == 3));
             if (_alias)
                 contexts[0] = contexts[0] with { References = [pack.Core, tunit, pack.Emit("R", files[Changed], []) with { Project = Right }] };
-            (_shas[run], _graphs[run]) = await CommitEndpointAsync();
+            (_shas[run], _graphs[run]) = CommitEndpoint();
             if (_alias) _historicalGraphs[run] = PreserveHistoricalRule(_graphs[run], north);
         }
         await ObserveLeftAsync([files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
@@ -129,9 +129,9 @@ internal sealed class ProvenReplayWorld : IDisposable
             Put("Directory.Build.props", files["Directory.Build.props"] = "<Project><!-- hold baseline --></Project>\n");
             Put(Left, files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../R/R.csproj\" /></ItemGroup></Project>\n");
             Put(Changed, files[Changed] = "namespace South; public class Probe {}\n");
-            _heldEndpoints.Add(4, await CommitEndpointAsync());
+            _heldEndpoints.Add(4, CommitEndpoint());
             Put(Changed, files[Changed] = "namespace South; public class Probe { private int GateValue; }\n");
-            _heldEndpoints.Add(5, await CommitEndpointAsync());
+            _heldEndpoints.Add(5, CommitEndpoint());
         }
         if (includeRenameEndpoint)
         {
@@ -142,7 +142,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             File.Move(Path.Combine(Repository, RenamedFrom), Path.Combine(Repository, RenamedTo));
             files[RenamedTo] = files[RenamedFrom];
             files.Remove(RenamedFrom);
-            _renameEndpoint = await CommitEndpointAsync();
+            _renameEndpoint = CommitEndpoint();
         }
         Console.WriteLine($"C2076 replay fixture=setup alias={_alias} gate={includeGateEndpoints} rename={includeRenameEndpoint} elapsedMs={clock.ElapsedMilliseconds}");
 
@@ -150,21 +150,13 @@ internal sealed class ProvenReplayWorld : IDisposable
             ? "namespace South; public class Probe { public const int Value = " + (changed ? "1" : "0") + "; }\n"
             : changed ? "namespace South; public class Probe { public int Value; }\n" : "namespace South; public class Probe {}\n";
 
-        async Task<(string Sha, string Graph)> CommitEndpointAsync()
+        (string Sha, string Graph) CommitEndpoint()
         {
             Git("add", "--all");
             Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
             var sha = Git("rev-parse", "HEAD").Trim();
-            var (manifest, pin) = pack.PinEndpoint(Repository, sha, files, contexts);
             var output = Path.Combine(Repository, ".antiphon", "selector-replay", sha + ".json");
-            var driver = Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll");
-            var start = new ProcessStartInfo("dotnet", [driver, "--release-graph", Repository, sha, output,
-                "--proven-subtraction", "--compiler-manifest", manifest, "--expected-compiler-manifest-sha256", pin])
-            {
-                WorkingDirectory = Repository,
-            };
-            var result = await C1514Support.RunProcess(start, cancellationToken);
-            result.ExitCode.ShouldBe(0, result.Text);
+            pack.WriteReleaseGraph(Repository, sha, output, files, contexts, cancellationToken);
             return (sha, output);
         }
     }
