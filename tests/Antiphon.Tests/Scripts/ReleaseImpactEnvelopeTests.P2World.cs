@@ -82,7 +82,9 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 catalog["catalogHash"] = TestSelectionCatalog.Hash(catalog);
                 _repo.Put(TestSelection.CatalogPath, TestSelectionJson.Canonical(catalog));
             }
-            _repo.Put(HotProject, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+            _repo.Put(HotProject, trust
+                ? "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Producer/Producer.csproj\" /></ItemGroup></Project>"
+                : "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             _repo.Put(QuietProject, trust
                 ? "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Producer/Producer.csproj\" /></ItemGroup></Project>"
                 : "<Project Sdk=\"Microsoft.NET.Sdk\" />");
