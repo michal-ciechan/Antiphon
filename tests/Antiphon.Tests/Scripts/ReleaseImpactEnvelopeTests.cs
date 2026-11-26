@@ -16,16 +16,10 @@ namespace Antiphon.Tests.Scripts;
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class ReleaseImpactEnvelopeTests
+public sealed partial class ReleaseImpactEnvelopeTests
 {
     [Test]
-    public void P2CanonicalBytes()
-    {
-        var directory = Path.Combine(RepoRoot(), "tests", "Antiphon.Tests", "Scripts", "Fixtures", "C2069");
-        using var json = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "root.json")));
-        var expected = Convert.FromHexString(File.ReadAllText(Path.Combine(directory, "root.hex")).Trim());
-        ReleaseImpactIntegrity.RootBytes(json.RootElement).ShouldBe(expected, "C.root.bytes");
-    }
+    public void P2CanonicalBytes() => CheckCanonicalVectors();
 
     // ImpactedClasses.SelectorFiles, as literals the derived impact index reads.
     private static readonly string[] AlgorithmFiles =
