@@ -15,9 +15,9 @@ Slot waits were 0s. Leases: shape before `104d8406`, baseline before `265977d1`,
 
 ## Verification design
 
-- V-1. `shape_fixture_sdk_build_count` is 0 SDK projects for the sampled mutation shapes, and `clean-build` still imports the SDK.
+- V-1. `shape_fixture_sdk_project_text_count` counts 0 SDK-importing project texts for the sampled mutation shapes, and `clean-build` still imports the SDK.
 - V-2. `CheckpointShapeConflictTests` stays green.
-- V-3. `CheckpointTrackedBaselineTests` stays green, including `baseline_staged_fixture_sdk_build_count`.
+- V-3. `CheckpointTrackedBaselineTests` stays green, including `baseline_staged_fixture_sdk_project_text_count`.
 - V-4. Nine-class guard union, excluding `WindowsUnitPlatformAdmissionTests` on Linux.
 - V-5. Derived-impact driver build, then `DerivedImpactIndexTests`.
 - V-6. `scripts/check-evidence-diff.ps1` over `f997d3f06f7e86c3e66d1eac23425cce3965f421..HEAD`.
@@ -29,7 +29,7 @@ No PC rows. Mutation is waived. Positive controls stay pending for SourceLanding
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2006/` | shape-witness | `/*/*/CheckpointShapeConflictTests/shape_fixture_sdk_build_count` | V-1 | shared SDK count 0 | 1 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2006/` | shape-witness | `/*/*/CheckpointShapeConflictTests/shape_fixture_sdk_project_text_count` | V-1 | SDK-importing project text count 0 | 1 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | S1 | CP-1 | shape-class | `/*/*/CheckpointShapeConflictTests/*` | V-2 | all listed, 0 failed | 18 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | S1 | CP-1 | baseline-class | `/*/*/CheckpointTrackedBaselineTests/*` | V-3 | all listed, 0 failed | 14 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | S1 | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-4 | 0 failed, executed at least 81 | 81 | 9 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
