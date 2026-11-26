@@ -26,15 +26,22 @@ public sealed class RcProjectSelectionTests
         CheckEndpointProofs(cancellationToken);
 
     [Test, Timeout(30_000)]
-    public Task EndpointProofsPreserveCapsAndIndependentReaders(CancellationToken cancellationToken) =>
-        CheckEndpointProofs(cancellationToken, additionalObligations: true);
+    public Task EndpointProofsPreserveOwnedAndUnownedCaps(CancellationToken cancellationToken) =>
+        CheckEndpointProofs(cancellationToken, ProofScenario.Caps);
 
-    private async Task CheckEndpointProofs(CancellationToken cancellationToken, bool additionalObligations = false)
+    [Test, Timeout(30_000)]
+    public Task EndpointProofsPreserveIndependentReadersAndAddedConsumers(CancellationToken cancellationToken) =>
+        CheckEndpointProofs(cancellationToken, ProofScenario.Readers);
+
+    private enum ProofScenario { Standard, Caps, Readers }
+
+    private async Task CheckEndpointProofs(CancellationToken cancellationToken, ProofScenario scenario = ProofScenario.Standard)
     {
         const string leftProject = "tests/L/L.csproj";
         const string rightProject = "tests/R/R.csproj";
         const string north = "tests/L/A.cs";
         const string south = "tests/R/B.cs";
+        const string southAtBaseline = "namespace South; public class Probe {}\n";
         const string leftSource = "tests/L/Use.cs";
         const string rightSource = "tests/R/Use.cs";
         const string index = "tests/derived-impact-index.json";
@@ -47,7 +54,7 @@ public sealed class RcProjectSelectionTests
             [leftProject] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
             [rightProject] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
             [north] = "namespace North; public class Probe {}\n",
-            [south] = "namespace South; public class Probe {}\n",
+            [south] = southAtBaseline,
             [leftSource] = "namespace L; public class LeftTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"l1\")] public void M(string key) { _ = typeof(North.Probe); } }\n",
             [rightSource] = "namespace R; public class RightTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"r1\")] public void M(string key) { _ = typeof(South.Probe); } }\n",
             [index] = JsonSerializer.Serialize(new
@@ -119,9 +126,14 @@ public sealed class RcProjectSelectionTests
         on.Of("right").Reasons.ShouldContain("release-relation-type:A:" + south, "C.sides candidate positive");
         on.Of("right").Reasons.ShouldContain("release-relation-type:B:" + south, "C.sides baseline positive");
         on.Of("left").Reasons.ShouldBeEmpty("C.delta left owes nothing");
-        if (additionalObligations)
+        if (scenario == ProofScenario.Caps)
         {
-            await CheckAdditionalObligations();
+            await CheckCaps();
+            return;
+        }
+        if (scenario == ProofScenario.Readers)
+        {
+            await CheckReadersAndAddedConsumer();
             return;
         }
 
@@ -236,18 +248,14 @@ public sealed class RcProjectSelectionTests
         linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
         linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
 
-        async Task CheckAdditionalObligations()
+        async Task CheckCaps()
         {
             const string uncatalogued = "docs/capped.md";
-            const string hand = "tests/impacted-classes.json";
-            const string script = "scripts/test-startup.ps1";
             var southAtCandidate = files[south];
-            var southAtBaseline = "namespace South; public class Probe {}\n";
-            var ordinaryIndex = files[index];
 
             repo.Git("checkout", "-q", "--detach", baseline);
             files[south] = southAtBaseline;
-            var cappedIndex = System.Text.Json.Nodes.JsonNode.Parse(ordinaryIndex)!;
+            var cappedIndex = System.Text.Json.Nodes.JsonNode.Parse(files[index])!;
             cappedIndex["cappedPaths"] = new System.Text.Json.Nodes.JsonArray(south, uncatalogued);
             Put(index, cappedIndex.ToJsonString());
             Put(uncatalogued, "baseline\n");
@@ -276,10 +284,15 @@ public sealed class RcProjectSelectionTests
             unownedCap.Mode.ShouldBe("Full", "C.cap unowned and independently read");
             unownedCap.FallbackReasons.ShouldContain("index-capped:" + uncatalogued + ":B");
             unownedCap.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.cap unowned set");
+        }
 
+        async Task CheckReadersAndAddedConsumer()
+        {
+            const string hand = "tests/impacted-classes.json";
+            const string script = "scripts/test-startup.ps1";
+            var southAtCandidate = files[south];
             repo.Git("checkout", "-q", "--detach", baseline);
-            files.Remove(uncatalogued);
-            files[index] = ordinaryIndex;
+            files[south] = southAtBaseline;
             Put(hand, JsonSerializer.Serialize(new { kinds = new[] { new { globs = new[] { south }, classes = new[] { "LeftTests" } } } }));
             Put(script, "Write-Output 'baseline'\n");
             var readerBaseline = repo.Commit();
@@ -326,9 +339,9 @@ public sealed class RcProjectSelectionTests
             addedConsumer.Of("added").Reasons.ShouldNotContain("release-relation-declaration:B:" + added, "C.sides no consumer at B");
             addedConsumer.Decisions.Select(decision => decision.Decision)
                 .ShouldBe(["carry", "execute", "execute"], "C.sides A-only owed set");
-
-            void Put(string path, string bytes) => repo.Put(path, files[path] = bytes);
         }
+
+        void Put(string path, string bytes) => repo.Put(path, files[path] = bytes);
 
         static RcTypeProofComparison Compare(string first, (string Path, string Digest) firstGraph, string last,
             (string Path, string Digest) lastGraph) => RcTypeProofComparison.Read(firstGraph.Path, firstGraph.Digest, first,

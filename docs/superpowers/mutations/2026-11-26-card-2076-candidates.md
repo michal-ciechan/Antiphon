@@ -28,11 +28,11 @@ The locations below are candidate source anchors. The binding needs the reviewed
 | PC-20 | (a), (b) | CP-2 | T / `Q.mixed`, `P.consumer`, `Q.kinds` | `Resolve` unions surviving sites and preserves independent graph kinds. |
 | PC-21 | (a), (b) | CP-2 | T / `ER.bounded`, `Q.limit` | `ResolveSite` retains the full candidate bucket at the limit. The bounded downstream widening witness remains outstanding. |
 | PC-22 | Single | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `ER.unbounded` | The release relation keeps the Full fallback. The affected-universe witness remains outstanding. |
-| PC-23 | (a), (b) | CP-3 | C / `C.sides` | `RcChunkSelection.Select` visits B and A for index hits and retains the side-qualified project reasons. |
+| PC-23 | (a), (b) | (a) CP-3, (b) `/*/*/RcProjectSelectionTests/EndpointProofsPreserveIndependentReadersAndAddedConsumers` | C / `C.sides` | `RcChunkSelection.Select` visits B and A for index hits and retains the side-qualified project and declaration reasons. |
 | PC-24 | (a), (b) | CP-3 | C / `C.legacy`, `C.roster` | `RcTypeProofComparison.DropIndexHit` checks the legacy name. `RosterBound` checks full case membership and recomputes the method-bound content digest. |
-| PC-25 | Single | CP-3 | C / `C.owed` | `RcTypeProofComparison.Independent` and `RcChunkSelection.Select` retain reader, hand, closure and graph obligations. |
-| PC-26 | (a), (b), (c) | CP-3 | C / `C.origin`, `C.debt`, `C.trust` | `RcChunkSelection.Select` keeps `RcChunkReceipt.Match`. The proof-specific later-debt and own-gate witnesses remain outstanding. |
-| PC-27 | (a), (b) | CP-3 | C / `C.cap`, `C.index` | `RcChunkSelection.Select` preserves cap and changed-index rules. |
+| PC-25 | Single | CP-3 | C / `C.owed` | `RcTypeProofComparison.Independent` and `RcChunkSelection.Select` retain reader, hand, closure and graph obligations. The companion `EndpointProofsPreserveIndependentReadersAndAddedConsumers` has separate hand and script cases. |
+| PC-26 | (a), (b), (c) | (a) CP-3, (b), (c) CP-4 | C / `C.origin`, `C.debt`, `C.trust` | `RcChunkSelection.Select` keeps `RcChunkReceipt.Match`. The replay covers an earlier executed failure and clean and failing own-test outcomes under the same held prediction. |
+| PC-27 | (a), (b) | (a) `/*/*/RcProjectSelectionTests/EndpointProofsPreserveOwnedAndUnownedCaps`, (b) CP-3 | C / `C.cap`, `C.index` | `RcChunkSelection.Select` preserves cap and changed-index rules. |
 | PC-28 | Single | CP-3 | C / `C.reseal` | The independent CARD-2069 verifier and its recomputation witness remain outstanding. |
 | PC-29 | (a), (b) | CP-3 | C / `C.identity` | `RcAdmission.RequiredAlgorithmPaths` and `RcTypeProofComparison.Read` bind the algorithm and policy identity. |
 | PC-30 | Single | CP-3 | C / `C.delta` | `RcChunkSelection.Select` applies `DropIndexHit` before receipt matching. |
@@ -45,7 +45,7 @@ The locations below are candidate source anchors. The binding needs the reviewed
 | PC-37 | (a), (b) | CP-4 | P / `P.nonclean` | `Replay` records every unsafe carry and prioritizes the hard-red verdict. |
 | PC-38 | Single | CP-4 | P / `P.opportunity` | `Replay` requires a proof-dependent carry for the diagnostic criterion. |
 | PC-39 | (a), (b), (c) | CP-4 | P / `P.records`, `P.unknown`, `P.evidence` | `RecordMisses` maps each failed case or the typed unknown. `RcSelectionMiss.ReadDiff` reads both rename ends. |
-| PC-40 | (a), (b) | CP-4 | P / `P.join`, `P.attribution` | `ReadOutcomes` and `RecordMisses` bind the observed row to its attempt contents. The historical causal attribution witnesses remain outstanding. |
+| PC-40 | (a), (b) | (a) CP-4, (b) `/*/*/IncrementalSelectionSoundnessTests/ArchivedWrongAliasWinnerUsesTheReplayScorerAndLeavesAnOpenRepair` | P / `P.join`, `P.attribution` | `ReadOutcomes` and `RecordMisses` bind the observed row to its attempt contents. The replay compares the historical wrong alias binding and repaired disposition. Complete per-use-site attribution remains outstanding. |
 | PC-41 | (a), (b) | CP-4 | P / `P.atomic`, `P.conflict` | `RcSelectionMiss.Persist` creates the record atomically and verifies occupied IDs. |
 | PC-42 | Single | CP-4 | P / `P.revision` | `RcSelectionMiss.AppendDisposition` appends a separate open revision. |
 | PC-43 | Single | CP-4 | P / `P.criterion` | `Replay` writes the criterion with `enables=false`. |
