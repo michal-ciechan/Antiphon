@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -51,12 +52,14 @@ public sealed class IncrementalSelectionSoundnessTests
             var raw = File.ReadAllBytes(Path.Combine(output, path));
             DigestBytes(raw).ShouldBe(record.GetProperty("sha256").GetString(), "P.evidence");
             using var stored = JsonDocument.Parse(raw);
+            stored.RootElement.GetProperty("schema").GetString().ShouldBe("antiphon-rc-selection-miss-v1");
             var doc = stored.RootElement.GetProperty("observation");
             identities.Add(doc.GetProperty("case").GetProperty("caseKey").GetString()!);
             doc.GetProperty("candidateSha").GetString().ShouldBe(world.Sha(3));
             doc.GetProperty("baselineSha").GetString().ShouldBe(world.Sha(2));
             doc.GetProperty("chunk").GetString().ShouldBe("left");
             doc.GetProperty("observedBy").GetString().ShouldBe("replay");
+            doc.GetProperty("observedAtUtc").GetString().ShouldBe("2026-11-25T12:00:00.0000000Z");
             doc.GetProperty("repository").GetString().ShouldBe("card-2076-fixture");
             doc.GetProperty("line").GetString().ShouldBe("rc");
             doc.GetProperty("platform").GetString().ShouldBe("windows");
@@ -64,10 +67,13 @@ public sealed class IncrementalSelectionSoundnessTests
             doc.GetProperty("profile").GetString().ShouldBe("rc");
             doc.GetProperty("suite").GetString().ShouldBe("antiphon");
             doc.GetProperty("attempt").GetString().ShouldBe(ProvenReplayWorld.RunId(3));
+            doc.GetProperty("run").GetString().ShouldBe(ProvenReplayWorld.RunId(3));
             doc.GetProperty("predicted").GetString().ShouldBe("carry");
             doc.GetProperty("case").GetProperty("assembly").GetString().ShouldBe("L");
             doc.GetProperty("case").GetProperty("class").GetString().ShouldBe("L.LeftTests");
             doc.GetProperty("case").GetProperty("method").GetString().ShouldBe("M");
+            doc.GetProperty("case").GetProperty("outcome").GetString().ShouldBe("Failed");
+            doc.GetProperty("trx").GetString().ShouldBe("runs/r3000000/logs/left.trx");
             doc.GetProperty("actual").GetString().ShouldBe("FAIL");
             foreach (var (property, relative) in new[]
             {
@@ -96,6 +102,17 @@ public sealed class IncrementalSelectionSoundnessTests
         using var firstDocument = JsonDocument.Parse(firstBytes);
         var observation = firstDocument.RootElement.GetProperty("observation").Deserialize<RcSelectionMissObservation>(
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var vector = observation with
+        {
+            BaselineSha = new string('1', 40), CandidateSha = new string('2', 40),
+            Run = "fixture-run", Attempt = "fixture-attempt", Chunk = "chunk-1", ContentDigest = new string('a', 64),
+            Case = new("case", "L", "L.LeftTests", "M", "l1", "Failed"),
+        };
+        var vectors = world.Output("literal-miss-identities");
+        RcSelectionMiss.Record(vectors, vector).MissId
+            .ShouldBe("c4270fc2d16562b39fefd2018b5d22a6b94b80a8cb7b65e0d0592b2d4631e325", "P.identity literal versioned case vector");
+        RcSelectionMiss.Record(vectors, vector with { Attempt = "second-attempt" }).MissId
+            .ShouldBe("98d6c07b51b32ecff6687e9fcf9c0bfd3dd4c77482d0789128ede5a100a6fa10", "P.identity exact attempt separates observations");
         var identical = await Task.WhenAll(Enumerable.Range(0, 2)
             .Select(_ => Task.Run(() => RcSelectionMiss.Record(output, observation), cancellationToken)));
         identical.Select(record => record.MissId).Distinct().Single().ShouldBe(records[0].GetProperty("missId").GetString(), "P.atomic");
@@ -294,6 +311,23 @@ public sealed class IncrementalSelectionSoundnessTests
         Replay(world.Input("gate-direct", fails: false, held: true, direct: true), direct, true).ShouldBe(0, "P.held direct obligation");
         using var directPartition = Read(direct, "predictions/5.resolved.json");
         directPartition.RootElement.GetProperty("predictions")[0].GetProperty("decision").GetString().ShouldBe("run", "P.held direct hit remains owed");
+
+        var debt = world.Input("later-debt", fails: false);
+        var priorTrx = Path.Combine(debt, "runs", "r2000000", "logs", "left.trx");
+        NightlyFixture.WriteTrx(priorTrx,
+            [new("l1", "L.LeftTests", "M", "Failed"), new("l2", "L.LeftTests", "M", "Failed")]);
+        Overlay(debt, "r2000000/logs/summary.json", doc =>
+        {
+            doc["suites"]![0]!["result"] = "FAIL";
+            doc["suites"]![0]!["exitCode"] = 1;
+        });
+        var debtOutput = world.Output("later-debt");
+        Replay(debt, debtOutput, true).ShouldBe(3, "C.debt prior failure leaves no proof-only carry");
+        using var debtPartition = Read(debtOutput, resolved);
+        var debtPredictions = debtPartition.RootElement.GetProperty("predictions").EnumerateArray().ToArray();
+        debtPredictions.Select(item => item.GetProperty("decision").GetString()).ToArray().ShouldBe(["run", "run"], "C.debt owed set");
+        debtPredictions[0].GetProperty("reasons").EnumerateArray().Select(reason => reason.GetString())
+            .ShouldContain("open-failure", "C.debt survives subtraction");
 
         static void Overlay(string input, string relative, Action<System.Text.Json.Nodes.JsonNode> edit)
         {

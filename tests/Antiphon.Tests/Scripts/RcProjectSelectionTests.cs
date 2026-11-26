@@ -22,7 +22,14 @@ public sealed class RcProjectSelectionTests
 {
 
     [Test, Timeout(30_000)]
-    public async Task BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken)
+    public Task BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken) =>
+        CheckEndpointProofs(cancellationToken);
+
+    [Test, Timeout(30_000)]
+    public Task EndpointProofsPreserveCapsAndIndependentReaders(CancellationToken cancellationToken) =>
+        CheckEndpointProofs(cancellationToken, additionalObligations: true);
+
+    private async Task CheckEndpointProofs(CancellationToken cancellationToken, bool additionalObligations = false)
     {
         const string leftProject = "tests/L/L.csproj";
         const string rightProject = "tests/R/R.csproj";
@@ -112,6 +119,12 @@ public sealed class RcProjectSelectionTests
         on.Of("right").Reasons.ShouldContain("release-relation-type:A:" + south, "C.sides candidate positive");
         on.Of("right").Reasons.ShouldContain("release-relation-type:B:" + south, "C.sides baseline positive");
         on.Of("left").Reasons.ShouldBeEmpty("C.delta left owes nothing");
+        if (additionalObligations)
+        {
+            await CheckAdditionalObligations();
+            return;
+        }
+
         var reader = new RcReaderCensusEntry { Reader = "L.LeftTests", Globs = [south] };
         var owed = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [reader], Admit, proof);
         owed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed");
@@ -222,6 +235,102 @@ public sealed class RcProjectSelectionTests
         linked.Of("left").Reasons.ShouldContain("project-closure:B:" + south, "C.sides B-only link");
         linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
         linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
+
+        async Task CheckAdditionalObligations()
+        {
+            const string uncatalogued = "docs/capped.md";
+            const string hand = "tests/impacted-classes.json";
+            const string script = "scripts/test-startup.ps1";
+            var southAtCandidate = files[south];
+            var southAtBaseline = "namespace South; public class Probe {}\n";
+            var ordinaryIndex = files[index];
+
+            repo.Git("checkout", "-q", "--detach", baseline);
+            var cappedIndex = System.Text.Json.Nodes.JsonNode.Parse(ordinaryIndex)!;
+            cappedIndex["cappedPaths"] = new System.Text.Json.Nodes.JsonArray(south, uncatalogued);
+            Put(index, cappedIndex.ToJsonString());
+            Put(uncatalogued, "baseline\n");
+            var capBaseline = repo.Commit();
+            var capBaselineArtifact = await ProduceAsync(capBaseline, "baseline-cap");
+            Put(south, southAtCandidate);
+            var capCandidate = repo.Commit();
+            var capCandidateArtifact = await ProduceAsync(capCandidate, "candidate-cap");
+            var capPair = Compare(capBaseline, capBaselineArtifact, capCandidate, capCandidateArtifact);
+            var ownedCap = RcChunkSelection.Select(repo.Root, capBaseline, capCandidate, chunks, receipts, [], Admit, capPair);
+            ownedCap.Mode.ShouldBe("Scoped", "C.cap owned");
+            ownedCap.Of("left").Reasons.ShouldContain("index-edge:B:" + south, "C.cap cannot discharge the capped hit");
+            ownedCap.Of("right").Reasons.ShouldContain("index-capped-closure:B:" + south, "C.cap owning closure");
+            ownedCap.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.cap owned set");
+            ownedCap.Proof.Removed.ShouldBeEmpty("C.cap no subtraction from the capped path");
+
+            repo.Git("checkout", "-q", "--detach", capBaseline);
+            files[south] = southAtBaseline;
+            Put(uncatalogued, "changed\n");
+            var unknownCandidate = repo.Commit();
+            var unknownArtifact = await ProduceAsync(unknownCandidate, "candidate-unknown-cap");
+            var unknownPair = Compare(capBaseline, capBaselineArtifact, unknownCandidate, unknownArtifact);
+            var unownedCap = RcChunkSelection.Select(repo.Root, capBaseline, unknownCandidate, chunks, receipts,
+                [new() { Reader = "L.LeftTests", Globs = [uncatalogued] }], Admit, unknownPair);
+            unownedCap.Mode.ShouldBe("Full", "C.cap unowned and independently read");
+            unownedCap.FallbackReasons.ShouldContain("index-capped:" + uncatalogued + ":B");
+            unownedCap.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.cap unowned set");
+
+            repo.Git("checkout", "-q", "--detach", baseline);
+            files.Remove(uncatalogued);
+            files[index] = ordinaryIndex;
+            Put(hand, JsonSerializer.Serialize(new { kinds = new[] { new { globs = new[] { south }, classes = new[] { "LeftTests" } } } }));
+            Put(script, "Write-Output 'baseline'\n");
+            var readerBaseline = repo.Commit();
+            var readerBaselineArtifact = await ProduceAsync(readerBaseline, "baseline-readers");
+            Put(south, southAtCandidate);
+            var readerCandidate = repo.Commit();
+            var readerArtifact = await ProduceAsync(readerCandidate, "candidate-hand");
+            var readerPair = Compare(readerBaseline, readerBaselineArtifact, readerCandidate, readerArtifact);
+            var handRule = RcChunkSelection.Select(repo.Root, readerBaseline, readerCandidate, chunks, receipts, [], Admit, readerPair);
+            handRule.Of("left").Reasons.ShouldContain("hand:A:" + south, "C.owed hand rule");
+            handRule.Of("left").Reasons.ShouldContain("hand:B:" + south, "C.owed hand rule");
+            handRule.Of("left").Reasons.ShouldNotContain("release-relation-type:A:" + south, "C.owed proof still removed its own contribution");
+            handRule.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed hand set");
+
+            repo.Git("checkout", "-q", "--detach", readerBaseline);
+            files[south] = southAtBaseline;
+            Put(script, "Write-Output 'candidate'\n");
+            var scriptCandidate = repo.Commit();
+            var scriptArtifact = await ProduceAsync(scriptCandidate, "candidate-script");
+            var scriptPair = Compare(readerBaseline, readerBaselineArtifact, scriptCandidate, scriptArtifact);
+            var scriptReader = RcChunkSelection.Select(repo.Root, readerBaseline, scriptCandidate, chunks, receipts,
+                [new() { Reader = "L.LeftTests", Globs = ["scripts/test-*.ps1"] }], Admit, scriptPair);
+            scriptReader.Mode.ShouldBe("Scoped", "C.owed script reader scope");
+            scriptReader.Of("left").Reasons.ShouldContain("runtime-reader:scripts/test-*.ps1", "C.owed script reader");
+            scriptReader.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "carry"], "C.owed script set");
+
+            repo.Git("checkout", "-q", "--detach", baseline);
+            files.Remove(hand);
+            files.Remove(script);
+            const string added = "tests/R/New.cs";
+            Put(added, "namespace R; public class AddedTests { [TUnit.Core.Test] public void M() { _ = typeof(South.Probe); } }\n");
+            contexts[1] = contexts[1] with { SourcePaths = [south, rightSource, added] };
+            var addedCandidate = repo.Commit();
+            var addedArtifact = await ProduceAsync(addedCandidate, "candidate-added-consumer");
+            var addedPair = Compare(baseline, baselineArtifact, addedCandidate, addedArtifact);
+            var addedChunk = Chunk("added", rightProject, "R.AddedTests");
+            addedChunk.Suite = "antiphon";
+            addedChunk.Cases = ["added-case"];
+            addedChunk.CaseRoster = [new("R", "R.AddedTests", "M", "added-case")];
+            addedChunk.ContentDigest = RcChunkReceipt.ContentDigest(addedChunk.Suite, "native", addedChunk.CaseRoster);
+            var addedConsumer = RcChunkSelection.Select(repo.Root, baseline, addedCandidate, [.. chunks, addedChunk],
+                receipts, [], Admit, addedPair);
+            addedConsumer.Of("added").Reasons.ShouldContain("release-relation-declaration:A:" + added, "C.sides A-only consumer");
+            addedConsumer.Of("added").Reasons.ShouldNotContain("release-relation-declaration:B:" + added, "C.sides no consumer at B");
+            addedConsumer.Decisions.Select(decision => decision.Decision)
+                .ShouldBe(["carry", "execute", "execute"], "C.sides A-only owed set");
+
+            void Put(string path, string bytes) => repo.Put(path, files[path] = bytes);
+        }
+
+        static RcTypeProofComparison Compare(string first, (string Path, string Digest) firstGraph, string last,
+            (string Path, string Digest) lastGraph) => RcTypeProofComparison.Read(firstGraph.Path, firstGraph.Digest, first,
+                lastGraph.Path, lastGraph.Digest, last, Digest("fixture-algorithm"), Digest("fixture-policy"));
 
         async Task<(string Path, string Digest)> ProduceAsync(string sha, string label)
         {
