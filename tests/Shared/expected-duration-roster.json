@@ -1,7 +1,7 @@
 {
   "format": "antiphon-expected-duration-roster-v1",
   "platform": "windows",
-  "costFile": "scripts/lib/nightly-class-costs.json",
+  "costFile": "/work/worktrees/ws-11/scripts/lib/nightly-class-costs.json",
   "export": "scripts/antiphon export-expected-duration-roster",
   "classes": {
     "Antiphon.E2E.AgentE2ETests": {
@@ -229,6 +229,13 @@
       "measuredRunId": null
     },
     "Antiphon.TestSupport.Invariants.TestClassificationGuardTests": {
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.TestSupport.TestClassificationGuardTests": {
       "seconds": 10,
       "basis": "conservative-bound",
       "hostId": null,
@@ -4547,6 +4554,13 @@
       "os": null,
       "measuredRunId": null
     },
+    "Antiphon.Tests.Infrastructure.AppDbContextModelTests": {
+      "seconds": 16,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
     "Antiphon.Tests.Infrastructure.CodexRootExecContractTests": {
       "seconds": 20,
       "basis": "measured",
@@ -4569,6 +4583,13 @@
       "measuredRunId": null
     },
     "Antiphon.Tests.Infrastructure.DbCommandMetricsTests": {
+      "seconds": 7,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.EvidencePolicyWorkflowTests": {
       "seconds": 7,
       "basis": "measured",
       "hostId": null,
@@ -4682,6 +4703,13 @@
     },
     "Antiphon.Tests.Infrastructure.OperatorTokenFileTests": {
       "seconds": 3,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Infrastructure.OrchestratorInstructionsMigrationShapeTests": {
+      "seconds": 6,
       "basis": "measured",
       "hostId": null,
       "os": null,
@@ -4843,6 +4871,13 @@
     },
     "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests": {
       "seconds": 57,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Scripts.C1514LandingSplitBudgetTests": {
+      "seconds": 33,
       "basis": "measured",
       "hostId": null,
       "os": null,
@@ -5331,6 +5366,13 @@
       "os": null,
       "measuredRunId": null
     },
+    "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests": {
+      "seconds": 8,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
     "Antiphon.Tests.TestHelpers.DirectoryLinkFixtureWindowsTests": {
       "seconds": 20,
       "basis": "measured",
@@ -5382,6 +5424,13 @@
     },
     "Antiphon.Tests.TestHelpers.TestDurationTripwireTests": {
       "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests": {
+      "seconds": 1,
       "basis": "measured",
       "hostId": null,
       "os": null,
