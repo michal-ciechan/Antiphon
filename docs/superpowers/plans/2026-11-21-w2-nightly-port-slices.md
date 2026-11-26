@@ -324,7 +324,18 @@ Rules:
   two libraries, `run-live-lane.ps1`, both drivers, `nightly-owned-process.ps1`. Operator approval needed: the
   `contractFiles` in `tests/live-lane-inputs.json` must be re-keyed to the C# sources, which moves the lane
   fingerprint and resets the paid-commission receipts.
-- **S22 Attestation, fingerprint, receipt and status (3 h; blocked on CI-2).** Port the three libraries and
+- **S22 Attestation, fingerprint, receipt and status (3 h). Done (unit 58 of the remaining-ps1 plan, 2026-11-26).** The three
+  libraries and `live-lane-status.ps1` are C# in the isolated `scripts/lib/Antiphon.LiveLane` (still referencing nothing), with
+  the Claude CLI version as its own receipt axis (receipt schema 2, `live-lane-status` per code digest and Claude version,
+  `--require-claude-version`); the five `test-live-lane-*` drivers are gone (their cases in process; the isolation and
+  evidence commissions are the commands `live-lane-isolation-rows` and `live-lane-evidence-rows`). Not blocked on CI-2 after
+  all: the PowerShell already called the C# `RcProjectSelection` (Read, Resolve, BlobText), so the lane project defines the
+  graph it needs as a seam with plain data (`ILiveLaneProjectGraphReader`, `LiveLaneProjectGraph`: projects, paths, the
+  literal imports of each parsed document, the diagnostics) and the CLI supplies it through an adapter over that walk
+  (`Antiphon.Scripts/LiveLaneNightlySources.cs`); CI-2's `tools/ChangeImpact` can replace the adapter. The canonical JSON
+  writer is already `TestSelectionJson` in Antiphon.Nightly; the lane project carries a copy (`LiveLaneData`) pinned to it
+  byte for byte. 97 cases captured from the PowerShell before deletion give the same bytes (`LiveLaneParityTests`). The
+  slice as planned: Port the three libraries and
   `live-lane-status.ps1`; the canonical JSON writer moves from PsJson into Antiphon.Nightly; CLI `live-lane-status`.
   Blocked: the fingerprint needs the rc-project-selection graph that CI-2 owns (wait for CI-2, or get the CI owner's
   agreement to reuse the graph walk in `Antiphon.Scripts/RcProjectSelection.cs`).
@@ -396,7 +407,7 @@ DerivedImpactIndexTests runs in every slice after regenerating `tests/derived-im
 | S19 | NightlyRunTests*, NightlyScriptsTests, ToolchainFloorWarningTests, NightlyPrerequisiteTests, NightlyVerificationContractTests |
 | S20 | NightlyRunTests, ReleaseGateRunTests, ReleaseGatePlatformTests, ReleaseSelectionHopSeedTests, ReleaseGateFollowupTests, ChangeAwareReleaseTests, WorktreeDefaultCallerTests, RcDirtyLaunchOrderTests, RcIncrementalShadowTests, AntiphonCliLauncherTests |
 | S21 | LiveLaneOutcomeTests, LiveLaneExecutableTests, LiveLaneRunnerTests, CheckpointCallerBudgetTests |
-| S22 | LiveLaneAttestationTests, LiveLaneFingerprintTests, LiveLaneReceiptTests |
+| S22 | LiveLaneAttestationTests, LiveLaneFingerprintTests, LiveLaneReceiptTests, LiveLaneParityTests, LiveLaneStatusTests, LiveLaneCommissionTests, LiveLaneRunnerTests, CheckpointCallerBudgetTests |
 | S23-S25 | LiveLaneInventoryTests, LiveClaudeInventoryTests (+ RcInputCensus for S25) |
 | S26 | RcFailureHistoryTests, RcStoppedRunSeedTests |
 | S27 | NightlyPolicyTests, TestSelectionCatalogTests, TestSelectionTests, LiveLaneRunnerTests, ReleaseAuthorityTests, ReleaseGatePublicationAuthorityTests, ReleaseImpactScriptTests, NativeLinuxPolicyMatcherParityTests, ImpactedClassesSelectorTests, SelectorLineEndingAttributeTests |
@@ -421,11 +432,12 @@ each moves `tests/test-execution-policy.json`.
    `qualification-supervisor.ps1` (all callers are W2-rc qualification scripts: reassign to W2-rc);
    `select-test-rosters.ps1` (a selector-identity file, `ReleaseSelection.cs:134,225`, `release-selection.ps1:49,56`,
    `test-selection.ps1:275,286`, tied to test-selection and CI's canonical JSON: move to W2-rc with release-selection).
-5. CI ownership (change-impact plan section 3.3): S22 depends on CI-2's graph (`tools/ChangeImpact` does not exist
-   yet); S25 needs the CI owner to re-key the `rc-input-reader-census.json` row; W2-nightly must not port
+5. CI ownership (change-impact plan section 3.3): S22 no longer waits on CI-2 (unit 58): it reads the graph through a
+   plain-data seam of the lane project that the CLI fills from `RcProjectSelection`, the walk the PowerShell already
+   called; CI-2's `tools/ChangeImpact` (still not built) can replace that adapter; S25 needs the CI owner to re-key the `rc-input-reader-census.json` row; W2-nightly must not port
    `test-selection.ps1` (the canonical JSON comes from moving PsJson).
 6. `ManifestPublicationHarness.ps1` moves from W2-rc to S08 (its subject is the test-phase journal).
-7. Operator approval: `tests/live-lane-inputs.json` contractFiles (S21; approved 2026-11-26, done in unit 56) resets the paid lane receipts; review
+7. Operator approval: `tests/live-lane-inputs.json` contractFiles (S21 and S22; approved 2026-11-26, done in units 56 and 58) resets the paid lane receipts; review
    approves all three re-pins.
 8. Windows lock risk: a nightly-run process holds its dll for hours, so the S01 launcher runs from a copy of the build;
    `scripts/antiphon` today runs in place.

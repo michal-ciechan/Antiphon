@@ -839,8 +839,8 @@ A conflicted preview must identify at least one path. Report any other conflict 
 preview error and stop Blocked before merging.
 
 - `tests/test-execution-policy.json` for the policy pin and its roster entries.
-- `scripts/test-live-lane-run.ps1` when the conflict is confined to the
-  `PinnedInputDigest` assignment.
+- `scripts/lib/Antiphon.LiveLane/LiveLaneInputDigest.cs` when the conflict is confined to the
+  `PinnedInputDigest` assignment (`LiveLaneInputDigest.Pinned`).
 - `tests/expected-platform-skips.json`, `tests/Shared/expected-duration-roster.json`,
   and existing project `slow-tests-allowlist.txt` files under `tests/` for roster entries.
 - `tests/derived-impact-index.json` as generated output.
@@ -852,8 +852,8 @@ the intended changes from both sides. Recompute the derived values in this order
 
 1. Recompute `policyHash` in `tests/test-execution-policy.json` from the resolved
    policy with `scripts/antiphon live-lane-emit-policy-hash --policy-root .`.
-2. Recompute `PinnedInputDigest` in `scripts/test-live-lane-run.ps1` with
-   `pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest`.
+2. Recompute `PinnedInputDigest` (`LiveLaneInputDigest.Pinned` in `scripts/lib/Antiphon.LiveLane/LiveLaneInputDigest.cs`)
+   with `scripts/antiphon live-lane-input-digest`, and confirm it with `--check`.
 3. Regenerate `tests/derived-impact-index.json` with
    `scripts/antiphon regenerate-derived-impact-index`.
 

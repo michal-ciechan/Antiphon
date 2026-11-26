@@ -376,7 +376,7 @@ coverage or substitutes for the Windows obligations above.
 
 CARD-1545 assigns `LiveLaneIsolationTests.StartupArgvMatchesProductionApplyOff`
 to its separately commissioned producer/context/consumer parity workflow on both
-platforms. Run `scripts/test-live-lane-isolation.ps1 -CheckpointToolPath <compiled-tool-path>`
+platforms. Run `scripts/antiphon live-lane-isolation-rows --checkpoint-tool <compiled-tool-path>`
 with an owned portable context and a source/run/build-bound PTY producer capture
 receipt; the consumer requires its exact method filter. Other methods in the class
 remain required by RC. The method-only exclusion is no execution credit.
