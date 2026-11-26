@@ -2193,8 +2193,8 @@
         "HangfireLeaseDocumentationTests",
         "OsWitnessCheckTests",
         "PackageVersionPinContractTests",
-        "PostgresSnapshotJobTests",
-        "QualificationCheckoutSourceTests"
+        "PlanCheckpointClassSelectionGuardTests",
+        "PostgresSnapshotJobTests"
       ]
     },
     {
@@ -24030,12 +24030,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Application/ChannelOutboundCaptureTests.cs",
-      "classes": [
-        "CodexTestResidueTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Application/ChannelOutboundDeliveryTests.Identity.cs",
       "classes": [
         "ChannelOutboundUnifiedPathTests"
@@ -25696,6 +25690,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Infrastructure/RepositoryInvariantAudit.cs",
+      "classes": [
+        "PlanCheckpointClassSelectionGuardTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Infrastructure/RepositoryMutationLeaseTests.cs",
       "classes": [
         "DerivedImpactIndexTests",
@@ -26909,8 +26909,9 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/TestHelpers/BuildOutputNestingTests.cs",
+      "path": "tests/Antiphon.Tests/TestHelpers/BuildOutputNesting.cs",
       "classes": [
+        "BuildOutputNestingTests",
         "StagedHelperBuildTests"
       ]
     },

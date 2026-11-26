@@ -32,11 +32,27 @@ public sealed class PlanCheckpointClassSelectionGuardTests
     public void C2082_Owned_fixture_reads_remain_in_the_product_lane()
     {
         var root = OwnedTempRoot.CreateOwned();
+        var privateRoot = OwnedTempRoot.CreateOwned();
         try
         {
             Write(root, "Antiphon.sln", "");
             const string plan = "docs/superpowers/plans/fixture.md";
-            Write(root, plan, "# A tracked plan");
+            Write(root, plan, """
+                # A tracked plan
+
+                ### Checkpoints
+
+                | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+                |---|---|---|---|---|---|---|---|---|
+                | CP-1 | S1 | `tests/Fixture.Tests -> bin-fixture/` | source | `/*/*/Readers/NewCheckoutReader` | V-1 | 1 passed | 1 | 1 |
+                """);
+            Write(privateRoot, plan, "# Golden input without a checkpoint table");
+            LibGit2Sharp.Repository.Init(privateRoot);
+            using var privateCheckout = new LibGit2Sharp.Repository(privateRoot);
+            LibGit2Sharp.Commands.Stage(privateCheckout, plan);
+            PlanTableImporter.ImportFile(Path.Combine(root, plan)).ExitCode.ShouldBe(0);
+            PlanTableImporter.ImportFile(Path.Combine(privateRoot, plan)).ExitCode.ShouldBe(2);
+
             Write(root, "tests/Fixture.Tests/Readers.cs", """
                 namespace Fixture.Invariants;
 
@@ -44,10 +60,10 @@ public sealed class PlanCheckpointClassSelectionGuardTests
                 partial class Readers
                 {
                     [Test]
-                    void NewCheckoutReader() => SubjectPlan().Success.ShouldBeTrue();
+                    void NewCheckoutReader() => SubjectPlan().ExitCode.ShouldBe(0);
 
                     [Test]
-                    void OwnedReader() => PrivatePlan().Success.ShouldBeTrue();
+                    void OwnedReader() => PrivatePlan().ExitCode.ShouldBe(2);
                 }
                 """);
             Write(root, "tests/Fixture.Tests/ReaderInputs.cs", """
@@ -89,9 +105,14 @@ public sealed class PlanCheckpointClassSelectionGuardTests
             offenders[1].Input.ShouldContain("SubjectPlan");
             offenders[1].Input.ShouldContain(plan);
             Should.Throw<DirectoryNotFoundException>(() => RepositoryInvariantAudit.Scan(Path.Combine(root, "missing")));
+            const string broken = "tests/Fixture.Tests/Broken.cs";
+            Write(root, broken, "namespace Fixture; public sealed class Broken {");
+            LibGit2Sharp.Commands.Stage(repo, broken);
+            Should.Throw<InvalidDataException>(() => RepositoryInvariantAudit.Scan(root)).Message.ShouldContain(broken);
         }
         finally
         {
+            OwnedTempRoot.Release(privateRoot);
             OwnedTempRoot.Release(root);
         }
     }
