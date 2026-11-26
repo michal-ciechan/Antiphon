@@ -445,6 +445,135 @@ public class DispatchSiblingInspectionTests
     }
 
     [Test]
+    [Arguments("git error")]
+    [Arguments("unknown format")]
+    [Arguments("inspection deadline")]
+    [Arguments("probe throws")]
+    public async Task C2034_UnsuccessfulObjectFormatProbeKeepsSiblingHold(string scenario)
+    {
+        using var repo = new ScratchGitRepo("c2034-probe");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        var startRef = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        startRef.Length.ShouldBe(40);
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var injected = 0;
+        var git = new RecordingGit
+        {
+            Rewrite = (args, result) =>
+            {
+                if (args is not ["rev-parse", "--show-object-format"]) return result;
+                injected++;
+                if (scenario == "inspection deadline")
+                {
+                    clock.Advance(TimeSpan.FromSeconds(GitSettings.DefaultWorktreeBaseInspectionTimeoutSeconds));
+                    return result;
+                }
+                return scenario switch
+                {
+                    "git error" => new LandingGitResult(128, "", "injected object-format Git failure"),
+                    "unknown format" => new LandingGitResult(0, "--show-object-format\n", ""),
+                    "probe throws" => throw new IOException("injected object-format probe exception"),
+                    _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
+                };
+            },
+        };
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var (taskId, source, _) = await DispatchDuringPendingLandAsync(schema, repo, startRef, git, clock);
+
+        injected.ShouldBeGreaterThan(0, $"the {scenario} must be injected into the object-format probe");
+        await using var fresh = Context(schema);
+        await AssertSiblingHoldAsync(fresh, taskId, source, startRef, scenario);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C2034_StartRefMatchesSha256RepositoryObjectFormat(bool useSha1LengthBranch)
+    {
+        using var repo = await ScratchGitRepo.TryCreateSha256Async("c2034-sha256");
+        if (repo is null)
+            Skip.Test("CARD-2034: host Git does not support git init --object-format=sha256.");
+        (await repo!.GitReadAsync("rev-parse", "--show-object-format")).Trim().ShouldBe("sha256");
+        await repo.CommitFileAsync("seed.txt", "seed");
+        var master = (await repo.GitReadAsync("rev-parse", "master")).Trim();
+        master.Length.ShouldBe(64);
+        var startRef = master;
+        if (useSha1LengthBranch)
+        {
+            startRef = new string('a', 40);
+            await repo.GitAsync("branch", startRef, "master");
+            (await repo.GitReadAsync("rev-parse", "--verify", startRef + "^{commit}")).Trim().ShouldBe(master);
+        }
+
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var (taskId, source, siblingSha) = await DispatchDuringPendingLandAsync(schema, repo, startRef, new LandingGit(), clock);
+        await using var fresh = Context(schema);
+        if (useSha1LengthBranch)
+        {
+            await AssertSiblingHoldAsync(fresh, taskId, source, startRef, "40-hex branch in SHA-256 repo");
+            return;
+        }
+
+        var observed = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        observed.Status.ShouldBe(AgentTaskStatus.Dispatched, "full 64-hex StartRef in SHA-256 repo");
+        observed.WorktreeBaseSha.ShouldBe(master);
+        var warning = await fresh.AgentTaskDispatchWarningIntents.AsNoTracking()
+            .SingleAsync(i => i.TaskId == taskId && i.WarningKey == DispatchBaseNotificationPayload.SiblingKey(source.Id));
+        warning.Detail.ShouldContain(siblingSha);
+    }
+
+    private static async Task<(Guid TaskId, AgentTask Source, string SiblingSha)> DispatchDuringPendingLandAsync(
+        IsolatedTestSchema schema, ScratchGitRepo repo, string startRef, ILandingGit git, TimeProvider clock)
+    {
+        await using var db = Context(schema);
+        var card = await CardAsync(db);
+        var source = await SourceAsync(db, repo, card.Id, "pending-plan", "master");
+        source.Role = AgentTaskRole.Plan;
+        var siblingSha = (await repo.GitReadAsync("rev-parse", source.WorktreeBranch!)).Trim();
+        var land = new AgentTaskLandRequest
+        {
+            Id = Guid.NewGuid(), TaskId = source.Id, IsPending = true, State = LandRequestState.Running,
+            ExpectedSourceSha = siblingSha, RequestedAt = DateTime.UtcNow,
+        };
+        source.CurrentLandRequestId = land.Id;
+        db.AgentTaskLandRequests.Add(land);
+        var request = NewRequest(repo, card.Id);
+        request.RootTaskId = request.Id;
+        request.Title = "Explicit StartRef during sibling land";
+        request.Goal = "Check the repository object format";
+        request.WorkingDirectory = repo.Path;
+        request.Role = AgentTaskRole.Code;
+        request.Status = AgentTaskStatus.Queued;
+        request.CreatedAt = DateTime.UtcNow;
+        request.RequestedWorktreeBaseMode = RequestedWorktreeBaseMode.Target;
+        request.WorktreeBaseRequestedRef = startRef;
+        db.AgentTasks.Add(request);
+        await db.SaveChangesAsync();
+
+        await using var provider = AgentTaskDispatchBaseGuardTests.CreateProvider(schema.ConnectionString,
+            repo.WorktreeRoot, git: git, clock: clock);
+        await using var scope = provider.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
+        return (request.Id, source, siblingSha);
+    }
+
+    private static async Task AssertSiblingHoldAsync(
+        AppDbContext db, Guid taskId, AgentTask source, string startRef, string scenario)
+    {
+        var observed = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        observed.Status.ShouldBe(AgentTaskStatus.Queued, scenario);
+        observed.WorktreePath.ShouldBeNull();
+        observed.AgentSessionId.ShouldBeNull();
+        var holds = await db.AgentTaskEvents.AsNoTracking()
+            .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
+            .Select(e => e.Detail).ToListAsync();
+        holds.ShouldContain(detail => detail != null
+            && detail.Contains("kept branch " + source.WorktreeBranch, StringComparison.Ordinal)
+            && detail.Contains("is landing and is not yet in " + startRef, StringComparison.Ordinal));
+    }
+
+    [Test]
     [Timeout(90_000)]
     public async Task C1514_ImmutableStartRefDoesNotWaitBeyondInventoryCap()
     {
