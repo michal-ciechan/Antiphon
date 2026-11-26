@@ -92,7 +92,8 @@ public static partial class ReleaseImpactAdmission
         var disposition = Text(row, "disposition");
         var actualContent = Text(row, "contentDigest");
         var result = Text(row, "result");
-        var exit = row.Contains("exitCode") ? checked((uint)PsOps.ToInt(row["exitCode"])) : (uint?)null;
+        // The wire binds the process exit as a 32-bit value. Keep its signed interpretation in Reusable.
+        var exit = row.Contains("exitCode") ? unchecked((uint)PsOps.ToInt(row["exitCode"])) : (uint?)null;
         var skipped = PsValue.IsTrue(row["skipped"]);
         var timedOut = PsValue.IsTrue(row["timedOut"]);
         var tolerated = PsValue.IsTrue(row["processExitTolerated"]);
@@ -128,9 +129,10 @@ public static partial class ReleaseImpactAdmission
             using var evidence = new MemoryStream(custody.Read(pin.Evidence), writable: false);
             observed = RcChunkReceipt.ReadTrx(evidence, strict: true) ?? throw new Refusal("p2-receipt:trx");
             var candidate = RcChunkReceipt.Reusable(execution, observed, chunk.Cases.Select(c => c.CaseUid), scope);
-            var exact = observed.Select(c => (c.CaseKey, c.Class, c.Method))
+            var exact = observed.Select(c => (c.Assembly, c.CaseKey, c.Class, c.Method))
                 .OrderBy(key => key, CaseTupleComparer.Instance)
-                .SequenceEqual(chunk.Cases.Select(c => (c.CaseUid, c.Class, c.Method)).OrderBy(key => key, CaseTupleComparer.Instance));
+                .SequenceEqual(chunk.Cases.Select(c => (c.Assembly, c.CaseUid, c.Class, c.Method))
+                    .OrderBy(key => key, CaseTupleComparer.Instance));
 
             if (!candidate.Reusable) absence = "row-not-reusable";
             else if (!exact || actualContent != ContentDigest(chunk)) absence = "case-evidence-mismatch";
@@ -145,11 +147,13 @@ public static partial class ReleaseImpactAdmission
             (uint)observed.Length, observed, pin is null ? null : "trx", absence);
     }
 
-    private sealed class CaseTupleComparer : IComparer<(string Uid, string Class, string Method)>
+    private sealed class CaseTupleComparer : IComparer<(string Assembly, string Uid, string Class, string Method)>
     {
         internal static readonly CaseTupleComparer Instance = new();
-        public int Compare((string Uid, string Class, string Method) first, (string Uid, string Class, string Method) second)
+        public int Compare((string Assembly, string Uid, string Class, string Method) first, (string Assembly, string Uid, string Class, string Method) second)
         {
+            var assembly = string.CompareOrdinal(first.Assembly, second.Assembly);
+            if (assembly != 0) return assembly;
             var uid = string.CompareOrdinal(first.Uid, second.Uid);
             if (uid != 0) return uid;
             var @class = string.CompareOrdinal(first.Class, second.Class);

@@ -350,7 +350,7 @@ These are candidate edits at the Code preimage. The landing binder records the a
     "edits": [
       {
         "file": "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs",
-        "before": "var exact = observed.Select(c => (c.CaseKey, c.Class, c.Method))\n                .OrderBy(key => key, CaseTupleComparer.Instance)\n                .SequenceEqual(chunk.Cases.Select(c => (c.CaseUid, c.Class, c.Method)).OrderBy(key => key, CaseTupleComparer.Instance));",
+        "before": "var exact = observed.Select(c => (c.Assembly, c.CaseKey, c.Class, c.Method))\n                .OrderBy(key => key, CaseTupleComparer.Instance)\n                .SequenceEqual(chunk.Cases.Select(c => (c.Assembly, c.CaseUid, c.Class, c.Method))\n                    .OrderBy(key => key, CaseTupleComparer.Instance));",
         "after": "var exact = chunk.Cases.All(required => observed.Any(actual => actual.CaseKey == required.CaseUid && actual.Outcome == \"Passed\"));",
         "matchCount": 1
       }

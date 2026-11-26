@@ -40,6 +40,7 @@ namespace Antiphon.Nightly
     /// <summary>One TRX case outcome: the case key (test id), the class and method, the TRX outcome.</summary>
     public sealed class RcTrxCase
     {
+        internal string Assembly { get; set; } = "";
         public string CaseKey { get; set; } = "";
         public string Class { get; set; } = "";
         public string Method { get; set; } = "";
@@ -279,13 +280,16 @@ namespace Antiphon.Nightly
             {
                 var doc = new XmlDocument { XmlResolver = null };
                 using (var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null })) doc.Load(reader);
-                var methods = new Dictionary<string, (string Class, string Method)>(StringComparer.Ordinal);
+                var methods = new Dictionary<string, (string Class, string Method, string Assembly)>(StringComparer.Ordinal);
                 foreach (XmlElement test in doc.GetElementsByTagName("UnitTest"))
                 {
                     var method = test.GetElementsByTagName("TestMethod").OfType<XmlElement>().FirstOrDefault();
                     var id = test.GetAttribute("id");
-                    var identity = (method?.GetAttribute("className") ?? "", method?.GetAttribute("name") ?? "");
-                    if (strict && (id.Length == 0 || identity.Item1.Length == 0 || identity.Item2.Length == 0 || methods.ContainsKey(id)))
+                    var assembly = strict && method != null
+                        ? Path.GetFileNameWithoutExtension(method.GetAttribute("codeBase").Replace('\\', '/')) : "";
+                    var identity = (method?.GetAttribute("className") ?? "", method?.GetAttribute("name") ?? "", assembly);
+                    if (strict && (id.Length == 0 || identity.Item1.Length == 0 || identity.Item2.Length == 0 ||
+                        assembly.Length == 0 || methods.ContainsKey(id)))
                         return null;
                     methods[id] = identity;
                 }
@@ -294,7 +298,8 @@ namespace Antiphon.Nightly
                 {
                     var id = result.GetAttribute("testId");
                     if (!methods.TryGetValue(id, out var m) && strict) return null;
-                    cases.Add(new RcTrxCase { CaseKey = id, Class = m.Class ?? "", Method = m.Method ?? "", Outcome = result.GetAttribute("outcome") });
+                    cases.Add(new RcTrxCase { CaseKey = id, Class = m.Class ?? "", Method = m.Method ?? "", Assembly = m.Assembly ?? "",
+                        Outcome = result.GetAttribute("outcome") });
                 }
                 return cases.ToArray();
             }
