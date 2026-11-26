@@ -63,16 +63,21 @@ internal sealed class C1677RetentionTransportWorld : IAsyncDisposable
     {
         var emptyConfig = Root + "/empty.gitconfig";
         File.WriteAllText(emptyConfig, "");
-        var service = new RunnerWorkspaceService(Clone, Work, OriginGit, psi =>
+        // The real starter keeps the runner's in-process reads on (a lambda turns them off). Config isolation goes
+        // through the environment seam, applied before the service's own set-up (an inspection run still replaces
+        // GIT_CONFIG_GLOBAL), and the worktree move/remove counts through the call seam.
+        var service = new RunnerWorkspaceService(Clone, Work, OriginGit, Process.Start, publishedBranch: "main")
         {
-            psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-            if (!psi.Environment.ContainsKey("GIT_CONFIG_GLOBAL"))
-                psi.Environment["GIT_CONFIG_GLOBAL"] = emptyConfig;
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            lock (_argv)
-                _argv.Add(psi.ArgumentList.SkipWhile(arg => arg.StartsWith('-')).ToArray());
-            return Process.Start(psi);
-        }, publishedBranch: "main");
+            GitEnvironmentForTest = new Dictionary<string, string>
+            {
+                ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_GLOBAL"] = emptyConfig, ["GIT_TERMINAL_PROMPT"] = "0",
+            },
+            GitCallForTest = args =>
+            {
+                lock (_argv)
+                    _argv.Add(args.SkipWhile(arg => arg.StartsWith('-')).ToArray());
+            },
+        };
         Engine = new RunnerWorkspaceRetention(service, new ProcWorkspaceSlotProcessProbe(), retiringRoot: Retiring);
         Engine.PhaseCut = phase =>
         {

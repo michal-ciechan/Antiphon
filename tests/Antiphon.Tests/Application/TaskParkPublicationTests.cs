@@ -360,11 +360,11 @@ public sealed class TaskParkPublicationTests
                     await w.GitTextAsync(w.Root, "clone", w.Origin, repo);
                     await w.ConfigureAsync(repo);
                     await w.GitTextAsync(repo, "worktree", "add", "-b", w.Branch, w.Path, w.Baseline);
-                    runtime = new(new RunnerWorkspaceService(repo, allowed, w.Origin, start =>
+                    // The real starter keeps the runner's in-process reads on (a lambda turns them off).
+                    runtime = new(new RunnerWorkspaceService(repo, allowed, w.Origin, Process.Start)
                     {
-                        ParkGit.Isolate(start);
-                        return Process.Start(start);
-                    }));
+                        GitEnvironmentForTest = ParkGit.IsolatedEnvironment,
+                    });
                 }
                 await using (var db = w.Fixture.Db())
                 {

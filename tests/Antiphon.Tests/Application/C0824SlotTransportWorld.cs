@@ -105,13 +105,15 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         var emptyConfig = Path.Combine(Root, "empty.gitconfig");
         if (!File.Exists(emptyConfig))
             File.WriteAllText(emptyConfig, "");
-        var service = new RunnerWorkspaceService(Clone, Work, Origin, psi =>
+        // The real starter keeps the runner's in-process reads on (a lambda turns them off); config isolation goes
+        // through the environment seam instead.
+        var service = new RunnerWorkspaceService(Clone, Work, Origin, Process.Start, publishedBranch: "main")
         {
-            psi.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-            psi.Environment["GIT_CONFIG_GLOBAL"] = emptyConfig;
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            return Process.Start(psi);
-        }, publishedBranch: "main");
+            GitEnvironmentForTest = new Dictionary<string, string>
+            {
+                ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_GLOBAL"] = emptyConfig, ["GIT_TERMINAL_PROMPT"] = "0",
+            },
+        };
         var pool = new RunnerWorkspaceSlotPool(service, settings.WorkspaceSlots, settings.Capacity, processes: _slotProcesses);
         service.SlotPool = pool;
         var runner = new PhoneHomeCommandDispatcher(new RuntimeStub(Rig.Host.StoreId), settings);
@@ -156,7 +158,7 @@ internal sealed class C0824SlotTransportWorld : IAsyncDisposable
         File.WriteAllText(storePath, storeId.ToString("D"));
         Directory.CreateDirectory(work);
         Git(Root, "clone", Origin, repository);
-        var service = new RunnerWorkspaceService(repository, work, Origin, psi => Process.Start(psi), publishedBranch: "main");
+        var service = new RunnerWorkspaceService(repository, work, Origin, Process.Start, publishedBranch: "main");
         var settings = new PhoneHomeSettings { Enabled = true, RunnerId = runnerId, AllowedCwd = work,
             StoreIdPath = storePath,
             RunnerRepository = repository, RunnerCloneSource = Origin, AllowedCloneSources = [Origin],

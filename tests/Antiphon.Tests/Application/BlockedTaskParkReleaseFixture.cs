@@ -56,11 +56,11 @@ internal sealed partial class RunnerSeatReleaseFixture
             var runnerRepo = Path.Combine(root, "runner-repo");
             var allowed = Path.Combine(root, "runner");
             SourcePath = Path.Combine(allowed, "worktrees", RemoteWorkspaceService.MirrorName(TaskId));
-            Wire.ParkRuntime = new(new RunnerWorkspaceService(runnerRepo, allowed, SourceOrigin, start =>
+            // The real starter keeps the runner's in-process reads on (a lambda turns them off).
+            Wire.ParkRuntime = new(new RunnerWorkspaceService(runnerRepo, allowed, SourceOrigin, Process.Start)
             {
-                TaskParkPublicationTests.ParkGit.Isolate(start);
-                return Process.Start(start);
-            }));
+                GitEnvironmentForTest = TaskParkPublicationTests.ParkGit.IsolatedEnvironment,
+            });
             Directory.RemotePath = SourcePath;
             Directory.FeaturesOverride = [RunnerCapabilityFeatures.TerminalSeatReleaseV1,
                 RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1, RunnerCapabilityFeatures.WorkspaceParkV1,
