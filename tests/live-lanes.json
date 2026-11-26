@@ -1943,6 +1943,51 @@
     },
     {
       "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Api",
+      "class": "CallerWakeTests",
+      "method": "Adopted_native_recipient_reads_its_report",
+      "arguments": [
+        "false"
+      ],
+      "shapes": [
+        "Explicit",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-2074",
+      "reason": "Explicit native caller canary requires an installed Claude CLI and the opt-in local model stub."
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Api",
+      "class": "CallerWakeTests",
+      "method": "Adopted_native_recipient_reads_its_report",
+      "arguments": [
+        "true"
+      ],
+      "shapes": [
+        "Explicit",
+        "RealCliStub"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-2074",
+      "reason": "Explicit native caller canary requires an installed Claude CLI and the opt-in local model stub."
+    },
+    {
+      "project": "Antiphon.Tests",
+      "namespace": "Antiphon.Tests.Api",
+      "class": "CallerWakeTests",
+      "method": "C2074_Native_caller_strips_every_inherited_provider_variable",
+      "arguments": [],
+      "shapes": [
+        "RealCliStub"
+      ],
+      "disposition": "diagnostic",
+      "owner": "CARD-1545",
+      "reason": "live-claude diagnostic gate"
+    },
+    {
+      "project": "Antiphon.Tests",
       "namespace": "Antiphon.Tests.ApiKeys",
       "class": "ProviderEndpointProjectionTests",
       "method": "C0167_Projection_names_match_RealCliStubEnv",
