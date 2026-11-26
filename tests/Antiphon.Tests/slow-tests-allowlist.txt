@@ -61,6 +61,8 @@ Antiphon.Tests.Application.TaskSupervisionReceiptTests
 
 # CARD-1537: real Git graph seeding and isolated PostgreSQL landing; native Windows cases take 35-83s.
 Antiphon.Tests.Application.LandNonCodeSkipTests
+# CARD-2082 checkout assertions split from the registered fixture above.
+Antiphon.Tests.Invariants.LandNonCodeSkipInvariantTests
 
 # CARD-1308: isolated migrated PostgreSQL, retained runtime debt and verified modal/input recovery.
 Antiphon.Tests.Application.SessionRuntimeActionTemporaryBlockTests
@@ -462,8 +464,12 @@ Antiphon.Tests.Application.C0824RefOnlyCleanupTests
 
 # CARD-0824: isolated PostgreSQL Up/Down and recorded-snapshot loss refusal; migrations are the subject.
 Antiphon.Tests.Application.C0824RefOnlySnapshotMigrationTests
+# CARD-2082 checkout assertions split from the registered fixture above.
+Antiphon.Tests.Invariants.C0824RefOnlySnapshotMigrationInvariantTests
 # CARD-1514: isolated historical PostgreSQL baselines, additive host-load Up and exact durable-byte preservation on refused Down.
 Antiphon.Tests.Application.C1514HostLoadMigrationTests
+# CARD-2082 checkout assertions split from the registered fixture above.
+Antiphon.Tests.Invariants.C1514HostLoadMigrationInvariantTests
 # real Git scratch repositories compare index, commit-tree and blob reads across staging and source set-aside.
 Antiphon.Tests.TestHelpers.ControlledLandingRemovalReadTests
 # CARD-1733: real Git promotion matrices exceeded 300 seconds before native fixture containment.
@@ -491,6 +497,8 @@ Antiphon.Tests.Application.SessionTranscriptSummaryAppendTests
 
 # CARD-1915: fresh predecessor database, bounded DDL-lock rollback/retry and safe Down witness; measured setup exceeds five seconds.
 Antiphon.Tests.Application.SessionTranscriptSummaryMigrationTests
+# CARD-2082 checkout assertions split from the registered fixture above.
+Antiphon.Tests.Invariants.SessionTranscriptSummaryMigrationInvariantTests
 
 # CARD-1915 round 2: shared 3,118,500-row fixture and descriptive append-option matrix; measured 268s in CP-36 at 017ef0fc4c.
 Antiphon.Tests.Application.SessionTranscriptSummaryAppendCostTests
