@@ -3,7 +3,10 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
+using Antiphon.Nightly;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.Application;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -512,6 +515,34 @@ public sealed class WindowsUnitPlatformAdmissionTests
             statements.Any(statement => SyntaxFactory.AreEquivalent(statement, qualification))
                 .ShouldBeTrue("c1226-linux-qualification: " + name);
         }
+    }
+
+    [Test]
+    public void C2068_Windows_rc_selects_native_session_launchers()
+    {
+        var type = typeof(SessionRunnerRuntimeTests);
+        var className = type.FullName!;
+        var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(method => method.IsDefined(typeof(TestAttribute), inherit: false))
+            .Select(method => method.Name)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var nodes = methods.Select(method => NightlyPlanCases.Node(className, type.Name, method, method, "Integration")).ToArray();
+
+        var policy = NightlyPlanCases.Policy();
+        NightlyPolicy.ProfileRequiredSuites(policy.Object, "rc").ShouldContain("antiphon");
+        var windowsExclusions = NightlyPlanCases.Exclusions(policy, "rc", "antiphon", "windows");
+        var linuxExclusions = NightlyPlanCases.Exclusions(policy, "rc", "antiphon", "linux");
+        var windows = NightlyCensus.RequiredUids(nodes, [className], windowsExclusions, profileAware: true).Select(PsValue.Str).ToArray();
+        var linux = NightlyCensus.RequiredUids(nodes, [className], linuxExclusions, profileAware: true).Select(PsValue.Str).ToArray();
+
+        windows.ShouldBe(methods);
+        windows.Except(linux, StringComparer.Ordinal).ToArray().ShouldBe(new[]
+        {
+            nameof(SessionRunnerRuntimeTests.Session_id_can_be_relaunched_after_exit_but_not_while_running),
+            nameof(SessionRunnerRuntimeTests.Session_runner_starts_shell_accepts_input_and_keeps_buffer),
+            nameof(SessionRunnerRuntimeTests.StartAsync_that_fails_after_the_host_exists_leaves_no_pty_host),
+        });
     }
 
     [Test, ParallelLimiter<ProcessSpawnLimit>]
