@@ -367,6 +367,31 @@ public class SessionRuntimeActionTests
     }
 
     [Test]
+    public async Task C1259_stop_rethrows_a_worker_fault()
+    {
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        var coordinator = new SessionRuntimeActionCoordinator(services.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System, NullLogger<SessionRuntimeActionCoordinator>.Instance);
+        using var stopping = new CancellationTokenSource();
+        var running = coordinator.RunAsync(stopping.Token);
+        try
+        {
+            using var worker = new SessionRuntimeActionHostedService(coordinator);
+            await worker.StartAsync(default);
+
+            var workerFault = await Should.ThrowAsync<InvalidOperationException>(() => worker.ExecuteTask!);
+            workerFault.Message.ShouldBe("Action workers already running.");
+            var stopFault = await Should.ThrowAsync<InvalidOperationException>(() => worker.StopAsync(default));
+            stopFault.ShouldBeSameAs(workerFault);
+        }
+        finally
+        {
+            await stopping.CancelAsync();
+            await running;
+        }
+    }
+
+    [Test]
     [Arguments("before-wake")]
     [Arguments("during-confirm")]
     [Arguments("after-input")]
