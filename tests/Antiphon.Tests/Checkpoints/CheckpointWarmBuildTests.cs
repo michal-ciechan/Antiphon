@@ -764,9 +764,9 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
                 return Task.FromResult(new DriverResult(0, "", ""));
             },
         };
-        // CARD-2085 measured a 964 ms nearest-rank p95 on Linux. The existing native
-        // limit stays provisional until Windows measurements cover the real sharing probe.
-        var budget = TimeSpan.FromSeconds(OperatingSystem.IsLinux() ? 2 : 5);
+        // CARD-2085: the 5 s watchdog is provisional. The Linux p95 was 1,436 ms
+        // across 11 samples, including six at server2 load 31-48. Native Windows sampling is pending.
+        var budget = TimeSpan.FromSeconds(5);
         Mark("watchdog-start");
         using var watchdog = new CancellationTokenSource(budget);
         using (var cache = fixture.Open())

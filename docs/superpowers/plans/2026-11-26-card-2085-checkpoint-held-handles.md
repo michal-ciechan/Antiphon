@@ -41,15 +41,24 @@ web host, database, container or live broker in the fabricated overlap.
 The watchdog covers gate opening through completion of both scheduled rows.
 The five portable observations use three method-only runs and two runs with
 other warm-build fixture cases. Report host load, slot wait and test time
-separately. The native Windows limit remains provisional until the same five
-comparable observations can be collected under CARD-2085.
+separately.
 
 The Linux build at `f9096cd25fdcff6946769186061411f9cb875912` supplied
 watchdog windows of 493.4, 569.8 and 426.6 ms in method-only execution and
 963.9 and 159.6 ms with the publication and admission cases selected alongside
-it. The small-sample nearest-rank p95 is 963.9 ms. The Linux watchdog is 2 s.
-The Windows watchdog stays at its existing 5 s pending native calibration.
-Retain these samples separately from final qualification of the repair.
+it. The provisional nearest-rank p95 for those five quieter runs was 963.9 ms.
+Review `cd5da02e` at `6d94c939301bcb9f6029357ea476f415835236a6` added
+six Linux observations at server2 load 31–48. One CP-1 run alongside CP-2
+measured 159.6 ms. Five method-only runs measured 831.5, 349.1, 367.7,
+771.6 and 1436.3 ms. The combined 11-sample nearest-rank p95 is a
+provisional 1436.3 ms. Linux returns to the original 5 s watchdog while
+loaded calibration is pending. Windows retains its provisional 5 s watchdog
+pending native calibration. Retain these samples separately from final
+qualification of the repair.
+
+R5 follow-up (CARD-2085) — collect 20 watchdog-window samples on a loaded
+Linux host and 20 natively on Windows, then reassess each budget against
+twice its measured p95.
 
 The main test project shares one isolated Debug build across five rows.
 Expect 5 to 8 minutes for the main build, up to 2 minutes each for the affected
