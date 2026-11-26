@@ -19,9 +19,9 @@ internal sealed partial class RunnerSeatReleaseFixture
     // CARD-1065 replaces the legacy publication-free Blocked release fixture.
     // Seed real clean/pushed source and prepare its receipt, leaving reservation and
     // the conditional command to the calling test (including its crash/race hooks).
-    public async Task PreparePublishedBlockedSourceAsync()
+    public async Task PreparePublishedBlockedSourceAsync(bool prePublished = false)
     {
-        await CreateSourceAsync();
+        await CreateSourceAsync(prePublished: prePublished);
         using var scope = Harness.Provider.CreateScope();
         var task = await TaskAsync();
         await using var db = Db();
@@ -40,7 +40,7 @@ internal sealed partial class RunnerSeatReleaseFixture
     public TaskParkPublicationTests.ParkGit SourceGit =>
         (TaskParkPublicationTests.ParkGit)Harness.Provider.GetRequiredService<ITaskProgressGit>();
 
-    public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false)
+    public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false, bool prePublished = false)
     {
         var root = Path.Combine(Path.GetTempPath(), "c1065-release-" + Guid.NewGuid().ToString("N"));
         _roots.Add(root);
@@ -49,7 +49,7 @@ internal sealed partial class RunnerSeatReleaseFixture
         SourceOrigin = Path.Combine(root, "origin.git");
         SourcePath = Path.Combine(root, "task");
         var branch = RemoteWorkspaceService.OwnedBranch(TaskId);
-        var sha = await SourceTreeAsync(root, TaskId, remote);
+        var sha = await SourceTreeAsync(root, TaskId, remote, prePublished);
         DesktopSourcePath = SourcePath;
         if (remote)
         {
@@ -136,19 +136,21 @@ internal sealed partial class RunnerSeatReleaseFixture
     /// with the runner mirror worktree. Cloned from a per-process template (GitTreeTemplate: the branch and the mirror
     /// name carry the task id's first 8 hex digits, the template's token) instead of 10-14 git processes; built with
     /// git when templates are off or the template is refused. Returns the baseline commit.
+    /// <paramref name="prePublished"/> also puts the owned branch on origin at the baseline (its own template), for
+    /// cases about release and delivery rather than the push itself (publication's push is TaskParkPublicationTests').
     /// </summary>
-    private async Task<string> SourceTreeAsync(string root, Guid taskId, bool remote)
+    private async Task<string> SourceTreeAsync(string root, Guid taskId, bool remote, bool prePublished = false)
     {
         var token = taskId.ToString("N")[..8];
         if (GitTreeTemplate.Enabled)
         {
             try
             {
-                var template = await GitTreeTemplate.BuildOnceAsync("c1065-park-source" + (remote ? "-remote" : ""), ["task"],
+                var template = await GitTreeTemplate.BuildOnceAsync("c1065-park-source" + (remote ? "-remote" : "") + (prePublished ? "-published" : ""), ["task"],
                     async (templateRoot, tokens) => new()
                     {
                         ["sha"] = await BuildSourceTreeAsync(templateRoot, "feat/card-task-" + tokens["task"],
-                            "task-" + tokens["task"], remote),
+                            "task-" + tokens["task"], remote, prePublished),
                     }, tokenLength: 8);
                 var clone = template.CloneTo(root, new Dictionary<string, string> { ["task"] = token });
                 return clone.Map(template.Values["sha"]);
@@ -164,10 +166,10 @@ internal sealed partial class RunnerSeatReleaseFixture
             }
         }
         return await BuildSourceTreeAsync(root, RemoteWorkspaceService.OwnedBranch(taskId),
-            RemoteWorkspaceService.MirrorName(taskId), remote);
+            RemoteWorkspaceService.MirrorName(taskId), remote, prePublished);
     }
 
-    private async Task<string> BuildSourceTreeAsync(string root, string branch, string mirror, bool remote)
+    private async Task<string> BuildSourceTreeAsync(string root, string branch, string mirror, bool remote, bool prePublished = false)
     {
         var origin = Path.Combine(root, "origin.git");
         var repository = Path.Combine(root, "repo");
@@ -185,7 +187,10 @@ internal sealed partial class RunnerSeatReleaseFixture
         await GitAsync(repository, "add", "source.txt");
         await GitAsync(repository, "commit", "-m", "retained baseline");
         await GitAsync(repository, "remote", "add", "origin", origin);
-        await GitAsync(repository, "push", "origin", "master");
+        // A pre-published owned branch is already on origin at the baseline (published with master, one push), so
+        // a park's publication confirms it with ls-remote instead of pushing it (a push to a local path is ~5 git
+        // processes per world).
+        await GitAsync(repository, prePublished ? ["push", "origin", "master", "HEAD:refs/heads/" + branch] : ["push", "origin", "master"]);
         var sha = await GitAsync(repository, "rev-parse", "HEAD");
         await GitAsync(repository, "worktree", "add", "-b", branch, Path.Combine(root, "task"), sha);
         if (remote)

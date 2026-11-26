@@ -32,10 +32,13 @@ public sealed class BlockedTaskParkReleaseTests
             (await db.RunnerSeatReleases.AnyAsync(r => r.ActionId != null)).ShouldBeFalse("G-95: no reservation without source proof");
         }
 
-        foreach (var invalid in new[] { "prefix", "destination", "kind", "floor", "timestamp", "generation", "valid" })
+        // Every world below is independent (its own schema, harness, clock, repositories and fake wire), so each loop
+        // runs its worlds side by side (Worlds.InParallelAsync); a failure names its world.
+        await Worlds.InParallelAsync(new[] { "prefix", "destination", "kind", "floor", "timestamp", "generation", "valid" },
+            invalid => "invalid-" + invalid, async invalid =>
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await f.CreateSourceAsync();
+            await f.CreateSourceAsync(prePublished: true);
             var parent = await f.AddParentAsync(busy: false);
             if (invalid != "timestamp")
             {
@@ -79,18 +82,21 @@ public sealed class BlockedTaskParkReleaseTests
             var guard = invalid switch { "prefix" => "G-99", "destination" => "G-100", "kind" => "G-101", "floor" or "timestamp" => "G-102", _ => "G-103" };
             if (invalid == "valid") (await NoteAsync(f)).ConfirmedAt.ShouldNotBeNull("complete current caller receipt control");
             else (await NoteAsync(f)).ConfirmedAt.ShouldBeNull(guard + ": invalid native receipt " + invalid);
-        }
+        });
 
         // Actual settlement -> durable notification -> real queue -> native caller prompt.
         // Every cut is crossed with busy-at-enqueue and eligible-at-enqueue recipients.
-        foreach (var busy in new[] { false, true })
-        foreach (var cut in new[] { "obligation-insert", "settled-committed", "note-insert", "note-committed",
-            "render-committed", "attempt-committed", "prompt-accepted" })
+        var crossed = from busy in new[] { false, true }
+                      from cut in new[] { "obligation-insert", "settled-committed", "note-insert", "note-committed",
+                          "render-committed", "attempt-committed", "prompt-accepted" }
+                      select (Busy: busy, Cut: cut);
+        await Worlds.InParallelAsync(crossed, c => (c.Busy ? "busy-" : "eligible-") + c.Cut, async c =>
         {
+            var (busy, cut) = c;
             var fault = new C544DeliveryFault();
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true,
                 configureDb: b => b.AddInterceptors(fault));
-            await f.CreateSourceAsync();
+            await f.CreateSourceAsync(prePublished: true);
             var parent = await f.AddParentAsync(busy);
             if (!busy)
             {
@@ -157,7 +163,7 @@ public sealed class BlockedTaskParkReleaseTests
                 && e.Kind == TranscriptKinds.UserPrompt && e.Sequence > queue.LastDeliveryBaselineSequence).ToListAsync();
             prompts.Count(e => PromptSubmissionMatch.IsConfirmedBy(rendering.WireText, e.Text)).ShouldBe(1, "G-99/G-100/G-101/G-102 complete recipient receipt");
             f.Submitted.Count.ShouldBe(1, "G-104 no duplicate typed note");
-        }
+        });
 
         // Physical recipient proof: real runtime/tailer/generation/input gate, fake child I/O.
         await using (var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, provider: "Claude"))
@@ -174,10 +180,11 @@ public sealed class BlockedTaskParkReleaseTests
             File.Exists(f.Live.TranscriptPath).ShouldBeTrue("native conversation retained");
         }
 
-        foreach (var cut in new[] { "BeforeReservation", "BeforeDispatch", "BeforeResponse", "lost-reply" })
+        await Worlds.InParallelAsync(new[] { "BeforeReservation", "BeforeDispatch", "BeforeResponse", "lost-reply" },
+            cut => "release-" + cut, async cut =>
         {
             await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await f.PreparePublishedBlockedSourceAsync();
+            await f.PreparePublishedBlockedSourceAsync(prePublished: true);
             // First stop at the ordinary idle refusal, after real publication has persisted.
             f.Wire.Qualified = f.Wire.Qualified with { Status = TerminalSeatQualificationStatus.Working };
             await f.HandleParkAsync();
@@ -212,7 +219,7 @@ public sealed class BlockedTaskParkReleaseTests
             (await f.ParkAsync()).Id.ShouldBe(park.Id);
             (await f.ParkAsync()).State.ShouldBe(AgentTaskParkState.Parked, cut);
             f.Wire.Requests.ShouldAllBe(r => r.ActionId == park.Id && r.ParkVersion == 2 && r.Publication != null);
-        }
+        });
     }
 
     [Test]
@@ -231,10 +238,12 @@ public sealed class BlockedTaskParkReleaseTests
         f.Wire.ConditionalCommands.ShouldBe(0, "G-108: unknown source ownership cannot release");
         f.Launches.Calls.ShouldBeEmpty();
 
-        foreach (var cause in new[] { "question", "bind-refusal", "unmarked", "prerequisite", "quota", "wall", "cost", "merge-back", "land-conflict" })
+        // Independent worlds (own schema, harness, clock, repositories, wire), run side by side.
+        await Worlds.InParallelAsync(new[] { "question", "bind-refusal", "unmarked", "prerequisite", "quota", "wall", "cost", "merge-back", "land-conflict" },
+            cause => "cause-" + cause, async cause =>
         {
             await using var world = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await world.CreateSourceAsync();
+            await world.CreateSourceAsync(prePublished: true);
             await world.EditAsync((task, _) =>
             {
                 task.Result = null; task.CompletedAt = null; task.FailureReason = cause;
@@ -253,8 +262,8 @@ public sealed class BlockedTaskParkReleaseTests
             (await world.TaskAsync()).Result.ShouldBeNull();
             (await world.TaskAsync()).CompletedAt.ShouldBeNull();
             world.Launches.Calls.ShouldBeEmpty();
-        }
-        foreach (var cause in new[] { "create", "routing", "kind-exhausted" })
+        });
+        await Worlds.InParallelAsync(new[] { "create", "routing", "kind-exhausted" }, cause => "sessionless-" + cause, async cause =>
         {
             await using var world = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
             await world.EditAsync((task, _) => { task.AgentSessionId = null; task.CompletedAt = null; task.Result = null; task.FailureReason = cause; });
@@ -262,11 +271,11 @@ public sealed class BlockedTaskParkReleaseTests
             (await world.ParkAsync()).SessionId.ShouldBeNull();
             world.Wire.ConditionalCommands.ShouldBe(0, "G-107 " + cause);
             world.Launches.Calls.ShouldBeEmpty("G-107 no invented session");
-        }
-        foreach (var refusal in new[] { "foreign-writer", "unknown-owner", "sequencer" })
+        });
+        await Worlds.InParallelAsync(new[] { "foreign-writer", "unknown-owner", "sequencer" }, refusal => "refusal-" + refusal, async refusal =>
         {
             await using var world = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
-            await world.CreateSourceAsync();
+            await world.CreateSourceAsync(prePublished: true);
             await using var store = world.Db();
             if (refusal == "foreign-writer")
             {
@@ -282,7 +291,7 @@ public sealed class BlockedTaskParkReleaseTests
             await world.HandleParkAsync();
             world.Wire.ConditionalCommands.ShouldBe(0, "G-108 " + refusal);
             (await world.ParkAsync()).State.ShouldNotBe(AgentTaskParkState.Parked);
-        }
+        });
     }
 
     [Test]
@@ -298,7 +307,9 @@ public sealed class BlockedTaskParkReleaseTests
         f.Wire.ForceCommands.ShouldBe(0);
         f.RecordedStops.Killed.ShouldBeEmpty();
 
-        foreach (var owner in new[] { "none", "standing", "always-on", "board", "specialist", "failed-stop" })
+        // Independent worlds (own schema, harness, clock, repositories, wire), run side by side.
+        await Worlds.InParallelAsync(new[] { "none", "standing", "always-on", "board", "specialist", "failed-stop" },
+            owner => "owner-" + owner, async owner =>
         {
             await using var world = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
             await world.CreateSourceAsync(WorkspaceMode.Shared);
@@ -332,7 +343,7 @@ public sealed class BlockedTaskParkReleaseTests
             if (owner == "none") retainedAgent.Status.ShouldBe(AgentStatus.Stopped);
             if (owner == "failed-stop")
                 (await store.AgentSessions.SingleAsync(s => s.Id == world.SessionId)).Status.ShouldBe(SessionStatus.Running);
-            if (owner != "none") continue;
+            if (owner != "none") return;
 
             // Independently challenge pool and retirement reservations with an otherwise reusable row.
             await world.EditAsync((_, a) =>
@@ -376,9 +387,9 @@ public sealed class BlockedTaskParkReleaseTests
                     .TryReuseWarmAgentAsync(reusable, world.Now, default)).ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused, "G-111 otherwise reusable control");
                 reusable.AgentId.ShouldBe(world.AgentId);
             }
-        }
+        });
 
-        foreach (var close in new[] { "cancellation", "continuation" })
+        await Worlds.InParallelAsync(new[] { "cancellation", "continuation" }, close => "close-" + close, async close =>
         {
             await using var world = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true);
             await world.CreateSourceAsync(WorkspaceMode.Shared);
@@ -420,7 +431,7 @@ public sealed class BlockedTaskParkReleaseTests
                 active.ShouldNotContain(original.Id, "G-117 previous attempt stays cleared");
                 active.Count.ShouldBe(2, "G-117 replacement and unrelated reservation survive");
             }
-        }
+        });
     }
 
     private static async Task<AgentTaskLandNotification> NoteAsync(RunnerSeatReleaseFixture f)

@@ -3,9 +3,10 @@ using Antiphon.Tests.TestHelpers;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// Runs independent world cases side by side (Codex CLI C959/C1029 worlds, C1213 branch-delivery worlds); unless the caller's token is cancelled, every case runs and every failure is reported under its label.
+/// Runs independent world cases side by side (Codex CLI C959/C1029 worlds, C1213 branch-delivery worlds, C1065 park-release worlds); unless the caller's token is cancelled, every case runs and every failure is reported under its label.
 /// A world's only child processes are git (its phone-home host is in-process Kestrel and its recipient terminals are
-/// in-process fakes), but each also has a Kestrel host, a harness and a schema, so a calling class (one strict
+/// in-process fakes; a C1065 park-release world's runner is a fake HTTP wire, and its one live-runtime case with a fake
+/// child stays outside the parallel loops), but each also has a host or wire, a harness and a schema, so a calling class (one strict
 /// ProcessSpawnLimit slot) runs at most Clamp(ProcessorCount / 2, 1, 4) worlds at once; ANTIPHON_TEST_CODEX_CLI_WORLDS
 /// (1-4, clamped; ANTIPHON_TEST_C1029_WORLDS is still read when it is unset or blank) overrides it for every caller
 /// (the C959 and C1029 classes and the C1213 queued-branch and old-runner tests), and 1 runs the cases one at a time
