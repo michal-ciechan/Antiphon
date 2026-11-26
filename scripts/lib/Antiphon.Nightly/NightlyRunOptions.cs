@@ -28,6 +28,8 @@ namespace Antiphon.Nightly
             "--selection-attempt-path", "--selection-attempt-digest", "--selection-path", "--selection-digest", "--attempt", "--prior-failures-path",
             "--prior-failures-digest", "--seed-source-candidate-id", "--trigger", "--profile", "--expected-sha", "--candidate-id", "--release-root",
             "--coordination-root", "--run-id", "--continue-run-id", "--continue-parent-pid", "--continue-parent-started-at", "--result-file",
+            "--requested-selection-mode", "--incremental-approval-digest", "--incremental-baseline-sha",
+            "--incremental-inventory-path", "--incremental-inventory-digest", "--incremental-owed-digest",
         };
 
         /// <summary>The switches of the command.</summary>
@@ -52,7 +54,7 @@ namespace Antiphon.Nightly
         public string SelectionMode { get; set; } = "Full";
 
         /// <summary>
-        /// CARD-1836 S6: the mode the cut was asked for (blank, or Incremental); not a flag. The run still executes its
+        /// CARD-1836 S6: the mode the cut was asked for (blank, or Incremental). The run still executes its
         /// SelectionMode (Full); an admitted Incremental request carries its binding below to the tests hop.
         /// </summary>
         public string RequestedSelectionMode { get; set; } = "";
@@ -141,6 +143,12 @@ namespace Antiphon.Nightly
             o.ExpectedSha = Text("--expected-sha", o.ExpectedSha);
             o.CandidateId = Text("--candidate-id", o.CandidateId);
             o.ReleaseRoot = Text("--release-root", o.ReleaseRoot);
+            o.RequestedSelectionMode = Text("--requested-selection-mode", o.RequestedSelectionMode);
+            o.IncrementalApprovalDigest = Text("--incremental-approval-digest", o.IncrementalApprovalDigest);
+            o.IncrementalBaselineSha = Text("--incremental-baseline-sha", o.IncrementalBaselineSha);
+            o.IncrementalInventoryPath = Text("--incremental-inventory-path", o.IncrementalInventoryPath);
+            o.IncrementalInventoryDigest = Text("--incremental-inventory-digest", o.IncrementalInventoryDigest);
+            o.IncrementalOwedDigest = Text("--incremental-owed-digest", o.IncrementalOwedDigest);
             o.CoordinationRoot = Text("--coordination-root", o.CoordinationRoot);
             o.RunId = Text("--run-id", o.RunId);
             o.ContinueRunId = Text("--continue-run-id", o.ContinueRunId);
@@ -191,6 +199,12 @@ namespace Antiphon.Nightly
             Add("--expected-sha", ExpectedSha, d.ExpectedSha);
             Add("--candidate-id", CandidateId, d.CandidateId);
             Add("--release-root", ReleaseRoot, d.ReleaseRoot);
+            Add("--requested-selection-mode", RequestedSelectionMode, d.RequestedSelectionMode);
+            Add("--incremental-approval-digest", IncrementalApprovalDigest, d.IncrementalApprovalDigest);
+            Add("--incremental-baseline-sha", IncrementalBaselineSha, d.IncrementalBaselineSha);
+            Add("--incremental-inventory-path", IncrementalInventoryPath, d.IncrementalInventoryPath);
+            Add("--incremental-inventory-digest", IncrementalInventoryDigest, d.IncrementalInventoryDigest);
+            Add("--incremental-owed-digest", IncrementalOwedDigest, d.IncrementalOwedDigest);
             Add("--coordination-root", CoordinationRoot, d.CoordinationRoot);
             Add("--run-id", RunId, d.RunId);
             Add("--continue-run-id", ContinueRunId, d.ContinueRunId);

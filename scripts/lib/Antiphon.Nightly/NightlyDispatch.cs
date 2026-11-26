@@ -247,6 +247,76 @@ namespace Antiphon.Nightly
         private static (string Suite, string Chunk) Identity(object suite, object chunk) =>
             (PsValue.Str(PsValue.Prop(suite, "id")), PsValue.Str(PsValue.Prop(chunk, "id")));
 
+        internal static RcIncrementalExecution RunIncremental(NightlyRunState state, NightlySuiteRunner runner,
+            string[] selectedSuites, NightlyRunOptions binding)
+        {
+            if (!state.NpmOk || state.LintBlocksPipeline || !state.DotnetOk)
+                throw new NightlyRefusal("incremental-preparation-blocked");
+            var suites = selectedSuites.Select(id => runner.Prepare(id, true)
+                ?? throw new NightlyRefusal("incremental-preparation-incomplete:" + id)).ToArray();
+            var plan = suites.SelectMany(suite => suite.Chunks.Select(chunk =>
+                (Suite: suite, Chunk: chunk, Planned: IncrementalChunk(state, suite, chunk)))).ToArray();
+            var byId = plan.ToDictionary(entry => entry.Planned.Id, StringComparer.Ordinal);
+            state.DispatchSchedule = Schedule(suites, null, "", null, true, state.InvocationId, state.Attempt,
+                null, state.Sha, state.UtcNow, "");
+            WriteBestEffort(state, state.DispatchSchedule);
+
+            var execution = RcIncrementalCut.Execute(binding, plan.Select(entry => entry.Planned).ToArray(),
+                state.LogRoot, planned =>
+                {
+                    var entry = byId[planned.Id];
+                    var before = state.SuiteResults.Count;
+                    runner.RunChunk(entry.Suite, entry.Chunk);
+                    if (state.SuiteResults.Count != before + 1 || !(state.SuiteResults[before] is IDictionary row))
+                        throw new NightlyRefusal("incremental-launch-no-row:" + planned.Id);
+                    var receipt = CopyRow(row);
+                    receipt["chunk"] = planned.Id;
+                    return receipt;
+                }, state.Platform);
+            if (execution.Receipts.Count > 0)
+            {
+                // A carried or resumed chunk contributes its sealed receipt to the summary. Keep the
+                // current schedule's suite/chunk key separate from the ledger's qualified identity.
+                state.SuiteResults = execution.Receipts.Select(receipt =>
+                {
+                    var entry = byId[PsValue.Str(receipt["chunk"])];
+                    var row = CopyRow(receipt);
+                    row["id"] = entry.Suite.Id;
+                    row["chunk"] = PsValue.Prop(entry.Chunk, "id");
+                    return (object)row;
+                }).ToList();
+            }
+            return execution;
+        }
+
+        private static OrderedDictionary CopyRow(IDictionary row)
+        {
+            var copy = new OrderedDictionary(StringComparer.Ordinal);
+            foreach (DictionaryEntry field in row) copy[field.Key] = field.Value;
+            return copy;
+        }
+
+        private static RcPlannedChunk IncrementalChunk(NightlyRunState state, NightlyPreparedSuite suite, object chunk)
+        {
+            var plan = new RcPlannedChunk
+            {
+                Id = suite.Id + "/" + PsValue.Str(PsValue.Prop(chunk, "id")),
+                Project = PsValue.Str(PsValue.Prop(suite.State.Suite, "project")),
+                RepositoryInvariant = NightlyTestsPlan.IsInvariantChunk(chunk),
+            };
+            if (!suite.State.IsNative) return plan; // No case evidence is available for a carry.
+            var classes = Each(PsValue.Prop(chunk, "classes")).Select(PsValue.Str).ToArray();
+            var nodes = Each(PsValue.Prop(chunk, "nodes"));
+            if (nodes.Length == 0) nodes = suite.State.DiscoveryNodes;
+            var members = RcChunkReceipt.RosterFromNodes(Path.GetFileNameWithoutExtension(suite.State.Host.AssemblyPath),
+                nodes.Where(node => !NightlyCensus.Excluded(node, suite.State.ProfileExclusions, state.ProfileAware)).ToArray(), classes);
+            plan.Classes = members.Select(member => member.Class).Distinct(StringComparer.Ordinal).ToArray();
+            plan.Cases = members.Select(member => member.CaseKey).ToArray();
+            plan.ContentDigest = RcChunkReceipt.ContentDigest(suite.Id, "native", members)
+                ?? throw new NightlyRefusal("incremental-chunk-membership:" + plan.Id);
+            return plan;
+        }
+
         private static void RunInvariantChunk(NightlyRunState state, NightlyDispatchSteps steps, object suite, object chunk,
             HashSet<(string Suite, string Chunk)> finished, object[] selectedSuites)
         {

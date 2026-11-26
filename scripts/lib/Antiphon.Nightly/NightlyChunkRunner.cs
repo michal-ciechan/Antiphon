@@ -684,6 +684,12 @@ namespace Antiphon.Nightly
                 // One concatenation per chunk, not one array copy per terminal node (19,000 in the main suite).
                 if (PsValue.IsTrue(terminalNodes)) s.TerminalNodes = s.TerminalNodes.Concat(PsValue.AsArray(terminalNodes)).ToArray();
                 suiteRow["trx"] = trxPath;
+                if (c.ChunkReceiptVersion == RcChunkReceipt.Version && File.Exists(trxPath) && File.Exists(execDiagPath))
+                {
+                    suiteRow["trxDigest"] = RcChunkReceipt.FileDigest(trxPath);
+                    suiteRow["executionDiagnostic"] = execDiagPath;
+                    suiteRow["executionDiagnosticDigest"] = RcChunkReceipt.FileDigest(execDiagPath);
+                }
                 suiteRow["evidenceReasons"] = PsValue.AsArray(PsValue.Prop(nativeVerdict, "reasons"));
                 var census = PsValue.IsTrue(s.Census) ? s.Census : PsValue.Prop(nativeVerdict, "census");
                 if (PsValue.IsTrue(census))
@@ -842,9 +848,14 @@ namespace Antiphon.Nightly
             {
                 var receiptClasses = PsValue.IsTrue(PsValue.Prop(chunk, "classes")) ? PsValue.AsArray(PsValue.Prop(chunk, "classes")).Select(PsValue.Str).ToArray() : new string[0];
                 var assembly = s.Host == null ? suiteId : Path.GetFileNameWithoutExtension(s.Host.AssemblyPath ?? suiteId);
-                var roster = s.IsNative && nativeVerdict != null ? RcChunkReceipt.RosterFromNodes(assembly, PsValue.Prop(nativeVerdict, "discoveryNodes"), receiptClasses) : new RcCaseIdentity[0];
+                var roster = s.IsNative && nativeVerdict != null
+                    ? RcChunkReceipt.RosterFromNodes(assembly, PsValue.AsArray(PsValue.Prop(nativeVerdict, "discoveryNodes"))
+                        .Where(node => !NightlyCensus.Excluded(node, s.ProfileExclusions, c.ProfileAware)).ToArray(), receiptClasses)
+                    : Array.Empty<RcCaseIdentity>();
                 RcChunkReceipt.Stamp(suiteRow, c.Sha, RcChunkReceipt.ContentDigest(suiteId, s.IsNative ? "native" : "command", roster),
                     new RcReceiptScope { Platform = c.Platform ?? "", Architecture = RcReceiptScope.CurrentArchitecture(), Profile = c.Profile ?? "" });
+                suiteRow["runId"] = c.InvocationId;
+                suiteRow["attempt"] = c.Attempt;
             }
             if (NightlyTestsPlan.IsInvariantChunk(chunk))
             {

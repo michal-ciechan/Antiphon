@@ -6,7 +6,7 @@
 // publisher for it (ReleaseCut). At the tests hop (after discovery) Execute re-verifies the bound inventory digest
 // (a stale plan refuses), seals the partition once (a resume reuses the sealed plan and launches only unlaunched owed
 // chunks, none twice), carries only strictly reusable receipts for exactly their contents, and closes a ledger that
-// reconciles to the roster. Diagnostic wiring: production NightlyTests does not call Execute yet. Plain C#, ASCII only.
+// reconciles to the roster. Plain C#, ASCII only.
 #nullable disable
 using System;
 using System.Collections;
@@ -42,6 +42,7 @@ namespace Antiphon.Nightly
         public string PlanDigest { get; set; } = "";
         public List<string> Launched { get; } = new List<string>();
         public List<IDictionary> Carried { get; } = new List<IDictionary>();
+        internal List<IDictionary> Receipts { get; } = new List<IDictionary>();
         public bool Reconciled { get; set; }
         public bool AllGreen { get; set; }
         public string LedgerDigest { get; set; } = "";
@@ -59,6 +60,39 @@ namespace Antiphon.Nightly
 
         /// <summary>The directory holding approval.json, last-full-sweep.json and comparison.json under a release root.</summary>
         public static string IncrementalRoot(string releaseRoot) => Path.Combine(releaseRoot, "incremental");
+
+        // Re-admit at the receiving process. The argv fields bind the approval and comparison files;
+        // the covered obligations are read from those files, so the hop cannot replace their contents.
+        internal static NightlyRunOptions BindTests(NightlyTestsOptions options, string repository, string sha,
+            string profile, string platform, DateTime now)
+        {
+            if (string.IsNullOrEmpty(options.IncrementalInventoryDigest)
+                && string.IsNullOrEmpty(options.IncrementalApprovalDigest)
+                && string.IsNullOrEmpty(options.IncrementalBaselineSha)
+                && string.IsNullOrEmpty(options.IncrementalInventoryPath)
+                && string.IsNullOrEmpty(options.IncrementalOwedDigest))
+                return null; // Ordinary Full, or the cut already refused Incremental admission.
+            if (options.RequestedSelectionMode != RequestedMode || options.SelectionMode != "Full" || profile != "rc"
+                || string.IsNullOrEmpty(options.SelectionAttemptPath) || string.IsNullOrEmpty(options.RunId)
+                || string.IsNullOrEmpty(options.ReleaseRoot) || !RcChunkReceipt.IsSha(sha) || sha != options.ExpectedSha)
+                throw new NightlyRefusal("incremental-hop-mismatch");
+            if (platform != "windows")
+                throw new NightlyRefusal("incremental-windows-required");
+            var policy = TestSelectionGit.Run(repository, new[] { "cat-file", "blob", sha + ":" + RcTrustedProjectGate.PolicyPath }, new[] { 0, 128 });
+            var admission = Admit(options.ReleaseRoot, sha, policy.Exit == 0 ? policy.Stdout : null, now, repository);
+            if (!admission.Admitted) throw new NightlyRefusal(admission.Reason);
+            if (admission.ApprovalDigest != options.IncrementalApprovalDigest || admission.BaselineSha != options.IncrementalBaselineSha
+                || admission.InventoryPath != options.IncrementalInventoryPath || admission.InventoryDigest != options.IncrementalInventoryDigest
+                || admission.OwedDigest != options.IncrementalOwedDigest)
+                throw new NightlyRefusal("incremental-hop-mismatch:binding");
+            return new NightlyRunOptions
+            {
+                RunId = options.RunId, Attempt = options.Attempt, ExpectedSha = sha, Profile = profile, SelectionMode = options.SelectionMode,
+                RequestedSelectionMode = options.RequestedSelectionMode, IncrementalApprovalDigest = admission.ApprovalDigest,
+                IncrementalBaselineSha = admission.BaselineSha, IncrementalInventoryPath = admission.InventoryPath,
+                IncrementalInventoryDigest = admission.InventoryDigest, IncrementalOwed = admission.Owed, IncrementalOwedDigest = admission.OwedDigest,
+            };
+        }
 
         /// <summary>D-6 admission at the cut hop. Every refusal names why; the caller then runs Full.</summary>
         public static RcIncrementalAdmission Admit(string releaseRoot, string candidateSha, string candidateTrustPolicy, DateTime nowUtc, string repositoryRoot)
@@ -186,6 +220,7 @@ namespace Antiphon.Nightly
                 using var doc = JsonDocument.Parse(bytes);
                 var root = doc.RootElement;
                 if (Text(root, "inventoryDigest") != run.IncrementalInventoryDigest || Text(root, "candidateSha") != run.ExpectedSha
+                    || Text(root, "baselineSha") != run.IncrementalBaselineSha || Text(root, "approvalDigest") != run.IncrementalApprovalDigest
                     || (roster.Any(chunk => chunk.RequiresFreshInvariantExecution) && Text(root, "invariantAttempt") != AttemptKey(run))
                     || Text(root, "rosterDigest") != RosterDigest(roster) || Text(root, "owedDigest") != run.IncrementalOwedDigest) return Refuse(answer, "incremental-plan-stale:binding");
                 entries = root.GetProperty("entries").EnumerateArray().Select(e => (OrderedDictionary)RcChunkReceipt.FromJson(e)).ToArray();
@@ -199,7 +234,7 @@ namespace Antiphon.Nightly
                     var chunk = roster.FirstOrDefault(c => c.ContentDigest == PsValue.Str(row["contentDigest"]));
                     var trx = PsValue.Str(row["trx"]);
                     if (trx.Length > 0 && !Path.IsPathRooted(trx)) trx = Path.Combine(trxRoot, trx);
-                    return RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadTrx(trx), chunk?.Cases ?? Array.Empty<string>(), scope);
+                    return RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadObservedTrx(row, trx), chunk?.Cases ?? Array.Empty<string>(), scope);
                 });
                 var sameSource = string.Equals(run.IncrementalBaselineSha, run.ExpectedSha, StringComparison.Ordinal);
                 entries = matches.Select(m =>
@@ -254,6 +289,8 @@ namespace Antiphon.Nightly
                 {
                     if (chunk.RequiresFreshInvariantExecution) return Refuse(answer, "repository-invariant-carried:" + id);
                     var carried = RcChunkReceipt.Carry((IDictionary)entry["origin"], run.ExpectedSha, run.IncrementalInventoryDigest);
+                    carried["originChunk"] = carried["chunk"];
+                    carried["chunk"] = id;
                     answer.Carried.Add(carried);
                     ledger.Add(carried);
                     continue;
@@ -288,6 +325,7 @@ namespace Antiphon.Nightly
                 && roster.All(c => accounted.Contains(c.Id, StringComparer.Ordinal));
             answer.AllGreen = answer.Reconciled && ledger.All(r => PsValue.Str(r["result"]) == "pass");
             answer.LedgerDigest = RcChunkReceipt.Seal(Path.Combine(attemptDirectory, "rc-chunk-receipts.json"), run.ExpectedSha, run.Attempt, ledger);
+            answer.Receipts.AddRange(ledger);
             answer.CoverageScope = "Incremental";
             return answer;
         }

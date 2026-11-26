@@ -21,6 +21,8 @@ namespace Antiphon.Nightly
             "--train-manifest-path", "--release-intent-path", "--selection-attempt-path", "--selection-attempt-digest", "--selection-path",
             "--selection-digest", "--attempt", "--prior-failures-path", "--prior-failures-digest", "--seed-source-candidate-id", "--rc-evidence-root",
             "--policy-path",
+            "--requested-selection-mode", "--incremental-approval-digest", "--incremental-baseline-sha",
+            "--incremental-inventory-path", "--incremental-inventory-digest", "--incremental-owed-digest",
         };
 
         /// <summary>The switches of the command.</summary>
@@ -45,6 +47,12 @@ namespace Antiphon.Nightly
         public string ExpectedSha { get; set; } = "";
         public string RunId { get; set; } = "";
         public string SelectionMode { get; set; } = "Full";
+        public string RequestedSelectionMode { get; set; } = "";
+        public string IncrementalApprovalDigest { get; set; } = "";
+        public string IncrementalBaselineSha { get; set; } = "";
+        public string IncrementalInventoryPath { get; set; } = "";
+        public string IncrementalInventoryDigest { get; set; } = "";
+        public string IncrementalOwedDigest { get; set; } = "";
         public string ReleaseRoot { get; set; } = "";
         public string CandidateId { get; set; } = "";
         public string Repository { get; set; } = "michal-ciechan/Antiphon";
@@ -95,6 +103,12 @@ namespace Antiphon.Nightly
                     ?? throw new NightlyUsageException("--selection-mode expects one of " + string.Join(", ", SelectionModes) + ", not '" + mode + "'");
             }
             options.ReleaseRoot = Text("--release-root", options.ReleaseRoot);
+            options.RequestedSelectionMode = Text("--requested-selection-mode", options.RequestedSelectionMode);
+            options.IncrementalApprovalDigest = Text("--incremental-approval-digest", options.IncrementalApprovalDigest);
+            options.IncrementalBaselineSha = Text("--incremental-baseline-sha", options.IncrementalBaselineSha);
+            options.IncrementalInventoryPath = Text("--incremental-inventory-path", options.IncrementalInventoryPath);
+            options.IncrementalInventoryDigest = Text("--incremental-inventory-digest", options.IncrementalInventoryDigest);
+            options.IncrementalOwedDigest = Text("--incremental-owed-digest", options.IncrementalOwedDigest);
             options.CandidateId = Text("--candidate-id", options.CandidateId);
             options.Repository = Text("--repository", options.Repository);
             options.BaselineSha = Text("--baseline-sha", options.BaselineSha);
@@ -142,6 +156,12 @@ namespace Antiphon.Nightly
             Add("--run-id", RunId, defaults.RunId);
             Add("--selection-mode", SelectionMode, defaults.SelectionMode);
             Add("--release-root", ReleaseRoot, defaults.ReleaseRoot);
+            Add("--requested-selection-mode", RequestedSelectionMode, defaults.RequestedSelectionMode);
+            Add("--incremental-approval-digest", IncrementalApprovalDigest, defaults.IncrementalApprovalDigest);
+            Add("--incremental-baseline-sha", IncrementalBaselineSha, defaults.IncrementalBaselineSha);
+            Add("--incremental-inventory-path", IncrementalInventoryPath, defaults.IncrementalInventoryPath);
+            Add("--incremental-inventory-digest", IncrementalInventoryDigest, defaults.IncrementalInventoryDigest);
+            Add("--incremental-owed-digest", IncrementalOwedDigest, defaults.IncrementalOwedDigest);
             Add("--candidate-id", CandidateId, defaults.CandidateId);
             Add("--repository", Repository, defaults.Repository);
             Add("--baseline-sha", BaselineSha, defaults.BaselineSha);

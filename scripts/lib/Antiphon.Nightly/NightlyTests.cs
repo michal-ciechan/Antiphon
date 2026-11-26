@@ -166,6 +166,7 @@ namespace Antiphon.Nightly
             var attempt = options.Attempt.ToString(CultureInfo.InvariantCulture);
 
             object selection = null;
+            NightlyRunOptions incremental;
             try
             {
                 if (!string.IsNullOrEmpty(options.SelectionAttemptPath))
@@ -184,6 +185,7 @@ namespace Antiphon.Nightly
                     if (head.ExitCode != 0 || !string.Equals((head.Output ?? "").Trim(), sha, StringComparison.Ordinal)) throw new NightlyRefusal("selection-hop-head");
                 }
                 else if (!string.Equals(options.SelectionMode, "Full", StringComparison.Ordinal)) throw new NightlyRefusal("selection-attempt-required");
+                incremental = RcIncrementalCut.BindTests(options, repoRoot, sha, profile, platform, host.UtcNow);
             }
             catch (Exception ex) { return new NightlyTestsResult { ExitCode = 3, Refusal = ex.Message, LaunchCount = 0 }; }
 
@@ -326,6 +328,7 @@ namespace Antiphon.Nightly
                 var lintOk = true;
                 var lintBlocksPipeline = false;
                 var activeNative = 0;
+                var coverageScope = incremental == null ? "Full" : "Incremental";
                 try
                 {
                     var docker = host.Probe.Docker() ?? new NightlyProbeRow { ExitCode = 1 };
@@ -472,6 +475,7 @@ namespace Antiphon.Nightly
                             StartedAt = startedAt,
                             BuildSeconds = qualificationBuildSeconds,
                             ProfileAware = profileAware,
+                            ChunkReceiptVersion = incremental == null ? 0 : RcChunkReceipt.Version,
                             RequiredSuites = requiredSuites.Cast<object>().ToArray(),
                             ChunksBySuite = chunksBySuite,
                             Preflight = preflight,
@@ -505,9 +509,22 @@ namespace Antiphon.Nightly
                         Exception dispatchFailure;
                         try
                         {
-                            dispatchFailure = NightlyDispatch.CoordinateOrFailure(state, new NightlySuiteRunner(state).Steps(), selectedSuites.Cast<object>().ToArray(), null, null,
-                                PsValue.Str(PsValue.Prop(dispatchInput, "Digest")), PsValue.Prop(dispatchInput, "History"), PsValue.Prop(dispatchInput, "PreviousRun"),
-                                PsValue.Str(PsValue.Prop(dispatchInput, "FallbackReason")));
+                            var runner = new NightlySuiteRunner(state);
+                            if (incremental == null)
+                                dispatchFailure = NightlyDispatch.CoordinateOrFailure(state, runner.Steps(), selectedSuites.Cast<object>().ToArray(), null, null,
+                                    PsValue.Str(PsValue.Prop(dispatchInput, "Digest")), PsValue.Prop(dispatchInput, "History"), PsValue.Prop(dispatchInput, "PreviousRun"),
+                                    PsValue.Str(PsValue.Prop(dispatchInput, "FallbackReason")));
+                            else
+                            {
+                                dispatchFailure = null;
+                                var execution = NightlyDispatch.RunIncremental(state, runner, selectedSuites, incremental);
+                                if (execution.Refusal.Length > 0 || !execution.AllGreen)
+                                {
+                                    state.TestsPassed = false;
+                                    throw new NightlyRefusal(execution.Refusal.Length > 0 ? execution.Refusal : "incremental-tests-incomplete");
+                                }
+                                coverageScope = execution.CoverageScope;
+                            }
                         }
                         finally
                         {
@@ -530,6 +547,7 @@ namespace Antiphon.Nightly
                 {
                     overallFailed = true;
                     coverageComplete = false;
+                    if (incremental != null) testsPassed = false;
                     preflight["unhandledError"] = ex.Message;
                     RunLine(host, ex.Message);
                     reasons.Add(ex.Message);
@@ -577,7 +595,6 @@ namespace Antiphon.Nightly
                 // never faults and is waited for by the next scan or in-line walk.
                 if (expectedSkipScan != null) NightlyExpectedSkips.Wait(expectedSkipScan.Task);
 
-                var coverageScope = "Full";
                 if (profile == "rc" && platform == "linux")
                 {
                     coverageScope = "PlatformDiagnostic";

@@ -509,7 +509,10 @@ namespace Antiphon.Nightly
 
                 // S6b shadow: one evidence root for this run, derived once and passed to every hook.
                 phase = "tests";
-                runDir = ReleaseGateCredit.Join(logRoot, NightlyRunParts.RunDirectoryName(host.UtcNow, runId));
+                // A resumed incremental attempt keeps the journal and child evidence in its sealed attempt directory.
+                runDir = string.IsNullOrEmpty(options.IncrementalInventoryDigest)
+                    ? ReleaseGateCredit.Join(logRoot, NightlyRunParts.RunDirectoryName(host.UtcNow, runId))
+                    : Path.Combine(Path.GetDirectoryName(selectionAttemptPath), "incremental-tests-" + options.Attempt.ToString(CultureInfo.InvariantCulture));
                 Directory.CreateDirectory(runDir);
                 rcEvidenceRoot = ReleaseGateCredit.Join(runDir, "rc-run-evidence");
                 var rcInputs = File.Exists(ReleaseGateCredit.Join(checkoutRoot, PolicyRelative)) ? new[] { PolicyRelative } : new string[0];
@@ -626,7 +629,8 @@ namespace Antiphon.Nightly
                     // reaches <StateRoot>\last-complete-green.json; RC green lands in the candidate's own store and never
                     // touches master readiness.
                     rcEvidence.AssertInputs(rcEvidenceRoot, logRoot, checkoutRoot, sha);
-                    var creditKind = ReleaseGateCredit.Verdict(View(state)).CreditKind ?? "";
+                    var creditKind = options.RequestedSelectionMode == RcIncrementalCut.RequestedMode
+                        ? "" : ReleaseGateCredit.Verdict(View(state)).CreditKind ?? "";
                     result.CreditKind = creditKind;
                     state["creditKind"] = creditKind;
                     if (string.Equals(creditKind, "master-scheduled", StringComparison.OrdinalIgnoreCase)) WriteState(host, lastGreen, state, true);
@@ -857,6 +861,12 @@ namespace Antiphon.Nightly
             if (!string.IsNullOrWhiteSpace(options.ExpectedSha)) a.AddRange(new[] { "-ExpectedSha", options.ExpectedSha });
             if (!string.IsNullOrWhiteSpace(candidateId)) a.AddRange(new[] { "-CandidateId", candidateId });
             if (!string.IsNullOrWhiteSpace(options.ReleaseRoot)) a.AddRange(new[] { "-ReleaseRoot", options.ReleaseRoot });
+            if (!string.IsNullOrEmpty(options.RequestedSelectionMode)) a.AddRange(new[] { "-RequestedSelectionMode", options.RequestedSelectionMode });
+            if (!string.IsNullOrEmpty(options.IncrementalApprovalDigest)) a.AddRange(new[] { "-IncrementalApprovalDigest", options.IncrementalApprovalDigest });
+            if (!string.IsNullOrEmpty(options.IncrementalBaselineSha)) a.AddRange(new[] { "-IncrementalBaselineSha", options.IncrementalBaselineSha });
+            if (!string.IsNullOrEmpty(options.IncrementalInventoryPath)) a.AddRange(new[] { "-IncrementalInventoryPath", options.IncrementalInventoryPath });
+            if (!string.IsNullOrEmpty(options.IncrementalInventoryDigest)) a.AddRange(new[] { "-IncrementalInventoryDigest", options.IncrementalInventoryDigest });
+            if (!string.IsNullOrEmpty(options.IncrementalOwedDigest)) a.AddRange(new[] { "-IncrementalOwedDigest", options.IncrementalOwedDigest });
             if (!string.IsNullOrWhiteSpace(options.CoordinationRoot)) a.AddRange(new[] { "-CoordinationRoot", options.CoordinationRoot });
             if (AnySuite(options.Suites)) a.AddRange(new[] { "-Suites", string.Join(",", options.Suites) });
             if (!string.IsNullOrWhiteSpace(timingRoot) && !Has(a, "-TimingRoot")) a.AddRange(new[] { "-TimingRoot", timingRoot });
@@ -903,6 +913,12 @@ namespace Antiphon.Nightly
                 t.PriorFailuresPath = priorFailuresPath;
                 t.PriorFailuresDigest = priorFailuresDigest ?? "";
             }
+            t.RequestedSelectionMode = options.RequestedSelectionMode ?? "";
+            t.IncrementalApprovalDigest = options.IncrementalApprovalDigest ?? "";
+            t.IncrementalBaselineSha = options.IncrementalBaselineSha ?? "";
+            t.IncrementalInventoryPath = options.IncrementalInventoryPath ?? "";
+            t.IncrementalInventoryDigest = options.IncrementalInventoryDigest ?? "";
+            t.IncrementalOwedDigest = options.IncrementalOwedDigest ?? "";
             t.AcceptCrossCandidateSeed = options.AcceptCrossCandidateSeed;
             if (!string.IsNullOrEmpty(options.SeedSourceCandidateId)) t.SeedSourceCandidateId = options.SeedSourceCandidateId;
             return t;

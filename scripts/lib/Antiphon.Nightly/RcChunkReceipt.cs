@@ -162,7 +162,9 @@ namespace Antiphon.Nightly
                 var type = PsValue.Str(PsValue.Prop(node, "type"));
                 var ns = PsValue.Str(PsValue.Prop(node, "namespace"));
                 var full = string.IsNullOrEmpty(ns) ? type : ns + "." + type;
-                if (wanted.Count > 0 && !wanted.Contains(type) && !wanted.Contains(full)) continue;
+                if (wanted.Count > 0 && !wanted.Contains(type) && !wanted.Contains(full)
+                    && !wanted.Contains(NightlyCensus.BareClassIdentity(type))
+                    && !wanted.Contains(NightlyCensus.BareClassIdentity(full))) continue;
                 roster.Add(new RcCaseIdentity(assembly, full, PsValue.Str(PsValue.Prop(node, "method")), PsValue.Str(PsValue.Prop(node, "uid"))));
             }
             return roster.ToArray();
@@ -274,6 +276,24 @@ namespace Antiphon.Nightly
             return ReadTrx(stream);
         }
 
+        // MTP can allocate different testIds in TRX. Resolve stable UIDs through the execution
+        // diagnostic bound to those exact TRX bytes, and require the same passing method multiset.
+        internal static RcTrxCase[] ReadObservedTrx(IDictionary row, string path)
+        {
+            var trx = ReadTrx(path);
+            if (!row.Contains("executionDiagnostic")) return trx;
+            var diagnostic = PsValue.Str(row["executionDiagnostic"]);
+            if (trx == null || !File.Exists(diagnostic) || FileDigest(path) != PsValue.Str(row["trxDigest"])
+                || FileDigest(diagnostic) != PsValue.Str(row["executionDiagnosticDigest"])) return null;
+            var nodes = PsValue.AsArray(PsValue.Prop(NightlyDiagnosticLog.Read(diagnostic, "execution"), "Nodes"));
+            if (nodes.Length != trx.Length || trx.Any(c => c.Outcome != "Passed")
+                || nodes.Any(node => NightlyClassNames.NormalizedOutcome(PsValue.Str(PsValue.Prop(node, "State"))) != "Passed"))
+                return null;
+            var methods = trx.Select(c => PsValue.Record(("ClassName", c.Class), ("MethodName", c.Method))).ToArray();
+            if (!PsValue.IsTrue(PsValue.Prop(NightlyVerdicts.CrossCheck(methods, nodes, Array.Empty<string>()), "Ok"))) return null;
+            return nodes.Select(node => new RcTrxCase { CaseKey = PsValue.Str(PsValue.Prop(node, "Uid")), Outcome = "Passed" }).ToArray();
+        }
+
         internal static RcTrxCase[] ReadTrx(Stream stream, bool strict = false)
         {
             try
@@ -326,7 +346,7 @@ namespace Antiphon.Nightly
                 var relative = Path.GetRelativePath(attemptDirectory, Path.GetFullPath(trxPath, Path.GetFullPath(attemptDirectory)));
                 if (!Path.IsPathRooted(relative) && relative != ".."
                     && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                    trx = ReadTrx(Path.Combine(attemptDirectory, relative));
+                    trx = ReadObservedTrx(row, Path.Combine(attemptDirectory, relative));
             }
             reasons.AddRange(Reusable(row, trx, chunk.Cases, scope).Reasons);
             if (trx != null && (trx.Count != chunk.Cases.Length

@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Nightly;
@@ -23,8 +24,14 @@ public sealed class ReleaseCutTests
     [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
     public void C2082_Admitted_cut_binds_the_nightly_tests_process()
     {
-        using var world = ReleaseCutWorld.Real("c2082-cut-hop");
-        NightlyFixture.WriteJson(Path.Combine(world.Checkout, ".antiphon-nightly-owned"), new { origin = world.Origin });
+        using var world = ReleaseCutWorld.Real("c2082-cut-hop", withNightlyLauncher: true);
+        const string invariantClass = "Fixture.Invariants.GuardTests";
+        const string ordinaryClass = "Fixture.Product.OrdinaryTests";
+        const string owedClass = "Fixture.Product.MessagingTests";
+        const string guardA = "guard-arg-1";
+        const string guardB = "guard-arg-2";
+        const string ordinary = "ordinary-arg";
+        const string owed = "owed-arg";
         var root = RcIncrementalCut.IncrementalRoot(world.Release);
         Directory.CreateDirectory(root);
         var approval = Path.Combine(root, "approval.json");
@@ -38,48 +45,154 @@ public sealed class ReleaseCutTests
             completedUtc = NightlyFixture.DefaultNow.AddHours(-1), sha = world.Sha,
         });
         var inventory = Path.Combine(root, "inventory.json");
-        var digest = RcChunkReceipt.Seal(inventory, world.Sha, 1, []);
+        var scope = new RcReceiptScope { Platform = "windows", Architecture = RcReceiptScope.CurrentArchitecture(), Profile = "rc" };
+        OrderedDictionary Prior(string chunk, string type, string[] cases)
+        {
+            var trx = Path.Combine(root, chunk + ".trx");
+            NightlyFixture.WriteTrx(trx, cases.Select(id => new NightlyTrxRow(id, type, "Check")));
+            var row = new OrderedDictionary
+            {
+                ["id"] = "antiphon", ["chunk"] = chunk, ["result"] = "pass", ["exitCode"] = 0, ["trx"] = trx, ["runId"] = "prior",
+            };
+            var content = RcChunkReceipt.ContentDigest("antiphon", "native",
+                cases.Select(id => new RcCaseIdentity("Antiphon.Tests", type, "Check", id)));
+            RcChunkReceipt.Stamp(row, world.Sha, content, scope);
+            return row;
+        }
+        var prior = new[] { Prior("prior-guard", invariantClass, [guardA, guardB]), Prior("prior-ordinary", ordinaryClass, [ordinary]) };
+        var digest = RcChunkReceipt.Seal(inventory, world.Sha, 1, prior);
         var comparison = RcComparisonBaseline.Choose("rc/fixture", [new RcComparisonInput
         {
             Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "prior", Attempt = "1",
             CompletedUtc = NightlyFixture.DefaultNow.AddHours(-1), ReceiptPath = inventory, ReceiptDigest = digest,
-            Sealed = true, Ancestor = true, Rows = [],
+            Sealed = true, Ancestor = true, Rows = prior,
         }]);
         RcComparisonBaseline.Record(Path.Combine(root, "comparison.json"), comparison, inventory, digest);
 
-        var launcher = new RecordingLauncher();
+        var testsHops = new List<NightlyTestsOptions>();
+        var results = new List<NightlyTestsResult>();
+        var executed = new List<string>();
+        var withholdGuard = true;
+        var interruptOrdinary = true;
+        NightlyHost nightly = null!;
+        var launcher = new RecordingLauncher(launch =>
+        {
+            if (NightlyRunHops.IsSelfHop(launch))
+                return NightlyTestsWorld.Result(NightlyRun.Run(NightlyRunHops.SelfHopOptions(launch), nightly, Bindings(world.Checkout)).ExitCode);
+            if (NightlyRunHops.IsTestsHop(launch))
+            {
+                var child = NightlyRunHops.TestsOptions(launch);
+                testsHops.Add(child);
+                var result = NightlyTests.Run(child, nightly, NightlyTestsWorld.SeamedBindings());
+                results.Add(result);
+                return NightlyTestsWorld.Result(result.ProcessExitCode);
+            }
+
+            var argv = launch.Arguments.ToList();
+            string Value(string flag) => argv[argv.IndexOf(flag) + 1];
+            if (argv.Contains("--list-tests"))
+            {
+                object Node(string uid, string type, bool invariant) => new
+                {
+                    uid, type = type[(type.LastIndexOf('.') + 1)..], @namespace = type[..type.LastIndexOf('.')],
+                    method = "Check", state = "Discovered", categories = invariant ? new[] { "RepositoryInvariant", "Unit" } : new[] { "Unit" },
+                };
+                var diag = Path.Combine(Value("--diagnostic-output-directory"), "list.diag");
+                var isMessaging = diag.Contains("messaging-profile", StringComparison.Ordinal);
+                NightlyFixture.WriteJson(diag, new
+                {
+                    format = NightlyDiagnosticLog.DiscoveryFormat, tunitVersion = NightlyDiagnosticLog.SupportedTunit,
+                    mtpVersion = NightlyDiagnosticLog.SupportedMtp, assemblyHash = "fixture-assembly",
+                    nodes = isMessaging ? new[] { Node(owed, owedClass, false) }
+                        : new[] { Node(guardA, invariantClass, true), Node(guardB, invariantClass, true), Node(ordinary, ordinaryClass, false) },
+                });
+            }
+            else if (argv.Contains("--report-trx"))
+            {
+                var trxName = Value("--report-trx-filename");
+                var isMessaging = trxName.StartsWith("messaging-", StringComparison.Ordinal);
+                var isInvariant = trxName.StartsWith("antiphon-invariant-", StringComparison.Ordinal);
+                var type = isMessaging ? owedClass : isInvariant ? invariantClass : ordinaryClass;
+                executed.Add(type);
+                if (isMessaging && interruptOrdinary) throw new OperationCanceledException("fixture interrupted before messaging produced a receipt");
+                string[] ids = isMessaging ? [owed] : isInvariant ? withholdGuard ? [guardA] : [guardA, guardB] : [ordinary];
+                NightlyFixture.WriteTrx(Path.Combine(Value("--results-directory"), trxName),
+                    ids.Select((_, index) => new NightlyTrxRow("adapter-id-" + index, type, "Check")));
+                NightlyFixture.WriteExecution(Path.Combine(Value("--diagnostic-output-directory"), "run.diag"),
+                    ids.Select(id => new NightlyTestNode(id, type, "Check")));
+            }
+            return RecordingLauncher.Passed();
+        });
         var processes = new FakeProcessTable();
         processes.Start(processes.CurrentPid, NightlyRunWorld.ProcessStart);
-        var nightly = world.Fixture.Host(git: world.HostGit, launcher: launcher, processes: processes);
-        var bindings = new NightlyRunBindings
+        nightly = world.Fixture.Host(git: world.HostGit, launcher: launcher, processes: processes);
+        NightlyRunBindings Bindings(string productRoot) => new()
         {
             CliPath = NightlyRunWorld.StagedCli,
-            ProductRoot = world.Checkout,
+            ProductRoot = productRoot,
             RcEvidence = NightlyRcChain.Suppressed(),
         };
         world.Answer = options =>
         {
             options.NoReport = true;
-            return NightlyRun.Run(options, nightly, bindings);
+            options.Suites = ["antiphon", "messaging"];
+            return NightlyRun.Run(options, nightly, Bindings(NightlyPlanCases.Repo));
         };
-        var cut = world.Cut(options =>
+        ReleaseCutResult Cut(string id, string mode = "Incremental") => world.Cut(options =>
         {
-            options.SelectionMode = "Incremental";
-            options.RunId = "c2082-cut";
+            options.SelectionMode = mode;
+            options.RunId = id;
+            options.Attempt = 2;
+            options.SkipPublish = true;
         });
-        cut.CoverageScope.ShouldBe("Incremental", cut.IncrementalReason);
-        var launch = launcher.Launches.SingleOrDefault(NightlyRunHops.IsTestsHop)
-            .ShouldNotBeNull(string.Join('\n', world.Lines));
-        var flags = NightlyArgs.Parse(launch.Arguments.Skip(3).ToArray(),
-            [.. NightlyTestsOptions.Valued, "--requested-selection-mode", "--incremental-approval-digest",
-                "--incremental-baseline-sha", "--incremental-inventory-path", "--incremental-inventory-digest", "--incremental-owed-digest"],
-            NightlyTestsOptions.Switches);
-        flags.Value("--requested-selection-mode").ShouldBe("Incremental");
-        flags.Value("--incremental-approval-digest").ShouldBe(RcChunkReceipt.FileDigest(approval));
-        flags.Value("--incremental-baseline-sha").ShouldBe(world.Sha);
-        flags.Value("--incremental-inventory-path").ShouldBe(inventory);
-        flags.Value("--incremental-inventory-digest").ShouldBe(digest);
-        flags.Value("--incremental-owed-digest").ShouldBe(RcComparisonBaseline.OwedDigest(new Dictionary<string, string>()));
+        var missing = Cut("c2082-missing");
+        missing.CoverageScope.ShouldBe("Incremental", missing.IncrementalReason);
+        launcher.Launches.Count(NightlyRunHops.IsSelfHop).ShouldBe(1);
+        testsHops.Count.ShouldBe(1, string.Join('\n', world.Lines));
+        var child = testsHops.Single();
+        child.RequestedSelectionMode.ShouldBe("Incremental");
+        child.IncrementalApprovalDigest.ShouldBe(RcChunkReceipt.FileDigest(approval));
+        child.IncrementalBaselineSha.ShouldBe(world.Sha);
+        child.IncrementalInventoryPath.ShouldBe(inventory);
+        child.IncrementalInventoryDigest.ShouldBe(digest);
+        child.IncrementalOwedDigest.ShouldBe(RcComparisonBaseline.OwedDigest(comparison.Owed));
+        missing.Tested.ShouldBeFalse();
+        executed.ShouldBe([invariantClass]);
+        results.Single().Reasons.ShouldContain(reason => reason.Contains("repository-invariant-receipt:", StringComparison.Ordinal));
+        File.Exists(Path.Combine(child.LogRoot, "rc-chunk-receipts.json")).ShouldBeFalse();
+
+        withholdGuard = false;
+        executed.Clear();
+        var interrupted = Cut("c2082-resume");
+        interrupted.Tested.ShouldBeFalse();
+        executed.ShouldBe([invariantClass, owedClass], string.Join('\n', results.Last().Reasons));
+        var attempt = testsHops.Last().LogRoot;
+        File.ReadLines(Path.Combine(attempt, "incremental-launches.jsonl")).Count().ShouldBe(1);
+
+        interruptOrdinary = false;
+        executed.Clear();
+        var resumed = Cut("c2082-resume");
+        resumed.Tested.ShouldBeTrue(string.Join('\n', results.Last().Reasons));
+        resumed.Published.ShouldBeFalse();
+        executed.ShouldBe([owedClass]);
+        testsHops.Last().LogRoot.ShouldBe(attempt);
+        var ledger = RcChunkReceipt.Read(Path.Combine(attempt, "rc-chunk-receipts.json"));
+        ledger.Refusal.ShouldBeEmpty();
+        ledger.Rows.Length.ShouldBe(3);
+        var carried = ledger.Rows.Single(row => PsValue.Str(row["disposition"]) == "carried");
+        PsValue.Str(carried["originChunk"]).ShouldBe("prior-ordinary");
+        PsValue.Str(carried["originReceiptDigest"]).ShouldBe(digest);
+        var fresh = ledger.Rows.Single(row => PsValue.Str(row["chunk"]).StartsWith("antiphon/invariant-", StringComparison.Ordinal));
+        PsValue.Str(fresh["runId"]).ShouldBe("c2082-resume");
+        PsValue.Str(fresh["attempt"]).ShouldBe("2");
+        PsValue.Str(fresh["sha"]).ShouldBe(world.Sha);
+
+        executed.Clear();
+        Cut("c2082-full", "Full").Tested.ShouldBeTrue(string.Join('\n', results.Last().Reasons));
+        testsHops.Last().RequestedSelectionMode.ShouldBeEmpty();
+        testsHops.Last().IncrementalInventoryDigest.ShouldBeEmpty();
+        results.Last().CoverageScope.ShouldBe("Full");
+        executed.ShouldBe([invariantClass, ordinaryClass, owedClass], ignoreOrder: true);
     }
 
     // CARD-1836 S6 (CP-6, V-6, G-20..G-24): an Incremental cut reconciles the owed roster and never reaches the publisher.
@@ -717,7 +830,7 @@ internal sealed class ReleaseCutWorld : IDisposable
         return new ReleaseCutWorld(fixture, new ReleaseGateRemote(remote.Run, null, null), remote, new FakeGit(""), sha);
     }
 
-    public static ReleaseCutWorld Real(string prefix)
+    public static ReleaseCutWorld Real(string prefix, bool withNightlyLauncher = false)
     {
         var fixture = NightlyFixture.Create(prefix);
         try
@@ -732,11 +845,18 @@ internal sealed class ReleaseCutWorld : IDisposable
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 File.Copy(Path.Combine(NightlyPlanCases.Repo, file.Replace('/', Path.DirectorySeparatorChar)), target);
             }
+            if (withNightlyLauncher)
+            {
+                NightlyTestsWorld.CopyPolicyProjects(checkout);
+                File.WriteAllText(Path.Combine(checkout, "scripts", "nightly-run.ps1"), "# fixture nightly-run process boundary");
+            }
             NightlyRcChain.Git(checkout, "add", "--all");
             NightlyRcChain.Git(checkout, "-c", "user.name=release-cut", "-c", "user.email=release-cut@example.invalid", "-c", "commit.gpgsign=false",
                 "-c", "core.hooksPath=.git/no-hooks", "commit", "-qm", "fixture");
             var sha = NightlyRcChain.Git(checkout, "rev-parse", "HEAD").Trim();
             File.WriteAllText(Path.Combine(checkout, ReleaseCandidate.OwnedMarker), "{\"kind\":\"release-clone\"}");
+            if (withNightlyLauncher)
+                NightlyFixture.WriteJson(Path.Combine(checkout, ".antiphon-nightly-owned"), new { origin = fixture.PathOf("origin.git") });
             NightlyRcChain.Git(fixture.Root, "clone", "-q", "--bare", checkout, fixture.PathOf("origin.git"));
             NightlyRcChain.Git(checkout, "remote", "add", "origin", fixture.PathOf("origin.git"));
             var hostGit = new FakeGit("");

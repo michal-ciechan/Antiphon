@@ -130,6 +130,12 @@ param(
     [string]$ExpectedSha = '',
     [string]$CandidateId = '',
     [string]$ReleaseRoot = '',
+    [string]$RequestedSelectionMode = '',
+    [string]$IncrementalApprovalDigest = '',
+    [string]$IncrementalBaselineSha = '',
+    [string]$IncrementalInventoryPath = '',
+    [string]$IncrementalInventoryDigest = '',
+    [string]$IncrementalOwedDigest = '',
     [string]$CoordinationRoot = '',
     [string]$RunId = '',
     [string]$ContinueRunId = '',
@@ -210,6 +216,12 @@ if ($NoReport) { $arguments += '--no-report' }
 if ($NoSync) { $arguments += '--no-sync' }
 if ($AcceptCrossCandidateSeed) { $arguments += '--accept-cross-candidate-seed' }
 if ($WhatIf) { $arguments += '--what-if' }
+if (-not [string]::IsNullOrWhiteSpace($RequestedSelectionMode)) { $arguments += @('--requested-selection-mode', $RequestedSelectionMode) }
+if (-not [string]::IsNullOrWhiteSpace($IncrementalApprovalDigest)) { $arguments += @('--incremental-approval-digest', $IncrementalApprovalDigest) }
+if (-not [string]::IsNullOrWhiteSpace($IncrementalBaselineSha)) { $arguments += @('--incremental-baseline-sha', $IncrementalBaselineSha) }
+if (-not [string]::IsNullOrWhiteSpace($IncrementalInventoryPath)) { $arguments += @('--incremental-inventory-path', $IncrementalInventoryPath) }
+if (-not [string]::IsNullOrWhiteSpace($IncrementalInventoryDigest)) { $arguments += @('--incremental-inventory-digest', $IncrementalInventoryDigest) }
+if (-not [string]::IsNullOrWhiteSpace($IncrementalOwedDigest)) { $arguments += @('--incremental-owed-digest', $IncrementalOwedDigest) }
 
 # Always a result file: -PassThru reads it back, and its absence after exit 9 means the CLI never ran.
 $resultFile = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'antiphon-nightly-run-' + [guid]::NewGuid().ToString('N') + '.json')

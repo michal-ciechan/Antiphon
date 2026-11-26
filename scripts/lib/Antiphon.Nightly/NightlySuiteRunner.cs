@@ -69,6 +69,7 @@ namespace Antiphon.Nightly
         public double? BuildSeconds { get; set; }
 
         public bool ProfileAware { get; set; }
+        internal int ChunkReceiptVersion { get; set; }
 
         internal bool RequiresInvariantPrefix => Profile == "rc" && Platform == "windows";
 
@@ -495,6 +496,7 @@ namespace Antiphon.Nightly
                 StartedAt = s.StartedAt,
                 BuildSeconds = s.BuildSeconds,
                 ProfileAware = s.ProfileAware,
+                ChunkReceiptVersion = s.ChunkReceiptVersion,
                 ExpectedSkipRoster = s.ExpectedSkipRoster,
                 RcSkipRoster = s.RcSkipRoster,
                 ExplicitPhaseRoot = s.ExplicitPhaseRoot ?? Environment.GetEnvironmentVariable("ANTIPHON_TEST_PHASE_ROOT") ?? "",
