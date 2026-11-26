@@ -1225,6 +1225,32 @@ public class InstructionBundleTests
     }
 
     [Test]
+    public void C2086_Only_own_branch_Merge_can_absorb_one_master_advance()
+    {
+        var merge = InstructionBundleComposer.Compose(
+            InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Merge)).Text;
+        merge.ShouldContain("Only a Merge-role Worktree task integrating into master may absorb one master advance per attempt on its own assigned branch",
+            Case.Sensitive);
+        merge.ShouldContain("A second advance stops Blocked.", Case.Sensitive);
+        merge.ShouldContain("docs/orchestration-loop.md#merge-master-moves-card-2086", Case.Sensitive);
+
+        var procedure = C1011Read("docs/orchestration-loop.md");
+        var start = procedure.IndexOf("<a id=\"merge-master-moves-card-2086\"></a>", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = procedure.IndexOf("<a id=", start + 1, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        var text = Collapse(procedure[start..end]);
+        text.ShouldContain("Hold lands that touch a running Merge's area", Case.Sensitive);
+        text.ShouldContain("Honor pre-authorization in the Merge goal", Case.Sensitive);
+        text.ShouldContain("clean or reports only the pin, roster, and index paths listed below", Case.Sensitive);
+        text.ShouldContain("1. Recompute `policyHash`", Case.Sensitive);
+        text.ShouldContain("2. Recompute `PinnedInputDigest`", Case.Sensitive);
+        text.ShouldContain("3. Regenerate `tests/derived-impact-index.json`", Case.Sensitive);
+        text.ShouldContain("rerun `land-graph-audit --check` and the final-tree checks at the new tip", Case.Sensitive);
+        text.ShouldContain("A second advance in the same attempt stops Blocked", Case.Sensitive);
+    }
+
+    [Test]
     public void C1213_StageExceptionsRemain()
     {
         var fragment = InstructionFragments.Get(InstructionFragments.GitCommon);
