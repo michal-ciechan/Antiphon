@@ -27817,6 +27817,7 @@
       "classes": [
         "GitTreeTemplateTests",
         "LandNonCodeSkipTests",
+        "RunnerSettlementSyncTests",
         "TaskParkPublicationTests"
       ]
     },
