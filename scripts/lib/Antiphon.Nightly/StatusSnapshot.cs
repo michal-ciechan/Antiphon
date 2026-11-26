@@ -55,16 +55,18 @@ namespace Antiphon.Nightly
     public sealed class StatusSnapshotOptions
     {
         /// <summary>The CLI's usage line.</summary>
-        public const string Usage = "status-snapshot [--project-id <guid>] [--runner server2] [--json] [--rc-run-log-dir <dir>] [--rc-state-dir <dir>]"
-            + " [--rc-heartbeat-path <file>] [--repository <dir>]";
+        public const string Usage = "status [--project-id <guid>] [--runner <id>] [--json] [--rc-run-log-dir <dir>] [--rc-state-dir <dir>]"
+            + " [--rc-heartbeat-path <file>] [--rc-release-root <dir>] [--rc-previous-run-log-dir <dir>] [--repository <dir>]";
+
+        internal const string DesktopReleases = @"C:\Antiphon\releases";
 
         private static readonly Regex RunnerPattern = new Regex("^[A-Za-z0-9][A-Za-z0-9_.-]*$", RegexOptions.CultureInvariant);
 
         /// <summary>The project whose tasks are counted; empty: discovered from the pipeline.</summary>
         public string ProjectId { get; init; } = "";
 
-        /// <summary>The session runner whose slots are read.</summary>
-        public string Runner { get; init; } = "server2";
+        /// <summary>Restrict slot details to this runner. Empty uses the fleet catalogue.</summary>
+        public string Runner { get; init; } = "";
 
         /// <summary>One indented JSON document instead of the text lines.</summary>
         public bool Json { get; init; }
@@ -78,6 +80,12 @@ namespace Antiphon.Nightly
         /// <summary>The supervisor heartbeat (normally in the task directory); empty: not read.</summary>
         public string RcHeartbeatPath { get; init; } = "";
 
+        /// <summary>Release directory to search for omitted rc paths.</summary>
+        public string RcReleaseRoot { get; init; } = "";
+
+        /// <summary>Previous comparable run's log directory, if specified.</summary>
+        public string RcPreviousRunLogDir { get; init; } = "";
+
         /// <summary>The checkout whose git facts are read.</summary>
         public string Repository { get; init; } = "";
 
@@ -90,18 +98,20 @@ namespace Antiphon.Nightly
         /// <summary>The arguments after the command name; the API, the token and the default repository come from the CLI.</summary>
         public static StatusSnapshotOptions Parse(IReadOnlyList<string> arguments, string api, string taskToken, string defaultRepository)
         {
-            var flags = NightlyArgs.Parse(arguments, new[] { "--project-id", "--runner", "--rc-run-log-dir", "--rc-state-dir", "--rc-heartbeat-path", "--repository" }, new[] { "--json" });
-            var runner = flags.Value("--runner", "server2");
-            if (!RunnerPattern.IsMatch(runner ?? "")) throw new NightlyUsageException("--runner must match " + RunnerPattern + ", not '" + runner + "'");
+            var flags = NightlyArgs.Parse(arguments, new[] { "--project-id", "--runner", "--rc-run-log-dir", "--rc-state-dir", "--rc-heartbeat-path", "--rc-release-root", "--rc-previous-run-log-dir", "--repository" }, new[] { "--json" });
+            var runner = flags.Value("--runner", null);
+            if (runner != null && !RunnerPattern.IsMatch(runner)) throw new NightlyUsageException("--runner must match " + RunnerPattern + ", not '" + runner + "'");
             var repository = flags.Value("--repository", "");
             return new StatusSnapshotOptions
             {
                 ProjectId = flags.Value("--project-id", ""),
-                Runner = runner,
+                Runner = runner ?? "",
                 Json = flags.Switch("--json"),
                 RcRunLogDir = flags.Value("--rc-run-log-dir", ""),
                 RcStateDir = flags.Value("--rc-state-dir", ""),
                 RcHeartbeatPath = flags.Value("--rc-heartbeat-path", ""),
+                RcReleaseRoot = flags.Value("--rc-release-root", ""),
+                RcPreviousRunLogDir = flags.Value("--rc-previous-run-log-dir", ""),
                 Repository = string.IsNullOrWhiteSpace(repository) ? defaultRepository ?? "" : repository,
                 Api = (string.IsNullOrWhiteSpace(api) ? "http://localhost:17202" : api).TrimEnd('/'),
                 TaskToken = taskToken ?? "",
@@ -118,14 +128,14 @@ namespace Antiphon.Nightly
         /// <summary>Each request's and each git read's deadline.</summary>
         public static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
 
-        private static readonly Regex RefLine = new Regex(@"^([0-9a-f]{40,64})\s+(refs/heads/.+)$", RegexOptions.CultureInvariant);
+        private static readonly Regex RefLine = new Regex(@"^([0-9a-f]{40}(?:[0-9a-f]{24})?)\s+(refs/heads/(?:master|rc/.+))$", RegexOptions.CultureInvariant);
 
         /// <summary>
         /// The snapshot on host.Out: text lines (OBSERVED, TASKS, MASTER, one compact JSON line per fact, UNVERIFIED per problem)
         /// or, with --json, one indented document. http answers each GET (production: NightlyReport.HttpTransport with the
         /// 20 s deadline); git each git read (production: ReadGit). Exit 0 every fact read, 2 otherwise.
         /// </summary>
-        public static int Run(StatusSnapshotOptions options, NightlyHost host, IFileSystem files, NightlyReportHttp http, NightlyGit git)
+        public static int Run(StatusSnapshotOptions options, NightlyHost host, IFileSystem files, NightlyReportHttp http, NightlyGit git, bool operatorStatus = true)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
@@ -148,7 +158,15 @@ namespace Antiphon.Nightly
                         problems.Add("GET " + path + " unavailable (HTTP " + ((System.Net.HttpStatusCode)answer.Status).ToString() + ").");
                         return null;
                     }
-                    return string.IsNullOrWhiteSpace(answer.Body) ? null : JsonNode.Parse(answer.Body);
+                    // The current instructions route serves markdown. Older fixture and
+                    // compatibility responses can carry a JSON object.
+                    if (operatorStatus && path == "/api/orchestrator-instructions" && !string.IsNullOrWhiteSpace(answer.Body)
+                        && !answer.Body.TrimStart().StartsWith("{", StringComparison.Ordinal))
+                        return new JsonObject { ["markdown"] = answer.Body };
+                    var body = string.IsNullOrWhiteSpace(answer.Body) ? null : JsonNode.Parse(answer.Body);
+                    if (path == "/api/session-runners" ? body is JsonArray : body is JsonObject) return body;
+                    problems.Add("GET " + path + " unavailable (invalid response shape).");
+                    return null;
                 }
                 catch (JsonException)
                 {
@@ -187,11 +205,11 @@ namespace Antiphon.Nightly
             }
 
             var projectId = options.ProjectId;
+            var discovery = operatorStatus || string.IsNullOrWhiteSpace(projectId) ? Get("/api/agent-tasks/pipeline") : null;
             JsonNode pipeline = null;
             if (string.IsNullOrWhiteSpace(projectId))
             {
-                var discovery = Get("/api/agent-tasks/pipeline");
-                var projects = Items(discovery?["concurrencyScopes"]).Select(scope => Text(scope?["projectId"])).Where(id => !string.IsNullOrEmpty(id))
+                var projects = Items(Field(discovery, "concurrencyScopes")).Select(scope => Text(Field(scope, "projectId"))).Where(id => !string.IsNullOrEmpty(id))
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 if (projects.Length == 1) projectId = projects[0];
                 else problems.Add("Project cannot be resolved uniquely from pipeline; supply --project-id.");
@@ -209,29 +227,34 @@ namespace Antiphon.Nightly
                 var taskIds = new List<string>();
                 foreach (var stage in stages)
                 {
-                    var flying = Items(stage?["inFlight"]).ToArray();
-                    var waiting = Items(stage?["queued"]).ToArray();
-                    var held = Items(stage?["blocked"]).ToArray();
+                    var flying = Items(Field(stage, "inFlight")).ToArray();
+                    var waiting = Items(Field(stage, "queued")).ToArray();
+                    var held = Items(Field(stage, "blocked")).ToArray();
                     inFlight += flying.Length;
                     queued += waiting.Length;
                     blocked += held.Length;
-                    foreach (var row in flying.Concat(waiting).Concat(held))
-                        if (!string.IsNullOrEmpty(Text(row?["taskId"]))) taskIds.Add(Text(row["taskId"]));
-                    foreach (var row in Items(stage?["ready"]))
-                        if (!string.IsNullOrEmpty(Text(row?["sourcePlanTaskId"]))) taskIds.Add(Text(row["sourcePlanTaskId"]));
+                    if (!operatorStatus)
+                    {
+                        taskIds.AddRange(flying.Concat(waiting).Concat(held).Select(row => Text(Field(row, "taskId"))).Where(id => !string.IsNullOrEmpty(id)));
+                        taskIds.AddRange(Items(Field(stage, "ready")).Select(row => Text(Field(row, "sourcePlanTaskId"))).Where(id => !string.IsNullOrEmpty(id)));
+                    }
                 }
                 counts = new JsonObject { ["inFlight"] = inFlight, ["queued"] = queued, ["blocked"] = blocked };
                 foreach (var id in taskIds.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => id, StringComparer.OrdinalIgnoreCase))
                 {
-                    var detail = Get("/api/agent-tasks/" + Uri.EscapeDataString(id));
-                    if (detail != null) details.Add(detail);
+                    if (!operatorStatus)
+                    {
+                        var detail = Get("/api/agent-tasks/" + Uri.EscapeDataString(id));
+                        if (detail != null) details.Add(detail);
+                    }
                 }
             }
             else
             {
                 problems.Add("Scoped pipeline stages unavailable; task counts unknown.");
             }
-            var slots = Get("/api/session-runners/" + Uri.EscapeDataString(options.Runner) + "/slots");
+            var runner = !operatorStatus && string.IsNullOrEmpty(options.Runner) ? "server2" : options.Runner;
+            var slots = operatorStatus ? null : Get("/api/session-runners/" + Uri.EscapeDataString(runner) + "/slots");
             var instructions = Get("/api/orchestrator-instructions");
             var refs = Git("Remote master/rc refs", "ls-remote", "--heads", "origin", "refs/heads/master", "refs/heads/rc/*");
             string tip = null;
@@ -246,15 +269,18 @@ namespace Antiphon.Nightly
             if (tip == null) problems.Add("Remote master tip unknown.");
             var history = Git("Cached origin/master history", "log", "-8", "--format=%H%x09%s", "origin/master");
 
+            var now = new DateTimeOffset(host.UtcNow, TimeSpan.Zero);
             JsonObject rc = null;
-            if (!string.IsNullOrEmpty(options.RcRunLogDir) || !string.IsNullOrEmpty(options.RcStateDir) || !string.IsNullOrEmpty(options.RcHeartbeatPath))
+            if (operatorStatus)
+                rc = OperatorRcStatus.Read(options, files, now, problems);
+            else if (!string.IsNullOrEmpty(options.RcRunLogDir) || !string.IsNullOrEmpty(options.RcStateDir) || !string.IsNullOrEmpty(options.RcHeartbeatPath))
                 rc = RcFacts(options, host, files, problems, Fact);
 
             var snapshot = new JsonObject
             {
-                ["observedAtUtc"] = host.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                ["observedAtUtc"] = now.UtcDateTime.ToString("o", CultureInfo.InvariantCulture),
                 ["projectId"] = string.IsNullOrEmpty(projectId) ? null : projectId,
-                ["runner"] = options.Runner,
+                ["runner"] = Optional(runner),
                 ["counts"] = counts,
                 ["pipeline"] = pipeline,
                 ["taskDetails"] = details,
@@ -263,15 +289,25 @@ namespace Antiphon.Nightly
                 ["master"] = new JsonObject { ["tip"] = tip, ["cachedOriginMasterLog"] = history, ["historyIsCached"] = true },
                 ["rcRefs"] = rcRefs,
                 ["rc"] = rc,
-                ["errors"] = new JsonArray(problems.Select(problem => (JsonNode)problem).ToArray()),
             };
+            if (operatorStatus)
+            {
+                snapshot.Remove("taskDetails");
+                snapshot.Remove("slots");
+                OperatorFleetStatus.Read(snapshot, discovery, pipeline, runner, Get, problems);
+            }
+            snapshot["errors"] = new JsonArray(problems.Select(problem => (JsonNode)problem).ToArray());
             if (options.Json)
             {
                 host.Out.WriteLine(RcQualificationRecords.Indented(snapshot));
             }
+            else if (operatorStatus)
+            {
+                OperatorFleetStatus.Print(snapshot, host.Out, problems);
+            }
             else
             {
-                host.Out.WriteLine("OBSERVED " + (string)snapshot["observedAtUtc"] + " project=" + projectId + " runner=" + options.Runner);
+                host.Out.WriteLine("OBSERVED " + (string)snapshot["observedAtUtc"] + " project=" + projectId + " runner=" + runner);
                 host.Out.WriteLine(counts == null ? "TASKS counts unknown" : "TASKS inFlight=" + counts["inFlight"] + " queued=" + counts["queued"] + " blocked=" + counts["blocked"]);
                 host.Out.WriteLine("MASTER tip=" + tip + " (remote); history below is cached origin/master, fetch separately");
                 foreach (var key in new[] { "pipeline", "taskDetails", "slots", "orchestratorInstructions", "master", "rcRefs", "rc" })
@@ -357,6 +393,8 @@ namespace Antiphon.Nightly
         }
 
         private static JsonNode Optional(string text) => string.IsNullOrEmpty(text) ? null : JsonValue.Create(text);
+
+        private static JsonNode Field(JsonNode node, string key) => node is JsonObject obj ? obj[key] : null;
 
         // An array's items; one value as one item; nothing for null.
         private static IEnumerable<JsonNode> Items(JsonNode node) => node switch

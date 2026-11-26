@@ -12,6 +12,7 @@ public sealed class OperatorStatusTests
     private const string Project = "acacacac-1111-2222-3333-444444444444";
     private const string Code = "12345678-1111-2222-3333-444444444444";
     private const string Merge = "87654321-1111-2222-3333-444444444444";
+    private const string Repair = "bcdefa12-1111-2222-3333-444444444444";
     private const string Pin = "0123456789abcdef0123456789abcdef01234567";
     private static readonly DateTimeOffset Now = new(2026, 11, 26, 12, 0, 0, TimeSpan.Zero);
 
@@ -38,6 +39,10 @@ public sealed class OperatorStatusTests
         ((int)eta["finishedWithoutBaseline"]!).ShouldBe(1);
         ((string)eta["biggestRemaining"]![0]!["chunk"]!).ShouldBe("suite-b");
         ((string)rc["failures"]![0]!["testName"]!).ShouldBe("Fixture.Failed");
+        var fix = rc["failures"]![0]!["fixes"]![0]!;
+        ((string)fix["shortId"]!).ShouldBe("bcdefa12");
+        ((string)fix["landingPublication"]!).ShouldBe("Landed");
+        ((string)fix["landingRef"]!).ShouldBe("refs/heads/master");
         ((int)rc["trxCount"]!).ShouldBe(2);
         ((int)rc["scheduledEntries"]!).ShouldBe(4);
         ((string)rc["candidateId"]!).ShouldBe("rc-2026-12-06-0123456789ab");
@@ -54,6 +59,22 @@ public sealed class OperatorStatusTests
         world.Trx(world.Live, "suite-a", 30);
         File.WriteAllText(world.Heartbeat, "{incomplete");
         world.Run().ShouldSatisfyPartial();
+    }
+
+    [Test]
+    public void Release_layout_lookup_binds_the_state_and_heartbeat_to_the_full_run_id()
+    {
+        using var world = new Fixture();
+        world.Trx(world.Previous, "suite-a", 20);
+        world.Trx(world.Previous, "suite-b", 40);
+        world.Trx(world.Live, "suite-a", 30);
+        var (exit, report) = world.Run(autoDiscover: true);
+        exit.ShouldBe(0);
+        var rc = report["rc"]!;
+        ((string)rc["runId"]!).ShouldBe("1fe763a9-04c0-4136-a9ec-46c833a411d0");
+        ((string)rc["runLogDir"]!).ShouldBe(world.Live);
+        ((double)rc["heartbeatAgeSeconds"]!).ShouldBe(60);
+        ((double)rc["eta"]!["projectedRemainingSeconds"]!).ShouldBe(60);
     }
 
     [Test]
@@ -80,6 +101,7 @@ public sealed class OperatorStatusTests
     {
         private readonly string _root;
         private readonly string _state;
+        private const string RunId = "1fe763a9-04c0-4136-a9ec-46c833a411d0";
         public readonly string Previous;
         public readonly string Live;
         public readonly string Heartbeat;
@@ -89,19 +111,23 @@ public sealed class OperatorStatusTests
         {
             _root = Directory.CreateTempSubdirectory("c2087-status-").FullName;
             Previous = Path.Combine(_root, "candidates", "rc-2026-12-05-abcdefabcdef", "logs", "2026-11-25-1528-previous");
-            Live = Path.Combine(_root, "candidates", "rc-2026-12-06-0123456789ab", "logs", "2026-11-26-1100-live");
+            Live = Path.Combine(_root, "candidates", "rc-2026-12-06-0123456789ab", "logs", "2026-11-26-1100-1fe763a9");
             _state = Path.Combine(_root, "state-live");
             Heartbeat = Path.Combine(_root, "task-live", "supervisor-heartbeat.json");
             Directory.CreateDirectory(Live);
             Directory.CreateDirectory(_state);
             Directory.CreateDirectory(Path.GetDirectoryName(Heartbeat)!);
             File.WriteAllText(Path.Combine(Live, "dispatch-schedule.json"),
-                """{"runId":"2026-11-26-1100-live","entries":[{"suite":"suite","chunk":"a"},{"suite":"suite","chunk":"b"},{"suite":"suite","chunk":"newDone"},{"suite":"suite","chunk":"newWaiting"}]}""");
-            File.WriteAllText(Path.Combine(Live, "active-chunk.json"), """{"chunk":"b"}""");
-            File.WriteAllText(Path.Combine(_state, "last-run.json"), $$$"""
-                {"runId":"2026-11-26-1100-live","lane":"rc","profile":"Full","candidateId":"rc-2026-12-06-0123456789ab","expectedSha":"{{{Pin}}}","phase":"tests","startedAt":"2026-11-26T11:00:00Z"}
-                """);
-            File.WriteAllText(Path.Combine(Path.GetDirectoryName(Heartbeat)!, "supervisor-identity.json"), """{"runId":"2026-11-26-1100-live"}""");
+                $$$"""{"runId":"{{{RunId}}}","entries":[{"suite":"suite","chunk":"a"},{"suite":"suite","chunk":"b"},{"suite":"suite","chunk":"newDone"},{"suite":"suite","chunk":"newWaiting"}]}""");
+            var timing = Path.Combine(Path.GetDirectoryName(Live)!, "timing-" + RunId);
+            Directory.CreateDirectory(timing);
+            File.WriteAllText(Path.Combine(timing, "active-chunk.json"), $$$"""{"runId":"{{{RunId}}}","suite":"suite","chunk":"b","state":"Active"}""");
+            File.WriteAllText(Path.Combine(_state, "last-run.json"), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                runId = RunId, lane = "rc", profile = "rc", candidateId = "rc-2026-12-06-0123456789ab", expectedSha = Pin,
+                phase = "tests", startedAt = "2026-11-26T11:00:00Z", logDir = Live,
+            }));
+            File.WriteAllText(Path.Combine(Path.GetDirectoryName(Heartbeat)!, "supervisor-identity.json"), $$$"""{"runId":"{{{RunId}}}"}""");
             File.WriteAllText(Heartbeat, """{"observedAtUtc":"2026-11-26T11:59:00Z","idleMinutes":1,"hangSuspected":false}""");
         }
 
@@ -112,18 +138,19 @@ public sealed class OperatorStatusTests
                 : $"""<UnitTestResult outcome="Failed" testName="{failure}"/>""";
             File.WriteAllText(Path.Combine(directory, name + ".trx"), $"""
                 <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
-                  <Times finish="{Now.AddSeconds(seconds):O}" start="{Now:O}" />
+                  <Times finish="{Now.AddMinutes(-59).AddSeconds(seconds):O}" start="{Now.AddMinutes(-59):O}" />
                   <Results>{result}</Results>
                 </TestRun>
                 """);
         }
 
-        public (int Exit, JsonObject Report) Run(bool includeRc = true)
+        public (int Exit, JsonObject Report) Run(bool includeRc = true, bool autoDiscover = false)
         {
             using var output = new StringWriter();
             var host = QualificationEtaTests.Host(output, output, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now));
             var args = new List<string> { "--json", "--project-id", Project };
-            if (includeRc) args.AddRange(["--rc-run-log-dir", Live, "--rc-state-dir", _state, "--rc-heartbeat-path", Heartbeat]);
+            if (autoDiscover || !includeRc) args.AddRange(["--rc-release-root", autoDiscover ? _root : Path.Combine(_root, "absent")]);
+            else args.AddRange(["--rc-run-log-dir", Live, "--rc-state-dir", _state, "--rc-heartbeat-path", Heartbeat]);
             var options = StatusSnapshotOptions.Parse(args, "http://fixture", "synthetic-token", _root);
             var exit = StatusSnapshot.Run(options, host, new FileSystem(), Get, (_, gitArgs) =>
             {
@@ -135,7 +162,8 @@ public sealed class OperatorStatusTests
 
         private NightlyReportHttpResponse Get(string method, string url, IReadOnlyDictionary<string, string> headers, string? body)
         {
-            var path = new Uri(url).AbsolutePath;
+            var uri = new Uri(url);
+            var path = uri.AbsolutePath;
             Requests.Add(method + " " + path);
             return path switch
             {
@@ -146,18 +174,25 @@ public sealed class OperatorStatusTests
                     ],"concurrencyScopes":[],"hosts":[{"hostId":"fixture-host","effectiveLimit":3,"inFlight":1,"remaining":2}],
                     "runners":[{"runnerId":"fixture-host"}]}
                     """),
-                "/api/agent-tasks" => new(200, $$$"""
+                "/api/agent-tasks" when uri.Query == "?landPending=true" => new(200, $$$"""
                     {"items":[{"id":"{{{Code}}}","role":"Code","status":"Blocked","runnerId":"fixture-host","landRequestedAt":"2026-11-26T11:00:00Z"}]}
+                    """),
+                "/api/agent-tasks" when uri.Query.StartsWith("?since=", StringComparison.Ordinal) => new(200, $$$"""
+                    {"items":[{"id":"{{{Repair}}}","role":"Debug","status":"Succeeded","runnerId":"fixture-host","title":"rc failure: Fixture.Failed"}]}
+                    """),
+                "/api/agent-tasks/" + Repair => new(200, $$$"""
+                    {"summary":{"id":"{{{Repair}}}","role":"Debug","status":"Succeeded","runnerId":"fixture-host","title":"rc failure: Fixture.Failed"},
+                    "goal":"Repair Fixture.Failed in Windows run {{{RunId}}}.","landing":{"publication":"Landed","destinationRef":"refs/heads/master"}}
                     """),
                 "/api/agent-tasks/" + Code => new(200, $$$"""
                     {"summary":{"id":"{{{Code}}}","role":"Code","status":"Blocked","runnerId":"fixture-host","title":"Fixture code","cardIdentifier":"CARD-2087"},
                     "failureReason":"first line\nsecond line","nextStage":"Review","nextHandoff":"review the candidate",
-                    "result":"next: invalid","landRequest":{"state":"Queued","queuePosition":1}}
+                    "result":"next: invalid","landRequest":{"state":"Queued","requestedAt":"2026-11-26T11:00:00Z"}}
                     """),
                 "/api/agent-tasks/" + Merge => new(200, $$$"""
                     {"summary":{"id":"{{{Merge}}}","role":"Merge","status":"Working","runnerId":"fixture-host","title":"Fixture merge"}}
                     """),
-                "/api/orchestrator-instructions" => new(200, """{"content":"fixture"}"""),
+                "/api/orchestrator-instructions" => new(200, "## Live instructions\nFixture text."),
                 "/api/session-runners/fixture-host/slots" => new(200, """{"occupied":1,"declaredCapacity":3,"slots":[]}"""),
                 "/api/attention" => new(200, """{"items":[]}"""),
                 _ => new(404, "{}"),

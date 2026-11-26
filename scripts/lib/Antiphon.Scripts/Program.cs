@@ -92,6 +92,7 @@ namespace Antiphon.Scripts
             [QualificationStopCommand.Name] = QualificationStopCommand.Run,
             // The status snapshot answers every input itself: exit 0 every fact read, 2 partial facts or usage.
             [StatusSnapshotCommand.Name] = StatusSnapshotCommand.Run,
+            [StatusSnapshotCommand.LegacyName] = StatusSnapshotCommand.Run,
             // The live-lane gate catalog answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             ["live-lane-scan-gates"] = LiveLaneScanGates,
             // The live-lane roster, bindings and fixture answer every input themselves: exit 0 done (the roster: its
