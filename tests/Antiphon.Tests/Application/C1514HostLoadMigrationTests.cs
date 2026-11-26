@@ -50,7 +50,8 @@ public sealed class C1514HostLoadMigrationTests
     public void ChainIsLinearAndSnapshotMatchesModel()
     {
         using var db = Metadata();
-        AssertChain(db.Database.GetMigrations().ToArray());
+        // Read declared IDs before EF projects them into a dictionary keyed by ID.
+        AssertChain([.. TestMigrationFingerprint.Default.MigrationIds]);
         db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
     }
 
@@ -86,11 +87,10 @@ public sealed class C1514HostLoadMigrationTests
         chain[previous + 8].ShouldBe(ModelAlias, "requested-model-alias-follows-land-verification-failure");
         chain[previous + 9].ShouldBe(ReviewEngine, "review-engine-follows-requested-model-alias");
         chain[previous + 10].ShouldBe(CallerReportReceipt, "caller-report-receipt-follows-review-engine");
-        // CARD-2074: the tip is derived. Every later migration is newer than this window and
-        // linear, so the next card's migration needs no edit here.
+        // Strict ordinal increase from the window's last ID rejects duplicates and reversals.
         var later = chain.Skip(previous + 11).ToArray();
-        later.ShouldAllBe(id => string.CompareOrdinal(id, CallerReportReceipt) > 0, "later-migrations-are-newer-than-the-window");
-        later.ShouldBe(later.Order(StringComparer.Ordinal).ToArray(), "later-migrations-are-linear");
+        later.Prepend(CallerReportReceipt).Zip(later)
+            .ShouldAllBe(pair => string.CompareOrdinal(pair.First, pair.Second) < 0, "later-migrations-are-linear");
     }
 
     [Test]

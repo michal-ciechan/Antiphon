@@ -68,7 +68,8 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     {
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
-        AssertChain(db.Database.GetMigrations().ToArray());
+        // Read declared IDs before EF projects them into a dictionary keyed by ID.
+        AssertChain([.. TestMigrationFingerprint.Default.MigrationIds]);
         db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
     }
 
@@ -98,11 +99,10 @@ public sealed class C0824RefOnlySnapshotMigrationTests
         start.ShouldBeGreaterThan(0, "the debt migration follows its predecessor");
         chain[start - 1].ShouldBe(Previous, "linear-after-master-with-original-ids");
         chain.Skip(start).Take(window.Length).ShouldBe(window, "linear-after-master-with-original-ids");
-        // CARD-2074: the tip is derived. Every later migration is newer than this window and
-        // linear, so the next card's migration needs no edit here.
+        // Strict ordinal increase from the window's last ID rejects duplicates and reversals.
         var later = chain.Skip(start + window.Length).ToArray();
-        later.ShouldAllBe(id => string.CompareOrdinal(id, CallerReportReceipt) > 0, "later-migrations-are-newer-than-the-window");
-        later.ShouldBe(later.Order(StringComparer.Ordinal).ToArray(), "later-migrations-are-linear");
+        later.Prepend(CallerReportReceipt).Zip(later)
+            .ShouldAllBe(pair => string.CompareOrdinal(pair.First, pair.Second) < 0, "later-migrations-are-linear");
     }
 
     [Test]
