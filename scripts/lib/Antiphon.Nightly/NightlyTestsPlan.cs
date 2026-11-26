@@ -425,6 +425,9 @@ namespace Antiphon.Nightly
         private static object[] RepositoryInvariantLaunchPlan(object[] discovery, object[] declared, object exclusions,
             string suiteId, object policy, NightlyClassCosts costs)
         {
+            var suite = PsValue.Prop(PsValue.Prop(policy, "suites"), suiteId);
+            var project = Path.GetFileNameWithoutExtension(PsValue.Str(PsValue.Prop(suite, "project")));
+            if (string.IsNullOrEmpty(project)) throw new NightlyRefusal("repository-invariant-project-missing:" + suiteId);
             var all = discovery.GroupBy(node => NightlyCensus.BareClassIdentity(PsValue.Str(PsValue.Prop(node, "ClassName"))),
                 StringComparer.Ordinal).ToArray();
             var planned = new List<object>();
@@ -486,6 +489,7 @@ namespace Antiphon.Nightly
                         PsValue.AddMemberForce(chunk, "id", "invariant-" + PsValue.Str(PsValue.Prop(chunk, "id")));
                         PsValue.AddMemberForce(chunk, "repositoryInvariant", true);
                         PsValue.AddMemberForce(chunk, "alwaysDirty", true);
+                        PsValue.AddMemberForce(chunk, "invariantProject", project);
                         PsValue.AddMemberForce(chunk, "plannedInvariantUids", uids);
                     }
                     planned.Add(chunk);

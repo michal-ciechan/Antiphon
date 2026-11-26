@@ -252,29 +252,30 @@ namespace Antiphon.Nightly
         {
             var id = Identity(suite, chunk);
             var before = state.SuiteResults.Count;
+            var observed = Array.Empty<string>();
             try
             {
                 steps.RunChunk(suite, chunk);
                 if (state.SuiteResults.Count != before + 1)
                     throw new NightlyRefusal("repository-invariant-missing-result:" + id.Suite + "/" + id.Chunk);
                 var result = state.SuiteResults[before];
-                var planned = Each(PsValue.Prop(chunk, "plannedInvariantUids")).Select(PsValue.Str).Order(StringComparer.Ordinal).ToArray();
-                var actual = Each(PsValue.Prop(result, "observedInvariantUids")).Select(PsValue.Str).Order(StringComparer.Ordinal);
-                if (PsValue.Str(PsValue.Prop(result, "id")) != id.Suite || PsValue.Str(PsValue.Prop(result, "chunk")) != id.Chunk
-                    || PsValue.Str(PsValue.Prop(result, "result")) != "pass" || !PsValue.IsTrue(PsValue.Prop(result, "coverageComplete"))
-                    || planned.Length == 0 || !planned.SequenceEqual(actual, StringComparer.Ordinal))
+                if (PsValue.Str(PsValue.Prop(result, "id")) == id.Suite && PsValue.Str(PsValue.Prop(result, "chunk")) == id.Chunk)
+                    observed = InvariantUids(result, "observedInvariantUids");
+                var planned = InvariantUids(chunk, "plannedInvariantUids");
+                if (PsValue.Str(PsValue.Prop(result, "result")) != "pass" || !PsValue.IsTrue(PsValue.Prop(result, "coverageComplete"))
+                    || planned.Length == 0 || !planned.SequenceEqual(observed, StringComparer.Ordinal))
                     throw new NightlyRefusal("repository-invariant-failed:" + id.Suite + "/" + id.Chunk);
                 finished.Add(id);
             }
             catch (Exception ex)
             {
-                RecordIncompletePrefix(state, id, ex.Message, finished, selectedSuites);
+                RecordIncompletePrefix(state, id, ex.Message, finished, selectedSuites, observed);
                 throw;
             }
         }
 
         private static void RecordIncompletePrefix(NightlyRunState state, (string Suite, string Chunk) id, string detail,
-            HashSet<(string Suite, string Chunk)> finished, object[] selectedSuites)
+            HashSet<(string Suite, string Chunk)> finished, object[] selectedSuites, string[] observed = null)
         {
             state.TestsPassed = false;
             state.CoverageComplete = false;
@@ -284,15 +285,31 @@ namespace Antiphon.Nightly
             var prepared = Each(PsValue.Prop(state.DispatchSchedule, "PreparedSuites"))
                 .Select(s => PsValue.Str(PsValue.Prop(s, "id"))).ToHashSet(StringComparer.Ordinal);
             var outstanding = Each(PsValue.Prop(state.DispatchSchedule, "entries"))
-                .Select(entry => (Suite: PsValue.Str(PsValue.Prop(entry, "suite")), Chunk: PsValue.Str(PsValue.Prop(entry, "chunk"))))
-                .Where(key => !finished.Contains(key))
-                .Select(key => PsValue.Record(("suite", key.Suite), ("chunk", key.Chunk)))
+                .Select(entry => (Key: (Suite: PsValue.Str(PsValue.Prop(entry, "suite")), Chunk: PsValue.Str(PsValue.Prop(entry, "chunk"))),
+                    Chunk: PsValue.Prop(entry, "ChunkRef")))
+                .Where(entry => !finished.Contains(entry.Key))
+                .Select(entry =>
+                {
+                    var row = PsValue.Record(("suite", entry.Key.Suite), ("chunk", entry.Key.Chunk));
+                    if (NightlyTestsPlan.IsInvariantChunk(entry.Chunk))
+                    {
+                        var project = PsValue.Str(PsValue.Prop(entry.Chunk, "invariantProject"));
+                        var alreadyObserved = entry.Key == id ? observed ?? Array.Empty<string>() : Array.Empty<string>();
+                        var missing = InvariantUids(entry.Chunk, "plannedInvariantUids")
+                            .Except(alreadyObserved, StringComparer.Ordinal).Select(uid => project + "/" + uid).ToArray();
+                        PsValue.AddMemberForce(row, "missingUids", missing);
+                    }
+                    return row;
+                })
                 .Concat(selectedSuites.Select(PsValue.Str).Where(s => !prepared.Contains(s))
                     .Select(s => PsValue.Record(("suite", s), ("chunk", "discovery-pending")))).ToArray();
             PsValue.AddMemberForce(state.DispatchSchedule, "invariantPrefix",
                 PsValue.Record(("complete", false), ("suite", id.Suite), ("chunk", id.Chunk), ("detail", detail), ("outstanding", outstanding)));
             WriteBestEffort(state, state.DispatchSchedule);
         }
+
+        private static string[] InvariantUids(object record, string field) =>
+            Each(PsValue.Prop(record, field)).Select(PsValue.Str).Order(StringComparer.Ordinal).ToArray();
 
         // ---- helpers ---------------------------------------------------------------------------------------------
 
