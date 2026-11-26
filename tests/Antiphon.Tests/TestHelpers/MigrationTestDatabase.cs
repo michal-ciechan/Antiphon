@@ -22,7 +22,10 @@ internal static class MigrationTestDatabase
 
     /// <summary>Seeds task graphs at the reversible tip with that migration's AgentTask columns.</summary>
     public static AppDbContext CreateReversibleTipSeedContext(IsolatedTestSchema schema) =>
-        new ReversibleTipSeedDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        CreateReversibleTipSeedContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+
+    public static AppDbContext CreateReversibleTipSeedContext(DbContextOptions<AppDbContext> options) =>
+        new ReversibleTipSeedDbContext(options);
 
     private sealed class ReversibleTipSeedDbContext(DbContextOptions<AppDbContext> options) : AppDbContext(options)
     {
