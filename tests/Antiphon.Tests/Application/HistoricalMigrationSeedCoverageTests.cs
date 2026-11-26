@@ -88,42 +88,64 @@ public sealed class HistoricalMigrationSeedCoverageTests
     private static string[] DiscoverHistoricalMigrationTests()
     {
         var witness = typeof(HistoricalMigrationSeedCoverageTests);
-        return witness.Assembly.GetTypes()
+        var tests = witness.Assembly.GetTypes()
             .Where(type => type != witness)
             .SelectMany(type => type.GetMethods(DeclaredMethods))
-            .Where(method => method.IsDefined(typeof(TestAttribute)) && UsesHistoricalMigration(method))
-            .Select(method => $"{method.DeclaringType!.FullName}.{method.Name}")
+            .Where(method => method.IsDefined(typeof(TestAttribute)))
+            .ToArray();
+
+        // Scan each test or fixture body once, then follow incoming calls back to the tests.
+        var pending = new Queue<MethodBase>(tests);
+        var queued = tests.Select(test => test.MetadataToken).ToHashSet();
+        var callers = new Dictionary<int, List<int>>();
+        var historical = new HashSet<int>();
+        while (pending.TryDequeue(out var method))
+        {
+            foreach (var called in ReferencedMethods(method))
+            {
+                if (IsHistoricalMigrationCall(called))
+                {
+                    historical.Add(method.MetadataToken);
+                    continue;
+                }
+
+                if (called.Module != witness.Module)
+                    continue;
+
+                var token = called.MetadataToken;
+                if (!callers.TryGetValue(token, out var incoming))
+                    callers[token] = incoming = [];
+                incoming.Add(method.MetadataToken);
+                if (queued.Add(token))
+                    pending.Enqueue(called);
+            }
+        }
+
+        var historicalCalls = new Queue<int>(historical);
+        while (historicalCalls.TryDequeue(out var token))
+        {
+            if (!callers.TryGetValue(token, out var incoming))
+                continue;
+            foreach (var caller in incoming)
+                if (historical.Add(caller))
+                    historicalCalls.Enqueue(caller);
+        }
+
+        return tests.Where(test => historical.Contains(test.MetadataToken))
+            .Select(test => $"{test.DeclaringType!.FullName}.{test.Name}")
             .Order(StringComparer.Ordinal)
             .ToArray();
     }
 
-    private static bool UsesHistoricalMigration(MethodInfo test)
+    private static IEnumerable<MethodBase> ReferencedMethods(MethodBase method)
     {
-        var pending = new Stack<MethodBase>();
-        var seen = new HashSet<int>();
-        pending.Push(test);
-        while (pending.TryPop(out var method))
-        {
-            if (!seen.Add(method.MetadataToken))
-                continue;
+        if (method.GetCustomAttribute<StateMachineAttribute>() is { } stateMachine)
+            foreach (var stateMethod in stateMachine.StateMachineType.GetMethods(DeclaredMethods))
+                yield return stateMethod;
 
-            if (method.GetCustomAttribute<StateMachineAttribute>() is { } stateMachine)
-                foreach (var stateMethod in stateMachine.StateMachineType.GetMethods(DeclaredMethods))
-                    pending.Push(stateMethod);
-
-            if (method.GetMethodBody() is not { } body)
-                continue;
-
+        if (method.GetMethodBody() is { } body)
             foreach (var called in ProcessSpawnLimitTests.ReferencedMembers(method, body).OfType<MethodBase>())
-            {
-                if (IsHistoricalMigrationCall(called))
-                    return true;
-                if (called.Module == test.Module)
-                    pending.Push(called);
-            }
-        }
-
-        return false;
+                yield return called;
     }
 
     private static bool IsHistoricalMigrationCall(MethodBase method)
