@@ -518,7 +518,8 @@ public static class Program
                     System.Globalization.CultureInfo.InvariantCulture, out expectedRepeat))
                 expectedRepeat = 0;
             var raw = ReceiptFile.ReadStrictText(runtime.CleanupContext, path, runtime.CancellationToken);
-            var refusal = ReceiptQualification.Validate(raw, expected, rows, expectedRepeat, repo, runtime.CancellationToken);
+            var refusal = ReceiptQualification.Validate(raw, expected, rows, expectedRepeat, repo, runtime.CancellationToken,
+                requireWindowsHost: options.Has("require-windows-host"));
             if (refusal is not null) { output.WriteLine("CHECKPOINT SOURCE INVALID reason=" + refusal); return ExitCodes.Invalid; }
             var selected = rows.Length;
             if (selected == 0)

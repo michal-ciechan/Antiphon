@@ -217,18 +217,18 @@
     },
     {
       "path": "docs/orchestration-loop.md",
-      "classes": 194,
+      "classes": 195,
       "reason": "cap",
-      "owed": 169,
+      "owed": 170,
       "first": [
+        "AgentSupervisionTests",
         "AgentSystemPromptLaunchTests",
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
         "AgentTaskCheckSweepTests",
         "AgentTaskDeadSessionReconciliationTests",
         "AgentTaskDeliveryWatchdogTests",
-        "AgentTaskDispatchBaseGuardTests",
-        "AgentTaskDispatchFailureTests"
+        "AgentTaskDispatchBaseGuardTests"
       ]
     },
     {
@@ -3467,7 +3467,6 @@
         "AgentSessionCancelledTurnTests",
         "AgentSessionLaunchFailureTests",
         "AgentSessionServiceIntegrationTests",
-        "AgentSupervisionTests",
         "BlockedTaskParkProjectionTests",
         "BootStallDocumentationTests",
         "CheckpointManifestDocumentationTests",
@@ -3477,6 +3476,7 @@
         "InstructionFileStampInvariantTests",
         "InstructionFileStampTests",
         "MechanicalPcContractTests",
+        "MergeHighRadiusSubsetTests",
         "OrchestratorInstructionsGuidanceTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "PostLandMutationContractTests",

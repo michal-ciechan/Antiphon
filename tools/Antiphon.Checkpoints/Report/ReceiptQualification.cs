@@ -31,6 +31,7 @@ public static class ReceiptQualification
     private static readonly Regex NonWindowsHost = new(
         "^(?:Linux|Debian GNU/Linux|Ubuntu|Alpine Linux|Fedora Linux|Rocky Linux|AlmaLinux|CentOS Linux|CentOS Stream|Red Hat Enterprise Linux|Arch Linux|openSUSE Leap|openSUSE Tumbleweed|SUSE Linux Enterprise Server|Amazon Linux|Oracle Linux Server|NixOS|Gentoo Linux|Kali GNU/Linux|Darwin)(?: |$)",
         RegexOptions.CultureInvariant);
+    private static readonly Regex WindowsHost = new("^(?:Microsoft )?Windows(?: |$)", RegexOptions.CultureInvariant);
     private static readonly Regex RosterArray = new(@"internal static readonly Entry\[\] WindowsOnly\s*=\s*\[(.*?)\];",
         RegexOptions.CultureInvariant | RegexOptions.Singleline);
     private static readonly Regex RosterEntry = new(
@@ -46,7 +47,7 @@ public static class ReceiptQualification
     /// whose git answers the skip roster at expectedSha.
     /// </summary>
     public static string? Validate(string raw, string expectedSha, IReadOnlyList<string> rows, int expectedRepeat,
-        string repository, CancellationToken cancellationToken = default)
+        string repository, CancellationToken cancellationToken = default, bool requireWindowsHost = false)
     {
         if (!FullObjectId.IsMatch(expectedSha)) return "expected_sha_invalid";
         if (expectedRepeat < 1) return "expected_repeat_invalid";
@@ -58,9 +59,12 @@ public static class ReceiptQualification
         {
             var report = ReadReport(root, raw);
             if (report.Refusal is not null) return report.Refusal;
+            if (requireWindowsHost && !WindowsHost.IsMatch(report.Model.Host?.Os ?? ""))
+                return "receipt_host_not_windows";
             return ReportValidator.Validate(report.Model, expectedSha, rows, expectedRepeat,
                 row => PlacementSkips(report.Model, row, expectedSha, expectedRepeat, repository, cancellationToken));
         }
+        if (requireWindowsHost) return "receipt_host_not_windows";
         return Envelope(root, expectedSha, expectedRepeat);
     }
 
