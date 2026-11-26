@@ -7,6 +7,35 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class ReleaseImpactRelationTests
 {
+
+    [Test]
+    [Timeout(30_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributions()
+    {
+        const string project = "tests/T/T.csproj";
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
+        var sources = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [project] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+            [north] = "namespace North; public class Probe {}\n",
+            [south] = "namespace South; public class Probe {}\n",
+            [use] = "using North; namespace Cases; public class SpecTests { public void Check() { _ = typeof(Probe); } }\n",
+        };
+        var binding = fixture.Capture(sources, new Dictionary<string, string>(),
+            [new(project, "T", [north, south, use], [], [fixture.Core])]);
+        binding.Eligible.ShouldBeTrue("Q.fixture: " + binding.Reason);
+        var proof = ReleaseImpactGraphBuilder.BuildWithTypeProof(sources, binding);
+        TypePaths(proof.Conservative).ShouldBe([north, south], "Q.before");
+        TypePaths(proof.Refined).ShouldBe([north], "Q.unique");
+
+        static IEnumerable<string> TypePaths(ReleaseImpactGraph graph) => graph.Edges
+            .Where(edge => edge.Classes.Any(consumer => consumer.Project == project && consumer.FullName == "Cases.SpecTests"
+                && consumer.Kinds.Contains("type", StringComparer.Ordinal)))
+            .Select(edge => edge.Path);
+    }
     [Test]
     public void AllTwentySixConsumersSurvive()
     {

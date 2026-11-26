@@ -56,31 +56,40 @@ if (args.Length >= 4 && args[0] == "--release-graph")
         }
         if (position != batch.Length) throw new InvalidDataException("release graph blob payload trailing data");
 
-        var graph = ReleaseImpactGraphBuilder.Build(inputs);
         var unsupported = entries.Where(row => row.Mode is not ("100644" or "100755"))
-            .Select(row => "unsupported-git-entry:" + row.Path);
-        graph = graph with { IncompleteReasons = graph.IncompleteReasons.Concat(unsupported).Order(StringComparer.Ordinal).ToArray() };
+            .Select(row => "unsupported-git-entry:" + row.Path).ToArray();
         var inventory = string.Concat(entries.Select(row => row.Path + "\0" + row.Mode + "\0" + row.Blob + "\n"));
         var inventoryDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory)));
-        var legacy = new
+        var (graph, body) = provenSubtraction ? ProvenArtifact() : LegacyArtifact();
+        var artifact = ReleaseImpactGraphBuilder.Serialize(body);
+        (ReleaseImpactGraph Graph, object Body) LegacyArtifact()
         {
-            schema = "antiphon-release-graph-artifact-v1", sourceSha = sha,
-            inputManifestDigest = inventoryDigest,
-            inputs = entries, graph,
-        };
-        var artifact = ReleaseImpactGraphBuilder.Serialize(provenSubtraction ? ProvenArtifact() : legacy);
-        object ProvenArtifact()
+            var legacy = WithGitGaps(ReleaseImpactGraphBuilder.Build(inputs));
+            return (legacy, new
+            {
+                schema = "antiphon-release-graph-artifact-v1", sourceSha = sha,
+                inputManifestDigest = inventoryDigest, inputs = entries, graph = legacy,
+            });
+        }
+
+        (ReleaseImpactGraph Graph, object Body) ProvenArtifact()
         {
             var binding = ReleaseCompilerInputs.Bind(sha,
                 entries.Where(row => row.Mode is "100644" or "100755").ToDictionary(row => row.Path, row => row.Blob, StringComparer.Ordinal),
                 Path.GetFullPath(compilerManifest!), compilerManifestDigest!);
-            return new
+            var proof = ReleaseImpactGraphBuilder.BuildWithTypeProof(inputs, binding);
+            var refined = WithGitGaps(proof.Refined);
+            return (refined, new
             {
                 schema = "antiphon-release-graph-artifact-v2", sourceSha = sha, inputManifestDigest = inventoryDigest,
                 provenSubtraction = true, proofEligible = binding.Eligible, binding.Reason, binding.ManifestDigest,
-                inputs = entries, graph,
-            };
+                inputs = entries, graph = refined, conservative = WithGitGaps(proof.Conservative), typeSites = proof.Sites,
+            });
         }
+        ReleaseImpactGraph WithGitGaps(ReleaseImpactGraph value) => value with
+        {
+            IncompleteReasons = value.IncompleteReasons.Concat(unsupported).Order(StringComparer.Ordinal).ToArray(),
+        };
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         using (var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None)) stream.Write(artifact);
         Console.WriteLine($"release-impact graph incomplete/Full classes={graph.Universe.Length} paths={graph.Edges.Length} source={sha}");

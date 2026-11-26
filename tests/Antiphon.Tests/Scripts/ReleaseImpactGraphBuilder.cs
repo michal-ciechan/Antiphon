@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Antiphon.ReleaseSelection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -14,6 +15,13 @@ namespace Antiphon.Tests.Scripts;
 /// </summary>
 internal static class ReleaseImpactGraphBuilder
 {
+    internal static ReleaseImpactTypeProof BuildWithTypeProof(IReadOnlyDictionary<string, string> inputs, ReleaseCompilerBinding binding,
+        int maximumCandidates = 4096)
+    {
+        var conservative = Build(inputs) with { Schema = "antiphon-release-relation-v2" };
+        return new(conservative, conservative, [], binding.ManifestDigest);
+    }
+
     internal static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs)
     {
         var reasons = new SortedSet<string>(StringComparer.Ordinal)
@@ -155,3 +163,8 @@ internal sealed record ReleaseImpactConsumer(string Project, string FullName, st
 internal sealed record ReleaseImpactEdge(string Path, ReleaseImpactConsumer[] Classes);
 internal sealed record ReleaseImpactGraph(string Schema, bool Complete, string Fallback, string[] IncompleteReasons,
     ReleaseImpactClass[] Universe, ReleaseImpactEdge[] Edges);
+internal sealed record ReleaseImpactTypeOrigin(ReleaseImpactIdentity Consumer, string Source, int Start, int Length, string Name, string[] Candidates);
+internal sealed record ReleaseImpactTypeSite(ReleaseImpactTypeOrigin Origin, string SourceSha256, string ContextDigest,
+    string Rule, string? Assembly, string? MetadataName, string[] Winners, string[] Retained);
+internal sealed record ReleaseImpactTypeProof(ReleaseImpactGraph Conservative, ReleaseImpactGraph Refined,
+    ReleaseImpactTypeSite[] Sites, string? ManifestDigest);
