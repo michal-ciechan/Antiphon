@@ -66,6 +66,12 @@ internal static class ReleaseInputCommand
             {
                 var binding = ReleaseCompilerInputs.Bind(sha, before.ToDictionary(input => input.Path, input => input.Blob, StringComparer.Ordinal),
                     Path.GetFullPath(manifest, repo), options["--expected-compiler-manifest-sha256"]);
+                if (binding.Contexts.Any(bound =>
+                    bound.Input.Framework != options["--framework"] ||
+                    bound.Input.Configuration != options["--configuration"] ||
+                    bound.Input.Platform != options["--platform"] ||
+                    bound.Input.RuntimeIdentifier != options["--rid"]))
+                    binding = new("compiler-evaluation-target-mismatch", binding.ManifestDigest, []);
                 Console.WriteLine(JsonSerializer.Serialize(new
                 {
                     schema = "release-inputs-v2", proofEligible = binding.Eligible, binding.Reason, binding.ManifestDigest,
@@ -171,6 +177,7 @@ internal static class ReleaseInputCommand
         var start = new ProcessStartInfo("git") { WorkingDirectory = repo, RedirectStandardOutput = true,
             RedirectStandardError = true, UseShellExecute = false };
         foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" }) start.Environment.Remove(key);
+        start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
         foreach (var arg in args) start.ArgumentList.Add(arg);
         var watch = Stopwatch.StartNew();
         using var process = Process.Start(start) ?? throw new InvalidDataException("git-unavailable");

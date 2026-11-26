@@ -280,7 +280,7 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneEvidence.cs" Link="Scripts/LiveLaneEvidence.cs" />
-    <Compile Include="../../scripts/lib/ReleaseCompilerInputs.cs" Link="Scripts/ReleaseCompilerInputs.cs" />
+    <Compile Include="../../tools/Antiphon.LandGraphAudit/ReleaseCompilerInputs.cs" Link="Scripts/ReleaseCompilerInputs.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcTagBacking.cs" Link="Scripts/RcTagBacking.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcPort.cs" Link="Scripts/RcPort.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcShadowSample.cs" Link="Scripts/RcShadowSample.cs" />

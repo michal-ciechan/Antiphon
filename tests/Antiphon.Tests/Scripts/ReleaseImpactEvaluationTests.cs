@@ -28,7 +28,7 @@ public sealed class ReleaseImpactEvaluationTests
         const string generated = "tests/T/Gen.g.cs";
         var files = new Dictionary<string, string>
         {
-            [".gitignore"] = ".antiphon/selector-replay/\n",
+            [".gitignore"] = ".antiphon/selector-replay/\nobj/\n",
             [project] = """
                 <Project Sdk="Microsoft.NET.Sdk">
                   <PropertyGroup><TargetFramework>net9.0</TargetFramework><AssemblyName>T</AssemblyName>
@@ -46,7 +46,10 @@ public sealed class ReleaseImpactEvaluationTests
         var authority = repo.Full(outputRoot + "/authority");
         Directory.CreateDirectory(authority);
         var manifestPath = Path.Combine(authority, "manifest.json");
-        var reference = File.ReadAllBytes(typeof(object).Assembly.Location);
+        var corePath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        var dotnetRoot = Path.GetFullPath(Path.Combine(corePath, "..", "..", ".."));
+        var referencePack = LatestVersion(Path.Combine(dotnetRoot, "packs", "Microsoft.NETCore.App.Ref"), 9);
+        var reference = File.ReadAllBytes(Path.Combine(referencePack, "ref", "net9.0", "System.Runtime.dll"));
         var aliases = new[] { "global", "Core" };
         var referenceDigest = Store(reference);
         var sources = new[] { north, south, use }.Select(path =>
@@ -63,9 +66,7 @@ public sealed class ReleaseImpactEvaluationTests
         var context = new ReleaseCompilerContext(project, "T", "windows", "x64", "net9.0", "win-x64", "Release", "AnyCPU",
             "12", ["FAST"], "disable", false, false, "release", "library",
             [..sources, gen], [new ReleaseCompilerReference(referenceDigest, aliases, false)]);
-        var corePath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
-        var sdkRoot = Path.GetFullPath(Path.Combine(corePath, "..", "..", "..", "sdk"));
-        var sdk = Directory.EnumerateDirectories(sdkRoot).Order(StringComparer.Ordinal).Last();
+        var sdk = LatestVersion(Path.Combine(dotnetRoot, "sdk"), 10);
         var manifest = new ReleaseCompilerManifest("antiphon-release-compiler-inputs-v1", sha,
             Store(File.ReadAllBytes(Path.Combine(sdk, "dotnet.dll"))), HashFile(typeof(CSharpCompilation).Assembly.Location),
             HashFile(typeof(Compilation).Assembly.Location), [context]);
@@ -93,6 +94,114 @@ public sealed class ReleaseImpactEvaluationTests
         using var off = await GraphAsync("off");
         off.RootElement.GetProperty("schema").GetString().ShouldBe("antiphon-release-graph-artifact-v1", "I.off");
         off.RootElement.TryGetProperty("proofEligible", out _).ShouldBeFalse("I.off");
+        using var offWithInputs = await GraphAsync("off-with-inputs", manifestPath, expected, enabled: false);
+        offWithInputs.RootElement.GetRawText().ShouldBe(off.RootElement.GetRawText(), "I.off with a valid compiler pack");
+
+        var unboundAlias = Store(Encoding.UTF8.GetBytes("global using Chosen = South.Probe;\n"));
+        var validButDifferent = manifest with { Contexts = [context with { Sources = [..sources, gen with { Sha256 = unboundAlias }] }] };
+        var resealed = Write(validButDifferent);
+        var alternative = ReleaseCompilerInputs.Bind(sha, gitBlobs, manifestPath, resealed);
+        BoundAlias(alternative).ShouldBe("South.Probe", "I.authority alternative fixture must really bind");
+        using var untrustedGraph = await GraphAsync("untrusted", manifestPath, expected);
+        untrustedGraph.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeFalse("I.authority");
+        untrustedGraph.RootElement.GetProperty("reason").GetString().ShouldBe("compiler-manifest-digest-mismatch");
+        untrustedGraph.RootElement.GetProperty("graph").GetProperty("fallback").GetString().ShouldBe("Full");
+
+        (string Label, ReleaseCompilerManifest Manifest)[] proposals =
+        [
+            ("generated-receipt", manifest with { Contexts = [context with { Sources = sources }] }),
+            ("owner", manifest with { Contexts = [context with { Project = "tests/T/Missing.csproj" }] }),
+            ("reference-alias", manifest with { Contexts = [context with { References = [new(referenceDigest, ["global", "Alternative"], false)] }] }),
+            ("define", manifest with { Contexts = [context with { Defines = ["OTHER"] }] }),
+            ("language", manifest with { Contexts = [context with { LanguageVersion = "13" }] }),
+            ("sdk", manifest with { SdkSha256 = unboundAlias }),
+            ("compiler", manifest with { CompilerSha256 = unboundAlias }),
+            ("rid", manifest with { Contexts = [context with { RuntimeIdentifier = "linux-x64" }] }),
+            ("framework", manifest with { Contexts = [context with { Framework = "net10.0" }] }),
+            ("os", manifest with { Contexts = [context with { OperatingSystem = "linux" }] }),
+            ("architecture", manifest with { Contexts = [context with { Architecture = "arm64" }] }),
+            ("configuration", manifest with { Contexts = [context with { Configuration = "Debug" }] }),
+            ("platform", manifest with { Contexts = [context with { Platform = "x64" }] }),
+        ];
+        foreach (var (label, proposal) in proposals)
+        {
+            Write(proposal).ShouldNotBe(expected, $"I.context {label} fixture");
+            Denied(sha, expected, "compiler-manifest-digest-mismatch", $"I.context {label}");
+        }
+
+        Write(manifest).ShouldBe(expected);
+        var obj = repo.Full("tests/T/obj/Gen.g.cs");
+        Directory.CreateDirectory(Path.GetDirectoryName(obj)!);
+        await File.WriteAllBytesAsync(obj, generatorOutput, cancellationToken);
+        var payload = Path.Combine(authority, gen.Sha256);
+        File.Delete(payload);
+        Denied(sha, expected, "compiler-generated-source-unbound", "I.generated");
+        await File.WriteAllBytesAsync(payload, Encoding.UTF8.GetBytes("global using Chosen = South.Probe;\n"), cancellationToken);
+        Denied(sha, expected, "compiler-generated-source-unbound", "I.generated conflicting bytes");
+        Store(generatorOutput);
+        var referencePath = Path.Combine(authority, referenceDigest);
+        await File.WriteAllBytesAsync(referencePath, generatorOutput, cancellationToken);
+        Denied(sha, expected, "compiler-reference-unbound", "I.reference substituted bytes");
+        Store(reference);
+
+        var auditDirectory = Path.Combine(AppContext.BaseDirectory, "land-graph-audit");
+        // The net10.0 evaluator and net9.0 index driver resolve different binaries
+        // from the same Roslyn package. Pin the effective compiler for each capture.
+        var auditManifest = manifest with
+        {
+            CompilerSha256 = HashFile(Path.Combine(auditDirectory, "Microsoft.CodeAnalysis.CSharp.dll")),
+            CodeAnalysisSha256 = HashFile(Path.Combine(auditDirectory, "Microsoft.CodeAnalysis.dll")),
+        };
+        string[] evaluation = ["release-inputs", "--source", sha, "--framework", "net9.0",
+            "--configuration", "Release", "--platform", "AnyCPU", "--rid", "win-x64"];
+        var audit = await repo.RunToolAsync([..evaluation, "--compiler-manifest", manifestPath,
+            "--expected-compiler-manifest-sha256", Write(auditManifest)]);
+        audit.ExitCode.ShouldBe(0, audit.Text);
+        using var auditReceipt = Receipt(audit.StandardOutput);
+        auditReceipt.RootElement.GetProperty("schema").GetString().ShouldBe("release-inputs-v2");
+        auditReceipt.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeTrue("I.inputs");
+        auditReceipt.RootElement.GetProperty("fallback").GetString().ShouldBe("Full");
+        auditReceipt.RootElement.GetProperty("evaluation").GetProperty("sourceSha").GetString().ShouldBe(sha);
+        var legacyBytes = Encoding.UTF8.GetBytes(auditReceipt.RootElement.GetProperty("evaluation").GetRawText());
+        await File.WriteAllBytesAsync(manifestPath, legacyBytes, cancellationToken);
+        ReleaseCompilerInputs.Bind(sha, gitBlobs, manifestPath, Convert.ToHexStringLower(SHA256.HashData(legacyBytes)))
+            .Eligible.ShouldBeFalse("I.v1");
+
+        // Use distinct pinned commits and independently pinned manifest bytes. A
+        // valid request on either side cannot mask the mismatched twin.
+        using var repository = new LibGit2Sharp.Repository(repo.Root);
+        var marker = repo.Full("endpoint.txt");
+        await File.WriteAllTextAsync(marker, "candidate\n", cancellationToken);
+        LibGit2Sharp.Commands.Stage(repository, "endpoint.txt");
+        var who = new LibGit2Sharp.Signature("fixture", "fixture@antiphon.test", DateTimeOffset.UnixEpoch);
+        var candidate = repository.Commit("candidate", who, who).Sha;
+        Write(manifest).ShouldBe(expected);
+        Denied(candidate, expected, "compiler-source-mismatch", "I.context wrong A");
+        var candidateDigest = Write(validButDifferent with { SourceSha = candidate });
+        BoundAlias(ReleaseCompilerInputs.Bind(candidate, gitBlobs, manifestPath, candidateDigest))
+            .ShouldBe("South.Probe", "I.context valid A");
+        Denied(sha, candidateDigest, "compiler-source-mismatch", "I.context wrong B");
+
+        void Denied(string endpoint, string pin, string reason, string label)
+        {
+            var refusal = ReleaseCompilerInputs.Bind(endpoint, gitBlobs, manifestPath, pin);
+            refusal.Eligible.ShouldBeFalse(label);
+            refusal.Reason.ShouldBe(reason, label);
+        }
+
+        string BoundAlias(ReleaseCompilerBinding verified)
+        {
+            verified.Eligible.ShouldBeTrue(verified.Reason);
+            var compilation = verified.Contexts.Single().Compilation;
+            var tree = compilation.SyntaxTrees.Single(item => item.FilePath == use);
+            var node = tree.GetRoot(cancellationToken).DescendantNodes().OfType<TypeOfExpressionSyntax>().Single().Type;
+            return compilation.GetSemanticModel(tree).GetSymbolInfo(node, cancellationToken).Symbol!.ToDisplayString();
+        }
+
+        static string LatestVersion(string path, int major) => Directory.EnumerateDirectories(path)
+            .Select(directory => (Directory: directory, Version: Version.TryParse(Path.GetFileName(directory), out var version) ? version : null))
+            .Where(installed => installed.Version?.Major == major)
+            .MaxBy(installed => installed.Version).Directory;
 
         string Store(byte[] bytes)
         {
@@ -110,7 +219,7 @@ public sealed class ReleaseImpactEvaluationTests
             return Convert.ToHexStringLower(SHA256.HashData(bytes));
         }
 
-        async Task<JsonDocument> GraphAsync(string name, string? inputs = null, string? digest = null)
+        async Task<JsonDocument> GraphAsync(string name, string? inputs = null, string? digest = null, bool enabled = true)
         {
             var output = repo.Full(outputRoot + "/" + name + ".json");
             var driver = Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll");
@@ -121,8 +230,10 @@ public sealed class ReleaseImpactEvaluationTests
             };
             if (inputs is not null)
             {
-                start.ArgumentList.Add("--proven-subtraction");
+                if (enabled) start.ArgumentList.Add("--proven-subtraction");
+                start.ArgumentList.Add("--compiler-manifest");
                 start.ArgumentList.Add(inputs);
+                start.ArgumentList.Add("--expected-compiler-manifest-sha256");
                 start.ArgumentList.Add(digest!);
             }
             var clock = Stopwatch.StartNew();

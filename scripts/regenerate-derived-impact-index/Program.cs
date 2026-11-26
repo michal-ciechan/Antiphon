@@ -8,14 +8,15 @@ using System.Text.RegularExpressions;
 
 // Additive release-only artifact mode. Ordinary one-argument behavior below is unchanged.
 // Inputs come from an immutable commit, never from candidate working bytes or schema 1.
-if ((args.Length == 4 || args.Length == 7 && args[4] == "--proven-subtraction") && args[0] == "--release-graph")
+if (args.Length >= 4 && args[0] == "--release-graph")
 {
     try
     {
+        var (provenSubtraction, compilerManifest, compilerManifestDigest) = ProofOptions(args[4..]);
         var repository = Path.GetFullPath(args[1]);
         var sha = args[2];
         if (!Regex.IsMatch(sha, "\\A[0-9a-f]{40}\\z", RegexOptions.CultureInvariant)
-            || Text(Git(repository, ["rev-parse", "--verify", sha + "^{commit}"])).Trim() != sha)
+            || Text(Git(repository, ["rev-parse", "--verify", sha + "^{commit}"], pinObjects: provenSubtraction)).Trim() != sha)
             throw new ArgumentException("release graph requires an exact lowercase 40-hex commit SHA");
         var output = Path.GetFullPath(args[3]);
         var relativeOutput = Path.GetRelativePath(repository, output).Replace('\\', '/');
@@ -25,7 +26,7 @@ if ((args.Length == 4 || args.Length == 7 && args[4] == "--proven-subtraction") 
             throw new ArgumentException("release graph requires a fresh ignored .antiphon/selector-replay/*.json output");
         Git(repository, ["check-ignore", "--quiet", "--", relativeOutput]);
 
-        var entries = Text(Git(repository, ["ls-tree", "-r", "-z", "--full-tree", sha]))
+        var entries = Text(Git(repository, ["ls-tree", "-r", "-z", "--full-tree", sha], pinObjects: provenSubtraction))
             .Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(row =>
             {
                 var tab = row.IndexOf('\t');
@@ -35,7 +36,7 @@ if ((args.Length == 4 || args.Length == 7 && args[4] == "--proven-subtraction") 
         var sourceEntries = entries.Where(row => row.Mode is "100644" or "100755"
             && row.Path.EndsWith(".cs", StringComparison.Ordinal)).ToArray();
         byte[] batch = sourceEntries.Length == 0 ? [] : Git(repository, ["cat-file", "--batch"],
-            string.Join('\n', sourceEntries.Select(row => row.Blob)) + "\n");
+            string.Join('\n', sourceEntries.Select(row => row.Blob)) + "\n", pinObjects: provenSubtraction);
         var inputs = entries.Where(row => row.Mode is "100644" or "100755")
             .ToDictionary(row => row.Path, _ => "", StringComparer.Ordinal);
         var position = 0;
@@ -67,12 +68,12 @@ if ((args.Length == 4 || args.Length == 7 && args[4] == "--proven-subtraction") 
             inputManifestDigest = inventoryDigest,
             inputs = entries, graph,
         };
-        var artifact = ReleaseImpactGraphBuilder.Serialize(args.Length == 4 ? legacy : ProvenArtifact());
+        var artifact = ReleaseImpactGraphBuilder.Serialize(provenSubtraction ? ProvenArtifact() : legacy);
         object ProvenArtifact()
         {
             var binding = ReleaseCompilerInputs.Bind(sha,
                 entries.Where(row => row.Mode is "100644" or "100755").ToDictionary(row => row.Path, row => row.Blob, StringComparer.Ordinal),
-                Path.GetFullPath(args[5]), args[6]);
+                Path.GetFullPath(compilerManifest!), compilerManifestDigest!);
             return new
             {
                 schema = "antiphon-release-graph-artifact-v2", sourceSha = sha, inputManifestDigest = inventoryDigest,
@@ -94,7 +95,8 @@ if ((args.Length == 4 || args.Length == 7 && args[4] == "--proven-subtraction") 
 
 if (args.Length != 1 || string.IsNullOrWhiteSpace(args[0]))
 {
-    Console.Error.WriteLine("usage: Antiphon.DerivedImpactIndex <repo> | --release-graph <repo> <commit-sha> <fresh-ignored-json> [--proven-subtraction <manifest.json> <expected-manifest-sha256>]");
+    Console.Error.WriteLine("usage: Antiphon.DerivedImpactIndex <repo> | --release-graph <repo> <commit-sha> <fresh-ignored-json>"
+        + " [--proven-subtraction --compiler-manifest <manifest.json> --expected-compiler-manifest-sha256 <sha256>]");
     return 1;
 }
 
@@ -119,7 +121,30 @@ return 0;
 
 static string Text(byte[] bytes) => Encoding.UTF8.GetString(bytes);
 
-static byte[] Git(string root, string[] arguments, string? input = null)
+static (bool Enabled, string? Manifest, string? Digest) ProofOptions(string[] options)
+{
+    var enabled = false;
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    for (var i = 0; i < options.Length; i++)
+    {
+        var key = options[i];
+        if (key == "--proven-subtraction" && !enabled)
+        {
+            enabled = true;
+            continue;
+        }
+        if (key is not ("--compiler-manifest" or "--expected-compiler-manifest-sha256") || ++i >= options.Length
+            || string.IsNullOrWhiteSpace(options[i]) || !values.TryAdd(key, options[i]))
+            throw new ArgumentException("invalid release graph options");
+    }
+    var manifest = values.GetValueOrDefault("--compiler-manifest");
+    var digest = values.GetValueOrDefault("--expected-compiler-manifest-sha256");
+    if ((manifest is null) != (digest is null) || enabled && manifest is null)
+        throw new ArgumentException("release graph proof requires a compiler manifest and its independently pinned SHA-256");
+    return (enabled, manifest, digest);
+}
+
+static byte[] Git(string root, string[] arguments, string? input = null, bool pinObjects = false)
 {
     var start = new ProcessStartInfo("git")
     {
@@ -127,6 +152,7 @@ static byte[] Git(string root, string[] arguments, string? input = null)
         RedirectStandardInput = input is not null, UseShellExecute = false,
     };
     foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" }) start.Environment.Remove(key);
+    if (pinObjects) start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
     foreach (var argument in arguments) start.ArgumentList.Add(argument);
     var watch = Stopwatch.StartNew();
     using var process = Process.Start(start) ?? throw new InvalidOperationException("Git did not start");
