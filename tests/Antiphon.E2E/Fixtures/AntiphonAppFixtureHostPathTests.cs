@@ -28,9 +28,6 @@ public class AntiphonAppFixtureHostPathTests
     public async Task Every_windows_path_setting_resolves_inside_the_fixture_workspace()
     {
         var keys = WindowsPathKeys();
-        // The two the fixture inherited before CARD-1795; any new one must be overridden too.
-        keys.ShouldContain("Delegation:CheckInterpreterWorkingDirectory");
-        keys.ShouldContain("ZombieCensus:SessionLogPath");
 
         await using var boot = await BootAsync();
         var configuration = boot.Fixture.Services.GetRequiredService<IConfiguration>();
@@ -201,7 +198,7 @@ public class AntiphonAppFixtureHostPathTests
     }
 
     /// <summary>Every string value in server/appsettings.json that is a Windows absolute path.</summary>
-    private static List<string> WindowsPathKeys()
+    internal static List<string> WindowsPathKeys()
     {
         var path = Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), "server", "appsettings.json");
         using var document = JsonDocument.Parse(File.ReadAllText(path),
