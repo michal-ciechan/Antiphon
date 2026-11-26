@@ -22,6 +22,14 @@ namespace Antiphon.Tests.Invariants;
 public sealed class PlanCheckpointClassSelectionGuardTests
 {
     [Test]
+    public void Split_destinations_keep_the_retained_methods_execution_metadata()
+    {
+        var failures = RepositoryInvariantRosterAudit.CheckSplitExecutionMetadata(DockerStackDocuments.RepoRoot,
+            typeof(PlanCheckpointClassSelectionGuardTests).Assembly);
+        failures.ShouldBeEmpty(string.Join('\n', failures));
+    }
+
+    [Test]
     public void Deferred_roster_entries_require_compiled_owners_in_their_assembly()
     {
         var root = OwnedTempRoot.CreateOwned();

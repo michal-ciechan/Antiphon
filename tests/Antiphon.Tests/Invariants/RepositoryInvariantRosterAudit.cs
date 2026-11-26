@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Antiphon.Nightly;
 
@@ -73,4 +74,62 @@ internal static class RepositoryInvariantRosterAudit
 
     private static bool Invariant(LiveLaneNode test) =>
         test.Namespace.EndsWith(".Invariants", StringComparison.Ordinal) && Classified(test);
+
+    internal static IReadOnlyList<string> CheckSplitExecutionMetadata(string root, Assembly assembly)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, RosterPath)));
+        var roster = document.RootElement;
+        var statuses = roster.GetProperty("implementation");
+        var project = assembly.GetName().Name!;
+        var errors = new List<string>();
+        foreach (var section in new[] { roster, roster.GetProperty("earlierMixed") })
+        foreach (var fixture in section.GetProperty("fixtures").EnumerateArray())
+        {
+            if (fixture.GetProperty("assembly").GetString() != project)
+                continue;
+            var type = fixture.GetProperty("type").GetString()!;
+            foreach (var method in fixture.GetProperty("methods").EnumerateArray().Where(method => method[4].GetString() == "SPLIT"))
+            {
+                var original = type + "/" + method[0].GetString();
+                var disposition = statuses.GetProperty(project + "/" + original);
+                if (disposition.GetProperty("status").GetString() != "applied")
+                    continue;
+                var extracted = disposition.GetProperty("owner").GetString()!;
+                var before = Method(assembly, original);
+                var after = Method(assembly, extracted);
+                if (before is null || after is null)
+                {
+                    errors.Add($"{project}/{original} -> {extracted}: compiled SPLIT method missing");
+                    continue;
+                }
+                var missing = ExecutionAttributes(before).Except(ExecutionAttributes(after), StringComparer.Ordinal).ToArray();
+                if (missing.Length > 0)
+                    errors.Add($"{project}/{original} -> {extracted}: missing {string.Join(", ", missing)}");
+            }
+        }
+        return errors;
+    }
+
+    private static MethodInfo? Method(Assembly assembly, string owner)
+    {
+        var slash = owner.LastIndexOf('/');
+        return assembly.GetType(owner[..slash])?
+            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+            .SingleOrDefault(method => method.Name == owner[(slash + 1)..]
+                && method.CustomAttributes.Any(attribute => attribute.AttributeType.Name == "TestAttribute"));
+    }
+
+    private static IEnumerable<string> ExecutionAttributes(MethodInfo method)
+    {
+        var attributes = method.CustomAttributes.AsEnumerable();
+        for (var type = method.DeclaringType; type is not null; type = type.BaseType)
+            attributes = attributes.Concat(type.CustomAttributes);
+        return attributes.Where(attribute => attribute.AttributeType.Name.Split('`')[0] switch
+        {
+            "ParallelLimiterAttribute" or "NotInParallelAttribute" or "TimeoutAttribute" or "RetryAttribute"
+                or "DependsOnAttribute" or "RunOnAttribute" or "ParallelGroupAttribute" => true,
+            "CategoryAttribute" => attribute.ConstructorArguments.Any(argument => argument.Value as string == "Slow"),
+            _ => false,
+        }).Select(attribute => attribute.ToString());
+    }
 }
