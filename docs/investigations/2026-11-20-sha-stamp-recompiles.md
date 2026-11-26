@@ -125,7 +125,7 @@ The last column says when the reader needs a real stamp:
 | `GET /api/version` `version` | `server/Api/Endpoints/VersionEndpoints.cs:20-21` | 40-hex | Deploy |
 | restart-apphost exit 0/5 (equals source HEAD or `-ExpectedServerSha`) | `scripts/restart-apphost.ps1:391-397, 428-447`; `scripts/apphost-common.ps1:601-617` | 40-hex | Deploy (dev-aspire AppHost build) |
 | cutover restart `-ExpectedServerSha $RcTip` | `scripts/cutover-postgres-server2.ps1:432, 537-538` | 40-hex | Deploy |
-| restart-linux-server gate | `scripts/restart-linux-server.ps1:132, 146` | 40-hex | Deploy (Docker, `SOURCE_REVISION`) |
+| restart-linux-server gate | `scripts/restart-linux-server.ps1:132, 146` (deleted 2026-11-26, unit 64 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`: `LinuxServerRestart.IsSha` and `Identity`) | 40-hex | Deploy (Docker, `SOURCE_REVISION`) |
 | release-status running SHA to publication journal | `scripts/release-status.ps1:62` | 40-hex | Deploy |
 | delegate.ps1 bind-failure diagnosis ("served build X") | `scripts/delegate.ps1:567-590` | 7-hex for display | Deploy (advisory) |
 | Diagnostics bundle server/runner SHA | `server/Application/Services/DiagnosticsBundleService.cs:81, 93, 99` | any | Deploy (display) |

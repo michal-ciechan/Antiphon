@@ -178,7 +178,7 @@ AppHost start does **not** need it:
 | `install-autostart.ps1` starts compose without the skip flag | `scripts/install-autostart.ps1:93-161` | Re-running it would recreate an empty `antiphon-postgres` | Note only |
 | Messages only | `scripts/restart-apphost.ps1:156,284` ("preserving … antiphon-postgres") | None | Cosmetic |
 | IDE link | `.claude/settings.json:19` (`http://localhost:17280`) | Dead link | Cosmetic |
-| Refuse lists (protect the name) | `scripts/c590-remote.sh:9427`, `src/Antiphon.SessionRunner/RunnerRepositoryMaintenance.cs:320`, `scripts/server2-repository-mirrors.ps1:54`, `scripts/restart-linux-server.ps1:68` | None | Keep |
+| Refuse lists (protect the name) | `scripts/c590-remote.sh:9427`, `src/Antiphon.SessionRunner/RunnerRepositoryMaintenance.cs:320`, `scripts/server2-repository-mirrors.ps1:54`, `scripts/restart-linux-server.ps1:68` (deleted 2026-11-26, unit 64 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`: `LinuxServerRestart.ContainerAllowed`) | None | Keep |
 
 ## Teardown list the follow-up task may remove
 

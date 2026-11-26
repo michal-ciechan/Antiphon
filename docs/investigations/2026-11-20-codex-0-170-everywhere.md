@@ -64,7 +64,7 @@ The runner image is `antiphon-server2/session-testing:${SOURCE_SHA12}` (`docker-
 
 `scripts/deploy-server2.ps1` deploys the phone-home runner from a checkout that is not the host being mutated. It does not deploy the server or Postgres (`docs/docker-stack.md:1541-1550`). It requires `-Rolling` (`scripts/deploy-server2.ps1:13`). `-Phase` defaults to `all` and accepts `all`, `deploy-temp`, `drain-old`, `redeploy-old`, `drain-temp`, `retire-temp`, `check-census`, `check-host-jq`, `provision-host-jq` (`scripts/deploy-server2.ps1:15-16`). Never pass the default `all`. `ANTIPHON_API` is required; unset exits 2; there is no localhost default (`docs/docker-stack.md:1544-1546`). The script header says run it from the desktop, never on server2 (`scripts/deploy-server2.ps1:1`).
 
-This is already runner-only. It is not an in-place rebuild of the standing container, and it does not skip the CARD-0934 gates. `scripts/restart-linux-server.ps1` is the Linux server SHA gate. It refuses runner, Postgres, and gateway container names and does not deploy the runner (`docs/docker-stack.md:1520-1525`). Replacing the runner image belongs to the rolling phases.
+This is already runner-only. It is not an in-place rebuild of the standing container, and it does not skip the CARD-0934 gates. `scripts/restart-linux-server.ps1` is the Linux server SHA gate (since 2026-11-26, unit 64 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`, the command `scripts/antiphon restart-linux-server`). It refuses runner, Postgres, and gateway container names and does not deploy the runner (`docs/docker-stack.md:1520-1525`). Replacing the runner image belongs to the rolling phases.
 
 ### Sequence and stop gates
 

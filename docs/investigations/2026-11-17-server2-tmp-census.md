@@ -188,7 +188,7 @@ no held rollout**. The server reads `IOptionsMonitor<...>.CurrentValue` at the s
 - desktop AppHost server: edit `server/appsettings.Development.json` (hot reload, no restart), provided no `RunnerWorktreeRetention__TempSweep__*`
   environment variable shadows it (docs/docker-stack.md:1082 states the same rule for `Delegation`);
 - server2 server container (`antiphon-server2-server`): it has no reloadable settings file; the env var goes through its compose environment and needs a
-  server container recreate (`scripts/deploy-server2-server.ps1`), not a runner change.
+  server container recreate (`scripts/deploy-server2-server.ps1`; since 2026-11-26, unit 64 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`, the command `scripts/antiphon deploy-server2-server`), not a runner change.
 Which process is the live production server, and therefore which one runs the scheduled tick, is **UNOBSERVED** from the runner
 (`PhoneHome__ServerOrigin` and `ANTIPHON_API` are both `https://antiphon.desktop.codeperf.net`; `/api/version` = `29ba0c50`). The tick holds a
 database-wide advisory lock (CARD-1804), so a second server process with the sweep off just ticks without sweeping.

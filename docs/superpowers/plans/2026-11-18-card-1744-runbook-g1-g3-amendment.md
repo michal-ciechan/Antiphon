@@ -207,7 +207,7 @@ Preconditions, from the parent plan, confirmed by the operator:
 
 | Step | Where | Action | Pass | STOP |
 |---|---|---|---|---|
-| RH-0 | Host, operator | `deploy-server2-server.ps1 -WhatIf -EnvFile <prod env>` | Exit 0, plan line, no docker. The desktop-win keys are present (`deploy-server2-server.ps1:344-348`). | Any refusal: fix the env file. No downtime yet. |
+| RH-0 | Host, operator | `deploy-server2-server.ps1 -WhatIf -EnvFile <prod env>` (2026-11-26, unit 64 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`: `scripts/antiphon deploy-server2-server --what-if --env-file <prod env>`; the line numbers name the deleted script) | Exit 0, plan line, no docker. The desktop-win keys are present (`deploy-server2-server.ps1:344-348`). | Any refusal: fix the env file. No downtime yet. |
 | RH-1 | Desktop, operator | Parent 1.1 to 1.7. **Start the downtime clock.** | As the parent plan. | Parent STOP rules. Rollback is R-1, with no phase 2 prefix unless phase 2 was started. |
 | RH-2 | Host, operator | Parent 2.1, 2.2, and 2.4. Skip 2.3 when the host token file is already the desktop token (D-18, operator copy, no display). Skip 2.5 and 2.6. | `127.0.0.1:17400/health` is 200 within 2 minutes. Version equals the tip and advertises `land-v2`. The gate exits 0. The sidecar is listed linux and available. `desktop-win` and `server2` are listed. Unavailable is enough. | Any STOP: RB. |
 | RH-2b | Desktop through the host tunnel, operator | `PUT /api/api-keys/card-1744-rehearsal-probe` with a non-secret dummy value, then `GET /api/api-keys`, then `DELETE /api/api-keys/{id}`. | PUT 2xx, the name is listed, DELETE 2xx. | Protector not ready: RB, and fix P-10 before any window. Do not touch the real key or any project path. |
