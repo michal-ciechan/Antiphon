@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
@@ -198,22 +199,43 @@ public sealed class DerivedImpactIndexTests
     public async Task regenerate_command_reports_changed_then_unchanged()
     {
         using var fixture = new Fixture();
-        fixture.Add("tests/Antiphon.Tests/AddedTests.cs", "public sealed class AddedTests { public void T() { } }\n");
+        const string source = "tests/Antiphon.Tests/AddedTests.cs";
+        fixture.Add(source, "public sealed class AddedTests { public void T() { } }\n");
         fixture.Add("tests/derived-impact-index.json", "{}\n");
         fixture.Commit();
         var head = Git(fixture.Root, "rev-parse", "HEAD").Single();
+        var indexPath = IndexPath(fixture.Root);
+        var original = await File.ReadAllBytesAsync(indexPath);
+        var originalLink = Path.Combine(fixture.Root, "old-index.json");
+        if (OperatingSystem.IsWindows())
+            CreateHardLink(originalLink, indexPath, IntPtr.Zero).ShouldBeTrue(Marshal.GetLastPInvokeError().ToString());
+        else
+            Link(indexPath, originalLink).ShouldBe(0, Marshal.GetLastPInvokeError().ToString());
+
         var first = await RegenAsync(fixture.Root);
         first.Exit.ShouldBe(0, first.Text);
         AssertChanged(first.Stdout);
         Git(fixture.Root, "rev-parse", "HEAD").Single().ShouldBe(head);
-        var written = await File.ReadAllBytesAsync(IndexPath(fixture.Root));
-        written.ShouldNotBe(System.Text.Encoding.UTF8.GetBytes("{}\n"));
+        var written = await File.ReadAllBytesAsync(indexPath);
+        written.ShouldBe(DerivedImpactIndexBuilder.Build(fixture.Root).Utf8);
+        written.ShouldNotBe(original);
+        (await File.ReadAllBytesAsync(originalLink)).ShouldBe(original, "atomic replacement keeps the old file's bytes intact");
 
         var second = await RegenAsync(fixture.Root);
         second.Exit.ShouldBe(0, second.Text);
         AssertUnchanged(second.Stdout);
         Git(fixture.Root, "rev-parse", "HEAD").Single().ShouldBe(head);
-        (await File.ReadAllBytesAsync(IndexPath(fixture.Root))).ShouldBe(written);
+        (await File.ReadAllBytesAsync(indexPath)).ShouldBe(written);
+
+        // Git still lists the source, so the real builder fails before publication.
+        File.Delete(Path.Combine(fixture.Root, source));
+        var failed = await RegenAsync(fixture.Root);
+        failed.Exit.ShouldBe(1, failed.Text);
+        failed.Text.ShouldContain("derived-impact-index failed:", Case.Sensitive);
+        failed.Stdout.ShouldNotContain("derived-impact-index changed", Case.Sensitive);
+        failed.Stdout.ShouldNotContain("derived-impact-index unchanged", Case.Sensitive);
+        (await File.ReadAllBytesAsync(indexPath)).ShouldBe(written);
+        Directory.GetFiles(Path.GetDirectoryName(indexPath)!).ShouldBe([indexPath]);
 
         var mutant = first.Stdout.Replace(
             "derived-impact-index changed",
@@ -222,6 +244,13 @@ public sealed class DerivedImpactIndexTests
         mutant.ShouldNotBe(first.Stdout);
         Should.Throw<ShouldAssertException>(() => AssertChanged(mutant));
     }
+
+    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
+    private static extern int Link(string oldPath, string newPath);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string newPath, string oldPath, IntPtr reserved);
 
     // CARD-1838. The Merge process names the regenerate command as the last step before
     // DerivedImpactIndexTests and the push, and the Merge guard union names the two missed rows.
