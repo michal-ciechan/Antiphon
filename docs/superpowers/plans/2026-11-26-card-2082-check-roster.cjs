@@ -95,9 +95,86 @@ function checkEarlierMixed(mixed, census) {
     counts.MOVE + ' MOVE, ' + counts.SPLIT + ' SPLIT, ' + counts.STAY + ' STAY methods)');
 }
 
-function main(baseFile, integratedFile, mixedFile) {
+function checkImplementation(roster, caseFile, masterFile) {
+  assert(caseFile && masterFile, 'Pass candidate compiled cases JSON and the replay-base detector JSONL');
+  const cases = JSON.parse(fs.readFileSync(caseFile, 'utf8'));
+  const master = readCensus(masterFile);
+  const keyed = new Map();
+  const projectUids = new Set();
+  const projects = new Set();
+  for (const test of cases) {
+    const qualified = test.asm + '/' + test.uid;
+    assert(!projectUids.has(qualified), 'Duplicate discovered UID ' + qualified);
+    projectUids.add(qualified);
+    projects.add(test.asm);
+    const name = test.asm + '/' + test.ns + '.' + test.type + '/' + test.method;
+    if (!keyed.has(name)) keyed.set(name, []);
+    keyed.get(name).push(test);
+  }
+  const obligations = new Map();
+  for (const cohort of [roster, roster.earlierMixed]) {
+    for (const fixture of cohort.fixtures) {
+      for (const [method, , , , disposition] of fixture.methods) {
+        if (disposition === 'STAY') continue;
+        const key = fixture.assembly + '/' + fixture.type + '/' + method;
+        assert(!obligations.has(key), 'Duplicate roster method ' + key);
+        obligations.set(key, { project: fixture.assembly, disposition });
+      }
+    }
+  }
+  const statuses = roster.implementation;
+  assert(statuses && typeof statuses === 'object', 'Missing application statuses');
+  assert.deepEqual(Object.keys(statuses).sort(), [...obligations.keys()].sort(), 'Every MOVE and SPLIT needs a status');
+  const isInvariant = test => test.ns.endsWith('.Invariants') && test.cats.includes('RepositoryInvariant');
+  let applied = 0, deferred = 0;
+  for (const [key, { project, disposition }] of obligations) {
+    const entry = statuses[key];
+    assert(projects.has(project), 'Missing compiled project ' + project);
+    const original = keyed.get(key) ?? [];
+    if (entry.status === 'applied') {
+      const observed = keyed.get(project + '/' + entry.owner) ?? [];
+      assert(observed.length > 0 && observed.every(isInvariant), key + ' has no classified compiled invariant owner');
+      if (disposition === 'MOVE') {
+        assert(Array.isArray(entry.uids) && entry.uids.length > 0, key + ' requires the expanded MOVE UIDs');
+        assert.deepEqual(observed.map(test => test.uid).sort(), entry.uids.slice().sort(), key + ' expanded arguments');
+        assert(original.every(isInvariant), key + ' still compiles in an ordinary owner');
+      } else {
+        assert(Number.isInteger(entry.minCases) && entry.minCases > 0 && observed.length >= entry.minCases,
+          key + ' requires its extracted invariant cases');
+        assert(original.length > 0 && original.every(test => !test.cats.includes('RepositoryInvariant')),
+          key + ' lost its ordinary SPLIT cases');
+      }
+      applied++;
+    } else {
+      assert(entry.status === 'deferred' && entry.phase?.endsWith('/' + project) && entry.reason?.trim(),
+        key + ' needs a phase and reason');
+      assert(Array.isArray(entry.pendingOwners) && entry.pendingOwners.length > 0, key + ' needs the deferred owner candidates');
+      assert([...original, ...entry.pendingOwners.flatMap(owner => keyed.get(project + '/' + owner) ?? [])]
+        .every(test => !test.cats.includes('RepositoryInvariant')), key + ' is deferred but compiles as an invariant');
+      deferred++;
+    }
+  }
+  const liveProject = 'Antiphon.LiveClaude.Tests';
+  const liveMaster = [...master.values()].filter(row => row.key.startsWith(liveProject + '/'));
+  const liveRoster = roster.masterLiveClaude?.fixtures ?? [];
+  assert(liveMaster.length > 0, 'The replay-base detector omitted the live Claude project');
+  assert.deepEqual(liveRoster.map(row => row.key).sort(), liveMaster.map(row => row.key).sort(), 'Live Claude master inventory');
+  for (const row of liveRoster) {
+    assert(row.disposition === 'STAY' && row.reason?.trim(), row.key + ' requires dedicated-lane admission');
+    assert.deepEqual(row.methods.slice().sort(), master.get(row.key).methods.slice().sort(), row.key + ' method inventory');
+    for (const method of row.methods) {
+      const actual = keyed.get(row.key + '/' + method) ?? [];
+      assert(actual.length > 0 && actual.every(test => !test.cats.includes('RepositoryInvariant')),
+        row.key + '/' + method + ' is absent or entered the invariant lane');
+    }
+  }
+  console.log('compiled roster applied=' + applied + ' deferred=' + deferred + ' liveClaudeFixtures=' + liveRoster.length);
+}
+
+function main(baseFile, integratedFile, mixedFile, caseFile, masterFile) {
   assert(baseFile && integratedFile, 'Pass the inventory-pin and integrated-pin census JSONL files');
   const roster = JSON.parse(fs.readFileSync(prefix + 'candidate-roster.json'));
+  checkImplementation(roster, caseFile, masterFile);
   const original = readCensus(baseFile), integrated = readCensus(integratedFile);
   if (roster.earlierMixed) checkEarlierMixed(roster.earlierMixed, mixedFile && readCensus(mixedFile));
   const keys = new Set(originalCandidates());
