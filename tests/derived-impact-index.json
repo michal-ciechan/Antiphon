@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 369,
+      "classes": 370,
       "reason": "allowlist"
     },
     {
@@ -231,7 +231,7 @@
     },
     {
       "path": "global.json",
-      "classes": 39,
+      "classes": 40,
       "reason": "allowlist"
     },
     {
@@ -2120,9 +2120,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 147,
+      "classes": 148,
       "reason": "cap",
-      "owed": 122,
+      "owed": 123,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2232,9 +2232,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
         "NightlyRunTests",
         "RcFailureHistoryTests",
@@ -17300,6 +17300,12 @@
       "path": "server/Infrastructure/Verification/CheckpointReceiptValidator.cs",
       "classes": [
         "AdvisoryChangePolicyTests"
+      ]
+    },
+    {
+      "path": "server/Infrastructure/Verification/CheckpointValidatorCommand.cs",
+      "classes": [
+        "CheckpointValidatorCommandTests"
       ]
     },
     {
