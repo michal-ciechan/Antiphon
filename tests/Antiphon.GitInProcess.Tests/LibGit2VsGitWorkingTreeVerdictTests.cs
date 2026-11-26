@@ -13,10 +13,9 @@ namespace Antiphon.Tests.Infrastructure;
 /// <summary>
 /// <see cref="InProcessGitStatus"/> (libgit2) against the real git CLI for the working-tree questions the
 /// product asks: <c>git status</c> and <c>git ls-files</c> in the argument forms it actually runs (park,
-/// land inspection, land worktree, guarded removals, recovery checkout, worktree manager). Unlike
-/// <see cref="LibGit2VsGitDifferentialTests"/> this compares verdicts, not bytes: the clean/dirty answer
-/// and the path set for status and <c>ls-files --others</c>, and the (tag, path) list for
-/// <c>ls-files -v</c>. Each shape either agrees with git or falls back (null), and the shapes that must
+/// land inspection, land worktree, guarded removals, recovery checkout, worktree manager). This compares
+/// clean/dirty verdicts, path sets, <c>ls-files -v</c> tags, and the listing exit codes and stdout.
+/// Each shape either agrees with git or falls back (null), and the shapes that must
 /// stay with git are pinned as fallbacks. Real temp repositories, git on PATH, and git children isolated the
 /// way libgit2 is in this process (<see cref="LibGit2ConfigIsolation"/>), so both read only the repository's config.
 /// </summary>
@@ -49,7 +48,8 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     /// </summary>
     private enum Falls { None, Conversion, WorkTree, All, KnownRacyDivergence }
 
-    private sealed record Scenario(string Name, Func<Repo, Task> Arrange, Falls Fallback = Falls.None, bool Linked = false);
+    private sealed record Scenario(string Name, Func<Repo, Task> Arrange, Falls Fallback = Falls.None, bool Linked = false,
+        string? AllowedGitWarning = null);
 
     private static readonly Scenario[] Scenarios =
     [
@@ -361,9 +361,9 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
 
             var git = await Repo.RunGitAsync(r.Root, StatusForms[0].Args);
             git.ExitCode.ShouldBe(0, git.Error);
-            git.Error.Trim().ShouldBe(UnreadableDirectoryWarning);
+            git.Error.TrimEnd('\r', '\n').ShouldBe(UnreadableDirectoryWarning);
             git.Output.ShouldBe("?? visible.txt\0");
-        }),
+        }, AllowedGitWarning: UnreadableDirectoryWarning),
         // Shapes LibGit2Sharp cannot read the way git does: these must fall back.
         new("skip-worktree", async r => { await r.GitAsync("update-index", "--skip-worktree", "a.txt"); File.Delete(r.Full("a.txt")); }, Fallback: Falls.All),
         new("intent-to-add", async r => { await r.WriteAsync("ita.txt", "i\n"); await r.GitAsync("add", "-N", "ita.txt"); }, Fallback: Falls.All),
@@ -430,7 +430,8 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 break;
             }
             var git = await Repo.RunGitAsync(checkout, args);
-            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree or Falls.Conversion, "status " + form, mine, git, StatusPaths);
+            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree or Falls.Conversion,
+                "status " + form, mine, git, StatusPaths, scenario.AllowedGitWarning);
             var rows = InProcessGitStatus.StatusRows(checkout, untracked, ignored, childEnvironment: ChildEnvironment());
             if (rows is null != mine is null) mismatches.Add($"status {form}: rows {(rows is null ? "fell back" : "answered")}, paths did not");
             else if (rows is not null && mine is not null)
@@ -445,7 +446,8 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             var mine = InProcessGitStatus.OtherPaths(checkout, ignored);
             string[] args = ignored ? ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"] : ["ls-files", "--others", "--exclude-standard", "-z"];
             var git = await Repo.RunGitAsync(checkout, args);
-            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree, string.Join(' ', args), mine, git, Records);
+            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree,
+                string.Join(' ', args), mine, git, Records, scenario.AllowedGitWarning);
         }
         // Every listing a runner gets in process is git's bytes, clean or dirty (libgit2's codes, git's layout); the
         // shapes whose rows git prints differently fall back, and only those.
@@ -457,7 +459,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                     || (status && ListingFallbacks.Contains(name))
                     || (status && args.Contains("--ignored") && IgnoredListingFallbacks.Contains(name))
                     || (status && !args.Contains("-z") && args.Contains("--untracked-files=all") && UnquotedFallbacks.Contains(name));
-                await SameBytesAsync(mismatches, checkout, args, mine, falls);
+                await SameBytesAsync(mismatches, checkout, args, mine, falls, scenario.AllowedGitWarning);
             }
         {
             var mine = InProcessGitStatus.IndexTags(checkout);
@@ -531,8 +533,9 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     /// <summary>The tree listings LandingGit (recovery checkout) and GuardedWorktreeRemoval run.</summary>
     private static string[][] TreeForms(string oid) => [["ls-tree", "-r", "-z", oid], ["ls-tree", "-r", "-z", "--full-tree", oid]];
 
-    /// <summary>Exactly git's exit code and output, or null where <paramref name="fallback"/> says git must answer.</summary>
-    private static async Task SameBytesAsync(List<string> mismatches, string cwd, string[] args, LandingGitResult? mine, bool fallback)
+    /// <summary>Exactly git's exit code and stdout, or null where <paramref name="fallback"/> says git must answer.</summary>
+    private static async Task SameBytesAsync(List<string> mismatches, string cwd, string[] args, LandingGitResult? mine,
+        bool fallback, string? allowedGitWarning = null)
     {
         var what = string.Join(' ', args);
         if (fallback)
@@ -542,7 +545,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         }
         if (mine is null) { mismatches.Add(what + ": fell back"); return; }
         var git = await Repo.RunGitAsync(cwd, args);
-        if (git.ExitCode != 0 || git.Error.Length != 0) mismatches.Add($"{what}: git exit {git.ExitCode}: {git.Error.Trim()}");
+        CheckGitDiagnostics(mismatches, what, git, allowedGitWarning);
         if (mine.ExitCode != git.ExitCode || mine.Output != git.Output)
             mismatches.Add($"{what}: git [{git.ExitCode}] {Visible(git.Output)} in process [{mine.ExitCode}] {Visible(mine.Output)}");
     }
@@ -808,7 +811,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     }
 
     private static void Check(List<string> mismatches, bool fallback, string what, IReadOnlySet<string>? mine,
-        (int ExitCode, string Output, string Error) git, Func<string, IEnumerable<string>> parse)
+        (int ExitCode, string Output, string Error) git, Func<string, IEnumerable<string>> parse, string? allowedGitWarning)
     {
         if (fallback)
         {
@@ -816,18 +819,20 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             return;
         }
         if (mine is null) { mismatches.Add(what + ": fell back"); return; }
-        if (git.ExitCode != 0) { mismatches.Add($"{what}: git exit {git.ExitCode}: {git.Error.Trim()}"); return; }
+        CheckGitDiagnostics(mismatches, what, git, allowedGitWarning);
+        if (git.ExitCode != 0) return;
         var expected = parse(git.Output).ToHashSet(StringComparer.Ordinal);
         if (expected.Count == 0 != (mine.Count == 0))
             mismatches.Add($"{what}: VERDICT git {(expected.Count == 0 ? "clean" : "dirty")} libgit2 {(mine.Count == 0 ? "clean" : "dirty")}");
         if (!expected.SetEquals(mine))
             mismatches.Add($"{what}: paths git [{string.Join(", ", expected.Order())}] libgit2 [{string.Join(", ", mine.Order())}]");
-        // A directory git cannot open is only a warning: both skip it, and the in-process answer stands.
-        var warnings = git.Error.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(line => !(line.StartsWith("warning: could not open directory '", StringComparison.Ordinal)
-                && line.EndsWith("': Permission denied", StringComparison.Ordinal)))
-            .ToList();
-        if (warnings.Count != 0) mismatches.Add($"{what}: git warned: {string.Join(" | ", warnings)}");
+    }
+
+    private static void CheckGitDiagnostics(List<string> mismatches, string what,
+        (int ExitCode, string Output, string Error) git, string? allowedGitWarning)
+    {
+        if (git.ExitCode != 0 || (git.Error.Length != 0 && git.Error.TrimEnd('\r', '\n') != allowedGitWarning))
+            mismatches.Add($"{what}: git exit {git.ExitCode}: {git.Error.Trim()}");
     }
 
     private static IEnumerable<string> Records(string output) => output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
