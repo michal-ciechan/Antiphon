@@ -648,7 +648,13 @@ public sealed class Card2060PlacementHandshakeTests
             world.Attempt.Commit().ShouldNotBeNull();
         }
 
-        budget.ShouldBe(TimeSpan.FromSeconds(10));
+        budget.ShouldBe(TimeSpan.FromSeconds(16));
+        LinuxPlacementLaunch.ClampAtReceipt(long.MaxValue, 0).ShouldBe(deadline);
+        var delayedSend = 20 * Stopwatch.Frequency;
+        var cappedDeadline = LinuxPlacementLaunch.Stamp(0, delayedSend);
+        Stopwatch.GetElapsedTime(0, cappedDeadline).ShouldBe(TimeSpan.FromSeconds(29));
+        LinuxPlacementLaunch.ClampAtReceipt(cappedDeadline, delayedSend + Stopwatch.Frequency).ShouldBe(cappedDeadline);
+
         using (var world = HostAttemptWorld.Start(Environment.ProcessId, clock, budget))
         {
             using var ct = CancellationTokenSource.CreateLinkedTokenSource(bound.Token, world.Attempt.Token);
