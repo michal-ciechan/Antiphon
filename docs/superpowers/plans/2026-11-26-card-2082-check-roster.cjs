@@ -261,5 +261,13 @@ function main(baseFile, integratedFile, mixedFile, caseFile, masterFile, limitsF
     ' split assertion maps, ' + checkedNodes.size + ' historical case identities');
 }
 
-try { main(...process.argv.slice(2)); }
+try {
+  const args = process.argv.slice(2);
+  if (args[0] === '--compiled-only') {
+    const roster = JSON.parse(fs.readFileSync(prefix + 'candidate-roster.json'));
+    checkImplementation(roster, ...args.slice(1));
+  } else {
+    main(...args);
+  }
+}
 catch (error) { console.error(error.message); process.exitCode = 1; }
