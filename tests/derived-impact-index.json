@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 158,
+      "classes": 159,
       "reason": "cap",
-      "owed": 133,
+      "owed": 134,
       "first": [
         "CardFilePrivacyOwnershipTests",
         "CardFilePrivacyPersistenceTests",
@@ -2310,6 +2310,15 @@
         "AgentSessionLaunchQueueOwnershipTests",
         "AgentTaskAnswerTests",
         "AgentTaskReplyIntegrationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/C1514Support.cs",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "C1677TempFamilyRegistryTests"
       ]
     },
     {
@@ -26537,6 +26546,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactTypeProofFixture.cs",
       "classes": [
+        "RcProjectSelectionTests",
         "ReleaseImpactRelationTests"
       ]
     },
@@ -26908,7 +26918,6 @@
       "classes": [
         "AstraFixesBTests",
         "C1677RetentionSettingsTests",
-        "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
         "CallerWakeTests",
@@ -26923,6 +26932,7 @@
         "RcManifestJournalTests",
         "RcManifestRecoveryTests",
         "RcManifestScaleTests",
+        "RcProjectSelectionTests",
         "ReleaseAuthorityTests",
         "TestDurationTripwireTests",
         "TestPhaseSummaryTests",
@@ -29474,6 +29484,7 @@
         "ImpactedClassesCensusTests",
         "ImpactedClassesSelectorTests",
         "IncrementalSelectionSoundnessTests",
+        "LandGeneratedArtifactTests",
         "PostLandEarlyWarningTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests"

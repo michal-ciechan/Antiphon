@@ -102,17 +102,47 @@ public sealed class RcProjectSelectionTests
         }
 
         var off = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit);
+        off.Mode.ShouldBe("Scoped", "C.off project coverage");
         off.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.off");
         var proof = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
             candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
         var on = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof);
         on.Decisions.Select(decision => decision.Decision).ShouldBe(["carry", "execute"], "C.delta");
+        on.Proof.Removed.ShouldBe([new("A", south, "LeftTests"), new("B", south, "LeftTests")], "C.sides");
         Text(on.Of("left").Origin, "sha").ShouldBe(baseline, "C.origin");
         on.Of("right").Reasons.ShouldContain("project-closure:A:" + south, "C.right");
         var reader = new RcReaderCensusEntry { Reader = "L.LeftTests", Globs = [south] };
         var owed = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [reader], Admit, proof);
         owed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed");
         owed.Of("left").Reasons.ShouldContain("runtime-reader:" + south, "C.owed");
+        var missing = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [receipts[1]], [], Admit, proof);
+        missing.Of("left").Decision.ShouldBe("execute", "C.origin missing");
+        var dirty = new OrderedDictionary();
+        foreach (DictionaryEntry entry in receipts[0]) dirty[entry.Key] = entry.Value;
+        dirty["coverageComplete"] = false;
+        RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
+            .Of("left").Decision.ShouldBe("execute", "C.origin dirty");
+
+        chunks[0].CaseRoster = [new("wrong-assembly", "L.LeftTests", "M", "l1")];
+        RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof)
+            .Of("left").Decision.ShouldBe("execute", "C.roster assembly");
+        chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "wrong-case")];
+        RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof)
+            .Mode.ShouldBe("Full", "C.roster case");
+        chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "l1")];
+        RcChunkSelection.Select(repo.Root, baseline, baseline, chunks, receipts, [], Admit, proof)
+            .Mode.ShouldBe("Full", "C.stale endpoint");
+
+        var newPolicy = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
+            candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("changed-policy"));
+        newPolicy.Identity.ShouldNotBe(proof.Identity, "C.identity");
+        var replacement = repo.PathOf(".antiphon", "selector-replay", "resealed.json");
+        var proposed = File.ReadAllText(candidateArtifact.Path) + "\n";
+        File.WriteAllText(replacement, proposed);
+        Digest(proposed).ShouldNotBe(candidateArtifact.Digest, "C.reseal fixture");
+        Should.Throw<InvalidDataException>(() => RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest,
+            baseline, replacement, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("fixture-policy")),
+            "C.reseal independent artifact pin");
 
         async Task<(string Path, string Digest)> ProduceAsync(string sha, string label)
         {

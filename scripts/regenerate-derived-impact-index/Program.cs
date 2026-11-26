@@ -34,7 +34,8 @@ if (args.Length >= 4 && args[0] == "--release-graph")
                 return new { Path = row[(tab + 1)..], Mode = header[0], Blob = header[2] };
             }).OrderBy(row => row.Path, StringComparer.Ordinal).ToArray();
         var sourceEntries = entries.Where(row => row.Mode is "100644" or "100755"
-            && row.Path.EndsWith(".cs", StringComparison.Ordinal)).ToArray();
+            && (row.Path.EndsWith(".cs", StringComparison.Ordinal)
+                || provenSubtraction && row.Path == "tests/impacted-classes.json")).ToArray();
         byte[] batch = sourceEntries.Length == 0 ? [] : Git(repository, ["cat-file", "--batch"],
             string.Join('\n', sourceEntries.Select(row => row.Blob)) + "\n", pinObjects: provenSubtraction);
         var inputs = entries.Where(row => row.Mode is "100644" or "100755")
@@ -79,10 +80,18 @@ if (args.Length >= 4 && args[0] == "--release-graph")
                 Path.GetFullPath(compilerManifest!), compilerManifestDigest!);
             var proof = ReleaseImpactGraphBuilder.BuildWithTypeProof(inputs, binding);
             var refined = WithGitGaps(proof.Refined);
+            using var producer = File.OpenRead(typeof(ReleaseImpactGraphBuilder).Assembly.Location);
             return (refined, new
             {
                 schema = "antiphon-release-graph-artifact-v2", sourceSha = sha, inputManifestDigest = inventoryDigest,
                 provenSubtraction = true, proofEligible = binding.Eligible, binding.Reason, binding.ManifestDigest,
+                producerBinarySha256 = Convert.ToHexStringLower(SHA256.HashData(producer)),
+                compilerContexts = binding.Contexts.Select(bound => new
+                {
+                    bound.Input.Project, bound.Input.Assembly, bound.Input.OperatingSystem, bound.Input.Architecture,
+                    bound.Input.Framework, bound.Input.RuntimeIdentifier, bound.Input.Configuration, bound.Input.Platform,
+                }),
+                legacyReaders = DerivedImpactIndexBuilder.LegacyReaders(inputs),
                 inputs = entries, graph = refined, conservative = WithGitGaps(proof.Conservative), typeSites = proof.Sites,
             });
         }

@@ -73,84 +73,7 @@ internal static class DerivedImpactIndexBuilder
     internal static DerivedImpactIndex Build(string repoRoot)
     {
         var scans = ScanAll(repoRoot, out var tracked);
-        var bySimple = new Dictionary<string, List<Decl>>(StringComparer.Ordinal);
-        var filesByFull = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        var productionFiles = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var scan in scans)
-        {
-            foreach (var decl in scan.Decls)
-            {
-                if (!bySimple.TryGetValue(decl.Simple, out var same))
-                {
-                    same = [];
-                    bySimple[decl.Simple] = same;
-                }
-
-                same.Add(decl);
-                if (!filesByFull.TryGetValue(decl.Full, out var files))
-                {
-                    files = new HashSet<string>(StringComparer.Ordinal);
-                    filesByFull[decl.Full] = files;
-                }
-
-                files.Add(decl.File);
-                if (!decl.Production || decl.Full.IndexOf('.') < 0)
-                    continue;
-                if (!productionFiles.TryGetValue(decl.Full, out var produced))
-                {
-                    produced = [];
-                    productionFiles[decl.Full] = produced;
-                }
-
-                if (!produced.Contains(decl.File))
-                    produced.Add(decl.File);
-            }
-        }
-
-        var uniqueBySimple = UniqueSimpleNames(bySimple);
-        var productionNames = new HashSet<string>(productionFiles.Keys, StringComparer.Ordinal);
-        var hits = new Dictionary<string, Dictionary<string, Hit>>(StringComparer.Ordinal);
-        var hops = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        foreach (var scan in scans)
-        {
-            foreach (var use in scan.Idents)
-            {
-                if (!uniqueBySimple.TryGetValue(use.Text, out var decls))
-                    continue;
-                filesByFull.TryGetValue(use.TestFull, out var ownFiles);
-                var rank = use.Created ? RankSpecific : RankType;
-                foreach (var decl in decls)
-                {
-                    RememberHop(hops, use.TestSimple, decl.File);
-                    if (ownFiles is not null && ownFiles.Contains(decl.File))
-                        continue;
-                    AddHit(hits, decl.File, use.TestSimple, rank);
-                }
-            }
-
-            foreach (var use in scan.DirectStrings)
-                AddStringHits(hits, use.Text, use.TestSimple, tracked, productionFiles, productionNames);
-        }
-
-        var stringHitsByFile = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var scan in scans)
-        {
-            var found = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var text in scan.Strings)
-                CollectStringTargets(found, text, tracked, productionFiles, productionNames);
-            stringHitsByFile[scan.Path] = [.. found];
-        }
-
-        foreach (var hop in hops)
-        {
-            foreach (var file in hop.Value)
-            {
-                if (!stringHitsByFile.TryGetValue(file, out var targets))
-                    continue;
-                foreach (var target in targets)
-                    AddHit(hits, target, hop.Key, RankHop);
-            }
-        }
+        var hits = CollectHits(scans, tracked);
 
         var lanes = ClassifyLanes(scans, ReadOverrideNames(repoRoot));
         var windowsOnly = lanes.WindowsOnly;
@@ -302,18 +225,126 @@ internal static class DerivedImpactIndexBuilder
         return rows;
     }
 
+
+    internal static ReleaseLegacyReader[] LegacyReaders(IReadOnlyDictionary<string, string> inputs)
+    {
+        var readers = new HashSet<ReleaseLegacyReader>();
+        var paths = inputs.Keys.ToHashSet(StringComparer.Ordinal);
+        var scans = inputs.Where(pair => IsWalkedSource(pair.Key)).Select(pair => ScanText(pair.Key, pair.Value)).ToArray();
+        CollectHits(scans, paths, (path, name, kind) => readers.Add(new(path, name, kind)));
+        if (inputs.TryGetValue("tests/impacted-classes.json", out var hand) && hand.Length > 0)
+        {
+            foreach (var (path, names) in ReadHandClasses(hand, paths))
+                foreach (var name in names)
+                    readers.Add(new(path, name, "hand"));
+        }
+        return readers.OrderBy(reader => reader.Path, StringComparer.Ordinal).ThenBy(reader => reader.Class, StringComparer.Ordinal)
+            .ThenBy(reader => reader.Kind, StringComparer.Ordinal).ToArray();
+    }
+
+    private static Dictionary<string, Dictionary<string, Hit>> CollectHits(FileScan[] scans, HashSet<string> tracked,
+        Action<string, string, string>? reader = null)
+    {
+        var bySimple = new Dictionary<string, List<Decl>>(StringComparer.Ordinal);
+        var filesByFull = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var productionFiles = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var scan in scans)
+        {
+            foreach (var decl in scan.Decls)
+            {
+                if (!bySimple.TryGetValue(decl.Simple, out var same))
+                {
+                    same = [];
+                    bySimple[decl.Simple] = same;
+                }
+
+                same.Add(decl);
+                if (!filesByFull.TryGetValue(decl.Full, out var files))
+                {
+                    files = new HashSet<string>(StringComparer.Ordinal);
+                    filesByFull[decl.Full] = files;
+                }
+
+                files.Add(decl.File);
+                if (!decl.Production || decl.Full.IndexOf('.') < 0)
+                    continue;
+                if (!productionFiles.TryGetValue(decl.Full, out var produced))
+                {
+                    produced = [];
+                    productionFiles[decl.Full] = produced;
+                }
+
+                if (!produced.Contains(decl.File))
+                    produced.Add(decl.File);
+            }
+        }
+
+        var uniqueBySimple = UniqueSimpleNames(bySimple);
+        var productionNames = new HashSet<string>(productionFiles.Keys, StringComparer.Ordinal);
+        var hits = new Dictionary<string, Dictionary<string, Hit>>(StringComparer.Ordinal);
+        var hops = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var scan in scans)
+        {
+            foreach (var use in scan.Idents)
+            {
+                if (!uniqueBySimple.TryGetValue(use.Text, out var decls))
+                    continue;
+                filesByFull.TryGetValue(use.TestFull, out var ownFiles);
+                var rank = use.Created ? RankSpecific : RankType;
+                foreach (var decl in decls)
+                {
+                    RememberHop(hops, use.TestSimple, decl.File);
+                    if (ownFiles is not null && ownFiles.Contains(decl.File))
+                        continue;
+                    AddHit(hits, decl.File, use.TestSimple, rank);
+                }
+            }
+
+            foreach (var use in scan.DirectStrings)
+                AddStringHits(hits, use.Text, use.TestSimple, tracked, productionFiles, productionNames, reader);
+        }
+
+        var stringHitsByFile = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var scan in scans)
+        {
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var text in scan.Strings)
+                CollectStringTargets(found, text, tracked, productionFiles, productionNames);
+            stringHitsByFile[scan.Path] = [.. found];
+        }
+
+        foreach (var hop in hops)
+        {
+            foreach (var file in hop.Value)
+            {
+                if (!stringHitsByFile.TryGetValue(file, out var targets))
+                    continue;
+                foreach (var target in targets)
+                {
+                    AddHit(hits, target, hop.Key, RankHop);
+                    reader?.Invoke(target, hop.Key, "legacy-type-reader");
+                }
+            }
+        }
+        return hits;
+    }
+
     private static void AddStringHits(
         Dictionary<string, Dictionary<string, Hit>> hits,
         string raw,
         string testSimple,
         HashSet<string> tracked,
         Dictionary<string, List<string>> productionFiles,
-        HashSet<string> productionNames)
+        HashSet<string> productionNames,
+        Action<string, string, string>? reader)
     {
         var found = new HashSet<string>(StringComparer.Ordinal);
         CollectStringTargets(found, raw, tracked, productionFiles, productionNames);
         foreach (var path in found)
+        {
             AddHit(hits, path, testSimple, RankPath);
+            reader?.Invoke(path, testSimple, "legacy-literal-reader");
+        }
     }
 
     private static void CollectStringTargets(
@@ -384,11 +415,15 @@ internal static class DerivedImpactIndexBuilder
     // A hand row already selects its classes. Cap slots stay for classes the table does not name.
     private static Dictionary<string, HashSet<string>> HandClassesByPath(string repoRoot, IEnumerable<string> paths)
     {
-        var covered = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         var table = Path.Combine(repoRoot, "tests", "impacted-classes.json");
-        if (!File.Exists(table))
-            return covered;
-        using var document = JsonDocument.Parse(File.ReadAllText(table));
+        return File.Exists(table) ? ReadHandClasses(File.ReadAllText(table), paths)
+            : new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+    }
+
+    private static Dictionary<string, HashSet<string>> ReadHandClasses(string legacyTable, IEnumerable<string> paths)
+    {
+        var covered = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        using var document = JsonDocument.Parse(legacyTable);
         if (!document.RootElement.TryGetProperty("kinds", out var kinds) || kinds.ValueKind != JsonValueKind.Array)
             return covered;
         var matchers = new List<(Regex Pattern, string[] Classes)>();
@@ -1000,6 +1035,7 @@ internal static class DerivedImpactIndexBuilder
 internal readonly record struct CappedPath(string Path, int Classes, string Reason, int Owed, string[]? First);
 
 internal readonly record struct ImpactEdge(string Path, IReadOnlyList<string> Classes);
+internal readonly record struct ReleaseLegacyReader(string Path, string Class, string Kind);
 
 internal readonly record struct LaneSets(IReadOnlyList<string> WindowsOnly, IReadOnlyList<string> LinuxOnly);
 
