@@ -24,6 +24,8 @@ namespace Antiphon.Tests.Infrastructure;
 [ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class LibGit2VsGitWorkingTreeVerdictTests
 {
+    private const string UnreadableDirectoryWarning = "warning: could not open directory 'locked/': Permission denied";
+
     /// <summary>The status argument forms in product code, with the callers that run them.</summary>
     private static readonly (string Name, string[] Args, bool Untracked, bool Ignored)[] StatusForms =
     [
@@ -343,6 +345,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             // git warns "could not open directory" and lists nothing under it; libgit2 skips it the same way, so
             // the answer is libgit2's and git is not asked (a warning, not a failure).
             await r.WriteAsync("locked/inside.txt", "x\n");
+            await r.WriteAsync("visible.txt", "x\n");
             if (OperatingSystem.IsWindows())
             {
                 var user = Environment.UserDomainName + "\\" + Environment.UserName;
@@ -354,7 +357,12 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             // while git is refused (measured 2026-11-19: elevated pwsh 7 lists it, the same pwsh with the
             // Administrators group filtered out is refused), so the two listings legitimately differ there.
             if (DirectoryListable(r.Full("locked")))
-                Skip.Test("the locked directory is still listable by this process (an elevated administrator on Windows), so the scenario cannot arise");
+                Skip.Test("the locked directory is still listable by this process, such as under an elevated Windows or root Linux account");
+
+            var git = await Repo.RunGitAsync(r.Root, StatusForms[0].Args);
+            git.ExitCode.ShouldBe(0, git.Error);
+            git.Error.Trim().ShouldBe(UnreadableDirectoryWarning);
+            git.Output.ShouldBe("?? visible.txt\0");
         }),
         // Shapes LibGit2Sharp cannot read the way git does: these must fall back.
         new("skip-worktree", async r => { await r.GitAsync("update-index", "--skip-worktree", "a.txt"); File.Delete(r.Full("a.txt")); }, Fallback: Falls.All),
@@ -1146,6 +1154,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 StandardOutputEncoding = new UTF8Encoding(false), StandardErrorEncoding = new UTF8Encoding(false),
             };
+            start.Environment["LC_ALL"] = "C"; // Compare git diagnostics in a stable locale.
             if (isolated) foreach (var (name, value) in Isolation) start.Environment[name] = value;
             foreach (var a in args) start.ArgumentList.Add(a);
             using var p = Process.Start(start)!;
