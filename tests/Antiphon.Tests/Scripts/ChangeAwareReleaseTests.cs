@@ -86,9 +86,9 @@ public sealed class ChangeAwareReleaseTests
                 && cut.ExitCode == 0 && cut.Tested
                 && run is { SelectionMode: "Full", RequestedSelectionMode: "", IncrementalApprovalDigest: "" }
                 && File.Exists(run.SelectionAttemptPath)
-                && cut.Selection is IDictionary selection && Field(selection, "requestedMode") == "Full"
-                && Field(selection, "effectiveMode") == "Full" && Field(selection, "coverageScope") == "Full"
-                && selection["executionEvidence"] is false,
+                && cut.Selection is IDictionary attempt && Field(attempt, "requestedMode") == "Full"
+                && Field(attempt, "effectiveMode") == "Full" && Field(attempt, "coverageScope") == "Full"
+                && File.Exists(run.SelectionPath) && ReadJson(run.SelectionPath)["executionEvidence"] is false,
                 "C1313 default-full", $"parsed={options.SelectionMode} cut={cut.ExitCode}/{cut.Refusal} run={run?.SelectionMode}/{run?.RequestedSelectionMode}");
         }
 
