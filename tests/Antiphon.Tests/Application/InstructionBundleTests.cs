@@ -1150,11 +1150,11 @@ public class InstructionBundleTests
     [
         ("contract-assigned-branch", "- Use only the assigned branch (feat/card-<n>-<stage>-<8hex> or legacy feat/card-task-<8hex>); never create, rename or switch branches."),
         ("contract-commit-push", "- Commit each slice with its real outcome; push after every commit with `git push origin HEAD:refs/heads/<branch>`. Report full 40-hex SHAs."),
-        ("contract-no-target-merge", "- Never merge the target into the task branch outside the CARD-2086 exception. Only a Merge-role Worktree task integrating into master may absorb one master advance per attempt on its own assigned branch."),
-        ("contract-no-rewrite", "- Never rebase, amend, reset or force-push a pushed commit; landing rebases."),
+        ("contract-no-target-merge", "- Merge the target only as Merge, once per attempt under CARD-2086 (docs/orchestration-loop.md)."),
+        ("contract-no-rewrite", "Never rebase, amend, reset or force-push a pushed commit; landing rebases."),
         ("contract-test-first", "- Commit the failing test before its fix, and commit before any long test run, even as WIP."),
         ("contract-review-freeze", "- A branch under Review is frozen for everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch."),
-        ("contract-merge-tree", "- Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts. Report the final result."),
+        ("contract-merge-tree", "- Report `git merge-tree --write-tree origin/master HEAD` after `git fetch origin master`. Require clean."),
         ("contract-push-retry", "- On a push `error in commit_refs`: wait, `git fetch`, check the tip with `git ls-remote`, retry at most three times; never force."),
         ("contract-evidence-custody", "- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/antiphon evidence-diff --base <base>."),
     ];
@@ -1231,10 +1231,8 @@ public class InstructionBundleTests
     {
         var merge = InstructionBundleComposer.Compose(
             InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Merge)).Text;
-        merge.ShouldContain("Only a Merge-role Worktree task integrating into master may absorb one master advance per attempt on its own assigned branch",
+        merge.ShouldContain("Merge the target only as Merge, once per attempt under CARD-2086 (docs/orchestration-loop.md).",
             Case.Sensitive);
-        merge.ShouldContain("A second advance stops Blocked.", Case.Sensitive);
-        merge.ShouldContain("docs/orchestration-loop.md#merge-master-moves-card-2086", Case.Sensitive);
 
         var procedure = C1011Read("docs/orchestration-loop.md");
         var start = procedure.IndexOf("<a id=\"merge-master-moves-card-2086\"></a>", StringComparison.Ordinal);
@@ -1242,6 +1240,8 @@ public class InstructionBundleTests
         var end = procedure.IndexOf("<a id=", start + 1, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(start);
         var text = Collapse(procedure[start..end]);
+        text.ShouldContain("A Merge-role Worktree task integrating into master may merge the updated `origin/master` into its own assigned branch once per attempt.",
+            Case.Sensitive);
         text.ShouldContain("Hold lands that touch a running Merge's area", Case.Sensitive);
         text.ShouldContain("Honor pre-authorization in the Merge goal", Case.Sensitive);
         text.ShouldContain("clean or reports only the pin, roster, and index paths listed below", Case.Sensitive);
