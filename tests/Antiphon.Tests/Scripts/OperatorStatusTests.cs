@@ -127,7 +127,7 @@ public sealed class OperatorStatusTests
             var options = StatusSnapshotOptions.Parse(args, "http://fixture", "synthetic-token", _root);
             var exit = StatusSnapshot.Run(options, host, new FileSystem(), Get, (_, gitArgs) =>
             {
-                gitArgs.ShouldContain(arg => arg is "ls-remote" or "log");
+                gitArgs.ShouldContain(arg => arg == "ls-remote" || arg == "log");
                 return new NightlyGitResult(0, gitArgs.Contains("ls-remote") ? Pin + "\trefs/heads/master" : Pin + "\tfixture");
             });
             return (exit, JsonNode.Parse(output.ToString())!.AsObject());
