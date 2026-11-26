@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.PtyHost.Protocol;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Hosting;
@@ -356,6 +358,57 @@ public class PhoneHomeCommandDispatcherTests
 
         frame.Kind.ShouldBe(PhoneHomeFrameKind.Result);
         runtime.Mutations.ShouldContain("start");
+    }
+
+    [Test]
+    public async Task Unrelated_slot_release_does_not_wait_for_stuck_linux_placement()
+    {
+        var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
+        var dispatcher = Dispatcher(runtime, capacity: 2);
+        var other = Request("grok", "/work");
+        (await dispatcher.DispatchAsync(Launch(other), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.MarkExited(other.SessionId, 0, "test done");
+
+        var tracked = TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = new CancellationTokenSource();
+        runtime.BeforeStart = async () =>
+        {
+            // Model a silent stage from the runtime's placement wait, using the production cutoff.
+            var stamp = LinuxPlacementLaunch.Stamp(0, 0);
+            var budget = Stopwatch.GetElapsedTime(0, LinuxPlacementLaunch.ClampAtReceipt(stamp, 0));
+            entered.SetResult();
+            try { await Task.Delay(budget, stop.Token); }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+            expired.SetResult();
+            throw new VerificationCustodyException("verification_custody_start_failed");
+        };
+
+        var launch = dispatcher.DispatchAsync(Launch(tracked), CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var stopwatch = Stopwatch.StartNew();
+            var release = dispatcher.DispatchAsync(ReleaseSlot(other.SessionId), CancellationToken.None);
+            var sameSession = dispatcher.DispatchAsync(ReleaseSlot(tracked.SessionId), CancellationToken.None);
+            try
+            {
+                var result = await release;
+                Console.WriteLine($"Unrelated ReleaseSlot elapsedMs={stopwatch.ElapsedMilliseconds} placementEnded={expired.Task.IsCompleted}");
+                result.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+                runtime.List().ShouldNotContain(session => session.SessionId == other.SessionId);
+                expired.Task.IsCompleted.ShouldBeFalse("the unrelated seat must be released while placement is still pending");
+                sameSession.IsCompleted.ShouldBeFalse("the release for the launching session must stay ordered after placement");
+            }
+            finally
+            {
+                await stop.CancelAsync();
+                (await launch).ErrorDetail.ShouldBe("verification_custody_start_failed");
+                (await sameSession).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            }
+        }
+        finally { await stop.CancelAsync(); await launch; }
     }
 
     private static RunnerLaunchRequest TrackedRequest(string backend, Guid storeId) =>
@@ -1413,6 +1466,7 @@ public class PhoneHomeCommandDispatcherTests
 
         /// <summary>Null (the default) is a runner that advertises no custody at all.</summary>
         public string? CustodyBackend { get; init; }
+        public Func<Task>? BeforeStart { get; set; }
         public string? VerificationCustodyBackend => CustodyBackend;
         public Guid RunnerStoreId { get; } = Guid.NewGuid();
 
@@ -1424,8 +1478,10 @@ public class PhoneHomeCommandDispatcherTests
         public IReadOnlyList<RunnerSessionDto> List() => [.. _sessions.Values];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             throw (Fault?.Invoke() ?? new KeyNotFoundException());
-        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
+        public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
+            if (BeforeStart is { } beforeStart)
+                await beforeStart();
             // The real runtime refuses a second live session with the same id.
             if (_sessions.TryGetValue(request.SessionId, out var running) && running.Status != "Exited")
                 throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
@@ -1435,7 +1491,7 @@ public class PhoneHomeCommandDispatcherTests
             var session = new RunnerSessionDto(request.SessionId, 1, DateTime.UtcNow, "Running", null, "", 0,
                 AcceptedStartedAt: request.AcceptedStartedAt);
             _sessions[request.SessionId] = session;
-            return Task.FromResult(session);
+            return session;
         }
 
         /// <summary>The session's process exited; like the real runtime, it stays listed as Exited.</summary>

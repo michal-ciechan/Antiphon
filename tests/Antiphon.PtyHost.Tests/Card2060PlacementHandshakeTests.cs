@@ -671,6 +671,41 @@ public sealed class Card2060PlacementHandshakeTests
             (await ReadFrameAsync(peer, bound.Token)).ShouldBeNull();
             world.Attempt.Commit().ShouldBeNull();
         }
+
+        // The monotonic deadline can arrive before its timer callback gets scheduled.
+        // Send a valid PLACED at equality with the cancellation token still live.
+        var delayedTimer = new PlacementClockWithDelayedTimer();
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId, delayedTimer, budget))
+        {
+            var exchange = world.ExchangeAsync(bound.Token);
+            using var peer = world.Connect();
+            var next = await world.ProveAndPlaceAsync(peer, _ =>
+            {
+                delayedTimer.Timestamp = world.Attempt.Deadline;
+                world.Attempt.Token.IsCancellationRequested.ShouldBeFalse();
+            }, bound.Token);
+            peer.Dispose();
+            // Join the exchange even if the host incorrectly releases the stage.
+            IOException? failure = null;
+            try { await exchange; }
+            catch (IOException ex) { failure = ex; }
+            next.ShouldBeNull("a valid PLACED at the deadline must never receive GO, even before the timer fires");
+            failure.ShouldNotBeNull();
+            failure.Message.ShouldBe("verification_custody_placement_refused");
+            world.Attempt.Commit().ShouldBeNull();
+        }
+    }
+
+    private sealed class PlacementClockWithDelayedTimer : TimeProvider
+    {
+        private readonly FakeTimeProvider _timerClock = new();
+
+        public long Timestamp { get; set; }
+
+        public override long GetTimestamp() => Timestamp;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            _timerClock.CreateTimer(callback, state, dueTime, period);
     }
 
     /// <summary>The original host's attempt against a fixture socket peer in this process.</summary>
