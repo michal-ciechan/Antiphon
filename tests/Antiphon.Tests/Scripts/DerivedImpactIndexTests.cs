@@ -212,7 +212,10 @@ public sealed class DerivedImpactIndexTests
         else
             Link(indexPath, originalLink).ShouldBe(0, Marshal.GetLastPInvokeError().ToString());
 
-        var first = await RegenAsync(fixture.Root);
+        // A system-temp staging file cannot be created here, even if system temp and the index share a volume.
+        var missingTemp = Path.Combine(fixture.Root, "missing-temp");
+        Directory.Exists(missingTemp).ShouldBeFalse();
+        var first = await RegenAsync(fixture.Root, missingTemp);
         first.Exit.ShouldBe(0, first.Text);
         AssertChanged(first.Stdout);
         Git(fixture.Root, "rev-parse", "HEAD").Single().ShouldBe(head);
@@ -221,7 +224,7 @@ public sealed class DerivedImpactIndexTests
         written.ShouldNotBe(original);
         (await File.ReadAllBytesAsync(originalLink)).ShouldBe(original, "atomic replacement keeps the old file's bytes intact");
 
-        var second = await RegenAsync(fixture.Root);
+        var second = await RegenAsync(fixture.Root, missingTemp);
         second.Exit.ShouldBe(0, second.Text);
         AssertUnchanged(second.Stdout);
         Git(fixture.Root, "rev-parse", "HEAD").Single().ShouldBe(head);
@@ -229,7 +232,7 @@ public sealed class DerivedImpactIndexTests
 
         // Git still lists the source, so the real builder fails before publication.
         File.Delete(Path.Combine(fixture.Root, source));
-        var failed = await RegenAsync(fixture.Root);
+        var failed = await RegenAsync(fixture.Root, missingTemp);
         failed.Exit.ShouldBe(1, failed.Text);
         failed.Text.ShouldContain("derived-impact-index failed:", Case.Sensitive);
         failed.Stdout.ShouldNotContain("derived-impact-index changed", Case.Sensitive);
@@ -243,6 +246,30 @@ public sealed class DerivedImpactIndexTests
             StringComparison.Ordinal);
         mutant.ShouldNotBe(first.Stdout);
         Should.Throw<ShouldAssertException>(() => AssertChanged(mutant));
+    }
+
+    [Test]
+    public async Task regenerate_command_removes_staging_file_when_move_fails()
+    {
+        using var fixture = new Fixture();
+        fixture.Add("tests/Antiphon.Tests/AddedTests.cs", "public sealed class AddedTests { public void T() { } }\n");
+        fixture.Commit();
+        var indexPath = IndexPath(fixture.Root);
+        var indexDirectory = Path.GetDirectoryName(indexPath)!;
+        // The sibling can be written, but it cannot replace an occupied directory.
+        Directory.CreateDirectory(indexPath);
+        var marker = Path.Combine(indexPath, "keep");
+        await File.WriteAllTextAsync(marker, "existing destination");
+
+        var failed = await RegenAsync(fixture.Root, indexDirectory);
+
+        failed.Exit.ShouldBe(1, failed.Text);
+        failed.Text.ShouldContain("derived-impact-index failed:", Case.Sensitive);
+        failed.Stdout.ShouldNotContain("derived-impact-index changed", Case.Sensitive);
+        failed.Stdout.ShouldNotContain("derived-impact-index unchanged", Case.Sensitive);
+        (await File.ReadAllTextAsync(marker)).ShouldBe("existing destination");
+        Directory.GetFileSystemEntries(indexDirectory).Order(StringComparer.Ordinal)
+            .ShouldBe(new[] { Path.Combine(indexDirectory, "Antiphon.Tests"), indexPath });
     }
 
     [DllImport("libc", EntryPoint = "link", SetLastError = true)]
@@ -1308,7 +1335,7 @@ public sealed class DerivedImpactIndexTests
 
     // Check the command's invocation before redirecting it to the same driver's staged DLL.
     // A test-project or checkpoint build may have no output in the driver's native bin directory.
-    private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot)
+    private static async Task<(int Exit, string Stdout, string Text)> RegenAsync(string fixtureRoot, string tempDirectory)
     {
         var checkout = RepoRoot();
         var project = Antiphon.Nightly.ImpactIndexRegeneration.ProjectPath(checkout);
@@ -1317,11 +1344,18 @@ public sealed class DerivedImpactIndexTests
         var options = Antiphon.Nightly.ImpactIndexRegenerationOptions.Parse(["--repo", fixtureRoot, "--no-build"], checkout, checkout, null);
         var output = new StringWriter();
         var error = new StringWriter();
+        var tempOverrides = new Dictionary<string, string?> { ["TMPDIR"] = tempDirectory };
+        if (OperatingSystem.IsWindows())
+        {
+            tempOverrides["TMP"] = tempDirectory;
+            tempOverrides["TEMP"] = tempDirectory;
+        }
+        var environment = Antiphon.Tests.Application.LandGraphCommandHost.Environment(tempOverrides);
         var host = Antiphon.Tests.Application.LandGraphCommandHost.Create(output, error, launch =>
         {
             launch.FileName.ShouldBe("dotnet");
             launch.Arguments.ShouldBe(["run", "--project", project, "--no-build", "-p:UseAppHost=false", "--", fixtureRoot]);
-            return launch with { Arguments = [driver, fixtureRoot] };
+            return launch with { Arguments = [driver, fixtureRoot], Environment = environment };
         });
         var exit = await Task.Run(() => Antiphon.Nightly.ImpactIndexRegeneration.Run(options, host, new System.IO.Abstractions.FileSystem()));
         var stdout = output.ToString();
