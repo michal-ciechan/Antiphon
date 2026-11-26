@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Antiphon.ReleaseSelection;
 using Microsoft.Build.Locator;
 
 namespace Antiphon.LandGraphAudit;
@@ -16,12 +17,14 @@ internal static class ReleaseInputCommand
         var watch = Stopwatch.StartNew();
         try
         {
-            var allowed = new[] { "--repo", "--solution", "--source", "--framework", "--configuration", "--platform", "--rid" };
+            var required = new[] { "--repo", "--solution", "--source", "--framework", "--configuration", "--platform", "--rid" };
+            var allowed = required.Concat(new[] { "--compiler-manifest", "--expected-compiler-manifest-sha256" }).ToArray();
             var options = new Dictionary<string, string>(StringComparer.Ordinal);
             for (var i = 0; i < args.Length; i += 2)
                 if (i + 1 >= args.Length || !allowed.Contains(args[i]) || !options.TryAdd(args[i], args[i + 1]))
                     throw new ArgumentException("invalid-options");
-            if (allowed.Any(key => !options.ContainsKey(key))
+            if (required.Any(key => !options.ContainsKey(key))
+                || options.ContainsKey("--compiler-manifest") != options.ContainsKey("--expected-compiler-manifest-sha256")
                 || options.Where(pair => pair.Key != "--rid").Any(pair => string.IsNullOrWhiteSpace(pair.Value)))
                 throw new ArgumentException("missing-options");
             var repo = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options["--repo"]));
@@ -58,7 +61,21 @@ internal static class ReleaseInputCommand
                 complete = false, fallback = "Full",
                 evaluation.IncompleteReasons, evaluation.Projects,
             };
-            Console.WriteLine(JsonSerializer.Serialize(receipt, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+            var json = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+            if (options.TryGetValue("--compiler-manifest", out var manifest))
+            {
+                var binding = ReleaseCompilerInputs.Bind(sha, before.ToDictionary(input => input.Path, input => input.Blob, StringComparer.Ordinal),
+                    Path.GetFullPath(manifest, repo), options["--expected-compiler-manifest-sha256"]);
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    schema = "release-inputs-v2", proofEligible = binding.Eligible, binding.Reason, binding.ManifestDigest,
+                    evaluation = receipt, complete = false, fallback = "Full",
+                }, json));
+            }
+            else
+            {
+                Console.WriteLine(JsonSerializer.Serialize(receipt, json));
+            }
             return 0;
         }
         catch (ArgumentException)

@@ -1,4 +1,5 @@
 using Antiphon.Tests.Scripts;
+using Antiphon.ReleaseSelection;
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -7,7 +8,7 @@ using System.Text.RegularExpressions;
 
 // Additive release-only artifact mode. Ordinary one-argument behavior below is unchanged.
 // Inputs come from an immutable commit, never from candidate working bytes or schema 1.
-if (args.Length == 4 && args[0] == "--release-graph")
+if ((args.Length == 4 || args.Length == 7 && args[4] == "--proven-subtraction") && args[0] == "--release-graph")
 {
     try
     {
@@ -59,12 +60,26 @@ if (args.Length == 4 && args[0] == "--release-graph")
             .Select(row => "unsupported-git-entry:" + row.Path);
         graph = graph with { IncompleteReasons = graph.IncompleteReasons.Concat(unsupported).Order(StringComparer.Ordinal).ToArray() };
         var inventory = string.Concat(entries.Select(row => row.Path + "\0" + row.Mode + "\0" + row.Blob + "\n"));
-        var artifact = ReleaseImpactGraphBuilder.Serialize(new
+        var inventoryDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory)));
+        var legacy = new
         {
             schema = "antiphon-release-graph-artifact-v1", sourceSha = sha,
-            inputManifestDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory))),
+            inputManifestDigest = inventoryDigest,
             inputs = entries, graph,
-        });
+        };
+        var artifact = ReleaseImpactGraphBuilder.Serialize(args.Length == 4 ? legacy : ProvenArtifact());
+        object ProvenArtifact()
+        {
+            var binding = ReleaseCompilerInputs.Bind(sha,
+                entries.Where(row => row.Mode is "100644" or "100755").ToDictionary(row => row.Path, row => row.Blob, StringComparer.Ordinal),
+                Path.GetFullPath(args[5]), args[6]);
+            return new
+            {
+                schema = "antiphon-release-graph-artifact-v2", sourceSha = sha, inputManifestDigest = inventoryDigest,
+                provenSubtraction = true, proofEligible = binding.Eligible, binding.Reason, binding.ManifestDigest,
+                inputs = entries, graph,
+            };
+        }
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         using (var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None)) stream.Write(artifact);
         Console.WriteLine($"release-impact graph incomplete/Full classes={graph.Universe.Length} paths={graph.Edges.Length} source={sha}");
@@ -79,7 +94,7 @@ if (args.Length == 4 && args[0] == "--release-graph")
 
 if (args.Length != 1 || string.IsNullOrWhiteSpace(args[0]))
 {
-    Console.Error.WriteLine("usage: Antiphon.DerivedImpactIndex <repo> | --release-graph <repo> <commit-sha> <fresh-ignored-json>");
+    Console.Error.WriteLine("usage: Antiphon.DerivedImpactIndex <repo> | --release-graph <repo> <commit-sha> <fresh-ignored-json> [--proven-subtraction <manifest.json> <expected-manifest-sha256>]");
     return 1;
 }
 
