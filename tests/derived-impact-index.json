@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 363,
+      "classes": 366,
       "reason": "allowlist"
     },
     {
@@ -2174,18 +2174,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 54,
+      "classes": 57,
       "reason": "cap",
-      "owed": 29,
+      "owed": 32,
       "first": [
+        "GrokRunnerImageContractTests",
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
         "OsWitnessCheckTests",
         "PackageVersionPinContractTests",
+        "PostgresSnapshotJobTests",
         "QualificationCheckoutSourceTests",
-        "RefreshGithubTokenScriptTests",
-        "SessionRunnerGrokLineEndingContractTests",
-        "ShellFixtureLineEndingContractTests"
+        "RefreshGithubTokenScriptTests"
       ]
     },
     {
@@ -2254,18 +2254,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 56,
+      "classes": 58,
       "reason": "cap",
-      "owed": 31,
+      "owed": 33,
       "first": [
+        "ClaudeSessionCleanupTests",
+        "ClientChecksTests",
         "ClientModeTests",
         "DaemonBuildCheckTests",
         "DesktopPostgresTests",
         "ExpectedDurationSyncTests",
         "ImpactIndexRegenerationTests",
-        "KeepSixCommandTests",
-        "LandAuditToolResolverTests",
-        "NightlyDiscoveryParserTests"
+        "KeepSixCommandTests"
       ]
     },
     {
@@ -25574,13 +25574,13 @@
         "DockerStackContractTests",
         "DockerStackDocumentationTests",
         "DotnetToolManifestContractTests",
-        "GrokRunnerImageContractTests",
         "HangfireStorageSelectionTests",
         "HostCleanupCheckpointExtractionTests",
         "JqRunnerImageContractTests",
         "LandGraphAuditProjectInstanceTests",
         "PostgresPoolConfigurationTests",
         "RcBridgeProbePlatformTests",
+        "RegisterPostgresSnapshotTests",
         "RemoteScriptContractTests",
         "RunnerPushCredentialDocsTests",
         "Server2ProductionServerContractTests",
@@ -26259,8 +26259,6 @@
         "Card0490BootDiskTests",
         "CheckpointToolCommandTests",
         "ClassCostMeasurementTests",
-        "ClaudeSessionCleanupTests",
-        "ClientChecksTests",
         "DaemonSupervisorTests",
         "DeployLocalTests",
         "LandGraphCommandTests",
@@ -26270,7 +26268,9 @@
         "NightlyTestsRunTests",
         "PgQpsTests",
         "PostgresJitWindowTests",
+        "PostgresSnapshotJobTests",
         "QualificationTimingTests",
+        "RegisterPostgresSnapshotTests",
         "ReleaseGateLibraryTests",
         "RunnerRestartOsTests",
         "ServerRepositoryMirrorsTests"
@@ -26315,6 +26315,26 @@
       "path": "tests/Antiphon.Tests/Scripts/PosixHarnessToolTests.cs",
       "classes": [
         "RcCoverageAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/PostgresSnapshotFakes.cs",
+      "classes": [
+        "PostgresSnapshotTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/PostgresSnapshotJobTests.cs",
+      "classes": [
+        "AgentAttachHerdrTests",
+        "AgentTaskCheckSweepTests",
+        "Card1619UnixExitTests",
+        "GrokDelegateEndToEndTests",
+        "GrokMidTurnInterruptCanaryTests",
+        "HerdrAlwaysOnChannelParityTests",
+        "PtyUtf8DecoderTests",
+        "SessionRuntimeActionRoutingTests",
+        "UnixPtyArgvTests"
       ]
     },
     {
@@ -27536,7 +27556,9 @@
       "classes": [
         "AdvisoryChangePolicyTests",
         "CheckpointSourceStateTests",
+        "PostgresSnapshotJobTests",
         "RcDirtyOrderCSharpTests",
+        "RegisterPostgresSnapshotTests",
         "RunCheckpointSourceScriptTests",
         "ServerImagePushCredentialTests",
         "ServerRepositoryMirrorsTests"
