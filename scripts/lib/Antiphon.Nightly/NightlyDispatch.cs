@@ -13,6 +13,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Collections.Specialized;
 using System.IO;
 using System.Text;
@@ -64,13 +65,14 @@ namespace Antiphon.Nightly
             var document = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
             foreach (var field in new[] { "format", "runId", "attempt", "historyDigest", "canonicalPlanDigest", "preparationComplete", "unresolved" })
                 document[field] = PsValue.Prop(schedule, field);
-            foreach (var field in new[] { "historyFallbackReason", "orderingReason", "lanes" })
+            foreach (var field in new[] { "historyFallbackReason", "orderingReason", "lanes", "invariantPrefix" })
                 if (PsOps.HasName(schedule, field)) document[field] = PsValue.Prop(schedule, field);
             var entries = new List<object>();
             foreach (var entry in Each(PsValue.Prop(schedule, "entries")))
             {
                 var row = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
                 foreach (var field in new[] { "suite", "chunk", "canonicalOrdinal", "dispatchOrdinal", "priorFailure" }) row[field] = PsValue.Prop(entry, field);
+                if (NightlyTestsPlan.IsInvariantChunk(PsValue.Prop(entry, "ChunkRef"))) row["phase"] = "repository-invariant";
                 entries.Add(row);
             }
             document["entries"] = entries.ToArray();
@@ -95,8 +97,10 @@ namespace Antiphon.Nightly
             // @($history.members).Count: a missing list counts one, as @($null) does.
             if (PsValue.IsTrue(history) && (PsValue.AsArray(PsValue.Prop(history, "members")).Length > 0 || PsValue.AsArray(PsValue.Prop(history, "unresolved")).Length > 0)) barrier = true;
             if (PsValue.IsTrue(previousRun)) barrier = true;
-            var needsDiscovery = barrier;
-            foreach (var suiteValue in suites ?? new object[0])
+            var needsDiscovery = barrier || state.RequiresInvariantPrefix;
+            var selectedSuites = suites ?? Array.Empty<object>();
+            var finishedPrefix = new HashSet<(string Suite, string Chunk)>();
+            foreach (var suiteValue in selectedSuites)
             {
                 if (!state.NpmOk || state.LintBlocksPipeline || !state.DotnetOk) break;
                 var suiteId = PsValue.Str(suiteValue);
@@ -118,6 +122,17 @@ namespace Antiphon.Nightly
                 }
                 prepared.Add(suite);
                 if (barrier) continue;
+                if (state.RequiresInvariantPrefix)
+                {
+                    var prefix = Each(PsValue.Prop(suite, "chunks")).Where(NightlyTestsPlan.IsInvariantChunk).ToArray();
+                    if (prefix.Length == 0) continue;
+                    state.DispatchSchedule = Schedule(prepared.ToArray(), null, "", null, false, state.InvocationId, state.Attempt,
+                        null, state.Sha, state.UtcNow, fallbackReason);
+                    WriteBestEffort(state, state.DispatchSchedule);
+                    foreach (var chunk in prefix)
+                        RunInvariantChunk(state, steps, suite, chunk, finishedPrefix, selectedSuites);
+                    continue;
+                }
                 try
                 {
                     state.DispatchSchedule = Schedule(prepared.ToArray(), null, "", null, false, state.InvocationId, state.Attempt, null, "", DateTime.UtcNow, fallbackReason);
@@ -127,7 +142,7 @@ namespace Antiphon.Nightly
                 foreach (var chunk in PsValue.AsArray(PsValue.Prop(suite, "chunks"))) steps.RunChunk(suite, chunk);
                 steps.Complete(suite);
             }
-            if (!barrier)
+            if (!barrier && !state.RequiresInvariantPrefix)
             {
                 try
                 {
@@ -148,7 +163,7 @@ namespace Antiphon.Nightly
                 state.UtcNow, "");
             state.DispatchSchedule = schedule;
             WriteBestEffort(state, schedule);
-            RunPrepared(state, steps, schedule);
+            RunPrepared(state, steps, schedule, finishedPrefix, selectedSuites);
         }
 
         /// <summary>
@@ -172,7 +187,11 @@ namespace Antiphon.Nightly
         /// once and bound to its own suite and chunk, runs in its order; a suite completes after its last entry. The
         /// caller keeps the run verdict and custody.
         /// </summary>
-        public static void RunPrepared(NightlyRunState state, NightlyDispatchSteps steps, object schedule)
+        public static void RunPrepared(NightlyRunState state, NightlyDispatchSteps steps, object schedule) =>
+            RunPrepared(state, steps, schedule, new HashSet<(string Suite, string Chunk)>(), Array.Empty<object>());
+
+        private static void RunPrepared(NightlyRunState state, NightlyDispatchSteps steps, object schedule,
+            HashSet<(string Suite, string Chunk)> finishedPrefix, object[] selectedSuites)
         {
             if (steps == null) throw new ArgumentNullException(nameof(steps));
             if (!PsValue.IsTrue(PsValue.Prop(schedule, "preparationComplete"))) throw new NightlyRefusal("dispatch-preparation-incomplete");
@@ -202,10 +221,59 @@ namespace Antiphon.Nightly
             foreach (var entry in entries)
             {
                 var suite = PsValue.Prop(entry, "SuiteState");
-                steps.RunChunk(suite, PsValue.Prop(entry, "ChunkRef"));
+                var chunk = PsValue.Prop(entry, "ChunkRef");
+                if (NightlyTestsPlan.IsInvariantChunk(chunk))
+                {
+                    if (!finishedPrefix.Contains(Identity(suite, chunk)))
+                        RunInvariantChunk(state, steps, suite, chunk, finishedPrefix, selectedSuites);
+                }
+                else steps.RunChunk(suite, chunk);
                 var key = PsValue.Str(PsValue.Prop(entry, "suite"));
                 remaining[key]--;
                 if (remaining[key] == 0) steps.Complete(suite);
+            }
+        }
+
+        private static (string Suite, string Chunk) Identity(object suite, object chunk) =>
+            (PsValue.Str(PsValue.Prop(suite, "id")), PsValue.Str(PsValue.Prop(chunk, "id")));
+
+        private static void RunInvariantChunk(NightlyRunState state, NightlyDispatchSteps steps, object suite, object chunk,
+            HashSet<(string Suite, string Chunk)> finished, object[] selectedSuites)
+        {
+            var id = Identity(suite, chunk);
+            var before = state.SuiteResults.Count;
+            try
+            {
+                steps.RunChunk(suite, chunk);
+                if (state.SuiteResults.Count > before)
+                {
+                    var result = state.SuiteResults[state.SuiteResults.Count - 1];
+                    if (PsValue.Str(PsValue.Prop(result, "result")) != "pass" || !PsValue.IsTrue(PsValue.Prop(result, "coverageComplete")))
+                        throw new NightlyRefusal("repository-invariant-failed:" + id.Suite + "/" + id.Chunk);
+                }
+                finished.Add(id);
+            }
+            catch (Exception ex)
+            {
+                state.TestsPassed = false;
+                state.CoverageComplete = false;
+                state.OverallFailed = true;
+                state.Reasons.Add("repository-invariant-prefix-incomplete:" + id.Suite + "/" + id.Chunk);
+                var prepared = Each(PsValue.Prop(state.DispatchSchedule, "PreparedSuites"))
+                    .Select(s => PsValue.Str(PsValue.Prop(s, "id"))).ToHashSet(StringComparer.Ordinal);
+                var outstanding = Each(PsValue.Prop(state.DispatchSchedule, "entries"))
+                    .Select(entry => (Suite: PsValue.Str(PsValue.Prop(entry, "suite")), Chunk: PsValue.Str(PsValue.Prop(entry, "chunk"))))
+                    .Where(key => !finished.Contains(key))
+                    .Select(key => PsValue.Record(("suite", key.Suite), ("chunk", key.Chunk)))
+                    .Concat(selectedSuites.Select(PsValue.Str).Where(s => !prepared.Contains(s))
+                        .Select(s => PsValue.Record(("suite", s), ("chunk", "discovery-pending")))).ToArray();
+                if (state.DispatchSchedule != null)
+                {
+                    PsValue.AddMemberForce(state.DispatchSchedule, "invariantPrefix",
+                        PsValue.Record(("complete", false), ("suite", id.Suite), ("chunk", id.Chunk), ("detail", ex.Message), ("outstanding", outstanding)));
+                    WriteBestEffort(state, state.DispatchSchedule);
+                }
+                throw;
             }
         }
 

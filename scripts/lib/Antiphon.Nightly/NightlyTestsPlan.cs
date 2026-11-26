@@ -408,6 +408,93 @@ namespace Antiphon.Nightly
             return chunks;
         }
 
+        public const string RepositoryInvariantCategory = "RepositoryInvariant";
+        public const string RepositoryInvariantFilter = "/*/*/*/*[Category=RepositoryInvariant]";
+
+        internal static bool RepositoryInvariantNode(object node) =>
+            PsValue.AsArray(PsValue.Prop(node, "Categories")).Any(category =>
+                string.Equals(PsValue.Str(category), RepositoryInvariantCategory, StringComparison.Ordinal));
+
+        internal static bool IsInvariantChunk(object chunk) =>
+            PsValue.IsTrue(PsValue.Prop(chunk, "repositoryInvariant"));
+
+        internal static bool IsInvariantClass(string className) =>
+            !string.IsNullOrEmpty(className) && className.Contains(".Invariants.", StringComparison.Ordinal);
+
+        private static object[] RepositoryInvariantLaunchPlan(object[] discovery, object[] declared, object exclusions,
+            string suiteId, object policy, NightlyClassCosts costs)
+        {
+            var all = discovery.GroupBy(node => NightlyCensus.BareClassIdentity(PsValue.Str(PsValue.Prop(node, "ClassName"))),
+                StringComparer.Ordinal).ToArray();
+            var planned = new List<object>();
+            var admittedUids = new HashSet<string>(StringComparer.Ordinal);
+            var actualUids = new HashSet<string>(StringComparer.Ordinal);
+            var owners = declared.Select(chunk => PsValue.AsArray(PsValue.Prop(chunk, "classes")).Select(PsValue.Str)
+                .ToHashSet(StringComparer.Ordinal)).ToArray();
+
+            foreach (var group in all)
+            {
+                var testClass = group.Key;
+                if (string.IsNullOrEmpty(testClass)) throw new NightlyRefusal("invariant-discovery-missing-class");
+                foreach (var node in group)
+                    if (RepositoryInvariantNode(node) != IsInvariantClass(testClass))
+                        throw new NightlyRefusal("repository-invariant-designation:" + testClass);
+
+                var required = group.Where(node => !NightlyCensus.Excluded(node, exclusions, true)).ToArray();
+                if (required.Length == 0) continue;
+                var shortName = testClass.Substring(testClass.LastIndexOf('.') + 1);
+                if (owners.Count(owner => owner.Count == 0 || owner.Contains(testClass) || owner.Contains(shortName)) != 1)
+                    throw new NightlyRefusal("invariant-discovery-unmapped-or-overlapping-class:" + testClass);
+                foreach (var node in required)
+                {
+                    var uid = PsValue.Str(PsValue.Prop(node, "Uid"));
+                    if (string.IsNullOrWhiteSpace(uid) || !admittedUids.Add(uid))
+                        throw new NightlyRefusal("invariant-discovery-duplicate-or-missing-uid:" + uid);
+                }
+            }
+
+            // Keep suite and declared ownership. Filter through the normal planner separately for each phase;
+            // it preserves method grouping and the original profile's exact exclusion handling.
+            foreach (var phase in new[] { true, false })
+            {
+                var separate = declared.Select((chunk, index) =>
+                {
+                    var owner = owners[index];
+                    var classes = all.Where(group => IsInvariantClass(group.Key) == phase)
+                        .Where(group => owner.Count == 0 || owner.Contains(group.Key)
+                            || owner.Contains(group.Key.Substring(group.Key.LastIndexOf('.') + 1)))
+                        .Select(group => (object)group.Key).ToArray();
+                    return PsValue.Record(("id", (phase ? "invariant-" : "ordinary-") + PsValue.Str(PsValue.Prop(chunk, "id"))),
+                        ("classes", classes));
+                }).Where(chunk => PsValue.AsArray(PsValue.Prop(chunk, "classes")).Length > 0).ToArray();
+                var leaves = LaunchPlanner.ProfileExecutionChunks(discovery, separate, exclusions);
+                var packed = PackProfileLaunchPlan(leaves, discovery, suiteId, policy, costs);
+                var byClass = all.ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+                foreach (var chunk in packed)
+                {
+                    var selectedNodes = PsValue.AsArray(PsValue.Prop(chunk, "nodes") ?? Array.Empty<object>());
+                    if (selectedNodes.Length == 0)
+                        selectedNodes = PsValue.AsArray(PsValue.Prop(chunk, "classes"))
+                            .SelectMany(name => byClass[PsValue.Str(name)]).ToArray();
+                    var uids = selectedNodes.Where(node => !NightlyCensus.Excluded(node, exclusions, true))
+                        .Select(node => PsValue.Str(PsValue.Prop(node, "Uid"))).ToArray();
+                    if (uids.Length == 0 || uids.Any(uid => !actualUids.Add(uid)))
+                        throw new NightlyRefusal("invariant-discovery-overlapping-or-empty-chunk:" + PsValue.Str(PsValue.Prop(chunk, "id")));
+                    if (phase)
+                    {
+                        PsValue.AddMemberForce(chunk, "id", "invariant-" + PsValue.Str(PsValue.Prop(chunk, "id")));
+                        PsValue.AddMemberForce(chunk, "repositoryInvariant", true);
+                        PsValue.AddMemberForce(chunk, "alwaysDirty", true);
+                        PsValue.AddMemberForce(chunk, "plannedInvariantUids", uids);
+                    }
+                    planned.Add(chunk);
+                }
+            }
+            if (!admittedUids.SetEquals(actualUids))
+                throw new NightlyRefusal("invariant-discovery-incomplete-partition:" + suiteId);
+            return planned.ToArray();
+        }
+
         /// <summary>
         /// Get-NightlyProfileLaunchPlan: the profile's launch leaves (LaunchPlanner.ProfileExecutionChunks) packed into
         /// launch groups, each refused before any test process starts when its estimate is not a positive finite number
@@ -418,6 +505,11 @@ namespace Antiphon.Nightly
         public static object[] ProfileLaunchPlan(object[] discoveryNodes, object[] chunks, object exclusions, string suiteId, object policyObject, NightlyClassCosts costs)
         {
             var leaves = LaunchPlanner.ProfileExecutionChunks(discoveryNodes, chunks, exclusions);
+            return PackProfileLaunchPlan(leaves, discoveryNodes, suiteId, policyObject, costs);
+        }
+
+        private static object[] PackProfileLaunchPlan(object[] leaves, object[] discoveryNodes, string suiteId, object policyObject, NightlyClassCosts costs)
+        {
             var plan = ProfileLaunchGroups(leaves, discoveryNodes, null, costs, NightlyLaunchPrices.Default);
             foreach (var launch in plan)
             {
@@ -453,6 +545,8 @@ namespace Antiphon.Nightly
         public static object[] SuiteChunks(object[] discoveryNodes, object[] chunks, object exclusions, bool profileAware, bool native,
             string suiteId, object policyObject, NightlyClassCosts costs)
         {
+            if (native && profileAware && discoveryNodes != null && discoveryNodes.Any(node => RepositoryInvariantNode(node) || IsInvariantClass(PsValue.Str(PsValue.Prop(node, "ClassName")))))
+                return RepositoryInvariantLaunchPlan(discoveryNodes, chunks, exclusions, suiteId, policyObject, costs);
             if (native && profileAware && PsValue.AsArray(exclusions).Length > 0)
                 return ProfileLaunchPlan(discoveryNodes, chunks, exclusions, suiteId, policyObject, costs);
             return PsValue.AsArray(chunks);

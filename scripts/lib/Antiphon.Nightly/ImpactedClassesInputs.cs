@@ -20,9 +20,14 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Antiphon.Nightly
 {
+    internal sealed record ImpactedInvariantMethod(string Name, bool OptIn);
+    internal sealed record ImpactedInvariantDeclaration(string File, string Namespace, string Class, ImpactedInvariantMethod[] Methods);
+
     /// <summary>One row of tests/impacted-classes.json, parsed and checked.</summary>
     public sealed class ImpactedKind
     {
@@ -257,6 +262,8 @@ namespace Antiphon.Nightly
         /// <summary>The files a derive pattern matches.</summary>
         public HashSet<string> DerivedFiles { get; } = new HashSet<string>(StringComparer.Ordinal);
 
+        internal List<ImpactedInvariantDeclaration> InvariantDeclarations { get; } = new List<ImpactedInvariantDeclaration>();
+
         /// <summary>Time spent reading files.</summary>
         public double ReadMilliseconds { get; private set; }
 
@@ -271,7 +278,7 @@ namespace Antiphon.Nightly
         /// regex's group 1 for every candidate line (a line holding "class"), and marks the file derived when any
         /// derive regex matches its text.
         /// </summary>
-        public static ImpactedClassesCensus Scan(string repo, Regex declaration, IReadOnlyList<Regex> derive)
+        public static ImpactedClassesCensus Scan(string repo, Regex declaration, IReadOnlyList<Regex> derive, bool includeInvariants = false)
         {
             var result = new ImpactedClassesCensus();
             var root = Path.Combine(repo, "tests");
@@ -306,6 +313,8 @@ namespace Antiphon.Nightly
                         if (!result.ClassesByFile.TryGetValue(relative, out var names)) result.ClassesByFile.Add(relative, names = new List<string>());
                         if (!names.Contains(name)) names.Add(name);
                     }
+                    if (includeInvariants && text.Contains(NightlyTestsPlan.RepositoryInvariantCategory, StringComparison.Ordinal))
+                        result.ReadInvariantDeclarations(relative, text);
                     declarationTicks += Stopwatch.GetTimestamp() - phase;
                     phase = Stopwatch.GetTimestamp();
                     foreach (var pattern in derive ?? Array.Empty<Regex>())
@@ -345,6 +354,34 @@ namespace Antiphon.Nightly
                 offset = end < text.Length ? end + 1 : end;
             }
         }
+        private void ReadInvariantDeclarations(string relative, string text)
+        {
+            var root = CSharpSyntaxTree.ParseText(text, new CSharpParseOptions(LanguageVersion.Preview)).GetRoot();
+            foreach (var type in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
+            {
+                var attributes = type.AttributeLists.SelectMany(list => list.Attributes).ToArray();
+                if (!attributes.Any(attribute => Category(attribute, NightlyTestsPlan.RepositoryInvariantCategory))) continue;
+                var ns = string.Join(".", type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse().Select(n => n.Name.ToString()));
+                if (!ns.EndsWith(".Invariants", StringComparison.Ordinal))
+                    throw new NightlyRefusal("repository-invariant-namespace-missing:" + relative + ":" + type.Identifier.ValueText);
+                var methods = new List<ImpactedInvariantMethod>();
+                foreach (var method in type.Members.OfType<MethodDeclarationSyntax>())
+                {
+                    var methodAttributes = method.AttributeLists.SelectMany(list => list.Attributes).ToArray();
+                    if (!methodAttributes.Any(attribute => AttributeName(attribute) == "Test")) continue;
+                    var optIn = attributes.Concat(methodAttributes).Any(attribute =>
+                        AttributeName(attribute) == "Explicit" || Category(attribute, "OptIn"));
+                    methods.Add(new ImpactedInvariantMethod(method.Identifier.ValueText, optIn));
+                }
+                if (methods.Count == 0) throw new NightlyRefusal("repository-invariant-empty-type:" + relative + ":" + type.Identifier.ValueText);
+                InvariantDeclarations.Add(new ImpactedInvariantDeclaration(relative, ns, type.Identifier.ValueText, methods.ToArray()));
+            }
+
+            static string AttributeName(AttributeSyntax attribute) => attribute.Name.GetLastToken().ValueText.Replace("Attribute", "");
+            static bool Category(AttributeSyntax attribute, string value) => AttributeName(attribute) == "Category"
+                && attribute.ArgumentList?.Arguments.FirstOrDefault()?.Expression is LiteralExpressionSyntax literal && literal.Token.ValueText == value;
+        }
+
     }
 
     /// <summary>A capped path of the derived index: why, how many classes are owed and the first ones.</summary>
