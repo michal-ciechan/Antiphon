@@ -48,7 +48,7 @@ public sealed class PlanCheckpointClassSelectionGuardTests
             type.Namespace.ShouldBe("Antiphon.Tests.Invariants");
         }
         var stagedHelpers = typeof(BuildOutputNestingTests).GetMethod(nameof(BuildOutputNestingTests.Own_output_stages_helper_program));
-        stagedHelpers.ShouldNotBeNull().GetCustomAttributesData().Count(a => a.AttributeType.Name == "ArgumentsAttribute").ShouldBe(11);
+        stagedHelpers.ShouldNotBeNull().GetCustomAttributesData().Count(a => a.AttributeType.Name == "ArgumentsAttribute").ShouldBe(12);
         foreach (var project in new[] { "Antiphon.Tests", "Antiphon.SessionRunner.Tests" })
         {
             var projectFile = XDocument.Load(Path.Combine(root, "tests", project, project + ".csproj"));

@@ -75,8 +75,7 @@ internal static class MergeInvariantCases
         static string Canonical(string project)
         {
             var path = project.Replace('\\', '/').TrimEnd('/');
-            return path.EndsWith(".csproj", StringComparison.Ordinal) && path.LastIndexOf('/') is var slash && slash > 0
-                ? path[..slash] : path;
+            return path.EndsWith(".csproj", StringComparison.Ordinal) ? path : path + "/" + path.Split('/')[^1] + ".csproj";
         }
         return Canonical(a) == Canonical(b);
     }
