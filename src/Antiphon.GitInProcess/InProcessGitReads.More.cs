@@ -72,8 +72,28 @@ internal static partial class InProcessGitReads
         "for-each-ref" => ForEachRef(repo, a),
         "diff-tree" => DiffTree(repo, a),
         "ls-tree" => LsTree(repo, a),
+        "cat-file" => CatFileExists(repo, a),
         _ => null,
     };
+
+    /// <summary>
+    /// <c>cat-file -e &lt;full id&gt;</c> and <c>cat-file -e &lt;full id&gt;^{commit}</c> for an object that is present
+    /// (and, with the peel, is or peels to a commit): exit 0, no output. Anything else (an absent object, which a
+    /// partial clone may lazily fetch; one that does not peel; an abbreviated id or a ref name) is git's.
+    /// </summary>
+    private static LandingGitResult? CatFileExists(Repository repo, IReadOnlyList<string> a)
+    {
+        if (a is not ["cat-file", "-e", var spec]) return null;
+        var peel = spec.EndsWith("^{commit}", StringComparison.Ordinal);
+        var id = peel ? spec[..^"^{commit}".Length] : spec;
+        if (!GitText.IsOid(id)) return null;
+        var target = repo.Lookup(id);
+        if (target is null) return null;
+        var peeled = target;
+        while (peel && peeled is TagAnnotation tag) peeled = tag.Target;
+        if (peel && peeled is not LibGit2Sharp.Commit) return null;
+        return Ok("");
+    }
 
     private static LandingGitResult? ForEachRef(Repository repo, IReadOnlyList<string> a)
     {

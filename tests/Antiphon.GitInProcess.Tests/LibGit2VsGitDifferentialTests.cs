@@ -53,6 +53,15 @@ public sealed class LibGit2VsGitDifferentialTests
     private static async Task AllShapesAsync(LandingGitFixture fixture, string cwd)
     {
         var head = (await GitAsync(cwd, "rev-parse", "HEAD")).Output.Trim();
+        var tree = (await GitAsync(cwd, "rev-parse", "HEAD^{tree}")).Output.Trim();
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", head);
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", head + "^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", tree);
+        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", tree + "^{commit}");
+        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40));
+        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40) + "^{commit}");
+        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", head[..12]);
+        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "HEAD^{commit}");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", fixture.TargetRef + "^{commit}");
