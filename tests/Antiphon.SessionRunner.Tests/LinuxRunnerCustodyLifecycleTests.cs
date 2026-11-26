@@ -217,7 +217,18 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         var tree = fx.Store.ReadRecord<LinuxNamespaceRecord>(fx.Binding, "linux-namespace.json")
             .ShouldNotBeNull();
         var procs = LinuxCgroupContainment.ExecutionProcsPath(tree.NamespaceId, tree.ContainerId);
+
+        // Enter the recovery path before host exit to pin the refusal without a scheduling race.
+        var ledger = fx.Runtime.CustodyForTests;
+        ledger.Seal(fx.Binding);
+        var early = ledger.ReleaseDeadHost(fx.Binding);
+        early.State.ShouldBe(VerificationCustodyState.Unknown);
+        early.Reason.ShouldBe("custody_host_still_present");
+        early.Receipt.ShouldBeNull();
+        fx.Store.ReadRecord<LinuxRecoveryRecord>(fx.Binding, "linux-recovery.json").ShouldBeNull();
         File.ReadAllLines(procs).ShouldContain(fx.DescendantPid.ToString(CultureInfo.InvariantCulture));
+
+        // The fixture joins the owned PtyHost before asking the runner to recover the tree.
         fx.KillHost();
         Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
         var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, true, CancellationToken.None);
