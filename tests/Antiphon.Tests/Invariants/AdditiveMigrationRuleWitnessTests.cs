@@ -198,7 +198,7 @@ public sealed class AdditiveMigrationRuleWitnessTests
     private static IReadOnlyList<string> TestSources()
     {
         var root = Path.Combine(DelegateScriptRunner.RepoRoot, "tests");
-        var self = Path.Combine(root, "Antiphon.Tests", "Application", nameof(AdditiveMigrationRuleWitnessTests) + ".cs");
+        var self = Path.Combine(root, "Antiphon.Tests", "Invariants", nameof(AdditiveMigrationRuleWitnessTests) + ".cs");
         var separator = Path.DirectorySeparatorChar;
         var files = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
             .Where(path => !path.Contains($"{separator}bin{separator}", StringComparison.Ordinal)

@@ -76,9 +76,8 @@ public sealed class C1514LandingSplitBudgetTests
             var exclusions = Exclusions(policy, "rc", "e2e", "windows");
             var required = nodes.Where(n => !NightlyCensus.Excluded(n, exclusions, true)).ToArray();
             var reasons = new List<string>();
-            // Exact census of the committed roster, including the C467 checkout SHA probe and the review engine
-            // browser E2E. Windows rc excludes seven.
-            if (nodes.Count != 197 || required.Length != 190) reasons.Add("source-census");
+            // The checkout host-path guard adds one case. Windows rc still excludes seven.
+            if (nodes.Count != 198 || required.Length != 191) reasons.Add("source-census");
             // Independent conservative per-expanded-case bounds. 600 s is 1.72x the slowest supplied Windows
             // observation (348.1 s), not a p95.
             var bounds = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -89,7 +88,7 @@ public sealed class C1514LandingSplitBudgetTests
                 var unit = 300.0;
                 if (Regex.IsMatch(bare, "(AgentTaskLandDelivery|DispatchBaseWarningDelivery)E2ETests$", RegexOptions.IgnoreCase)) unit = 600.0;
                 else if (Regex.IsMatch(bare, "WorktreeRetirementDeliveryE2ETests$", RegexOptions.IgnoreCase)) unit = 500.0;
-                else if (Regex.IsMatch(bare, "(OutputDistillationCanaryGuardTests|LandDeliveryFixtureProbeTests|PtyBackendEnvGuardTests|TestClassificationGuardTests)$", RegexOptions.IgnoreCase)) unit = 10.0;
+                else if (Regex.IsMatch(bare, "(OutputDistillationCanaryGuardTests|LandDeliveryFixtureProbeTests|PtyBackendEnvGuardTests|TestClassificationGuardTests|AntiphonAppFixtureHostPathInvariantTests)$", RegexOptions.IgnoreCase)) unit = 10.0;
                 bounds[bare] = unit;
                 if (!costRows.TryGetValue(bare, out var row) || RowInt(row, "nodes") != group.Count() || RowDouble(row, "seconds") != unit * group.Count()
                     || !RowText(row, "source").Contains("CARD-1584", StringComparison.Ordinal)) reasons.Add("cost-row:" + bare);
