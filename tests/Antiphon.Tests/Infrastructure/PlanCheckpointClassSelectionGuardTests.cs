@@ -18,6 +18,85 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class PlanCheckpointClassSelectionGuardTests
 {
     [Test]
+    public void C2082_Repository_readers_belong_to_the_invariant_namespace()
+    {
+        var readers = RepositoryInvariantAudit.Scan(DockerStackDocuments.RepoRoot);
+        readers.ShouldContain(reader => reader.Method == "EveryLiveGateHasDisposition"
+            && reader.Input.Contains("LiveLaneGateScan.Matrix", StringComparison.Ordinal),
+            "the live checkout must expose the live-gate source inventory");
+        var unclassified = readers.Where(reader => !reader.Designated).Select(reader => reader.ToString()).ToArray();
+        unclassified.ShouldBeEmpty("Repository readers need both invariant designations:\n" + string.Join('\n', unclassified));
+    }
+
+    [Test]
+    public void C2082_Owned_fixture_reads_remain_in_the_product_lane()
+    {
+        var root = OwnedTempRoot.CreateOwned();
+        try
+        {
+            Write(root, "Antiphon.sln", "");
+            const string plan = "docs/superpowers/plans/fixture.md";
+            Write(root, plan, "# A tracked plan");
+            Write(root, "tests/Fixture.Tests/Readers.cs", """
+                namespace Fixture.Invariants;
+
+                [Category("Unit")]
+                partial class Readers
+                {
+                    [Test]
+                    void NewCheckoutReader() => SubjectPlan().Success.ShouldBeTrue();
+
+                    [Test]
+                    void OwnedReader() => PrivatePlan().Success.ShouldBeTrue();
+                }
+                """);
+            Write(root, "tests/Fixture.Tests/ReaderInputs.cs", """
+                namespace Fixture.Invariants;
+
+                partial class Readers
+                {
+                    private static ImportResult SubjectPlan() => PlanTableImporter.ImportFile(
+                        Path.Combine(DockerStackDocuments.RepoRoot, "docs/superpowers/plans/fixture.md"));
+
+                    // PlanTableImporter.ImportFile(Path.Combine(DockerStackDocuments.RepoRoot, "docs/superpowers/plans/fixture.md"))
+                    private static ImportResult PrivatePlan() => PlanTableImporter.ImportFile(
+                        Path.Combine(OwnedTempRoot.CreateOwned(), "docs/superpowers/plans/fixture.md"));
+                }
+                """);
+            Write(root, "tests/Fixture.Tests/CategoryOnly.cs", """
+                namespace Fixture.Product;
+
+                [Category("RepositoryInvariant")]
+                class CategoryOnly
+                {
+                    [Test]
+                    void MissingNamespace() => File.ReadAllText(Path.Combine(DockerStackDocuments.RepoRoot,
+                        "docs/superpowers/plans/fixture.md")).ShouldBeEmpty();
+                }
+                """);
+
+            LibGit2Sharp.Repository.Init(root);
+            using var repo = new LibGit2Sharp.Repository(root);
+            LibGit2Sharp.Commands.Stage(repo, new[] { "Antiphon.sln", plan, "tests/Fixture.Tests/Readers.cs",
+                "tests/Fixture.Tests/ReaderInputs.cs", "tests/Fixture.Tests/CategoryOnly.cs" });
+            var offenders = RepositoryInvariantAudit.Scan(root).Where(reader => !reader.Designated).ToArray();
+
+            offenders.Select(reader => reader.Method).ShouldBe(["MissingNamespace", "NewCheckoutReader"], ignoreOrder: false);
+            offenders[0].InNamespace.ShouldBeFalse();
+            offenders[0].HasCategory.ShouldBeTrue();
+            offenders[1].InNamespace.ShouldBeTrue();
+            offenders[1].HasCategory.ShouldBeFalse();
+            offenders[1].Input.ShouldContain("SubjectPlan");
+            offenders[1].Input.ShouldContain(plan);
+            Should.Throw<DirectoryNotFoundException>(() => RepositoryInvariantAudit.Scan(Path.Combine(root, "missing")));
+        }
+        finally
+        {
+            OwnedTempRoot.Release(root);
+        }
+    }
+
+    [Test]
     public void Plan_checkpoint_rows_select_declared_test_classes_or_are_retired()
     {
         var root = DockerStackDocuments.RepoRoot;
