@@ -1,4 +1,4 @@
-// Compare two JSONL outputs of the companion Roslyn detector to the pinned source roster.
+// Compare JSONL outputs of the companion Roslyn detector to the pinned source roster.
 // Run from the repository root. Reads Git objects at the roster SHA without changing the checkout.
 'use strict';
 
@@ -49,10 +49,57 @@ function sourcesAt(pin, names) {
   return result;
 }
 
-function main(baseFile, integratedFile) {
+function checkEarlierMixed(mixed, census) {
+  assert(census, 'Pass the earlier mixed source census JSONL file as the third argument');
+  assert.match(mixed.source, /^[a-f0-9]{40}$/);
+  assert.deepEqual(mixed.columns, ['method', 'fileIndex', 'startLine', 'endLine', 'disposition', 'assertionLines', 'reasonIndex']);
+
+  const inventory = fs.readFileSync(prefix + 'invariant-inventory.md', 'utf8');
+  const section = inventory.split('## Fixtures with a current-tree assertion to extract or isolate')[1]
+    .split('## Product and fixture controls')[0];
+  const candidates = [...section.matchAll(/^\| \[([^\]]+)\]\(\.\.\/\.\.\/\.\.\/(tests\/[^)#]+)\)/gm)]
+    .map(([, type, file]) => file + '#' + type);
+  assert.equal(candidates.length, 271);
+  assert.equal(mixed.alreadyMapped.length, 25);
+  assert.equal(mixed.fixtures.length, 246);
+  const keys = [...mixed.alreadyMapped];
+  const source = sourcesAt(mixed.source, mixed.fixtures.flatMap(f => f.files));
+  const counts = { MOVE: 0, SPLIT: 0, STAY: 0 };
+  for (const fixture of mixed.fixtures) {
+    const id = fixture.assembly + '/' + fixture.type;
+    const declaration = census.get(id);
+    assert(declaration, id + ' missing from the source census');
+    assert.deepEqual(fixture.files.slice().sort(), declaration.files.slice().sort(), id + ' declaring files');
+    assert(fixture.files.includes(fixture.inventoryFile), id + ' original inventory file');
+    keys.push(fixture.inventoryFile + '#' + fixture.type.split('.').at(-1));
+    assert.deepEqual(fixture.methods.map(row => row[0]).sort(), declaration.methods.slice().sort(), id + ' declared methods');
+
+    for (const row of fixture.methods) {
+      const [name, index, first, last, choice, oracleLines, reason] = row;
+      const method = id + '/' + name;
+      const lines = source.get(fixture.files[index]);
+      assert.equal(row.length, mixed.columns.length, method);
+      assert(lines && Number.isInteger(first) && Number.isInteger(last) && first > 0 && last >= first && last <= lines.length, method);
+      assert(lines.slice(first - 1, last).join('\n').includes(name + '('), method + ' declaration source');
+      assert(Object.hasOwn(counts, choice) && Number.isInteger(reason) && mixed.reasons[reason]?.trim(), method + ' disposition and reason');
+      assert(oracleLines.length > 0 && new Set(oracleLines).size === oracleLines.length, method + ' unique oracle source');
+      for (const line of oracleLines) {
+        // A helper in the same partial file may own the assertion.
+        assert(Number.isInteger(line) && line > 0 && lines[line - 1]?.trim(), method + ' oracle L' + line);
+      }
+      counts[choice]++;
+    }
+  }
+  assert.deepEqual(keys.sort(), candidates.sort(), 'Earlier inventory must be covered exactly once');
+  console.log(mixed.fixtures.length + ' earlier mixed fixtures at ' + mixed.source + ' (' +
+    counts.MOVE + ' MOVE, ' + counts.SPLIT + ' SPLIT, ' + counts.STAY + ' STAY methods)');
+}
+
+function main(baseFile, integratedFile, mixedFile) {
   assert(baseFile && integratedFile, 'Pass the inventory-pin and integrated-pin census JSONL files');
   const roster = JSON.parse(fs.readFileSync(prefix + 'candidate-roster.json'));
   const original = readCensus(baseFile), integrated = readCensus(integratedFile);
+  if (roster.earlierMixed) checkEarlierMixed(roster.earlierMixed, mixedFile && readCensus(mixedFile));
   const keys = new Set(originalCandidates());
   for (const r of integrated.values()) if (r.signals.length && !original.get(r.key)?.signals.length) keys.add(r.key);
   assert.deepEqual([...keys].sort(), roster.fixtures.map(f => f.assembly + '/' + f.type).sort());
