@@ -155,8 +155,8 @@ These directions override the cited standing rules in
    pwsh -NoProfile -File scripts/build-slot.ps1 -Label rc-merge-graph -- scripts\antiphon.cmd land-graph-audit --check
    ```
 
-   (`scripts/antiphon land-graph-audit --check` on sh.) Supply the documented built audit
-   tool (`--tool-path`) when needed; its build also takes a slot and uses an isolated
+   (On sh: `scripts/antiphon build-slot --label rc-merge-graph -- scripts/antiphon land-graph-audit --check`.)
+   Supply the documented built audit tool (`--tool-path`) when needed; its build also takes a slot and uses an isolated
    OutputPath. When `--check` fails solely because this batch changed a build-definition
    record, the selected digest or count, or a target pin, run
    `scripts\antiphon.cmd land-graph-land-refresh --base <batch-base>` before the land. It
