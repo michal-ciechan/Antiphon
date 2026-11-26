@@ -21,16 +21,24 @@ public sealed class MergeHighRadiusSubsetTests
         const string category = "/*/*/*/*[Category=RepositoryInvariant]";
         var root = Root();
         string[] expectedOwners = ["tests/Antiphon.Tests", "tests/Antiphon.Messaging.Tests", "tests/Antiphon.Agents.Pty.Tests"];
+        var standaloneRun = await RunAsync(root, "--repository-invariants", "--json");
+        standaloneRun.Exit.ShouldBe(0, standaloneRun.Text);
+        using var standalone = JsonDocument.Parse(standaloneRun.Stdout);
+        string[] Invariants(JsonElement payload, string lane) => payload.GetProperty(lane).EnumerateArray()
+            .Where(row => row.GetProperty("id").GetString()!.StartsWith("CP-invariants-", StringComparison.Ordinal))
+            .Select(row => row.GetProperty("project").GetString() + "\0" + row.GetProperty("treenodeFilter").GetString()).ToArray();
         foreach (var range in new[] { "HEAD..HEAD", QuietRange, RemoteScriptsRange })
         {
             using var result = await SelectMergeAsync(root, range);
             var payload = result.RootElement;
             var filters = payload.GetProperty("filters").EnumerateArray().ToArray();
-            var owners = filters.Where(row => row.GetProperty("treenodeFilter").GetString() == category)
-                .Select(row => row.GetProperty("project").GetString()).ToArray();
+            var invariants = Invariants(payload, "filters");
+            invariants.ShouldBe(Invariants(standalone.RootElement, "filters"), range);
+            Invariants(payload, "windowsFilters").ShouldBe(Invariants(standalone.RootElement, "windowsFilters"), range);
+            var owners = invariants.Select(row => row.Split('\0')[0]).Distinct().ToArray();
             foreach (var owner in expectedOwners)
-                owners.Count(p => p == owner).ShouldBe(1, range + " " + owner);
-            var ordinary = filters.Where(row => row.GetProperty("treenodeFilter").GetString() != category)
+                owners.ShouldContain(owner, range);
+            var ordinary = filters.Where(row => !row.GetProperty("id").GetString()!.StartsWith("CP-invariants-", StringComparison.Ordinal))
                 .Select(row => row.GetProperty("treenodeFilter").GetString()).ToArray();
             ordinary.ShouldContain(filter => filter!.Contains("CheckpointReceiptSafetyTests", StringComparison.Ordinal));
             ordinary.ShouldAllBe(filter => !filter!.Contains("AppDbContextModelTests", StringComparison.Ordinal));
@@ -40,11 +48,18 @@ public sealed class MergeHighRadiusSubsetTests
                 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
                 |---|---|---|---|---|---|---|---|---|
                 """;
-            foreach (var (owner, index) in expectedOwners.Select((owner, index) => (owner, index)))
-                markdown += $"\n| CP-{index + 1} | S3 | {owner} -> bin-c2082-fixture-{index}/ | invariants | {category} | V-4 | green | 1 | 2 |";
+            foreach (var (row, index) in invariants.Select((row, index) => (row, index)))
+            {
+                var fields = row.Split('\0');
+                markdown += $"\n| CP-{index + 1} | S3 | {fields[0]} -> bin-c2082-fixture-{index}/ | invariants | {fields[1]} | V-4 | green | 1 | 2 |";
+            }
             var imported = PlanTableImporter.ImportMarkdown(markdown);
-            imported.ExitCode.ShouldBe(0);
+            imported.ExitCode.ShouldBe(0, imported.Error);
+            imported.Manifest.ShouldNotBeNull().Checkpoints.Select(row => row.Filter)
+                .ShouldBe(invariants.Select(row => row.Split('\0')[1]));
         }
+        File.ReadAllText(Path.Combine(root, "docs/testing-and-build.md")).ShouldContain(category);
+        File.ReadAllText(Path.Combine(root, "docs/testing-and-build.md")).ShouldContain("impacted-classes --repository-invariants --json");
     }
 
     private const string MigrationRange =

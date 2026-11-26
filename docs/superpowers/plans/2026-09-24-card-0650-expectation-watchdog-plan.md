@@ -374,7 +374,7 @@ count/reason recorded; every additional build/test needs a stated reason.
 | CP-9 | S4 | CP-8 | ordinary-input | `/*/*/SessionMessageQueueServiceTests*/(Send_now_delivers_immediately_and_does_not_queue*)\|(Delivery_sends_body_then_a_separate_CR_not_one_combined_write*)\|(Multiline_delivery_is_wrapped_in_bracketed_paste*)\|(When_idle_message_is_held_while_the_agent_is_working*)` | R-2 | all 4, 0 failed/skipped | 4 | 0.3 |
 | CP-10 | S5-tests | `tests/Antiphon.Tests -> bin-c650-r5/` | operator-red | `/*/*/ExpectationEscalationTests*/C650_Unanswered_nudge_pages_exact_channel_at_deadline` | V-5 | 1 executed, missing exact-channel page assertion fails | 1 | 1.1 |
 | CP-11 | S5 | `tests/Antiphon.Tests -> bin-c650-r5/` | operator-green | `/*/*/(ExpectationEscalationTests*)\|(ExpectationStatusTests*)/*` | V-5 | all 10, 0 failed/skipped | 10 | 1.9 |
-| CP-12 | S6-tests | `tests/Antiphon.Tests -> bin-c650-r6/` | job-red | `/*/*/ExpectationWatchdogJobTests*/C650_Registers_minute_job_on_dedicated_queue` | V-6 | 1 executed, missing recurring registration assertion fails | 1 | 1.1 |
+| CP-12 | S6-tests | `tests/Antiphon.Tests -> bin-c650-r6/` | job-red | `/*/*/(ExpectationWatchdogJobTests*)\|(ExpectationWatchdogJobInvariantTests*)/(C650_Registers_minute_job_on_dedicated_queue*)\|(Watchdog_declares_the_expectations_queue*)` | V-6 | 1 executed, missing recurring registration assertion fails | 1 | 1.1 |
 | CP-13 | S6 | `tests/Antiphon.Tests -> bin-c650-r6/` | scenario-green | `/*/*/(ExpectationWatchdogJobTests*)\|(ExpectationWatchdogScenarioTests*)\|(HangfireStartupSafetyTests*)\|(ExpectationWatchdogJobInvariantTests*)/*` | V-6, R-3 | all 8 new + 9 existing, 0 failed/skipped | 17 | 2.2 |
 
 Example CP-4 invocation:

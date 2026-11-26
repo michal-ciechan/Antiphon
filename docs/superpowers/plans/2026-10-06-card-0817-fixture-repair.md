@@ -74,9 +74,9 @@ Rows are serial to respect the assembly-local process-spawn limiter.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-18 | repair | `tests/Antiphon.Tests -> bin-c0817-fixture/` | mount-repair | `/*/*/RetiredTempContainerHostTests/C994_Production_mount_topology_is_proven*` | V-19 | one method, 0 failed/skipped | 1 | 8 | true |
+| CP-18 | repair | `tests/Antiphon.Tests -> bin-c0817-fixture/` | mount-repair | `/*/*/(RetiredTempContainerHostTests*)\|(RetiredTempContainerHostInvariantTests*)/(C994_Production_mount_topology_is_proven*)\|(Production_compose_mount_roster_is_complete*)` | V-19 | one method, 0 failed/skipped | 1 | 8 | true |
 | CP-19 | repair | CP-18 | host-helper-repair | `/*/*/RemoteScriptContractTests/Nested_lane_never_uses_sudo_or_python*` | V-20 | one method; report inherited red separately | 1 | 1 | true |
-| CP-20 | repair | CP-18 | retired-temp-full | `/*/*/(RetiredTempContainerHostTests*)|(RetiredTempContainerHostInvariantTests*)/C994_*` | V-19, R-4 | all 20 methods, 0 failed/skipped | 20 | 13 | true |
+| CP-20 | repair | CP-18 | retired-temp-full | `/*/*/(RetiredTempContainerHostTests*)\|(RetiredTempContainerHostInvariantTests*)/(C994_*)\|(Production_compose_mount_roster_is_complete*)` | V-19, R-4 | all 20 methods, 0 failed/skipped | 20 | 13 | true |
 | CP-4 | repair | CP-18 | custody-linux | `/*/*/DindRunnerContractTests/*` | V-12, V-13, V-14, R-2 | all 25 methods, 0 failed/skipped | 25 | 1 | true |
 | CP-5 | repair | CP-18 | deploy-script-linux | `/*/*/RemoteScriptContractTests/(Deploy_parent_creates_the_github_token_directory_without_reading_it*)\|(Deploy_parent_creates_the_codex_home_directory_without_reading_it*)\|(Deploy_parent_seeds_or_verifies_runner_checkout*)\|(Persistent_restart_ensures_the_identity_file_before_stopping_an_older_runner*)\|(C1008_Recycle_exact_default_volumes*)\|(Scrub_covers_github_token_prefixes*)` | V-15, V-20, R-3 | all 6 methods, 0 failed/skipped | 6 | 3 | true |
 

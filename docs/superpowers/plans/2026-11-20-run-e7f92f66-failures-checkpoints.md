@@ -49,7 +49,7 @@ Desktop filters for the orchestrator after run `e7f92f66`, even when Linux is gr
 | CP-2 | fix | CP-1 | phone-home | `/*/*/PhoneHomeBackpressureTests/*` | V-2 | 9 cases, 0 failed, 0 skipped | 9 | 10 | true |
 | CP-3 | fix | CP-1 | task-input | `/*/*/AgentTaskInputFallbackTests/*` | V-3 | 13 cases, 0 failed, 0 skipped | 13 | 8 | true |
 | CP-4 | fix | CP-1 | nightly-clone | `/*/*/WorktreeDefaultCallerTests/*` | V-4 | 8 cases, 0 failed, 0 skipped | 8 | 8 | true |
-| CP-5 | fix | CP-1 | ref-only-rewind | `/*/*/C0824RefOnlyIdentityTests/Mode_round_trips_with_legacy_default` | V-5 | 1 case, 0 failed, 0 skipped | 1 | 5 | true |
+| CP-5 | fix | CP-1 | ref-only-rewind | `/*/*/(C0824RefOnlyIdentityTests*)\|(C0824RefOnlyIdentityInvariantTests*)/(Mode_round_trips_with_legacy_default*)\|(Ref_only_model_and_migration_are_declared*)` | V-5 | 1 case, 0 failed, 0 skipped | 1 | 5 | true |
 | CP-6 | fix | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-6 | 81 cases, 0 failed, 0 skipped | 81 | 10 | true |
 | CP-7 | fix | n/a | derived-driver | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo` | V-6 | exit 0, 0 errors | n/a | 8 | true |
 | CP-8 | fix | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-6 | 27 cases, 0 failed, 0 skipped | 27 | 5 | true |

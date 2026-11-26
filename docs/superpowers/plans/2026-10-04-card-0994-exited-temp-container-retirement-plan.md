@@ -869,7 +869,7 @@ Min counts TUnit results; CP-5 instead has exact command/roster expectations.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c994/` | linux-c994-host | `/*/*/(RetiredTempContainerHostTests*)|(RetiredTempContainerHostInvariantTests*)/C994_*` | V-1,V-2,V-3,V-4,V-8,V-9 | exact 20 listed methods, 0 failed/skipped | 20 | 13 | true |
+| CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c994/` | linux-c994-host | `/*/*/(RetiredTempContainerHostTests*)\|(RetiredTempContainerHostInvariantTests*)/(C994_*)\|(Production_compose_mount_roster_is_complete*)` | V-1,V-2,V-3,V-4,V-8,V-9 | exact 20 listed methods, 0 failed/skipped | 20 | 13 | true |
 | CP-2 | S1-S3 | CP-1 | linux-c994-wrapper | `/*/*/RetiredTempContainerScriptTests/C994_*` | V-4,V-5,V-6,V-7,V-8 | exact 13 listed methods, 0 failed/skipped | 13 | 6 | true |
 | CP-3 | S1-S3 | CP-1 | linux-c1008-host | `/*/*/RemoteScriptContractTests/C1008_*` | R-1 | exact 11 existing methods, 0 failed/skipped | 11 | 8 | true |
 | CP-4 | S1-S3 | CP-1 | linux-c1008-wrapper | `/*/*/RollingVolumeRecycleScriptTests/(C1008_Present_or_unknown_temp_keeps_null_refusal*)\|(C1008_Busy_routed_and_land_in_flight_refuse*)\|(C1008_Same_sha_and_partial_retries_are_safe*)\|(C1008_Option_manifest_is_strict*)\|(C1008_Documentation_and_transport_pins_match*)\|(C1008_Refusal_receipts_do_not_leak_secrets*)\|(C1008_Retired_absent_null_is_accepted*)` | R-1 | exact 7 existing methods, 0 failed/skipped | 7 | 4 | true |

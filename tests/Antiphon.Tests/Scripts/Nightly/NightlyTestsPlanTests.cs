@@ -50,8 +50,8 @@ public sealed class NightlyTestsPlanTests
                 ["antiphon"] = new PlainObject(("id", "antiphon"), ("chunks", alpha)),
                 ["messaging"] = new PlainObject(("id", "messaging"), ("chunks", beta)),
             };
-            foreach (var history in new[] { false, true })
-            foreach (var stop in new[] { "", "antiphon", "messaging" })
+            foreach (var order in new[] { "fresh", "history", "previous" })
+            foreach (var stop in new[] { "", "antiphon", "messaging", "interrupted" })
             {
                 using var fixture = NightlyFixture.Create("c2082-prefix");
                 var state = new NightlyRunState
@@ -74,21 +74,29 @@ public sealed class NightlyTestsPlanTests
                         var invariant = Uids([chunk]).Length > 0;
                         started.Add((id, Str(chunk, "id"), invariant));
                         if (invariant && id == stop) throw new InvalidOperationException("fixture failure " + id);
+                        if (invariant && id == "messaging" && stop == "interrupted") throw new OperationCanceledException("fixture interrupted");
                     },
                     Complete = suite => completed.Add(Str(suite, "id")),
                 };
-                object[] priority = history ? [new PlainObject(("suite", "client"), ("chunks", new object[] { "all" }))] : [];
+                object[] priority = order == "history" ? [new PlainObject(("suite", "client"), ("chunks", new object[] { "all" }))] : [];
+                var previous = order == "previous" ? new PlainObject(
+                    ("liveness", "closed"), ("schemaVersion", 1), ("sha", state.Sha), ("completedAt", DateTime.UtcNow.AddMinutes(-1)),
+                    ("canonicalPlanDigest", Str(NightlyDispatch.Schedule(suites.Values.ToArray()), "canonicalPlanDigest")),
+                    ("suites", new object[] { new PlainObject(("id", "client"), ("chunk", "all"), ("result", "FAIL"), ("exitCode", 1)) })) : null;
                 var failure = NightlyDispatch.CoordinateOrFailure(state, steps, suites.Keys.Cast<object>().ToArray(), priority, [],
-                    "", null!, null!, "");
+                    "", null!, previous!, "");
                 started[0].Invariant.ShouldBeTrue("first runtime start must be a repository invariant");
                 using var evidence = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(fixture.Root, "dispatch-schedule.json")));
                 var schedule = evidence.RootElement;
                 if (stop.Length > 0)
                 {
-                    failure.ShouldNotBeNull().Message.ShouldContain("fixture failure " + stop);
+                    failure.ShouldNotBeNull().Message.ShouldContain(stop == "interrupted" ? "fixture interrupted" : "fixture failure " + stop);
                     started.ShouldAllBe(start => start.Invariant);
-                    schedule.GetProperty("invariantPrefix").GetProperty("outstanding").GetArrayLength().ShouldBeGreaterThan(0);
+                    var prefix = schedule.GetProperty("invariantPrefix");
+                    prefix.GetProperty("complete").GetBoolean().ShouldBeFalse(stop);
+                    prefix.GetProperty("outstanding").GetArrayLength().ShouldBeGreaterThan(0);
                 }
+                if (order == "previous") schedule.GetProperty("orderingReason").GetString().ShouldBe("previous-run-order");
                 else
                 {
                     failure.ShouldBeNull();

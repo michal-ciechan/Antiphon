@@ -300,9 +300,12 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>The digest of the roster's ordered (id, content digest) pairs.</summary>
-        public static string RosterDigest(IReadOnlyList<RcPlannedChunk> roster) =>
-            RcChunkReceipt.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", roster.Select(c =>
-                c.Id + "\0" + c.ContentDigest + (c.RequiresFreshInvariantExecution ? "\0repository-invariant" : "")))));
+        public static string RosterDigest(IReadOnlyList<RcPlannedChunk> roster)
+        {
+            var rows = roster.Select(chunk => chunk.Id + "\0" + chunk.ContentDigest
+                + (chunk.RequiresFreshInvariantExecution ? "\0repository-invariant" : ""));
+            return RcChunkReceipt.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", rows))));
+        }
 
         static object Plain(IDictionary row)
         {

@@ -588,8 +588,8 @@
         "removed": true
       },
       "methods": [
-        "LiveLaneInventoryTests/EveryLiveGateHasDisposition",
-        "LiveLaneInventoryTests/ExplicitGatesAreNeverFullRequired"
+        "LiveLaneInventoryInvariantTests/EveryLiveGateHasDisposition",
+        "LiveLaneInventoryInvariantTests/ExplicitGatesAreNeverFullRequired"
       ]
     },
     {
