@@ -2,6 +2,8 @@
 
 This is the verification appendix to the [landed migration plan](2026-11-26-card-2082-repository-invariants-plan.md). Code imports the Checkpoints table in this appendix. The matching rows in the Plan are the original proposal. S1–S4 and D-1–D-6 below refer to the plan.
 
+The [class timing matrix](2026-11-26-card-2082-class-timing.md) and the measured first-phase and Merge costs below supersede the Plan's preliminary estimates. The matrix records the incomplete groups in both Windows exports and the Linux evidence for each cross-platform failure comparison.
+
 ## Verification design
 
 ### Inspection
