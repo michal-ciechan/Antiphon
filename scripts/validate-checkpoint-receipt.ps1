@@ -8,9 +8,10 @@
 
     Thin launcher of the checkpoint tool's validate verb (tools/Antiphon.Checkpoints/Report/ReceiptQualification.cs),
     unit 20 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, run as `antiphon-scripts checkpoints validate`
-    (the tool built from this checkout). Kept because the server's CheckpointReceipts:ValidatorScript setting names this
-    file and starts it with pwsh -File. A report.json (the tool's runs and its row verb) or a source.json written by
-    run-checkpoint.ps1 before unit 20 is read; a relative -Evidence is this location's. Prints
+    (the tool built from this checkout). Kept while a server deployed before unit 59 may still start it with pwsh -File
+    (CheckpointReceipts:ValidatorScript); since unit 59 the server starts the validate verb directly, with no PowerShell,
+    and a setting naming this file only names its checkout. A report.json (the tool's runs and its row verb) or a
+    source.json written by run-checkpoint.ps1 before unit 20 is read; a relative -Evidence is this location's. Prints
     `CHECKPOINT SOURCE VALID source=<sha> rows=<n>` or `CHECKPOINT SOURCE INVALID reason=<reason>`.
 
     Exit codes: 0 valid; 2 incomplete, dirty, changed, unknown or conflicting facts, or an unreadable receipt; 9 the CLI

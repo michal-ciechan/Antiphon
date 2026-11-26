@@ -1,6 +1,4 @@
-using System.Diagnostics;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using Antiphon.Server.Application.Dtos;
@@ -144,8 +142,8 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
         }
         await VerifyRetainedAsync(retainedIndex, request.BundleDigest, ct);
         var retainedReport = Resolve(retained, reportEntry.RelativePath);
-        var (validator, arguments) = ValidatorCommand(settings.ValidatorScript, retainedReport, request.SourceSha, request.Selection.Rows);
-        var validation = await RunValidatorAsync(validator, arguments, ValidatorBudget(settings.ValidatorScript), ct);
+        var arguments = CheckpointValidatorCommand.VerbArguments(retainedReport, request.SourceSha, request.Selection.Rows);
+        var validation = await CheckpointValidatorCommand.RunAsync(settings.ValidatorScript, arguments, ct);
         if (validation.Exit != 0) return Incomplete(request.Selection.Rows);
         return new(retainedIndex, JsonSerializer.Serialize(new { schemaVersion = 1, verified = true,
             sourceSha = request.SourceSha, rows = request.Selection.Rows, bundleDigest = request.BundleDigest,
@@ -234,57 +232,9 @@ public sealed class CheckpointReceiptValidator(IOptions<CheckpointReceiptSetting
         for (string? path = root; path is not null; path = Path.GetDirectoryName(path))
             if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("storage_linked");
     }
-    // CheckpointReceipts:ValidatorScript names scripts/validate-checkpoint-receipt.ps1 (run with pwsh -File; the production
-    // setting), the launcher of the checkpoint tool's validate verb since unit 20 of
-    // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, or a built Antiphon.Checkpoints.dll, run with dotnet exec
-    // as that same verb (the tests, which start no PowerShell). Either answers exit 0 for a qualifying receipt.
-    internal static (string FileName, string[] Arguments) ValidatorCommand(string validator, string evidence, string sourceSha,
-        IReadOnlyList<string> rows) =>
-        validator.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
-            ? ("dotnet", ["exec", validator, "validate", "--evidence", evidence, "--expected-source-sha", sourceSha, "--rows", string.Join(',', rows)])
-            : ("pwsh", ["-NoProfile", "-NonInteractive", "-File", validator, "-Evidence", evidence, "-ExpectedSourceSha", sourceSha,
-                "-Rows", string.Join(',', rows)]);
-
-    // A built DLL answers in seconds and keeps the 30 s budget. The launcher builds the antiphon-scripts CLI and the
-    // checkpoint tool on its first call after their sources change (19 s cold, 2.4 s warm on the laptop, 2026-11-24), so it
-    // gets enough time for that build: a kill at 30 s would end the build every time, and every receipt would be refused
-    // until something else built the tool. The owner chose the longer budget over a startup warm-up (2026-11-24).
-    internal static readonly TimeSpan DllValidatorBudget = TimeSpan.FromSeconds(30);
-    internal static readonly TimeSpan LauncherValidatorBudget = TimeSpan.FromMinutes(5);
-
-    internal static TimeSpan ValidatorBudget(string validator) =>
-        validator.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? DllValidatorBudget : LauncherValidatorBudget;
-
-    private static async Task<(int Exit, string Output)> RunValidatorAsync(string fileName, string[] arguments, TimeSpan limit,
-        CancellationToken ct)
-    {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        budget.CancelAfter(limit);
-        var start = new ProcessStartInfo(fileName) { UseShellExecute = false, RedirectStandardOutput = true,
-            RedirectStandardError = true, CreateNoWindow = true };
-        foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        using var child = Process.Start(start) ?? throw new IOException("validator_start_failed");
-        var stdout = ReadBoundedAsync(child.StandardOutput, budget.Token);
-        var stderr = ReadBoundedAsync(child.StandardError, budget.Token);
-        try
-        {
-            await Task.WhenAll(child.WaitForExitAsync(budget.Token), stdout, stderr).WaitAsync(budget.Token);
-            return (child.ExitCode, await stdout + await stderr);
-        }
-        finally
-        {
-            if (!child.HasExited) child.Kill(entireProcessTree: true);
-            await child.WaitForExitAsync(CancellationToken.None);
-        }
-    }
-    private static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken ct)
-    {
-        var text = new StringBuilder(); var buffer = new char[4096]; int length;
-        while ((length = await reader.ReadAsync(buffer.AsMemory(), ct)) != 0)
-        {
-            if (text.Length + length > 65536) throw new InvalidDataException("validator_output_too_large");
-            text.Append(buffer, 0, length);
-        }
-        return text.ToString();
-    }
+    // CheckpointReceipts:ValidatorScript names a built Antiphon.Checkpoints.dll (the tests: dotnet exec, 30 s) or a
+    // checkout's CLI entry: scripts/antiphon, scripts/antiphon.cmd, or the older scripts/validate-checkpoint-receipt.ps1,
+    // which names the same checkout. Since unit 59 (N2 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md)
+    // the CLI's checkpoints validate verb starts directly, with no PowerShell and no cmd.exe parsing the receipt path
+    // (CheckpointValidatorCommand), with 5 minutes for a first call that builds the CLI and the tool. Exit 0 qualifies.
 }

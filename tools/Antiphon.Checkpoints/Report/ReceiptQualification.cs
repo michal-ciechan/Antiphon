@@ -9,8 +9,8 @@ namespace Antiphon.Checkpoints;
 /// <summary>
 /// The validate verb's offline receipt qualification (CARD-0835 D-5): an executable validator, never a regex match for
 /// <c>commit=</c>. Since unit 20 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md
-/// scripts/validate-checkpoint-receipt.ps1 is its thin launcher (the server's CheckpointReceipts:ValidatorScript names that
-/// file), so this holds that script's contract as well as the tool's own:
+/// scripts/validate-checkpoint-receipt.ps1 is its thin launcher (since unit 59 the server's CheckpointReceipts:ValidatorScript
+/// starts the verb directly through the CLI), so this holds that script's contract as well as the tool's own:
 /// <list type="bullet">
 /// <item>A receipt with rows is a report.json (the tool's runs and the row verb, schema 2 or 3): <see cref="ReportValidator"/>,
 /// which admits a row whose only skips are Windows-only tests recorded on a non-Windows host (<see cref="PlacementSkips"/>).</item>

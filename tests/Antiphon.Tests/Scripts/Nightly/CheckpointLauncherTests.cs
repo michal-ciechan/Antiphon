@@ -10,9 +10,10 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// <summary>
 /// scripts/run-checkpoint.ps1 and scripts/validate-checkpoint-receipt.ps1, the thin launchers of the checkpoint tool's row
 /// and validate verbs (unit 20 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): agents, the delegate
-/// bundle and the server2 nested lane start the first by path, the server's CheckpointReceipts:ValidatorScript the second,
-/// so they are production PowerShell and these tests start them (pwsh; both require PowerShell 7) from a copy beside
-/// scripts/lib/antiphon-cli.ps1 under a temporary checkout root. ANTIPHON_SCRIPTS_DLL names the cli-echo mode of the script
+/// bundle and the server2 nested lane start the first by path; a server deployed before unit 59 starts the second
+/// (CheckpointReceipts:ValidatorScript; since unit 59 that value only names the checkout, and the server starts the CLI's
+/// validate verb directly: CheckpointValidatorCommandTests). They are production PowerShell, so these tests start them
+/// (pwsh; both require PowerShell 7) from a copy beside scripts/lib/antiphon-cli.ps1 under a temporary checkout root. ANTIPHON_SCRIPTS_DLL names the cli-echo mode of the script
 /// harness host (CLI_ECHO_COMMAND=checkpoints), so nothing builds and the argv the CLI would receive is printed. The rows
 /// are the launchers' half of the deleted test-run-checkpoint.ps1: every parameter's flag, the relative paths resolved
 /// at the caller's location, values passed as given, the exit code and exit 9. The verbs' own rows are RowVerbTests and
@@ -127,7 +128,7 @@ public sealed class CheckpointLauncherTests
         }
     }
 
-    // The server starts this file with -Evidence, -ExpectedSourceSha and -Rows CP-1,CP-2 (CheckpointReceiptValidator).
+    // The launcher's -Evidence, -ExpectedSourceSha, -Rows CP-1,CP-2 and -ExpectedRepeat map onto the validate verb.
     [Test]
     public async Task Validate_checkpoint_receipt_maps_onto_the_validate_verb()
     {
@@ -148,22 +149,6 @@ public sealed class CheckpointLauncherTests
         });
     }
 
-    // The server's budget for one validation: the launcher may build the CLI and the tool first, so it gets minutes; a built
-    // DLL keeps 30 s. Both forms run the validate verb with the same receipt facts.
-    [Test]
-    public void The_server_gives_the_launcher_time_to_build_and_a_dll_thirty_seconds()
-    {
-        const string launcher = @"C:\src\Antiphon\scripts\validate-checkpoint-receipt.ps1";
-        const string dll = @"C:\tools\Antiphon.Checkpoints.DLL";
-        Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorBudget(launcher).ShouldBe(TimeSpan.FromMinutes(5));
-        Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorBudget(dll).ShouldBe(TimeSpan.FromSeconds(30));
-        var (shell, shellArguments) = Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorCommand(launcher, "r.json", "abc", ["CP-1", "CP-2"]);
-        shell.ShouldBe("pwsh");
-        shellArguments.ShouldBe(new[] { "-NoProfile", "-NonInteractive", "-File", launcher, "-Evidence", "r.json", "-ExpectedSourceSha", "abc", "-Rows", "CP-1,CP-2" });
-        var (exec, execArguments) = Antiphon.Server.Infrastructure.Verification.CheckpointReceiptValidator.ValidatorCommand(dll, "r.json", "abc", ["CP-1"]);
-        exec.ShouldBe("dotnet");
-        execArguments.ShouldBe(new[] { "exec", dll, "validate", "--evidence", "r.json", "--expected-source-sha", "abc", "--rows", "CP-1" });
-    }
 
     [Test]
     public async Task The_launchers_are_thin_ascii_and_parse()
