@@ -1730,6 +1730,16 @@
         },
         {
           "suite": "antiphon",
+          "class": "C2070HostIndependentPathMatchTests",
+          "methods": [
+            "Windows_git_toplevel_round_trips_to_the_stored_unc_path"
+          ],
+          "platform": "linux",
+          "reason": "Windows-only by construction: converts Git's slash-form UNC top-level using Windows Path.GetFullPath. The method remains required on Windows.",
+          "owner": "CARD-2077"
+        },
+        {
+          "suite": "antiphon",
           "class": "C0824RefOnlyNativeTests",
           "platform": "linux",
           "reason": "CARD-0824 actual Windows path, registration and restart witnesses; all three remain required on Windows.",
