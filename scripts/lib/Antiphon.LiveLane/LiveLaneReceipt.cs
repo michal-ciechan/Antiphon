@@ -1,7 +1,13 @@
 // CARD-1545 S2b: live-lane execution receipts, lane state and use records, ported from scripts/lib/live-lane-receipt.ps1
 // (W2 slice S22; the script is deleted). Diagnostic and shadow-only: no receipt is trusted (D-9 is S2c), no state carries
 // gate credit, and a reuse is a use record, never an execution. Every verdict is recomputed from the receipt's own facts,
-// in the PowerShell's order. Plain C#, framework only. ASCII only.
+// in the PowerShell's order.
+//
+// The Claude version (the owner, 2026-11-26: "a way to say digest vs what versions of Claude it was tested against"): a
+// receipt of schemaVersion 2 records the Claude CLI version of the executable the run used, as a stable token and the raw
+// line of `<exe> --version` (LiveLaneClaudeVersion); a schemaVersion 1 receipt has none and reads as version "unknown".
+// Receipts are never rewritten. The version is its own axis, outside the fingerprint, so one code digest can be shown
+// against every Claude version it ran with (LiveLaneStatus). Plain C#, framework only. ASCII only.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -26,7 +32,8 @@ namespace Antiphon.LiveLane
         public LiveLaneMap Receipt { get; set; }
         public DateTimeOffset? EndedUtc { get; set; }
         public long Sequence { get; set; }
-
+        /// <summary>The Claude version the receipt records ("unknown" for schemaVersion 1).</summary>
+        public LiveLaneClaudeVersion Claude { get; set; } = LiveLaneClaudeVersion.Unknown;
 
         internal string FingerprintDigest => (Receipt?["fingerprint"] as LiveLaneMap)?["digest"] as string;
         internal LiveLaneMap FingerprintComponents => (Receipt?["fingerprint"] as LiveLaneMap)?["components"] as LiveLaneMap;
@@ -90,6 +97,8 @@ namespace Antiphon.LiveLane
         public const string UseKind = "live-lane-use";
         public const string RevocationKind = "live-lane-revocation";
 
+        /// <summary>The receipt schema new receipts are written with: 2 adds the Claude version (claude: {version, raw}).</summary>
+        public const int CurrentSchemaVersion = 2;
 
         private static readonly string[] ReceiptFields =
         {
@@ -97,6 +106,7 @@ namespace Antiphon.LiveLane
             "finalExit", "fingerprint", "host", "inputAfter", "inputBefore", "kind", "laneId", "missing", "passed", "planned", "ref", "repository", "rows", "runId",
             "schemaVersion", "sequence", "skipped", "sourceClean", "sourceSha", "startedUtc"
         };
+        private static readonly string[] ReceiptFieldsV2 = ReceiptFields.Concat(new[] { "claude" }).ToArray();
         private static readonly string[] UseFields =
         {
             "candidateSha", "createdUtc", "executed", "executedNow", "failed", "fingerprintDigest", "gateCredit", "kind", "laneId",
@@ -179,7 +189,8 @@ namespace Antiphon.LiveLane
 
         /// <summary>
         /// Test-LiveLaneReceipt: validates one live-lane-execution receipt against the lane roster (manifest, a manifest
-        /// copy's path, or roster). rosterDigest, when given, is the roster's digest.
+        /// copy's path, or roster). rosterDigest, when given, is the roster's digest. A receipt of schemaVersion 1 carries
+        /// no Claude version (it reads as "unknown"); schemaVersion 2 must carry claude {version, raw}.
         /// </summary>
         public static LiveLaneReceiptCheck Check(string receipt, string manifest = null, IEnumerable<string> roster = null, string rosterDigest = null)
         {
@@ -196,9 +207,11 @@ namespace Antiphon.LiveLane
             var rosterSet = new HashSet<string>((roster ?? Array.Empty<string>()).Where(uid => !string.IsNullOrEmpty(uid)), StringComparer.Ordinal);
             if (string.IsNullOrEmpty(rosterDigest)) rosterDigest = RosterDigest(rosterSet);
 
-            ExactKeys(reasons, document, ReceiptFields);
+            // The schema decides the field set: 1 is the CARD-1545 S2b receipt, 2 adds the Claude version.
+            var schema = LiveLaneData.IsLong(document["schemaVersion"], out var version) && (version == 1 || version == 2) ? version : 0;
+            ExactKeys(reasons, document, schema == 2 ? ReceiptFieldsV2 : ReceiptFields);
             if (!LiveLaneData.Same(document["kind"], ExecutionKind)) reasons.Add("kind");
-            if (!LiveLaneData.IsLong(document["schemaVersion"], out var version) || version != 1) reasons.Add("schema");
+            if (schema == 0) reasons.Add("schema");
             foreach (var name in new[] { "laneId", "runId", "repository", "ref" }) Field(reasons, document, name, "string");
             Field(reasons, document, "sourceSha", "sha1");
             Field(reasons, document, "sourceClean", "bool");
@@ -294,6 +307,17 @@ namespace Antiphon.LiveLane
                 }
             }
 
+            // The Claude version (schemaVersion 2): a stable token and the raw line it came from.
+            var claude = LiveLaneClaudeVersion.Unknown;
+            if (schema == 2 && Field(reasons, document, "claude", "object"))
+            {
+                var map = (LiveLaneMap)document["claude"];
+                ExactKeys(reasons, map, new[] { "raw", "version" }, "claude.");
+                if (!(map["version"] is string token) || !LiveLaneClaudeVersion.IsToken(token)) reasons.Add("type:claude.version");
+                else if (map["raw"] != null && !(map["raw"] is string raw && raw.Length <= LiveLaneClaudeVersion.RawLimit)) reasons.Add("type:claude.raw");
+                else claude = new LiveLaneClaudeVersion(token, map["raw"] as string);
+            }
+
             var sorted = LiveLaneData.Sorted(reasons);
             if (sorted.Length > 0) return Invalid(sorted, read.Sha256, document);
             // Outcome: the worse of the rows and the classifier; a skip is never green.
@@ -303,7 +327,7 @@ namespace Antiphon.LiveLane
             return new LiveLaneReceiptCheck
             {
                 Valid = true, Reasons = Array.Empty<string>(), Outcome = Outcome(code), Code = code, Digest = read.Sha256, Receipt = document,
-                EndedUtc = ended, Sequence = counts["sequence"]
+                EndedUtc = ended, Sequence = counts["sequence"], Claude = claude
             };
         }
 

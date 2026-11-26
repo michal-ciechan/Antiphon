@@ -1,11 +1,12 @@
 // W2 slices S21 and S22: the live lane's CLI commands over the isolated Antiphon.LiveLane project (the dependency goes
 // Scripts -> LiveLane, never the reverse). live-lane-run [--lane --candidate-ref --expected-sha --manifest --coordination-root
-// --results-root]: run-live-lane.ps1's native mode, always native-unqualified, exit 20, the compact record on stdout
-// (no lock, no process, no provider). live-lane-input-digest [--root <dir>]
+// --results-root --claude]: run-live-lane.ps1's native mode, always native-unqualified, exit 20, the compact record on stdout
+// (no lock, no process, no provider); --claude defaults to ANTIPHON_LIVE_CLAUDE_EXE. live-lane-input-digest [--root <dir>]
 // [--check]: the protected-input digest that test-live-lane-run.ps1 -PrintInputDigest printed (exit 0); --check also compares
 // it with LiveLaneInputDigest.Pinned and reads the census sentinels with this CLI's compiled policy and census (exit 1 when
-// either fails). live-lane-status (S22, live-lane-status.ps1): each lane's state, git and the rc
-// project graph read through the nightly core (LiveLaneNightlySources); exit 0, 2 a lane INVALID. Usage is 2 for each. ASCII only.
+// either fails). live-lane-status (S22, live-lane-status.ps1): each lane's state with its Claude versions, git and the rc
+// project graph read through the nightly core (LiveLaneNightlySources); exit 0, 2 a lane INVALID, 1 a required Claude
+// version missing. Usage is 2 for each. ASCII only.
 using System;
 using System.Linq;
 using Antiphon.LiveLane;
@@ -17,7 +18,7 @@ namespace Antiphon.Scripts
         internal const string Usage = LiveLaneRunOptions.Usage + " | " + LiveLaneInputDigestOptions.Usage + " | " + LiveLaneStatusOptions.Usage;
 
         internal static int RunLiveLaneRun(string[] args) =>
-            LiveLaneRunCommand.Run(LiveLaneRunOptions.Parse(args.Skip(1).ToArray()), Console.Out);
+            LiveLaneRunCommand.Run(LiveLaneRunOptions.Parse(args.Skip(1).ToArray(), Environment.GetEnvironmentVariable("ANTIPHON_LIVE_CLAUDE_EXE")), Console.Out);
 
         internal static int RunInputDigest(string[] args) =>
             LiveLaneInputDigestCommand.Run(LiveLaneInputDigestOptions.Parse(args.Skip(1).ToArray(), SourceCheckout.Root()),

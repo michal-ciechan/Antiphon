@@ -344,7 +344,8 @@ namespace Antiphon.Scripts
             // The live lane's commands (W2 slices S21 and S22, the isolated Antiphon.LiveLane project) answer every input themselves.
             // live-lane-run: always exit 20, native-unqualified (the compact record on stdout). live-lane-input-digest: exit 0
             // the digest printed; with --check 1 when it is not the pin or the census sentinels fail. live-lane-status: exit 0,
-            // 2 when a lane is INVALID (its document says why). Usage is 2 for each.
+            // 2 when a lane is INVALID (its document says why), 1 when a required Claude version has no passing receipt.
+            // Usage is 2 for each.
             [LiveLaneRunCommand.Name] = LiveLaneCommands.RunLiveLaneRun,
             [LiveLaneInputDigestCommand.Name] = LiveLaneCommands.RunInputDigest,
             [LiveLaneStatus.Name] = LiveLaneCommands.RunStatus,

@@ -85,6 +85,8 @@ namespace Antiphon.LiveLane
         public LiveLaneMap EnvironmentJson() =>
             Environment == null ? null : new LiveLaneMap(("status", Environment.Status), ("reasons", Environment.Reasons.Cast<object>().ToList()));
 
+        /// <summary>The digest of the code alone: the components without the environment (the receipts' Claude-version key).</summary>
+        public string CodeDigest => LiveLaneFingerprint.CodeDigest(LaneId, Components);
 
         /// <summary>The ordered hashtable the PowerShell returned.</summary>
         public LiveLaneMap ToJson()
@@ -259,6 +261,19 @@ namespace Antiphon.LiveLane
         {
             var material = "antiphon-live-lane-fingerprint\n" + LiveLaneData.Canonical(new LiveLaneMap(("schemaVersion", 1), ("laneId", lane), ("components", components)));
             return LiveLaneData.Sha256Text(material);
+        }
+
+        /// <summary>
+        /// The code digest: the fingerprint digest of the components without the environment (the attested executable,
+        /// runtime, settings and account). Receipts are keyed by it and by the Claude version, so one code digest can be shown
+        /// against every Claude version it was run with. Null when there are no components.
+        /// </summary>
+        public static string CodeDigest(string lane, LiveLaneMap components)
+        {
+            if (components == null) return null;
+            var code = new LiveLaneMap();
+            foreach (var pair in components) if (pair.Key != "environment") code[pair.Key] = pair.Value;
+            return Digest(lane, code);
         }
 
         // Get-LiveLaneImportSet: the files MSBuild visits for the closure projects, mirroring the reader's literal walk (ancestor

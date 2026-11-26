@@ -1,6 +1,6 @@
 // The seams the live lane's fingerprint, receipts and Claude version probe read through (W2 slice S22). This project
-// references nothing, so git and the rc project graph come from the caller: the CLI (Antiphon.Scripts)
-// binds them to the nightly core's TestSelectionGit and RcProjectSelection (LiveLaneNightlySources), the
+// references nothing, so git, the rc project graph and child processes come from the caller: the CLI (Antiphon.Scripts)
+// binds git and the graph to the nightly core's TestSelectionGit and RcProjectSelection (LiveLaneNightlySources), the
 // same reads the deleted PowerShell called; a test binds the same adapter or a fake. The graph is plain data, so a later
 // owner of the change-impact graph (CI-2's tools/ChangeImpact) can replace the adapter without touching this project.
 // Plain C#, framework only. ASCII only.
@@ -84,5 +84,26 @@ namespace Antiphon.LiveLane
 
         public ILiveLaneGit Git { get; }
         public ILiveLaneProjectGraphReader Graph { get; }
+    }
+
+    /// <summary>A finished child process: its exit code (null when it did not start or ran out of time) and stdout.</summary>
+    public sealed class LiveLaneProcessResult
+    {
+        public LiveLaneProcessResult(int? exit, string stdout, bool timedOut = false)
+        {
+            Exit = exit;
+            Stdout = stdout ?? "";
+            TimedOut = timedOut;
+        }
+
+        public int? Exit { get; }
+        public string Stdout { get; }
+        public bool TimedOut { get; }
+    }
+
+    /// <summary>Starts a child process and waits for it (bounded); never a shell. The CLI binds the real one, a test a fake.</summary>
+    public interface ILiveLaneProcess
+    {
+        LiveLaneProcessResult Run(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout);
     }
 }

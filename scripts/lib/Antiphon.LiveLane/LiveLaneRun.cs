@@ -87,6 +87,8 @@ namespace Antiphon.LiveLane
         public Func<string, LiveLaneProbeRequest, LiveLaneProbeReply> Probe { get; set; }
         public Action<string> Trace { get; set; }
         public Action<LiveLaneRequest> BeforeRelease { get; set; }
+        /// <summary>Optional: the process seam the run asks `&lt;executable&gt; --version` through (the Claude version it records).</summary>
+        public ILiveLaneProcess Process { get; set; }
     }
 
     /// <summary>The owner fields of the shared native-run lock record.</summary>
@@ -150,6 +152,8 @@ namespace Antiphon.LiveLane
         public string RawChildOutcome { get; set; }
         public List<int> ChildExits { get; } = new List<int>();
         public List<LiveLaneProbeObservation> Probes { get; set; } = new List<LiveLaneProbeObservation>();
+        /// <summary>The Claude CLI version of the executable the run targeted (null when the run never asked it).</summary>
+        public LiveLaneClaudeVersion Claude { get; set; }
 
         /// <summary>
         /// The compact JSON record, in the field order of the old pscustomobject: what run-live-lane.ps1 printed with
@@ -202,6 +206,15 @@ namespace Antiphon.LiveLane
                     json.WriteEndObject();
                 }
                 json.WriteEndArray();
+                // S22: the Claude version the run recorded (null: it never asked; the native mode never does).
+                if (Claude == null) json.WriteNull("Claude");
+                else
+                {
+                    json.WriteStartObject("Claude");
+                    json.WriteString("Version", Claude.Version);
+                    OptionalString(json, "Raw", Claude.Raw);
+                    json.WriteEndObject();
+                }
                 json.WriteEndObject();
             }
             return Encoding.UTF8.GetString(stream.ToArray());
@@ -488,6 +501,9 @@ namespace Antiphon.LiveLane
                     result.Reason = "deadline";
                     return result;
                 }
+                // S22: the Claude version is asked of the executable the run targets, before anything runs with it, and
+                // recorded beside the code digest (a failure to answer records unknown; it never refuses the run).
+                if (boundary.Process != null) result.Claude = LiveLaneClaudeVersion.Probe(boundary.Process, request.Executable);
                 if (boundary.Probe != null)
                 {
                     var preflight = LiveLaneOutcome.Preflight(boundary, request, deadline);
@@ -609,13 +625,15 @@ namespace Antiphon.LiveLane
 
     /// <summary>
     /// live-lane-run's flags, kept from run-live-lane.ps1's Native parameter set (all optional, all ignored: the run is
-    /// native-unqualified whatever they say). Kebab case; an unknown, repeated or valueless flag, or a positional
-    /// argument, is a usage error.
+    /// native-unqualified whatever they say), and --claude (S22): the Claude executable the run targets (the request's
+    /// Executable, passed to the child as ANTIPHON_LIVE_CLAUDE_EXE; the CLI defaults it to that variable). The version a
+    /// run records is asked of this executable; the native mode refuses before it asks anything. Kebab case; an unknown,
+    /// repeated or valueless flag, or a positional argument, is a usage error.
     /// </summary>
     public sealed class LiveLaneRunOptions
     {
-        public const string Usage = "live-lane-run [--lane <id>] [--candidate-ref <ref>] [--expected-sha <sha>] [--manifest <path>] [--coordination-root <dir>] [--results-root <dir>]";
-        private static readonly string[] Flags = { "--lane", "--candidate-ref", "--expected-sha", "--manifest", "--coordination-root", "--results-root" };
+        public const string Usage = "live-lane-run [--lane <id>] [--candidate-ref <ref>] [--expected-sha <sha>] [--manifest <path>] [--coordination-root <dir>] [--results-root <dir>] [--claude <exe>]";
+        private static readonly string[] Flags = { "--lane", "--candidate-ref", "--expected-sha", "--manifest", "--coordination-root", "--results-root", "--claude" };
 
         public string Lane { get; private set; }
         public string CandidateRef { get; private set; }
@@ -623,14 +641,17 @@ namespace Antiphon.LiveLane
         public string Manifest { get; private set; }
         public string CoordinationRoot { get; private set; }
         public string ResultsRoot { get; private set; }
+        /// <summary>The Claude executable the run targets (null: none named).</summary>
+        public string Claude { get; private set; }
 
-        public static LiveLaneRunOptions Parse(IReadOnlyList<string> arguments)
+        public static LiveLaneRunOptions Parse(IReadOnlyList<string> arguments, string defaultClaude = null)
         {
             var values = LiveLaneArgs.Parse(arguments, Flags, Array.Empty<string>());
             return new LiveLaneRunOptions
             {
                 Lane = values.Value("--lane"), CandidateRef = values.Value("--candidate-ref"), ExpectedSha = values.Value("--expected-sha"),
-                Manifest = values.Value("--manifest"), CoordinationRoot = values.Value("--coordination-root"), ResultsRoot = values.Value("--results-root")
+                Manifest = values.Value("--manifest"), CoordinationRoot = values.Value("--coordination-root"), ResultsRoot = values.Value("--results-root"),
+                Claude = values.Value("--claude") ?? (string.IsNullOrWhiteSpace(defaultClaude) ? null : defaultClaude)
             };
         }
     }
@@ -645,8 +666,9 @@ namespace Antiphon.LiveLane
 
         public static int Run(LiveLaneRunOptions options, TextWriter output)
         {
-            // The flags name a native run; there is no native executor, so they cannot change the answer.
-            var result = LiveLaneRun.Run(new LiveLaneRequest { Mode = "Native" }, null, null);
+            // The flags name a native run; there is no native executor, so they cannot change the answer. The executable is
+            // carried so that a run records the version of the Claude it targets; the native mode never asks it.
+            var result = LiveLaneRun.Run(new LiveLaneRequest { Mode = "Native", Lane = options?.Lane, Executable = options?.Claude }, null, null);
             output.WriteLine(result.ToJson());
             return result.ExitCode;
         }

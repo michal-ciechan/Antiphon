@@ -121,3 +121,33 @@ internal static class LiveLaneTestSources
 
     public static string RepoRoot => DelegateScriptRunner.RepoRoot;
 }
+
+/// <summary>The lane roster and manifest the live lane's attestation, receipt and status tests share.</summary>
+internal static class LiveLaneLaneFixture
+{
+    // The lane roster, written out here as an independent oracle: the six S1 core uids (LiveClaudeCore.All) in the
+    // manifest's namespace.class.method(arguments) form.
+    public static readonly string[] Roster =
+    [
+        "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests.Submitting_via_two_writes_completes_a_turn(claude)",
+        "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.Control_auto_connects_a_bridge_session_before_the_first_user",
+        "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.Settings_file_prevents_auto_connect_and_keeps_startup_records",
+        "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.Remote_control_slash_command_still_arms_after_settings_off",
+        "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests.C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt",
+        "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
+    ];
+
+    /// <summary>The lane manifest of a roster: namespace.class.method(arguments) split into one core row each.</summary>
+    public static LiveLaneMap Manifest(IEnumerable<string> roster)
+    {
+        var core = new List<object>();
+        foreach (var uid in roster)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(uid, @"^(.+)\.([^.]+)\.([^.(]+)(\((.*)\))?$");
+            var arguments = match.Groups[4].Success ? match.Groups[5].Value.Split(',').Cast<object>().ToList() : new List<object>();
+            core.Add(new LiveLaneMap(("project", "Pty.Tests"), ("namespace", match.Groups[1].Value), ("class", match.Groups[2].Value), ("method", match.Groups[3].Value),
+                ("arguments", arguments)));
+        }
+        return new LiveLaneMap(("format", "antiphon-live-lanes-v1"), ("core", core), ("gates", new List<object>()), ("additiveContract", new List<object>()));
+    }
+}

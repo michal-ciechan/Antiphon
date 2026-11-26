@@ -4,9 +4,16 @@
 //
 // For each lane (--lane, or every lane the candidate's tests/live-lane-inputs.json declares) it prints the state document
 // the script printed (antiphon-live-lane-status-v1: without --history every lane is DUE; with --history and --context
-// the receipts decide, D-6 under --reuse-policy). --json prints one canonical document per lane per line (the script's
-// text); otherwise a short table. Exit 0; 2 when a lane is INVALID (the document says why, as the script's did). Plain C#,
-// framework only. ASCII only.
+// the receipts decide, D-6 under --reuse-policy) plus one key the script did not have, "claude": the Claude versions the
+// lane's receipts ran with for this code digest (the fingerprint without the attested environment), the newest receipt of
+// each version deciding its outcome, and the versions --require-claude-version names. Status is keyed by (code digest,
+// Claude version). --json prints one canonical document per lane per line (the script's text plus "claude"); otherwise a
+// short table. Exit 0; 2 when a lane is INVALID (the document says why, as the script's did); 1 when a required Claude
+// version has no passing receipt. With no requirement the rule is today's: one passing receipt is enough.
+//
+// The requirement lives on the command line, not in the lane declaration: tests/live-lane-inputs.json is a lane contract
+// file, so a field there would move the fingerprint and stale every receipt whenever the set of versions changed, which is
+// the opposite of checking one unchanged digest against more versions. Plain C#, framework only. ASCII only.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,22 +22,41 @@ using System.Text.RegularExpressions;
 
 namespace Antiphon.LiveLane
 {
+    /// <summary>The Claude versions of one lane's receipts for one code digest, and the requirement against them.</summary>
+    public sealed class LiveLaneClaudeVersions
+    {
+        public string CodeDigest { get; set; }
+        /// <summary>One entry per version: the newest receipt of that version decides (GREEN passes).</summary>
+        public IReadOnlyList<LiveLaneMap> Versions { get; set; } = Array.Empty<LiveLaneMap>();
+        public IReadOnlyList<string> Passing { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> Failing { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> Required { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> Missing { get; set; } = Array.Empty<string>();
+        /// <summary>Every required version passes; with none required, at least one version passes (one receipt is enough).</summary>
+        public bool Satisfied => Required.Count > 0 ? Missing.Count == 0 : Passing.Count > 0;
+
+        public LiveLaneMap ToJson() => new LiveLaneMap(("codeDigest", CodeDigest), ("versions", Versions.Cast<object>().ToList()),
+            ("passing", Passing.Cast<object>().ToList()), ("failing", Failing.Cast<object>().ToList()), ("required", Required.Cast<object>().ToList()), ("missing", Missing.Cast<object>().ToList()),
+            ("satisfied", Satisfied));
+    }
+
     /// <summary>One lane's status: the document, the exit it asks for, and the parts the table shows.</summary>
     public sealed class LiveLaneStatusResult
     {
         public string LaneId { get; set; }
-        /// <summary>The document (the script's).</summary>
+        /// <summary>The document (the script's, plus "claude" when the lane was not refused).</summary>
         public LiveLaneMap Document { get; set; }
         public int ExitCode { get; set; }
+        public LiveLaneClaudeVersions Claude { get; set; }
     }
 
     /// <summary>live-lane-status's flags.</summary>
     public sealed class LiveLaneStatusOptions
     {
         public const string Usage = "live-lane-status [--lane <id>] [--candidate-sha <sha>] [--repository-root <dir>] [--attestation <file>] [--history <dir> --context <file>"
-            + " [--reuse-policy AlwaysRerun|Bounded24h] [--use-record <file>]] [--json]";
+            + " [--reuse-policy AlwaysRerun|Bounded24h] [--use-record <file>]] [--require-claude-version <v>[,<v>...]] [--json]";
 
-        private static readonly string[] Valued = { "--lane", "--candidate-sha", "--repository-root", "--attestation", "--history", "--context", "--reuse-policy", "--use-record" };
+        private static readonly string[] Valued = { "--lane", "--candidate-sha", "--repository-root", "--attestation", "--history", "--context", "--reuse-policy", "--use-record", "--require-claude-version" };
 
         /// <summary>null: every declared lane; "" is the script's -Lane '' (lane-required).</summary>
         public string Lane { get; private set; }
@@ -42,18 +68,29 @@ namespace Antiphon.LiveLane
         public string Context { get; private set; }
         public string ReusePolicy { get; private set; } = LiveLaneAttestation.AlwaysRerun;
         public string UseRecord { get; private set; }
+        public IReadOnlyList<string> RequiredClaudeVersions { get; private set; } = Array.Empty<string>();
         public bool Json { get; private set; }
 
         public static LiveLaneStatusOptions Parse(IReadOnlyList<string> arguments, string defaultRoot)
         {
             var values = LiveLaneArgs.Parse(arguments, Valued, new[] { "--json" });
+            var required = new List<string>();
+            var requirement = values.Value("--require-claude-version");
+            if (requirement != null)
+                foreach (var part in requirement.Split(','))
+                {
+                    var token = part.Trim();
+                    if (token.Length == 0 || token == LiveLaneClaudeVersion.UnknownToken || !LiveLaneClaudeVersion.IsToken(token))
+                        throw new LiveLaneUsageException("--require-claude-version takes major.minor.patch versions, comma-separated: '" + part + "'");
+                    if (!required.Contains(token, StringComparer.Ordinal)) required.Add(token);
+                }
             var options = new LiveLaneStatusOptions
             {
                 Lane = values.Value("--lane"), CandidateSha = values.Value("--candidate-sha"),
                 RepositoryRoot = values.Value("--repository-root") ?? defaultRoot ?? Environment.CurrentDirectory,
                 Attestation = values.Value("--attestation") ?? "", History = values.Value("--history") ?? "", Context = values.Value("--context") ?? "",
                 ReusePolicy = values.Value("--reuse-policy") ?? LiveLaneAttestation.AlwaysRerun, UseRecord = values.Value("--use-record") ?? "",
-                Json = values.Switch("--json")
+                RequiredClaudeVersions = required, Json = values.Switch("--json")
             };
             if (options.UseRecord.Length > 0 && options.Lane == null) throw new LiveLaneUsageException("--use-record needs --lane (one lane writes one use record)");
             return options;
@@ -70,11 +107,11 @@ namespace Antiphon.LiveLane
 
         /// <summary>The options of a direct call (tests, the parity cases): the script's parameters.</summary>
         public static LiveLaneStatusOptions Of(string root, string lane, string candidateSha, string attestation = "", string history = "", string context = "",
-            string reusePolicy = LiveLaneAttestation.AlwaysRerun, string useRecord = "") =>
+            string reusePolicy = LiveLaneAttestation.AlwaysRerun, string useRecord = "", IReadOnlyList<string> required = null) =>
             new LiveLaneStatusOptions
             {
                 RepositoryRoot = root, Lane = lane, CandidateSha = candidateSha, Attestation = attestation ?? "", History = history ?? "", Context = context ?? "",
-                ReusePolicy = reusePolicy, UseRecord = useRecord ?? ""
+                ReusePolicy = reusePolicy, UseRecord = useRecord ?? "", RequiredClaudeVersions = required ?? Array.Empty<string>()
             };
     }
 
@@ -145,6 +182,54 @@ namespace Antiphon.LiveLane
                 ("fingerprint", FingerprintJson(fingerprint)));
         }
 
+        /// <summary>
+        /// The Claude versions of the lane's receipts in history for the candidate's code digest: each valid, clean receipt
+        /// of this lane whose fingerprint, without its environment component, is the candidate's; the newest receipt of each
+        /// version decides (GREEN passes). A run id with two different receipts is left out (the state refuses it).
+        /// </summary>
+        public static LiveLaneClaudeVersions ClaudeVersions(string lane, string codeDigest, IEnumerable<string> history, IReadOnlyList<string> roster,
+            IReadOnlyList<string> required)
+        {
+            var checks = new List<LiveLaneReceiptCheck>();
+            var digestsByRun = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var rosterDigest = LiveLaneReceipt.RosterDigest(roster ?? Array.Empty<string>());
+            foreach (var path in history ?? Array.Empty<string>())
+            {
+                try
+                {
+                    if (!(LiveLaneAttestation.ReadDocument(path, "history-unreadable").Value is LiveLaneMap map)
+                        || !LiveLaneData.Same(map["kind"], LiveLaneReceipt.ExecutionKind)) continue;
+                }
+                catch (LiveLaneRefusal) { continue; }
+                var check = LiveLaneReceipt.Check(path, null, roster, rosterDigest);
+                if (check.Receipt?["runId"] is string run)
+                {
+                    if (!digestsByRun.TryGetValue(run, out var digests)) digestsByRun[run] = digests = new HashSet<string>(StringComparer.Ordinal);
+                    digests.Add(check.Digest ?? "");
+                }
+                if (check.Valid && LiveLaneData.Same(check.Receipt["laneId"], lane) && check.Receipt["sourceClean"] is bool clean && clean
+                    && codeDigest != null && LiveLaneFingerprint.CodeDigest(lane, check.FingerprintComponents) == codeDigest) checks.Add(check);
+            }
+            checks = checks.Where(check => digestsByRun[(string)check.Receipt["runId"]].Count == 1).ToList();
+            var versions = new List<LiveLaneMap>();
+            var passing = new List<string>();
+            var failing = new List<string>();
+            foreach (var group in LiveLaneReceipt.Ordered(checks).GroupBy(check => check.Claude.Version, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
+            {
+                var latest = group.Last();
+                versions.Add(new LiveLaneMap(("version", group.Key), ("raw", latest.Claude.Raw), ("outcome", latest.Outcome), ("receiptDigest", latest.Digest),
+                    ("runId", latest.Receipt["runId"]), ("endedUtc", latest.EndedUtc == null ? null : LiveLaneReceipt.Iso(latest.EndedUtc.Value)),
+                    ("receipts", (long)group.Count())));
+                (latest.Outcome == "GREEN" ? passing : failing).Add(group.Key);
+            }
+            var requiredList = (required ?? Array.Empty<string>()).ToList();
+            return new LiveLaneClaudeVersions
+            {
+                CodeDigest = codeDigest, Versions = versions, Passing = passing, Failing = failing, Required = requiredList,
+                Missing = requiredList.Where(version => !passing.Contains(version, StringComparer.Ordinal)).ToList()
+            };
+        }
+
         /// <summary>The INVALID document the script printed for a refusal: the reason when it is a fixed token, else status-failed.</summary>
         public static LiveLaneMap Invalid(string lane, Exception failure)
         {
@@ -156,7 +241,7 @@ namespace Antiphon.LiveLane
 
         /// <summary>
         /// One lane, as live-lane-status.ps1 answered it (lane-required, history-required:Context|UseRecord and policy-invalid
-        /// first). Never throws: a refusal is the INVALID document, exit 2.
+        /// first), plus the Claude versions of its receipts. Never throws: a refusal is the INVALID document, exit 2.
         /// </summary>
         public static LiveLaneStatusResult Lane(LiveLaneSources sources, LiveLaneStatusOptions options)
         {
@@ -167,10 +252,12 @@ namespace Antiphon.LiveLane
                 LiveLaneMap document;
                 LiveLaneFingerprintResult fingerprint;
                 IReadOnlyList<string> roster = Array.Empty<string>();
+                IReadOnlyList<string> history = Array.Empty<string>();
                 if (options.History.Length > 0)
                 {
                     document = WithHistory(sources, options.RepositoryRoot, lane, options.CandidateSha, options.Attestation, options.History, options.Context,
                         options.ReusePolicy, options.UseRecord, out fingerprint, out roster);
+                    history = LiveLaneData.Sorted(Directory.GetFiles(options.History, "*.json"));
                 }
                 else
                 {
@@ -179,7 +266,9 @@ namespace Antiphon.LiveLane
                     if (!LiveLaneAttestation.Policies.Contains(options.ReusePolicy ?? "", StringComparer.Ordinal)) throw new LiveLaneRefusal("policy-invalid");
                     document = Plain(sources, options.RepositoryRoot, lane, options.CandidateSha, options.Attestation, out fingerprint);
                 }
-                return new LiveLaneStatusResult { LaneId = lane, Document = document, ExitCode = 0 };
+                var claude = ClaudeVersions(lane, fingerprint.CodeDigest, history, roster, options.RequiredClaudeVersions);
+                document["claude"] = claude.ToJson();
+                return new LiveLaneStatusResult { LaneId = lane, Document = document, Claude = claude, ExitCode = claude.Missing.Count > 0 ? 1 : 0 };
             }
             catch (Exception e) when (!(e is OutOfMemoryException))
             {
@@ -189,7 +278,8 @@ namespace Antiphon.LiveLane
 
         /// <summary>
         /// live-lane-status: the candidate (--candidate-sha, else HEAD), each lane (--lane, else every lane the candidate
-        /// declares), one document or table block per lane. Exit 2 when any lane is INVALID, else 0.
+        /// declares), one document or table block per lane. Exit 2 when any lane is INVALID, else 1 when any lane misses a
+        /// required Claude version, else 0.
         /// </summary>
         public static int Run(LiveLaneStatusOptions options, LiveLaneSources sources, TextWriter output)
         {
@@ -218,7 +308,7 @@ namespace Antiphon.LiveLane
                 if (options.Json) output.WriteLine(LiveLaneData.Canonical(result.Document));
                 else WriteTable(result, output);
             }
-            return results.Any(r => r.ExitCode == 2) ? 2 : 0;
+            return results.Any(r => r.ExitCode == 2) ? 2 : results.Any(r => r.ExitCode == 1) ? 1 : 0;
         }
 
         // The repository's HEAD commit; null when it cannot be read (the lane then refuses full-commit-required).
@@ -230,7 +320,7 @@ namespace Antiphon.LiveLane
 
         private static string Short(object digest) => digest is string text && text.Length >= 12 ? text.Substring(0, 12) : digest as string ?? "-";
 
-        /// <summary>The table for people: the lane, its state and fingerprint, its reasons.</summary>
+        /// <summary>The table for people: the lane, its state and fingerprint, then one line per Claude version and the requirement.</summary>
         public static void WriteTable(LiveLaneStatusResult result, TextWriter output)
         {
             var document = result.Document;
@@ -242,11 +332,17 @@ namespace Antiphon.LiveLane
             var fingerprint = (LiveLaneMap)document["fingerprint"];
             var reasons = ((List<object>)document["reasons"]).Cast<string>().ToList();
             output.WriteLine(result.LaneId + "  " + document["state"] + "  fingerprint " + Short(fingerprint["digest"]) + " (" + fingerprint["status"] + ")"
-                + "  candidate " + Short(document["candidateSha"]));
+                + "  code " + Short(result.Claude.CodeDigest) + "  candidate " + Short(document["candidateSha"]));
             if (reasons.Count > 0) output.WriteLine("  reasons: " + string.Join(", ", reasons));
             var unknown = ((List<object>)fingerprint["unknownReasons"]).Count;
             if (unknown > 0) output.WriteLine("  unknown inputs: " + unknown);
-
+            if (result.Claude.Versions.Count == 0) output.WriteLine("  claude: no receipt for this code digest");
+            foreach (var version in result.Claude.Versions)
+                output.WriteLine("  claude " + ((string)version["version"]).PadRight(12) + " " + ((string)version["outcome"]).PadRight(12) + " receipt "
+                    + Short(version["receiptDigest"]) + "  ended " + (version["endedUtc"] ?? "-") + "  receipts " + version["receipts"]);
+            if (result.Claude.Required.Count > 0)
+                output.WriteLine("  required: " + string.Join(", ", result.Claude.Required) + (result.Claude.Missing.Count == 0 ? " (met)"
+                    : "; missing " + string.Join(", ", result.Claude.Missing)));
         }
     }
 }

@@ -4,11 +4,13 @@
 // the project graph is RcProjectSelection.Read, handed over as plain data (projects, paths, the literal imports of every
 // parsed MSBuild document, the diagnostics). One instance holds one document cache keyed by blob id, as the PowerShell's
 // -DocumentCache did: the CLI makes one per command, a test may share one across fingerprints. CI-2's change-impact graph
-// (tools/ChangeImpact) can replace RcProjectSelection here without touching the lane's project. Antiphon.Tests compiles this file in.
+// (tools/ChangeImpact) can replace RcProjectSelection here without touching the lane's project. Also the real process seam
+// the Claude version probe and the portable-row commissions run children through. Antiphon.Tests compiles this file in.
 // ASCII only.
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Xml;
 using Antiphon.LiveLane;
@@ -58,6 +60,43 @@ namespace Antiphon.Scripts
                 imports[pair.Key] = targets;
             }
             return new LiveLaneProjectGraph(projects, graph.Paths, imports, graph.FallbackReasons);
+        }
+    }
+
+    /// <summary>
+    /// ILiveLaneProcess on the real machine: the file started directly (a .cmd or .bat shim through cmd.exe /d /s /c on
+    /// Windows, which cannot start one otherwise), stdout read, stderr drained, killed after the timeout.
+    /// </summary>
+    internal sealed class LiveLaneOsProcess : ILiveLaneProcess
+    {
+        public LiveLaneProcessResult Run(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout)
+        {
+            var start = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+            if (OperatingSystem.IsWindows() && (fileName.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || fileName.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)))
+            {
+                start.FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+                foreach (var argument in new[] { "/d", "/s", "/c", fileName }.Concat(arguments)) start.ArgumentList.Add(argument);
+            }
+            else
+            {
+                start.FileName = fileName;
+                foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            }
+            Process process;
+            try { process = Process.Start(start); }
+            catch (Exception) { return new LiveLaneProcessResult(null, ""); }
+            using (process)
+            {
+                var output = process.StandardOutput.ReadToEndAsync();
+                var error = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit((int)Math.Min(int.MaxValue, timeout.TotalMilliseconds)))
+                {
+                    try { process.Kill(true); } catch (InvalidOperationException) { } catch (System.ComponentModel.Win32Exception) { }
+                    return new LiveLaneProcessResult(null, "", timedOut: true);
+                }
+                process.WaitForExit();
+                return new LiveLaneProcessResult(process.ExitCode, output.Result);
+            }
         }
     }
 }

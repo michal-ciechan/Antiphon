@@ -421,9 +421,10 @@ public sealed class LiveLaneRunnerTests
     }
 
     // The exact line and exit code run-live-lane.ps1's native mode gave (captured before it was deleted, with and without
-    // its six parameters): the CLI command live-lane-run keeps both, and its flags cannot change the answer.
+    // its six parameters): the CLI command live-lane-run keeps both, and its flags cannot change the answer. W2 S22 added
+    // the last field, the Claude version the run recorded: always null here, since the native mode asks nothing.
     private const string NativeLine = "{\"ExitCode\":20,\"Reason\":\"native-unqualified\",\"DiagnosticOnly\":true,\"GateCredit\":false,\"TerminalComplete\":false,"
-        + "\"RawChildExit\":null,\"CheckpointRunId\":null,\"Classification\":\"INCONCLUSIVE\",\"Rows\":[],\"RawChildOutcome\":null,\"ChildExits\":[],\"Probes\":[]}";
+        + "\"RawChildExit\":null,\"CheckpointRunId\":null,\"Classification\":\"INCONCLUSIVE\",\"Rows\":[],\"RawChildOutcome\":null,\"ChildExits\":[],\"Probes\":[],\"Claude\":null}";
 
     [Test]
     public void NativeModeIsUnqualified()
@@ -439,8 +440,48 @@ public sealed class LiveLaneRunnerTests
             LiveLaneRunCommand.Run(LiveLaneRunOptions.Parse(argv), output).ShouldBe(20);
             output.ToString().ShouldBe(NativeLine + Environment.NewLine);
         }
-        foreach (var bad in new[] { new[] { "--bogus" }, ["--lane"], ["--lane", "a", "--lane", "b"], ["positional"], ["-Lane", "a"] })
+        foreach (var bad in new[] { new[] { "--bogus" }, ["--lane"], ["--lane", "a", "--lane", "b"], ["positional"], ["-Lane", "a"], ["--claude"] })
             Should.Throw<LiveLaneUsageException>(() => LiveLaneRunOptions.Parse(bad));
+        // S22: --claude names the executable (ANTIPHON_LIVE_CLAUDE_EXE is the CLI's default); the native mode still asks
+        // it nothing, so the record is the same line.
+        LiveLaneRunOptions.Parse(["--claude", "C:/tools/claude.exe"], "C:/env/claude.exe").Claude.ShouldBe("C:/tools/claude.exe");
+        LiveLaneRunOptions.Parse([], "C:/env/claude.exe").Claude.ShouldBe("C:/env/claude.exe");
+        LiveLaneRunOptions.Parse([], " ").Claude.ShouldBeNull();
+        var named = new StringWriter();
+        LiveLaneRunCommand.Run(LiveLaneRunOptions.Parse(["--claude", "C:/tools/claude.exe"]), named).ShouldBe(20);
+        named.ToString().ShouldBe(NativeLine + Environment.NewLine);
+    }
+
+    // S22: the fixture run asks the executable it targets for its version through the process seam, before it starts
+    // anything, and records it (the receipt writer sees it); without a seam it records nothing, and a failed probe is unknown.
+    [Test]
+    public void RunRecordsTheClaudeVersion()
+    {
+        var cases = new C1545Cases(nameof(RunRecordsTheClaudeVersion));
+        using var scratch = new C1545Scratch("c1545-run-version-");
+        var q = new Fixture(scratch);
+        var calls = new List<string>();
+        q.Boundary.Process = new VersionProcess(calls, 0, "2.1.3 (Claude Code)\n");
+        var r = q.Run();
+        cases.Check("recorded", r.Claude is { Version: "2.1.3", Raw: "2.1.3 (Claude Code)" } && calls.SequenceEqual(["owned-fixture-executable --version"])
+            && r.ToJson().EndsWith(",\"Claude\":{\"Version\":\"2.1.3\",\"Raw\":\"2.1.3 (Claude Code)\"}}", StringComparison.Ordinal), r.ToJson());
+        q = new Fixture(scratch);
+        r = q.Run();
+        cases.Check("not-asked", r.Claude == null && r.ToJson().EndsWith(",\"Claude\":null}", StringComparison.Ordinal), r.ToJson());
+        q = new Fixture(scratch);
+        q.Boundary.Process = new VersionProcess(calls, 1, "boom");
+        r = q.Run();
+        cases.Check("failed-probe", r.Claude is { Version: "unknown", Raw: null } && r.ExitCode == new Fixture(scratch).Run().ExitCode, r.ToJson());
+        cases.Complete("recorded", "not-asked", "failed-probe");
+    }
+
+    private sealed class VersionProcess(List<string> calls, int exit, string stdout) : ILiveLaneProcess
+    {
+        public LiveLaneProcessResult Run(string fileName, IReadOnlyList<string> arguments, TimeSpan timeout)
+        {
+            calls.Add(fileName + " " + string.Join(" ", arguments));
+            return new LiveLaneProcessResult(exit, stdout);
+        }
     }
 
     [Test]
