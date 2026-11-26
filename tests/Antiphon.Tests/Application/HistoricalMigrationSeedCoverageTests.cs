@@ -1,3 +1,4 @@
+using System.Reflection;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -71,7 +72,27 @@ public sealed class HistoricalMigrationSeedCoverageTests
             """, ct);
         UnreviewedAdditions("synthetic migration", before, await ReadColumnsAsync(db, ct))
             .ShouldBe(["synthetic migration: OutputDistillations.HistoricalSeedRequiredProbe (required)"]);
+
+        var candidates = DiscoverHistoricalMigrationTests();
+        var capacityRecovery = typeof(CapacityRecoveryCompatibilityTests).FullName;
+        var group90 = new[]
+        {
+            $"{capacityRecovery}.{nameof(CapacityRecoveryCompatibilityTests.Card0412_V22_migrate_forward_preserves_legacy_holds)}",
+            $"{capacityRecovery}.{nameof(CapacityRecoveryCompatibilityTests.Input_body_upgrade_preserves_a_preexisting_event_with_null_body)}",
+        };
+        group90.Except(candidates, StringComparer.Ordinal)
+            .ShouldBeEmpty("Find both historical writers even when the class lacks the MigrationTests suffix.");
+        candidates.ShouldNotContain(
+            $"{capacityRecovery}.{nameof(CapacityRecoveryCompatibilityTests.Card0412_V23_legacy_available_for_stranded_current_session)}");
     }
+
+    private static string[] DiscoverHistoricalMigrationTests() => typeof(HistoricalMigrationSeedCoverageTests).Assembly
+        .GetTypes()
+        .Where(type => type.Name.EndsWith("MigrationTests", StringComparison.Ordinal))
+        .SelectMany(type => type.GetMethods().Where(method => method.IsDefined(typeof(TestAttribute)))
+            .Select(method => $"{type.FullName}.{method.Name}"))
+        .Order(StringComparer.Ordinal)
+        .ToArray();
 
     private static IEnumerable<string> UnreviewedAdditions(string migration, List<SeedColumn> before, List<SeedColumn> after)
     {
