@@ -43,7 +43,7 @@ public sealed class PlanCheckpointClassSelectionGuardTests
         {
             var selected = rows.Single(checkpoint => checkpoint.Id == row);
             selected.MinExecuted.ShouldBe(floor, row);
-            selected.Filter.ShouldNotBeNull().Split('/')[3].ShouldContain(type.Name, row);
+            selected.Filter.ShouldNotBeNull().Split('/')[3].Contains(type.Name, StringComparison.Ordinal).ShouldBeTrue(row);
             type.Namespace.ShouldBe("Antiphon.Tests.Invariants");
         }
         var stagedHelpers = typeof(BuildOutputNestingTests).GetMethod(nameof(BuildOutputNestingTests.Own_output_stages_helper_program));

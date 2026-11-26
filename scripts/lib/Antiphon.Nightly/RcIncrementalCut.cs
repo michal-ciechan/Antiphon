@@ -149,12 +149,19 @@ namespace Antiphon.Nightly
                 return Refuse(answer, "incremental-hop-mismatch");
             if (!bound)
             {
-                // Full: the whole roster, in roster order; green only when every launched row is a pass (Review r1 D-3).
+                // Full runs the invariant roster first and requires fresh case evidence for that prefix.
                 var launchedRows = new List<IDictionary>();
                 foreach (var chunk in roster.OrderByDescending(chunk => chunk.RequiresFreshInvariantExecution))
                 {
-                    launchedRows.Add(launch(chunk));
+                    var row = launch(chunk);
                     answer.Launched.Add(chunk.Id);
+                    if (chunk.RequiresFreshInvariantExecution)
+                    {
+                        if (row == null) return Refuse(answer, "repository-invariant-missing-result:" + chunk.Id);
+                        var fresh = RcChunkReceipt.FreshInvariant(row, run, chunk, scope, attemptDirectory);
+                        if (!fresh.Reusable) return Refuse(answer, "repository-invariant-receipt:" + chunk.Id + ":" + string.Join(",", fresh.Reasons));
+                    }
+                    launchedRows.Add(row);
                 }
                 answer.Reconciled = true;
                 answer.AllGreen = launchedRows.All(r => r != null && PsValue.Str(r["result"]) == "pass");

@@ -214,7 +214,7 @@ A new test that only compares constants is a stub. V-1 reads the attribute base 
 | CP-7 | S5 | `tests/Antiphon.Tests -> bin-c1832-s5/` | s5-lanes | `/*/*/PlatformTaxonomyLaneFilterTests/*` | V-6 | 0 failed | 4 | 8 | false | n/a |
 | CP-8 | S6 | `tests/Antiphon.Tests -> bin-c1832-s6/` | s6-census | `/*/*/PlatformTaxonomyCensusTests/*` | V-4 | 0 failed | 5 | 8 | false | n/a |
 | CP-9 | S7 | `tests/Antiphon.Tests -> bin-c1832-s7/` | s7-census | `/*/*/PlatformTaxonomyCensusTests/*` | V-4 | 0 failed | 5 | 8 | false | n/a |
-| CP-10 | S8 | `tests/Antiphon.Tests -> bin-c1832-s8/` | s8-roster | `/*/*/(PlatformTaxonomyCensusTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | V-4, R-4 | 0 failed | 10 | 8 | false | n/a |
+| CP-10 | S8 | `tests/Antiphon.Tests -> bin-c1832-s8/` | s8-roster | `/*/*/(PlatformTaxonomyCensusTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | V-4, R-4 | 0 failed | 10 | 8 | false | n/a |
 | CP-11 | S9 | `tests/Antiphon.Tests -> bin-c1832-s9/` | s9-cutover | `/*/*/(PlatformTaxonomyCensusTests*)\|(NativeLinuxPolicyWitnessTests*)\|(ReleaseGatePlatformTests*)/*` | V-7, R-3 | 0 failed | 14 | 12 | false | n/a |
 
 Suffix check: `PlatformTaxonomyFilterTests` is not a prefix of `PlatformTaxonomyClassFilterTests`. Census, derivation, lane, and selector names do not prefix each other. No row name contains `Land`. No output name contains `ref`.

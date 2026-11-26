@@ -104,7 +104,7 @@ public sealed class FakeBrowserSolutionReleaseTests
             Directory.Delete(path, recursive: true);
     }
 
-    private static string FindRepository()
+    internal static string FindRepository()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)

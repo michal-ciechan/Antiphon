@@ -52,7 +52,7 @@ that is already true there is not the witness.
 | CP-5 | advisories | n/a | s4a-collision | `pwsh -NoProfile -File scripts/test-rc-boundary-pack.ps1 -Case ShortIdCollisionUsesS2Policy` | V-1878-6 | one contract, exit 0 after repair | n/a | 3 |
 | CP-6 | advisories | `tests/Antiphon.Tests` default output | boundary-build | `dotnet build tests/Antiphon.Tests/Antiphon.Tests.csproj -p:UseAppHost=false` | R-1878-1 | build exit 0 | n/a | 8 |
 | CP-7 | advisories | CP-6 | boundary-class | `/*/*/RcBoundaryChunkIdTests/*` | R-1878-1 | every method, 0 failed | 11 | 4 |
-| CP-8 | advisories | CP-6 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-1878-2 | each class nonzero, 0 failed | 80 | 15 |
+| CP-8 | advisories | CP-6 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(DerivedImpactIndexInvariantTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | R-1878-2 | each class nonzero, 0 failed | 80 | 15 |
 
 Rows run through `scripts/build-slot.ps1` into the worktree default output.
 The checkpoint tool's `bin-*/` output is not used: this brief forbids a custom

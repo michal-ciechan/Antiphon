@@ -74,5 +74,5 @@ The unbound candidate is
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1265-roster/` | roster-full | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(RefreshGithubTokenRemoteCommandTests*)/*` | V-1, V-2, V-3, R-1, R-2 | 7 passed, 0 failed, 1 Windows-only skip on Linux; S1 expected red | 7 | 10 | true |
-| CP-2 | all | CP-1 | roster-portable | `/*/*/(WindowsUnitPlatformAdmissionTests*)/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)` | V-1, V-2, V-3 | exactly 4 passed, 0 failed/skipped | 4 | 1 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1265-roster/` | roster-full | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(RefreshGithubTokenRemoteCommandTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | V-1, V-2, V-3, R-1, R-2 | 7 passed, 0 failed, 1 Windows-only skip on Linux; S1 expected red | 7 | 10 | true |
+| CP-2 | all | CP-1 | roster-portable | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)` | V-1, V-2, V-3 | exactly 4 passed, 0 failed/skipped | 4 | 1 | true |

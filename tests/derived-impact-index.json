@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 378,
+      "classes": 380,
       "reason": "allowlist"
     },
     {
@@ -2130,18 +2130,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 148,
+      "classes": 149,
       "reason": "cap",
-      "owed": 123,
+      "owed": 124,
       "first": [
-        "DelegateScriptVerificationRoundTests",
         "LandNonCodeSkipTests",
         "LinuxServerRestartGateTests",
         "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
         "RunnerLinuxCompilerPolicyTests",
-        "VolumeRetirementApplyGateTests"
+        "VolumeRetirementApplyGateTests",
+        "WindowsUnitPlatformAdmissionInvariantTests"
       ]
     },
     {
@@ -2258,14 +2258,14 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 61,
+      "classes": 62,
       "reason": "cap",
-      "owed": 36,
+      "owed": 37,
       "first": [
-        "QualificationStopTests",
         "RcFailedFirstPlannerTests",
         "ReleaseGateRegistrationTests",
         "ChangeAwareReleaseTests",
+        "ExpectedPlatformSkipRosterTests",
         "LongPathsCheckoutScriptTests",
         "RcRosterRepairTests",
         "ReleaseGateLibraryTests",
@@ -3302,7 +3302,7 @@
       "classes": [
         "ClaudeTokenRefreshOptInTests",
         "DockerStackDocumentationTests",
-        "ProviderEndpointProjectionTests",
+        "ProviderEndpointProjectionInvariantTests",
         "PushProbeOutcomeTests",
         "RunnerPushCredentialDocsTests",
         "ServerImagePushCredentialTests",
@@ -11081,6 +11081,7 @@
         "LaunchEnvLayersIntegrationTests",
         "PhoneHomeTaskRoutingTests",
         "PoolProviderProjectionStampTests",
+        "ProviderEndpointProjectionInvariantTests",
         "ProviderEndpointProjectionTests"
       ]
     },
@@ -11110,6 +11111,7 @@
     {
       "path": "server/Application/Services/ProviderEndpointSettings.cs",
       "classes": [
+        "ProviderEndpointProjectionInvariantTests",
         "ProviderEndpointProjectionTests"
       ]
     },
@@ -22124,9 +22126,22 @@
       ]
     },
     {
+      "path": "tests/Antiphon.MarkdownPdf.FakeBrowser/Antiphon.MarkdownPdf.FakeBrowser.csproj",
+      "classes": [
+        "FakeBrowserSolutionInvariantTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.MarkdownPdf.Tests/Antiphon.MarkdownPdf.Tests.csproj",
       "classes": [
+        "FakeBrowserSolutionInvariantTests",
         "RcManifestIntegrationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.MarkdownPdf.Tests/FakeBrowserSolutionReleaseTests.cs",
+      "classes": [
+        "FakeBrowserSolutionInvariantTests"
       ]
     },
     {
@@ -22262,7 +22277,7 @@
     {
       "path": "tests/Antiphon.SessionRunner.Tests/AgentPinWorkspaceStoreTests.cs",
       "classes": [
-        "WindowsUnitPlatformAdmissionTests"
+        "WindowsUnitPlatformAdmissionInvariantTests"
       ]
     },
     {
@@ -23241,7 +23256,7 @@
       "path": "tests/Antiphon.Tests/Agents/SessionRunnerRuntimeTests.cs",
       "classes": [
         "ProcessSpawnLimitTests",
-        "WindowsUnitPlatformAdmissionTests"
+        "WindowsUnitPlatformAdmissionInvariantTests"
       ]
     },
     {
@@ -24249,6 +24264,7 @@
         "DelegateScriptLandCompatibilityTests",
         "DelegateScriptLandStatusTests",
         "DelegateScriptStartRefTests",
+        "DelegateScriptVerificationRoundTests",
         "DelegateScriptWorkspaceDefaultTests",
         "GrokDelegateEndToEndTests",
         "NightlyScriptsTests",
@@ -24259,8 +24275,7 @@
         "RoutingPinScriptTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests",
-        "WindowsUnitPlatformAdmissionTests"
+        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -26302,7 +26317,6 @@
       "classes": [
         "C1514LandingSplitBudgetTests",
         "ClassCostMeasurementTests",
-        "ExpectedPlatformSkipRosterTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
@@ -26311,6 +26325,7 @@
         "NightlyTestsRunTests",
         "NightlyVerificationContractTests",
         "QualificationGraphTests",
+        "QualificationStopTests",
         "QualificationSupervisorTests",
         "QualificationTimingTests",
         "RcBoundaryPackTests",
@@ -26917,7 +26932,8 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs",
       "classes": [
-        "ReleaseGatePlatformTests"
+        "ReleaseGatePlatformTests",
+        "WindowsUnitPlatformAdmissionInvariantTests"
       ]
     },
     {
@@ -26930,6 +26946,7 @@
         "RunCheckpointSourceScriptTests",
         "SessionRunnerRuntimeTests",
         "TestSelectionExecutionTests",
+        "WindowsUnitPlatformAdmissionInvariantTests",
         "WindowsUnitPlatformAdmissionTests",
         "ZombieCensusPlatformTests"
       ]
@@ -29445,7 +29462,7 @@
       "classes": [
         "NativeLinuxPolicyWitnessMutationTests",
         "NativeLinuxPolicyWitnessTests",
-        "WindowsUnitPlatformAdmissionTests"
+        "WindowsUnitPlatformAdmissionInvariantTests"
       ]
     },
     {
@@ -29715,7 +29732,7 @@
         "ReleaseTagAllocatorTests",
         "TestSelectionTests",
         "TimeoutAuditTests",
-        "WindowsUnitPlatformAdmissionTests"
+        "WindowsUnitPlatformAdmissionInvariantTests"
       ]
     },
     {

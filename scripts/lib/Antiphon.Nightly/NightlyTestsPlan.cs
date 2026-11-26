@@ -419,7 +419,7 @@ namespace Antiphon.Nightly
         internal static bool IsInvariantChunk(object chunk) =>
             PsValue.IsTrue(PsValue.Prop(chunk, "repositoryInvariant"));
 
-        internal static bool IsInvariantClass(string className) =>
+        public static bool IsInvariantClass(string className) =>
             !string.IsNullOrEmpty(className) && className.Contains(".Invariants.", StringComparison.Ordinal);
 
         private static object[] RepositoryInvariantLaunchPlan(object[] discovery, object[] declared, object exclusions,
@@ -544,9 +544,9 @@ namespace Antiphon.Nightly
         /// chunks (the single all chunk); only a native profile that actually excludes packs leaves (ProfileLaunchPlan).
         /// </summary>
         public static object[] SuiteChunks(object[] discoveryNodes, object[] chunks, object exclusions, bool profileAware, bool native,
-            string suiteId, object policyObject, NightlyClassCosts costs)
+            string suiteId, object policyObject, NightlyClassCosts costs, bool requiresInvariantPrefix = false)
         {
-            if (native && profileAware && discoveryNodes != null && discoveryNodes.Any(node => RepositoryInvariantNode(node) || IsInvariantClass(PsValue.Str(PsValue.Prop(node, "ClassName")))))
+            if (requiresInvariantPrefix && native && profileAware && discoveryNodes != null && discoveryNodes.Any(node => RepositoryInvariantNode(node) || IsInvariantClass(PsValue.Str(PsValue.Prop(node, "ClassName")))))
                 return RepositoryInvariantLaunchPlan(discoveryNodes, chunks, exclusions, suiteId, policyObject, costs);
             if (native && profileAware && PsValue.AsArray(exclusions).Length > 0)
                 return ProfileLaunchPlan(discoveryNodes, chunks, exclusions, suiteId, policyObject, costs);

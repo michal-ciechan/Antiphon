@@ -108,8 +108,8 @@ totalTimeoutMinutes: 65
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c1544-closure/` | exact-closure | `/*/*/WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates` | V-2 | 1 passed, 0 failed/skipped | 1 | 1 | true |
-| CP-2 | all | CP-1 | named-guards | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)/*` | R-1, R-2 | nonzero for every class; only explicit native/capability skips | 40 | 5 | true |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c1544-closure/` | exact-closure | `/*/*/WindowsUnitPlatformAdmissionInvariantTests/C1210_Roster_closure_matches_source_gates` | V-2 | 1 passed, 0 failed/skipped | 1 | 1 | true |
+| CP-2 | all | CP-1 | named-guards | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(TestClassificationPolicy*)\|(TestClassificationGuard*)\|(SlowTestRegistryMerge*)\|(SlowTestTripwire*)\|(NativeLinuxPolicyWitnessTests*)\|(C1729LayeringGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | R-1, R-2 | nonzero for every class; only explicit native/capability skips | 40 | 5 | true |
 | CP-3 | all | CP-1 | full-unit | `/*/*/*/*[Category=Unit]` | R-3 | nonzero full Unit receipt; disclose every failure/skip | 1000 | 15 | true |
 | CP-4 | repair | `tests/Antiphon.Tests -> bin-c1544-path-guards/` | formatter-path-guards | `/*/*/(RepairSourceDocumentationTests*)\|(SpecialistRoleContractTests*)/*` | R-4 | 5 passed, 0 failed/skipped | 5 | 3 | true |
 
