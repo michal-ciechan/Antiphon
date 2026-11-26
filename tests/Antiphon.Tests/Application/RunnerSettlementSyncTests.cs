@@ -1184,7 +1184,13 @@ public sealed class RunnerSettlementSyncTests
         {
             var world = new SyncWorld { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
-            if (immutableSeedOrigin is not null)
+            var plain = immutableSeedOrigin is null && !extraMasterCommit && !withSubmodule && initialFiles is not { Count: > 0 };
+            var cloned = plain && GitTreeTemplate.Enabled && await world.CloneBaseAsync();
+            if (cloned)
+            {
+                // The base tree (origin, desktop, base commit, the task worktree) came from the template.
+            }
+            else if (immutableSeedOrigin is not null)
             {
                 if (extraMasterCommit || withSubmodule || initialFiles is { Count: > 0 })
                     throw new InvalidOperationException("Immutable seed clones require the unmodified base fixture.");
@@ -1235,7 +1241,7 @@ public sealed class RunnerSettlementSyncTests
                 await world.RunAsync(world.Desktop, "remote", "add", "origin", world.Origin);
                 await world.RunAsync(world.Desktop, "push", "origin", "master");
             }
-            await world.RunAsync(world.Desktop, "worktree", "add", "-b", world.Branch, world.Worktree, "master");
+            if (!cloned) await world.RunAsync(world.Desktop, "worktree", "add", "-b", world.Branch, world.Worktree, "master");
 
             // The dispatcher's own capture, before remote preparation pushes the branch.
             var progress = new TaskProgressGit(world.Leases);
@@ -1266,7 +1272,12 @@ public sealed class RunnerSettlementSyncTests
             };
 
             if (pushBranch)
-                await world.RunAsync(world.Worktree, "push", "origin", world.Branch);
+            {
+                // The same remote branch as "git push origin <branch>", pushed in process (LibGit2Sharp's local transport)
+                // instead of git, sh and receive-pack; as DesktopLegacyWorld pushes its setup branches.
+                using var desktop = new LibGit2Sharp.Repository(world.Desktop);
+                desktop.Network.Push(desktop.Network.Remotes["origin"], world.FullRef + ":" + world.FullRef);
+            }
             world.Git.Clear();
             return world;
         }
@@ -1411,6 +1422,59 @@ public sealed class RunnerSettlementSyncTests
             }
             await System.Threading.Tasks.Task.WhenAll(output, error);
             return new LandingGitResult(process.ExitCode, await output, process.ExitCode == 0 ? "" : await error);
+        }
+
+        /// <summary>
+        /// The plain base tree (origin.git, desktop with the base commit pushed to master, and the task worktree "wt" on
+        /// the owned branch) cloned from a per-process GitTreeTemplate whose token is the task id's first 8 hex digits
+        /// (the branch carries it), instead of ~13 git processes per world. False (and the root emptied) when the
+        /// template is refused, so the caller builds it with git.
+        /// </summary>
+        private async Task<bool> CloneBaseAsync()
+        {
+            try
+            {
+                var prefix = _cardBranch ? "feat/card-1213-code-" : "feat/card-task-";
+                var template = await GitTreeTemplate.BuildOnceAsync("c657-sync-world" + (_cardBranch ? "-card" : ""), ["task"],
+                    async (root, tokens) => { await BuildBaseAsync(root, prefix + tokens["task"]); return new Dictionary<string, string>(); },
+                    tokenLength: 8);
+                template.CloneTo(Root, new Dictionary<string, string> { ["task"] = TaskId.ToString("N")[..8] });
+                return true;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"sync world template not used: {ex.GetType().Name}: {ex.Message}");
+                foreach (var entry in Directory.EnumerateFileSystemEntries(Root))
+                {
+                    if (Directory.Exists(entry)) GitTreeTemplate.DeleteTree(entry);
+                    else File.Delete(entry);
+                }
+                return false;
+            }
+        }
+
+        private static async System.Threading.Tasks.Task BuildBaseAsync(string root, string branch)
+        {
+            static async System.Threading.Tasks.Task Run(string directory, params string[] arguments)
+            {
+                var result = await ExecAsync(directory, arguments);
+                result.ExitCode.ShouldBe(0, "git " + string.Join(' ', arguments));
+            }
+            var origin = Path.Combine(root, "origin.git");
+            var desktop = Path.Combine(root, "desktop");
+            await Run(root, "init", "--bare", "-b", "master", origin);
+            await File.AppendAllTextAsync(Path.Combine(origin, "config"), "[receive]\n\tautogc = false\n");
+            Directory.CreateDirectory(desktop);
+            await Run(desktop, "init", "-b", "master");
+            await Run(desktop, "config", "user.email", "c657@example.invalid");
+            await Run(desktop, "config", "user.name", "CARD-0657 test");
+            await Run(desktop, "config", "commit.gpgsign", "false");
+            File.WriteAllText(Path.Combine(desktop, "README.md"), "base\n");
+            await Run(desktop, "add", "README.md");
+            await Run(desktop, "commit", "-m", "base");
+            await Run(desktop, "remote", "add", "origin", origin);
+            await Run(desktop, "push", "origin", "master");
+            await Run(desktop, "worktree", "add", "-b", branch, Path.Combine(root, "wt"), "master");
         }
 
         private async Task ConfigureAsync(string repository)

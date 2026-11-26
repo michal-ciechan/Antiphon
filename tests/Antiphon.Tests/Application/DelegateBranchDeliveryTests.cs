@@ -390,8 +390,14 @@ public sealed class DelegateBranchDeliveryTests
         public static async Task<Wire> CreateAsync(RunnerSettlementSyncTests.SyncWorld world, bool old, CancellationToken ct, string? reportedPlatform = null)
         {
             var repo = Path.Combine(world.Root, "recipient-repo");
-            await world.RunAsync(world.Root, "clone", world.Origin, repo);
-            await world.RunAsync(repo, "config", "user.name", "c1213 wire"); await world.RunAsync(repo, "config", "user.email", "c1213@localhost");
+            // The recipient's clone of origin with its identity, made in process (LibGit2Sharp) instead of three git
+            // processes plus upload-pack; the runner under test reads and writes it with git.
+            LibGit2Sharp.Repository.Clone(world.Origin, repo);
+            using (var clone = new LibGit2Sharp.Repository(repo))
+            {
+                clone.Config.Set("user.name", "c1213 wire", LibGit2Sharp.ConfigurationLevel.Local);
+                clone.Config.Set("user.email", "c1213@localhost", LibGit2Sharp.ConfigurationLevel.Local);
+            }
             var w = new Wire(Path.Combine(world.Root, "wire-state"), repo, Path.Combine(world.Root, "recipient"), world.Origin, Guid.NewGuid(), old, reportedPlatform);
             try { await w.StartAsync(ct); return w; } catch { await w.DisposeAsync(); throw; }
         }
