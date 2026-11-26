@@ -10,8 +10,8 @@
 // (no rename inference) to its owning projects at B and A and closes over everything downstream. Any doubt - an unknown
 // path, a shared build input, a graph diagnostic, an invalid inventory, a cycle, an unbatched test project, B not an
 // ancestor of A - proposes Full (every project affected). Callers: the release selection attempt (ReleaseSelectionAttempt,
-// a non-Full mode with a baseline), the live-lane fingerprint (scripts/lib/live-lane-fingerprint.ps1 reads Read, Resolve and
-// BlobText from the loaded core) and the select-rc-project-batches command.
+// a non-Full mode with a baseline), the live-lane fingerprint (Antiphon.Scripts/LiveLaneNightlySources.cs reads Read, Resolve and
+// BlobText for the isolated live-lane project, W2 slice S22) and the select-rc-project-batches command.
 //
 // The document cache is the caller's dictionary keyed by git blob id (immutable bytes): a parsed XmlDocument, or the
 // exception an unparseable blob gave (kept so every import site reports it without a second read), and "text:<blob>" for

@@ -300,37 +300,45 @@ public class LiveLaneEvidenceTests
         }
     }
 
-    /// <summary>The checkpoint row command reaches the compiled scan: the wrapper runs the built command.</summary>
+    /// <summary>
+    /// The checkpoint row command reaches the compiled scan. W2 slice S22 deleted the PowerShell wrapper
+    /// (scripts/test-live-lane-evidence.ps1): CP-29 of the S1c-sanitization plan runs the CLI command itself
+    /// (`scripts/antiphon live-lane-evidence CompletedRows`, the launcher on Windows), and the cases the wrapper passed
+    /// through answer in process as the command answers them.
+    /// </summary>
     [Test]
-    public void WrapperRunsCompiledScan()
+    public void CheckpointRowRunsCompiledScan()
     {
-        var wrapper = Path.Combine(FindRepo(), "scripts", "test-live-lane-evidence.ps1");
+        var manifest = Antiphon.Checkpoints.PlanTableImporter.ImportFile(Path.Combine(FindRepo(), Antiphon.LiveLane.LiveLaneEvidenceRows.Plan)).Manifest
+            ?? throw new InvalidOperationException("C1545 V-8/plan import");
+        var row = manifest.Checkpoints.Single(spec => spec.Id == "CP-29");
+        if (row.Command != Antiphon.LiveLane.LiveLaneEvidenceRows.ScanCommand || !LiveLaneEvidence.Cases.Contains("CompletedRows"))
+            throw new InvalidOperationException("C1545 V-8/CP-29 command " + row.Command);
         var root = Path.Combine("/tmp", "c1545-wrapper-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
         {
-            var roster = RunWrapper(wrapper, "Roster", null);
-            var expected = Roster.Select(row => row.Case + " " + row.Test + " " + row.Cp).ToArray();
+            var roster = RunCase("Roster", null);
+            var expected = Roster.Select(entry => entry.Case + " " + entry.Test + " " + entry.Cp).ToArray();
             if (roster.Code != 0 || !expected.SequenceEqual(roster.Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
-                throw new InvalidOperationException("C1545 V-8/wrapper roster " + roster.Text);
+                throw new InvalidOperationException("C1545 V-8/command roster " + roster.Text);
             var clean = Build(Path.Combine(root, "clean"), cleanFiles: true);
-            var scan = RunWrapper(wrapper, "Scan", clean.Context);
+            var scan = RunCase("Scan", clean.Context);
             if (scan.Code != 0 || !scan.Text.Contains("EVIDENCE-SCAN clean", StringComparison.Ordinal))
-                throw new InvalidOperationException("C1545 V-8/wrapper clean " + scan.Code + " " + scan.Text);
+                throw new InvalidOperationException("C1545 V-8/command clean " + scan.Code + " " + scan.Text);
             File.WriteAllText(Path.Combine(clean.Row, "nested", "leak.txt"), LiveClaudeEvidenceSentinels.Secret);
-            var red = RunWrapper(wrapper, "Scan", clean.Context);
+            var red = RunCase("Scan", clean.Context);
             if (red.Code != 2 || !red.Text.Contains("INVALID/evidence-sanitization reason=sentinel-present", StringComparison.Ordinal))
-                throw new InvalidOperationException("C1545 V-8/wrapper red " + red.Code + " " + red.Text);
-            var absent = RunWrapper(wrapper, "Scan", Path.Combine(root, "absent.json"));
+                throw new InvalidOperationException("C1545 V-8/command red " + red.Code + " " + red.Text);
+            var absent = RunCase("Scan", Path.Combine(root, "absent.json"));
             if (absent.Code != 2 || !absent.Text.Contains("reason=context-absent", StringComparison.Ordinal))
-                throw new InvalidOperationException("C1545 V-8/wrapper absent " + absent.Code + " " + absent.Text);
+                throw new InvalidOperationException("C1545 V-8/command absent " + absent.Code + " " + absent.Text);
         }
         finally
         {
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
     }
-
     private static bool Throws(Action action)
     {
         try { action(); return false; }
@@ -768,36 +776,13 @@ public class LiveLaneEvidenceTests
         return (code, output.ToString());
     }
 
-    private static (int Code, string Text) RunWrapper(string wrapper, string caseName, string? context)
+    // One case of the live-lane-evidence command, in process (what antiphon-scripts live-lane-evidence <case> [context] prints).
+    private static (int Code, string Text) RunCase(string caseName, string? context)
     {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(wrapper);
-        start.ArgumentList.Add("-Case");
-        start.ArgumentList.Add(caseName);
-        if (!string.IsNullOrWhiteSpace(context))
-        {
-            start.ArgumentList.Add("-Context");
-            start.ArgumentList.Add(context);
-        }
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("C1545 V-8/pwsh");
-        var stderr = process.StandardError.ReadToEndAsync();
-        var stdout = process.StandardOutput.ReadToEnd();
-        // The first run after a source change builds the command (nightly-core.ps1 caches it per source version).
-        if (!process.WaitForExit(240_000))
-        {
-            process.Kill(entireProcessTree: true);
-            throw new InvalidOperationException("C1545 V-8/pwsh timeout");
-        }
-        return (process.ExitCode, stdout + "\n" + stderr.Result);
+        var output = new StringWriter();
+        var code = LiveLaneEvidence.Run(caseName, context, output, null);
+        return (code, output.ToString());
     }
-
     // The references are read once per process, not once per compile; a source compiled before (the restored
     // sanitizer, or the LF and CRLF forms that normalize to the same text) reuses its assembly.
     private static readonly Lazy<MetadataReference[]> TrustedReferences = new(() =>

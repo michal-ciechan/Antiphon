@@ -11,6 +11,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Xml;
 using Antiphon.LiveLane;
@@ -96,6 +97,45 @@ namespace Antiphon.Scripts
                 }
                 process.WaitForExit();
                 return new LiveLaneProcessResult(process.ExitCode, output.Result);
+            }
+        }
+    }
+
+    /// <summary>
+    /// ILiveLaneCommissionHost on the real machine (the portable-row commissions): a child started directly with its
+    /// environment on top of this process's, stdout captured or left on this console, stderr on this console, killed after
+    /// its timeout; the real clock; Console.Out and Console.Error.
+    /// </summary>
+    internal sealed class LiveLaneOsCommissionHost : ILiveLaneCommissionHost
+    {
+        public TextWriter Out => Console.Out;
+        public TextWriter Error => Console.Error;
+
+        public void Sleep(TimeSpan delay) => System.Threading.Thread.Sleep(delay);
+
+        public LiveLaneProcessResult Run(LiveLaneProcessStart start)
+        {
+            var info = new ProcessStartInfo(start.FileName) { UseShellExecute = false, RedirectStandardOutput = start.Capture };
+            if (!string.IsNullOrEmpty(start.WorkingDirectory)) info.WorkingDirectory = start.WorkingDirectory;
+            foreach (var argument in start.Arguments) info.ArgumentList.Add(argument);
+            foreach (var pair in start.Environment)
+            {
+                if (pair.Value == null) info.Environment.Remove(pair.Key);
+                else info.Environment[pair.Key] = pair.Value;
+            }
+            Process process;
+            try { process = Process.Start(info); }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception || e is InvalidOperationException) { return new LiveLaneProcessResult(null, ""); }
+            using (process)
+            {
+                var output = start.Capture ? process.StandardOutput.ReadToEndAsync() : null;
+                if (!process.WaitForExit((int)Math.Min(int.MaxValue, start.Timeout.TotalMilliseconds)))
+                {
+                    try { process.Kill(true); } catch (InvalidOperationException) { } catch (System.ComponentModel.Win32Exception) { }
+                    return new LiveLaneProcessResult(null, "", timedOut: true);
+                }
+                process.WaitForExit();
+                return new LiveLaneProcessResult(process.ExitCode, output?.Result ?? "");
             }
         }
     }

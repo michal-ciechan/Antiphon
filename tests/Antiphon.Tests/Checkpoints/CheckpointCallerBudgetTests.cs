@@ -1,6 +1,6 @@
 using System.Reflection;
-using System.Text.RegularExpressions;
 using Antiphon.Checkpoints;
+using Antiphon.LiveLane;
 using Shouldly;
 using TUnit.Core;
 
@@ -9,8 +9,8 @@ namespace Antiphon.Tests.Checkpoints;
 [Category("Unit")]
 public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
 {
-    private const string IsolationCaller = "scripts/test-live-lane-isolation.ps1";
-    private const string EvidenceCaller = "scripts/test-live-lane-evidence.ps1";
+    private const string IsolationCaller = "live-lane-isolation-rows";
+    private const string EvidenceCaller = "live-lane-evidence-rows";
 
     [Test]
     [Arguments("plan")]
@@ -46,7 +46,9 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
         Select(manifest, root, ["CP-1"], 12).TotalTimeoutMinutes.ShouldBe(12);
     }
 
-    // The unreferenced-script cleanup retired the startup and delivery checkpoint drivers.
+    // The unreferenced-script cleanup retired the startup and delivery checkpoint drivers. W2 slice S22 made the two live-lane
+    // callers C# commands (live-lane-isolation-rows and live-lane-evidence-rows, Antiphon.LiveLane/LiveLaneCommission.cs):
+    // their rows, totals and control roster are the commands' constants, linted here against the plans they import.
     [Test]
     [Arguments(IsolationCaller, "producerRows", false)]
     [Arguments(IsolationCaller, "producerRows", true)]
@@ -56,57 +58,43 @@ public sealed class CheckpointCallerBudgetTests : CheckpointTestBase
     [Arguments(EvidenceCaller, "CP-29", false)]
     public void committed_live_lane_callers_pass_total_lint(string caller, string selection, bool controls)
     {
-        var source = File.ReadAllText(Path.Combine(CheckpointFixtures.RepoRoot, caller));
-        var plan = Match(source, @"import --plan \(Join-Path \$repo '(?<value>[^']+)'\)");
+        var plan = caller == EvidenceCaller ? LiveLaneEvidenceRows.Plan : LiveLaneIsolationRows.Plan;
         var manifest = PlanTableImporter.ImportFile(Path.Combine(CheckpointFixtures.RepoRoot, plan)).Manifest.ShouldNotBeNull();
         string[] rows;
         int total;
+        string? reason = null;
         if (caller == EvidenceCaller)
         {
-            // Both real calls to the parameterized start wrapper carry their own total.
-            Regex.Matches(source, @"Invoke-EvidenceCheckpoint -Rows '[^']+' -TotalMinutes \d+").Count.ShouldBe(2);
-            source.ShouldContain("'--total-timeout', ($TotalMinutes.ToString() + 'm')");
-            total = int.Parse(Match(source, $@"Invoke-EvidenceCheckpoint -Rows '{selection}' -TotalMinutes (?<value>\d+)"));
+            // Both real starts carry their own total.
+            LiveLaneEvidenceRows.Groups.Count.ShouldBe(2);
+            var group = LiveLaneEvidenceRows.Groups.Single(g => g.Rows == selection);
+            total = group.TotalMinutes;
             rows = selection.Split(',');
         }
         else
         {
-            Regex.Matches(source, @"--total-timeout \d+m").Count.ShouldBe(1);
-            total = int.Parse(Match(source, @"--total-timeout (?<value>\d+)m"));
-            var assigned = Match(source, $@"\${selection} = @\((?<value>[^\r\n]+)\)");
-            rows = Regex.Matches(assigned, @"'([^']+)'").Select(match => match.Groups[1].Value).ToArray();
+            total = LiveLaneIsolationRows.TotalMinutes;
+            reason = LiveLaneIsolationRows.TotalOverrideReason;
+            rows = (selection == "producerRows" ? LiveLaneIsolationRows.ProducerRows : LiveLaneIsolationRows.ConsumerRows).ToArray();
             rows.ShouldNotBeEmpty();
             if (rows.Contains("CP-24-PARITY"))
                 AddRow(manifest, "CP-24-PARITY", "CP-24", 1);
             if (controls)
             {
-                // Read the committed control roster and its actual estimate, including
-                // isolation's producer/consumer split at V-12.
-                var estimate = int.Parse(Match(source, @"- id: PC-V\$v[\s\S]*?estimatedMinutes: (?<value>\d+)"));
-                var variants = Regex.Matches(source, @"@\((\d+),'[^']+'\)").Select(match => int.Parse(match.Groups[1].Value)).ToArray();
+                // The committed control roster and its estimate, including isolation's producer/consumer split at V-12.
+                var variants = LiveLaneIsolationRows.Controls.Select(c => c.Variant).ToArray();
                 variants.ShouldNotBeEmpty();
-                source.ShouldContain("$isPty = $v -le 12");
-                variants = variants.Where(v => selection == "producerRows" ? v <= 12 : v > 12).ToArray();
+                variants = variants.Where(v => selection == "producerRows" ? v <= LiveLaneIsolationRows.LastProducerControl : v > LiveLaneIsolationRows.LastProducerControl).ToArray();
                 foreach (var variant in variants)
                 {
                     var id = $"PC-V{variant}";
-                    AddRow(manifest, id, rows[0], estimate);
+                    AddRow(manifest, id, rows[0], LiveLaneIsolationRows.ControlEstimateMinutes);
                     rows = [.. rows, id];
                 }
             }
         }
-        var reason = Regex.Match(source, @"--total-timeout-override-reason '(?<value>[^']+)'");
-        Select(manifest, TempDir(), rows, total, reason.Success ? reason.Groups["value"].Value : null)
-            .TotalTimeoutMinutes.ShouldBe(total, $"{caller}/{selection}/controls={controls}");
+        Select(manifest, TempDir(), rows, total, reason).TotalTimeoutMinutes.ShouldBe(total, $"{caller}/{selection}/controls={controls}");
     }
-
-    private static string Match(string source, string pattern)
-    {
-        var match = Regex.Match(source, pattern);
-        match.Success.ShouldBeTrue($"Unrecognized committed caller syntax: {pattern}");
-        return match.Groups["value"].Value;
-    }
-
     private static void AddRow(CheckpointManifest manifest, string id, string parent, int estimate)
     {
         var row = manifest.Checkpoints.Single(row => row.Id == parent);

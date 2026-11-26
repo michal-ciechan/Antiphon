@@ -14,8 +14,9 @@ namespace Antiphon.Tests.Scripts;
 /// to running real Claude"). The live lane's C# lives in scripts/lib/Antiphon.LiveLane, which references no project or
 /// package outside an allow-list (empty: the framework only), and the lane's contractFiles in tests/live-lane-inputs.json
 /// are exactly that project's input set: its directory, the repository build files that apply to it, and the lane
-/// manifests, beside the receipt and status PowerShell that S22 moves into the project. No contract pattern covers
-/// Antiphon.Nightly or Antiphon.Scripts, so the lane contract moves only when live-lane code or its build moves.
+/// manifests (S22 moved the receipt, attestation, fingerprint and status PowerShell into the project and deleted it). No
+/// contract pattern covers Antiphon.Nightly or Antiphon.Scripts, so the lane contract moves only when live-lane code or its
+/// build moves.
 /// </summary>
 [Category("Unit")]
 public sealed class LiveLaneProjectIsolationTests
@@ -30,10 +31,8 @@ public sealed class LiveLaneProjectIsolationTests
     private static readonly string[] AllowedProjectReferences = [];
     private static readonly string[] AllowedPackageReferences = [];
 
-    // The lane manifests the declaration always lists, and the receipt, attestation, fingerprint and status PowerShell
-    // that is still the lane's own code until S22 ports it into the project (then these two entries leave the list).
+    // The lane manifests the declaration always lists.
     private static readonly string[] LaneManifests = ["tests/live-lanes.json", "tests/live-lane-inputs.json"];
-    private static readonly string[] PendingPowerShell = ["scripts/lib/live-lane-*.ps1", "scripts/live-lane-status.ps1"];
 
     // The repository files MSBuild reads for a project from its directory upwards. NuGet.config and
     // Directory.Packages.props do not exist in this repository today; a new one on the path joins the input set.
@@ -74,7 +73,7 @@ public sealed class LiveLaneProjectIsolationTests
         var inputs = ProjectInputs();
         inputs.ShouldContain(ProjectDirectory + "/**");
         inputs.ShouldContain("tests/Shared/CheckpointRepeat.targets", "Directory.Build.targets imports it");
-        var expected = LaneManifests.Concat(PendingPowerShell).Concat(inputs).Order(StringComparer.Ordinal).ToArray();
+        var expected = LaneManifests.Concat(inputs).Order(StringComparer.Ordinal).ToArray();
         contract.Order(StringComparer.Ordinal).ToArray().ShouldBe(expected);
 
         // Each pattern names files that exist (the fingerprint's declared-root-empty), and none covers the nightly core or

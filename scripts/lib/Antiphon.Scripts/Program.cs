@@ -349,6 +349,10 @@ namespace Antiphon.Scripts
             [LiveLaneRunCommand.Name] = LiveLaneCommands.RunLiveLaneRun,
             [LiveLaneInputDigestCommand.Name] = LiveLaneCommands.RunInputDigest,
             [LiveLaneStatus.Name] = LiveLaneCommands.RunStatus,
+            // The portable S1c checkpoint commissions (S22; test-live-lane-isolation.ps1 and test-live-lane-evidence.ps1's RunPortableRows):
+            // exit 0 done, 1 a failed step (or the step's own exit), 2 context-absent for the evidence rows without a tool. Usage is 2.
+            [LiveLaneIsolationRows.Name] = LiveLaneCommands.RunIsolationRows,
+            [LiveLaneEvidenceRows.Name] = LiveLaneCommands.RunEvidenceRows,
         };
 
         public static int Main(string[] args)
