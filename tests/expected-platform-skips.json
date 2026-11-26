@@ -176,6 +176,21 @@
       "platform": "windows",
       "test": "Antiphon.Tests.Infrastructure.WorktreeNoFollowDeleteTests.C1717_D5_ExchangedSymlinkDoesNotDeleteOutsideFiles",
       "reasonPrefix": "The ancestor exchange uses Linux renameat2."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Scripts.ScriptHarnessHandleProbeTests.Early_exit_reports_process_and_receipt_evidence",
+      "reasonPrefix": "This fake child uses a Linux shell."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Checkpoints.EvidenceFolderTests.generated_replay_preserves_native_property_arguments",
+      "reasonPrefix": "Native Linux shell argument witness."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Checkpoints.CheckpointWarmBuildTests.fifo_seal_falls_back_cold_without_hanging",
+      "reasonPrefix": "FIFO seal requires Linux mkfifo"
     }
   ]
 }
