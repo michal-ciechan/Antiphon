@@ -636,7 +636,8 @@ public sealed class Card2060PlacementHandshakeTests
         var clock = new FakeTimeProvider();
         using (var world = HostAttemptWorld.Start(Environment.ProcessId, clock, budget))
         {
-            var exchange = world.ExchangeAsync(bound.Token);
+            using var ct = CancellationTokenSource.CreateLinkedTokenSource(bound.Token, world.Attempt.Token);
+            var exchange = world.ExchangeAsync(ct.Token);
             using var peer = world.Connect();
             var go = await world.ProveAndPlaceAsync(peer, _ => clock.Advance(TimeSpan.FromSeconds(6)), bound.Token);
             if (go is { Kind: GoKind })
@@ -647,12 +648,15 @@ public sealed class Card2060PlacementHandshakeTests
             world.Attempt.Commit().ShouldNotBeNull();
         }
 
+        budget.ShouldBe(TimeSpan.FromSeconds(10));
         using (var world = HostAttemptWorld.Start(Environment.ProcessId, clock, budget))
         {
             using var ct = CancellationTokenSource.CreateLinkedTokenSource(bound.Token, world.Attempt.Token);
             var exchange = world.ExchangeAsync(ct.Token);
             using var peer = world.Connect();
-            (await ReadFrameAsync(peer, bound.Token))!.Value.Kind.ShouldBe(ProveKind);
+            var prove = await ReadFrameAsync(peer, bound.Token);
+            prove.ShouldNotBeNull();
+            prove.Value.Kind.ShouldBe(ProveKind);
             clock.Advance(budget - TimeSpan.FromTicks(1));
             ct.IsCancellationRequested.ShouldBeFalse();
             clock.Advance(TimeSpan.FromTicks(1));

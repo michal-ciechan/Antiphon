@@ -24,6 +24,7 @@ public sealed class LinuxPlacementAttempt : IDisposable
     private readonly LinuxPlacementBinding _binding;
     private readonly Socket _listener;
     private readonly TimeProvider _clock;
+    private readonly CancellationTokenSource _deadlineCancellation;
     private readonly CancellationTokenSource _budget;
     private readonly CancellationTokenRegistration _cancel;
     private readonly object _gate = new();
@@ -65,8 +66,8 @@ public sealed class LinuxPlacementAttempt : IDisposable
             throw;
         }
 
-        _budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _budget.CancelAfter(_clock.GetElapsedTime(now, deadline));
+        _deadlineCancellation = new CancellationTokenSource(_clock.GetElapsedTime(now, deadline), _clock);
+        _budget = CancellationTokenSource.CreateLinkedTokenSource(ct, _deadlineCancellation.Token);
         _cancel = Token.Register(() => { lock (_gate) _decided = true; });
     }
 
@@ -243,5 +244,6 @@ public sealed class LinuxPlacementAttempt : IDisposable
         _listener.Dispose();
         _cancel.Dispose();
         _budget.Dispose();
+        _deadlineCancellation.Dispose();
     }
 }
