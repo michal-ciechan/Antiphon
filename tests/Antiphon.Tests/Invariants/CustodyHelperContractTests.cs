@@ -1,8 +1,9 @@
+using Antiphon.Tests.Infrastructure;
 using System.Text.RegularExpressions;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Infrastructure;
+namespace Antiphon.Tests.Invariants;
 
 // CARD-0604 S9 / D-17. Text guards over the three files that make up the Linux custody
 // mechanism: the root-owned placement shim, the root-owned termination helper and the sudoers
@@ -15,6 +16,7 @@ namespace Antiphon.Tests.Infrastructure;
 // sudo out of it -- is measured separately on both cgroup versions (V-28, CP-14/CP-15) before
 // the backend is trusted.
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class CustodyHelperContractTests
 {
     // CARD-0598's containment requirement in one line: PR_SET_NO_NEW_PRIVS is what makes the

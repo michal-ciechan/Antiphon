@@ -4125,6 +4125,18 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-66; 9 nodes; 74 serial test-seconds; completed 9 of 9 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-406644-363ed2afe1074c19bb640a9ad7aef9f5.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95; may-understate: 1 failed tests in this run can end early."
     },
+    "Antiphon.Tests.Invariants.ProcessSpawnTimeoutPolicyTests": {
+      "nodes": 2,
+      "seconds": 17,
+      "basis": "measured",
+      "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-78; 2 nodes; 17 serial test-seconds; completed 2 of 2 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-327940-2ac84d07012b4cec80c840462eacb7fb.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
+    },
+    "Antiphon.Tests.Invariants.RcRosterRepairTests": {
+      "nodes": 3,
+      "seconds": 6,
+      "basis": "measured",
+      "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-77; 3 nodes; 6 serial test-seconds; completed 3 of 3 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-331368-f65315e35f6948df81e2eeccd9772135.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
+    },
     "Antiphon.Tests.Migrations.PipelineDefinitionMigrationTests": {
       "nodes": 13,
       "seconds": 68,

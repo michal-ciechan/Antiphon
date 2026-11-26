@@ -1,16 +1,18 @@
+using Antiphon.Tests.Scripts;
 using System.Collections;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using TUnit.Core;
 using static Antiphon.Tests.Scripts.Nightly.NightlyPlanCases;
 
-namespace Antiphon.Tests.Scripts;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>
 /// Offline CARD-1561/1566/1567 witnesses (the cases of the retired scripts/test-rc-roster-repairs.ps1), in-process since
 /// W2-nightly S11 against the shipped policy, the census and NightlyTestsPlan. No provider or qualification launch.
 /// </summary>
 [Category("Integration")]
+[Category("RepositoryInvariant")]
 public sealed class RcRosterRepairTests
 {
     private static PlainObject RosterNode(string type, string method, string uid) =>

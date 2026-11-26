@@ -1,10 +1,12 @@
+using Antiphon.Tests.Application;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Application;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>The slot route marks a live Blocked or Queued owner owned and carries its park (CARD-1124).</summary>
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class BlockedTaskParkProjectionTests
 {
     [Test]

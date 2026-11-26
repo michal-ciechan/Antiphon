@@ -2,9 +2,10 @@ using System.Reflection;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.SessionRunner.Tests;
+namespace Antiphon.SessionRunner.Tests.Invariants;
 
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class C0824WorkspaceSlotTimeoutBudgetTests
 {
     // CARD-1722: ten complete Linux class runs (190/190 passed), 2026-11-05,

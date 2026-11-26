@@ -1,3 +1,4 @@
+using Antiphon.Tests.Scripts;
 using Antiphon.Tests.Application;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -5,9 +6,10 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Scripts;
+namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class ProcessSpawnTimeoutPolicyTests
 {
     private const int CeilingMilliseconds = 600_000;

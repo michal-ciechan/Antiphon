@@ -1,3 +1,4 @@
+using Antiphon.Tests.Application;
 using System.Text.Json;
 using System.Xml.Linq;
 using Antiphon.Server.Application.Dtos;
@@ -9,9 +10,10 @@ using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Application;
+namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class ChannelOutboundContractTests
 {
     [Test]

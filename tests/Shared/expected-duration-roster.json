@@ -4834,6 +4834,20 @@
       "os": null,
       "measuredRunId": null
     },
+    "Antiphon.Tests.Invariants.ProcessSpawnTimeoutPolicyTests": {
+      "seconds": 17,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
+    "Antiphon.Tests.Invariants.RcRosterRepairTests": {
+      "seconds": 6,
+      "basis": "measured",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
     "Antiphon.Tests.Invariants.TestLaneCategoryGuardTests": {
       "seconds": 1,
       "basis": "measured",

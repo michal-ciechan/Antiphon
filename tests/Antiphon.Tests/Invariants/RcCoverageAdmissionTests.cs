@@ -1,3 +1,4 @@
+using Antiphon.Tests.Scripts;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Antiphon.Nightly;
@@ -5,7 +6,7 @@ using Antiphon.Tests.Scripts.Nightly;
 using TUnit.Core;
 using static Antiphon.Tests.Scripts.Nightly.NightlyPlanCases;
 
-namespace Antiphon.Tests.Scripts;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>
 /// The offline admission regression from Debug d8f70e4c (no provider or qualification run), in process since unit 18 of
@@ -14,6 +15,7 @@ namespace Antiphon.Tests.Scripts;
 /// declared test of the affected files stays required, and an undeclared gate keeps coverage incomplete.
 /// </summary>
 [Category("Integration")]
+[Category("RepositoryInvariant")]
 public sealed class RcCoverageAdmissionTests
 {
     private static readonly (string Suite, string Class, string Method, string Owner)[] Inventory =

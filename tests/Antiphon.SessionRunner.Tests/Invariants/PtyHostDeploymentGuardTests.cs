@@ -1,7 +1,7 @@
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.SessionRunner.Tests;
+namespace Antiphon.SessionRunner.Tests.Invariants;
 
 /// <summary>
 /// Guards the pty-host survival fix (docs/superpowers/specs/2026-07-19-pty-host-split.md,
@@ -10,6 +10,7 @@ namespace Antiphon.SessionRunner.Tests;
 /// detached pty-hosts and kills them on restart. If either launch path reverts to `dotnet run`,
 /// sessions silently stop surviving runner restarts - so pin both.
 /// </summary>
+[Category("RepositoryInvariant")]
 public class PtyHostDeploymentGuardTests
 {
     private static string RepoRoot => FindRepoRoot();

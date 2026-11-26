@@ -1,13 +1,15 @@
+using Antiphon.Tests.Infrastructure;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Infrastructure;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>CARD-1859: a false <c>TerminateJobObject</c> result is logged and does not throw,
 /// so <c>TryKill</c> still reaches <c>Kill(entireProcessTree: true)</c> while git is alive.</summary>
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class CardFileRepositoryTryKillTests
 {
     [Test]
