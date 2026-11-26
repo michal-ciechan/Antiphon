@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 367,
+      "classes": 368,
       "reason": "allowlist"
     },
     {
@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 26,
+      "classes": 27,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 13,
+      "classes": 14,
       "reason": "allowlist"
     },
     {
@@ -231,7 +231,7 @@
     },
     {
       "path": "global.json",
-      "classes": 35,
+      "classes": 36,
       "reason": "allowlist"
     },
     {
@@ -2119,9 +2119,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 145,
+      "classes": 146,
       "reason": "cap",
-      "owed": 120,
+      "owed": 121,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2649,6 +2649,7 @@
       "classes": [
         "IncrementalSelectionSoundnessTests",
         "LandVerificationFailureTests",
+        "LiveLaneProjectIsolationTests",
         "RcInputManifestTests",
         "RcInputOwnersMapTests"
       ]
@@ -2811,7 +2812,8 @@
       "classes": [
         "CheckpointManifestDocumentationTests",
         "DirectoryBuildRspTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "LiveLaneProjectIsolationTests"
       ]
     },
     {
@@ -4092,6 +4094,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/Antiphon.Nightly.csproj",
+      "classes": [
+        "LiveLaneProjectIsolationTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
       "classes": [
         "LinuxServerRestartGateTests",
@@ -4272,9 +4280,16 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/NightlyCore.cs",
+      "classes": [
+        "LiveLaneRunnerTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/NightlyPolicy.cs",
       "classes": [
-        "LiveLaneCensusTests"
+        "LiveLaneCensusTests",
+        "LiveLaneRunnerTests"
       ]
     },
     {
@@ -4540,6 +4555,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Scripts/Antiphon.Scripts.csproj",
+      "classes": [
+        "LiveLaneProjectIsolationTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Scripts/BuildSlotCommands.cs",
       "classes": [
         "BuildSlotScriptTests",
@@ -4689,6 +4710,12 @@
       ]
     },
     {
+      "path": "scripts/live-lane-status.ps1",
+      "classes": [
+        "LiveLaneProjectIsolationTests"
+      ]
+    },
+    {
       "path": "scripts/nightly-run.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4826,7 +4853,7 @@
       ]
     },
     {
-      "path": "scripts/test-live-lane-outcome.ps1",
+      "path": "scripts/test-live-lane-receipt.ps1",
       "classes": [
         "ReleaseImpactScriptTests"
       ]
@@ -25999,6 +26026,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/LiveLaneFixtures.cs",
+      "classes": [
+        "LiveLaneOutcomeTests",
+        "LiveLaneRunnerTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/LiveLaneInventoryTests.cs",
       "classes": [
         "LiveLaneCensusTests",
@@ -26653,9 +26687,7 @@
       "classes": [
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
-        "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
-        "LiveLaneRunnerTests",
         "ScriptHarnessProcessContractTests"
       ]
     },
@@ -26678,9 +26710,7 @@
         "C1514HostLoadScriptTests",
         "LiveLaneAttestationTests",
         "LiveLaneFingerprintTests",
-        "LiveLaneOutcomeTests",
         "LiveLaneReceiptTests",
-        "LiveLaneRunnerTests",
         "ProcessSpawnLimitTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
@@ -29133,7 +29163,8 @@
     {
       "path": "tests/Shared/CheckpointRepeat.targets",
       "classes": [
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "LiveLaneProjectIsolationTests"
       ]
     },
     {
@@ -29549,9 +29580,16 @@
       ]
     },
     {
+      "path": "tests/live-lane-inputs.json",
+      "classes": [
+        "LiveLaneProjectIsolationTests"
+      ]
+    },
+    {
       "path": "tests/live-lanes.json",
       "classes": [
-        "LiveLaneCensusTests"
+        "LiveLaneCensusTests",
+        "LiveLaneProjectIsolationTests"
       ]
     },
     {
