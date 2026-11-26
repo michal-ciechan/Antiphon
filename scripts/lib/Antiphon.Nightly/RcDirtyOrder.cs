@@ -63,7 +63,8 @@ namespace Antiphon.Nightly
                 var disposition = Text(RcPort.DirtyProp(row, "disposition"));
                 if (disposition != "Dirty" && disposition != "Sample" && disposition != "Carry") RcPort.Throw("invalid-disposition");
                 if (states.ContainsKey(key)) RcPort.Throw("duplicate-obligation");
-                states.Add(key, new State { Key = key, Disposition = disposition });
+                var invariant = NightlyTestsPlan.IsInvariantClass(Text(RcPort.DirtyProp(row, "className")));
+                states.Add(key, new State { Key = key, Disposition = invariant ? "Dirty" : disposition, RepositoryInvariant = invariant });
             }
             foreach (var fix in Rows(fixes))
             {
@@ -144,9 +145,9 @@ namespace Antiphon.Nightly
                 else if (!state.SawGreen) { band = "not-run"; rank = 2; }
                 else if (state.Disposition == "Dirty") { band = "changed"; rank = 3; }
                 else { band = "sample"; rank = 4; }
-                ranked.Add(new Ranked { Key = state.Key, Band = band, Disposition = state.Disposition, Rank = rank });
+                ranked.Add(new Ranked { Key = state.Key, Band = band, Disposition = state.Disposition, Rank = rank, RepositoryInvariant = state.RepositoryInvariant });
             }
-            ranked = ranked.OrderBy(item => item.Rank).ThenBy(item => item.Key, StringComparer.Ordinal).ToList();
+            ranked = ranked.OrderByDescending(item => item.RepositoryInvariant).ThenBy(item => item.Rank).ThenBy(item => item.Key, StringComparer.Ordinal).ToList();
             var launch = new RcDirtyLaunchItem[ranked.Count];
             for (var i = 0; i < ranked.Count; i++)
             {
@@ -286,6 +287,7 @@ namespace Antiphon.Nightly
         {
             public string Key;
             public string Disposition;
+            public bool RepositoryInvariant;
             public bool Failed;
             public string FailureSha = "";
             public bool Interrupted;
@@ -307,6 +309,7 @@ namespace Antiphon.Nightly
             public string Band;
             public string Disposition;
             public int Rank;
+            public bool RepositoryInvariant;
         }
 
         sealed class GitResult

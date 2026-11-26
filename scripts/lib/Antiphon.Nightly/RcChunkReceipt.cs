@@ -309,6 +309,32 @@ namespace Antiphon.Nightly
             }
         }
 
+        internal static RcReuse FreshInvariant(IDictionary row, NightlyRunOptions run, RcPlannedChunk chunk,
+            RcReceiptScope scope, string attemptDirectory)
+        {
+            var reasons = new List<string>();
+            if (PsValue.Str(row["disposition"]) != "executed") reasons.Add("not-executed");
+            if (PsValue.Str(row["sha"]) != run.ExpectedSha) reasons.Add("foreign-source");
+            if (PsValue.Str(row["runId"]) != run.RunId ||
+                PsValue.Str(row["attempt"]) != run.Attempt.ToString(CultureInfo.InvariantCulture)) reasons.Add("foreign-attempt");
+            if (PsValue.Str(row["chunk"]) != chunk.Id) reasons.Add("foreign-chunk");
+            if (PsValue.Str(row["contentDigest"]) != chunk.ContentDigest) reasons.Add("foreign-content");
+            var trxPath = PsValue.Str(row["trx"]);
+            IReadOnlyList<RcTrxCase> trx = null;
+            if (trxPath.Length > 0)
+            {
+                var relative = Path.GetRelativePath(attemptDirectory, Path.GetFullPath(trxPath, Path.GetFullPath(attemptDirectory)));
+                if (!Path.IsPathRooted(relative) && relative != ".."
+                    && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                    trx = ReadTrx(Path.Combine(attemptDirectory, relative));
+            }
+            reasons.AddRange(Reusable(row, trx, chunk.Cases, scope).Reasons);
+            if (trx != null && (trx.Count != chunk.Cases.Length
+                || !trx.Select(c => c.CaseKey).ToHashSet(StringComparer.Ordinal).SetEquals(chunk.Cases)))
+                reasons.Add("wrong-case-roster");
+            return new RcReuse { Reusable = reasons.Count == 0, Reasons = reasons.ToArray() };
+        }
+
         // ---- matching against prior receipts ---------------------------------------------------------------------
 
         /// <summary>

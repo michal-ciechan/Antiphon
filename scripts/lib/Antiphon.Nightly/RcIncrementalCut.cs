@@ -151,7 +151,7 @@ namespace Antiphon.Nightly
             {
                 // Full: the whole roster, in roster order; green only when every launched row is a pass (Review r1 D-3).
                 var launchedRows = new List<IDictionary>();
-                foreach (var chunk in roster)
+                foreach (var chunk in roster.OrderByDescending(chunk => chunk.RequiresFreshInvariantExecution))
                 {
                     launchedRows.Add(launch(chunk));
                     answer.Launched.Add(chunk.Id);
@@ -165,6 +165,9 @@ namespace Antiphon.Nightly
 
             var inventory = RcChunkReceipt.Read(run.IncrementalInventoryPath, run.IncrementalInventoryDigest);
             if (inventory.Refusal.Length > 0) return Refuse(answer, "incremental-plan-stale:" + inventory.Refusal);
+            if (roster.Any(chunk => chunk.RequiresFreshInvariantExecution)
+                && inventory.Rows.Any(row => !RcChunkReceipt.IsDigest(PsValue.Str(row["contentDigest"]))))
+                return Execute(FullFallback(run), roster, attemptDirectory, launch, platform);
             Directory.CreateDirectory(attemptDirectory);
             var planPath = Path.Combine(attemptDirectory, "incremental-plan.json");
             var digestPath = planPath + ".sha256";
@@ -176,6 +179,7 @@ namespace Antiphon.Nightly
                 using var doc = JsonDocument.Parse(bytes);
                 var root = doc.RootElement;
                 if (Text(root, "inventoryDigest") != run.IncrementalInventoryDigest || Text(root, "candidateSha") != run.ExpectedSha
+                    || (roster.Any(chunk => chunk.RequiresFreshInvariantExecution) && Text(root, "invariantAttempt") != AttemptKey(run))
                     || Text(root, "rosterDigest") != RosterDigest(roster) || Text(root, "owedDigest") != run.IncrementalOwedDigest) return Refuse(answer, "incremental-plan-stale:binding");
                 entries = root.GetProperty("entries").EnumerateArray().Select(e => (OrderedDictionary)RcChunkReceipt.FromJson(e)).ToArray();
                 answer.PlanDigest = RcChunkReceipt.Hex(SHA256.HashData(bytes));
@@ -201,6 +205,8 @@ namespace Antiphon.Nightly
                     var originSha = carry ? PsValue.Str(m.Origin["sha"]) : "";
                     if (carry && !string.Equals(originSha, run.IncrementalBaselineSha, StringComparison.Ordinal)) reasons.Add("origin-sha:" + originSha);
                     if (owed.TryGetValue(m.ContentDigest ?? "", out var open)) reasons.Add(open);
+                    if (roster.Any(chunk => chunk.Id == m.Chunk && chunk.RequiresFreshInvariantExecution))
+                        reasons.Add("repository-invariant-fresh-execution");
                     var carried = carry && reasons.Count == 0;
                     return new OrderedDictionary(StringComparer.Ordinal)
                     {
@@ -214,6 +220,7 @@ namespace Antiphon.Nightly
                     { "inventoryDigest", run.IncrementalInventoryDigest }, { "owedDigest", run.IncrementalOwedDigest }, { "rosterDigest", RosterDigest(roster) },
                     { "entries", entries.Cast<object>().ToArray() },
                 };
+                if (roster.Any(chunk => chunk.RequiresFreshInvariantExecution)) plan["invariantAttempt"] = AttemptKey(run);
                 var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(plan));
                 using (var stream = new FileStream(planPath, FileMode.CreateNew, FileAccess.Write)) stream.Write(bytes, 0, bytes.Length);
                 answer.PlanDigest = RcChunkReceipt.Hex(SHA256.HashData(bytes));
@@ -231,22 +238,36 @@ namespace Antiphon.Nightly
                     executed[PsValue.Str(row["chunk"])] = row;
                 }
             var ledger = new List<IDictionary>();
-            foreach (var entry in entries)
+            var byId = roster.ToDictionary(chunk => chunk.Id, StringComparer.Ordinal);
+            foreach (var entry in entries.OrderByDescending(entry => byId[PsValue.Str(entry["chunk"])].RequiresFreshInvariantExecution))
             {
                 var id = PsValue.Str(entry["chunk"]);
-                var chunk = roster.First(c => c.Id == id);
+                var chunk = byId[id];
                 if (PsValue.Str(entry["decision"]) == "carry")
                 {
+                    if (chunk.RequiresFreshInvariantExecution) return Refuse(answer, "repository-invariant-carried:" + id);
                     var carried = RcChunkReceipt.Carry((IDictionary)entry["origin"], run.ExpectedSha, run.IncrementalInventoryDigest);
                     answer.Carried.Add(carried);
                     ledger.Add(carried);
                     continue;
                 }
-                if (!executed.TryGetValue(id, out var row))
+                var resume = executed.TryGetValue(id, out var row);
+                if (resume && chunk.RequiresFreshInvariantExecution
+                    && !RcChunkReceipt.FreshInvariant(row, run, chunk, scope, attemptDirectory).Reusable)
+                    resume = false;
+                if (!resume)
                 {
                     row = launch(chunk) ?? throw new NightlyRefusal("incremental-launch-no-row:" + id);
-                    row["chunk"] = id;
-                    RcChunkReceipt.Stamp(row, run.ExpectedSha, chunk.ContentDigest, scope);
+                    if (chunk.RequiresFreshInvariantExecution)
+                    {
+                        var fresh = RcChunkReceipt.FreshInvariant(row, run, chunk, scope, attemptDirectory);
+                        if (!fresh.Reusable) return Refuse(answer, "repository-invariant-receipt:" + id + ":" + string.Join(",", fresh.Reasons));
+                    }
+                    else
+                    {
+                        row["chunk"] = id;
+                        RcChunkReceipt.Stamp(row, run.ExpectedSha, chunk.ContentDigest, scope);
+                    }
                     File.AppendAllText(journalPath, JsonSerializer.Serialize(Plain(row)) + "\n", new UTF8Encoding(false));
                     executed[id] = row;
                     answer.Launched.Add(id);
@@ -264,6 +285,13 @@ namespace Antiphon.Nightly
             return answer;
         }
 
+        private static string AttemptKey(NightlyRunOptions run) => run.RunId + "/" + run.Attempt.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        private static NightlyRunOptions FullFallback(NightlyRunOptions run) => new NightlyRunOptions
+        {
+            RunId = run.RunId, Attempt = run.Attempt, ExpectedSha = run.ExpectedSha, Profile = run.Profile,
+        };
+
         static RcIncrementalExecution Refuse(RcIncrementalExecution answer, string why)
         {
             answer.Refusal = why;
@@ -273,7 +301,8 @@ namespace Antiphon.Nightly
 
         /// <summary>The digest of the roster's ordered (id, content digest) pairs.</summary>
         public static string RosterDigest(IReadOnlyList<RcPlannedChunk> roster) =>
-            RcChunkReceipt.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", roster.Select(c => c.Id + "\0" + c.ContentDigest)))));
+            RcChunkReceipt.Hex(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", roster.Select(c =>
+                c.Id + "\0" + c.ContentDigest + (c.RequiresFreshInvariantExecution ? "\0repository-invariant" : "")))));
 
         static object Plain(IDictionary row)
         {
