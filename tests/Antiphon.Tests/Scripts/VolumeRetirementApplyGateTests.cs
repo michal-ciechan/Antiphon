@@ -166,6 +166,14 @@ public sealed class VolumeRetirementApplyGateTests
     public async Task Scripted_apply_refuses_until_the_operation_token_matches()
     {
         C1008HostFixture.RequireNativeLinux();
+        var readyPreviews = 0;
+        async Task<(int Exit, string Output)> PreparePreview(C1008HostFixture fixture)
+        {
+            var preview = await Preview(fixture);
+            readyPreviews++;
+            return preview;
+        }
+
         using (var host = new C1008HostFixture())
         {
             var blocked = await host.Run("deploy-parent", "C1609_FIXTURE_APPLY_GATE=off");
@@ -178,17 +186,18 @@ public sealed class VolumeRetirementApplyGateTests
                 .ShouldBeFalse("apply-gate: host apply off writes no journal directory");
         }
 
-        await RefuseTemp(null);
-        await RefuseTemp(EnabledTypo);
-        await RefuseTemp("1");
-        await RefuseTemp("true");
-        await RefuseTemp("enabled-" + WrongOperation);
+        await RefuseTemp(null, PreparePreview);
+        await RefuseTemp(EnabledTypo, PreparePreview);
+        await RefuseTemp("1", PreparePreview);
+        await RefuseTemp("true", PreparePreview);
+        await RefuseTemp("enabled-" + WrongOperation, PreparePreview);
 
         using var enabled = new C1008HostFixture(main: false);
-        await Preview(enabled);
+        await PreparePreview(enabled);
         var applied = await enabled.Run("retire-temp-runner", EnabledToken);
         applied.Exit.ShouldBe(0, "apply-gate: the matching operation token deletes; " + applied.Output);
         CountRemoved(enabled).ShouldBe(4, "apply-gate: the matching token deletes the four temp volumes");
+        readyPreviews.ShouldBe(1, "apply-gate: all scripted temp attempts reuse one real Ready preview");
     }
 
     [Test]
@@ -383,10 +392,11 @@ public sealed class VolumeRetirementApplyGateTests
 
     private const string EnabledToken = "export ANTIPHON_VOLUME_RETIREMENT_APPLY=\"enabled-${C1008_OPERATION}\"";
 
-    private static async Task RefuseTemp(string? token)
+    private static async Task RefuseTemp(string? token,
+        Func<C1008HostFixture, Task<(int Exit, string Output)>> preparePreview)
     {
         using var fixture = new C1008HostFixture(main: false);
-        var preview = await Preview(fixture);
+        var preview = await preparePreview(fixture);
         var extra = token is null
             ? "C1609_FIXTURE_APPLY_GATE=off"
             : "export ANTIPHON_VOLUME_RETIREMENT_APPLY=" + VolumeRetirementFixture.Quote(token);
