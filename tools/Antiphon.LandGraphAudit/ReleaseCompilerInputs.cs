@@ -27,11 +27,14 @@ internal sealed record ReleaseCompilerContext(string Project, string Assembly, s
     ReleaseCompilerSource[] Sources, ReleaseCompilerReference[] References);
 
 internal sealed record ReleaseCompilerSource(string Path, string Sha256, string? GitBlob);
-internal sealed record ReleaseCompilerReference(string Sha256, string[] Aliases, bool EmbedInteropTypes);
+internal sealed record ReleaseCompilerReference(string Sha256, string[] Aliases, bool EmbedInteropTypes, string? Project = null);
 
 internal sealed record BoundReleaseCompilation(ReleaseCompilerContext Input, CSharpCompilation Compilation);
 
-internal sealed record ReleaseCompilerBinding(string Reason, string? ManifestDigest, BoundReleaseCompilation[] Contexts)
+internal sealed record UnavailableGeneratedInput(string Project, string Path);
+
+internal sealed record ReleaseCompilerBinding(string Reason, string? ManifestDigest, BoundReleaseCompilation[] Contexts,
+    UnavailableGeneratedInput? UnavailableGenerated = null)
 {
     internal bool Eligible => Contexts.Length > 0;
 }
@@ -53,6 +56,7 @@ internal static class ReleaseCompilerInputs
         string? digest = null;
         var reason = "compiler-manifest-unreadable";
         var watch = Stopwatch.StartNew();
+        UnavailableGeneratedInput? unavailableGenerated = null;
         try
         {
             var manifestBytes = ReadBytes(manifestPath, 8 * MiB);
@@ -113,6 +117,8 @@ internal static class ReleaseCompilerInputs
                 {
                     reason = source.GitBlob is null ? "compiler-generated-source-unbound" : "compiler-tracked-source-unbound";
                     if (!IsRelativePath(source.Path) || !paths.Add(source.Path)) return new(reason, digest, []);
+                    if (source.GitBlob is null && !gitBlobs.ContainsKey(source.Path))
+                        unavailableGenerated = new(context.Project, source.Path);
                     var bytes = Payload(source.Sha256, 8 * MiB);
                     if (source.GitBlob is null ? gitBlobs.ContainsKey(source.Path)
                         : !gitBlobs.TryGetValue(source.Path, out var blob) || source.GitBlob != blob || GitBlob(bytes) != blob)
@@ -120,13 +126,15 @@ internal static class ReleaseCompilerInputs
                     using var sourceStream = new MemoryStream(bytes, writable: false);
                     var text = SourceText.From(sourceStream, Utf8, SourceHashAlgorithm.Sha256, throwIfBinaryDetected: true);
                     trees.Add(CSharpSyntaxTree.ParseText(text, parse, source.Path));
+                    unavailableGenerated = null;
                 }
 
                 reason = "compiler-reference-unbound";
                 var references = new List<PortableExecutableReference>(context.References.Length);
                 foreach (var reference in context.References)
                 {
-                    if (reference.Aliases.Any(alias => !SyntaxFacts.IsValidIdentifier(alias))
+                    if (reference.Project is not null && (!IsRelativePath(reference.Project) || !gitBlobs.ContainsKey(reference.Project))
+                        || reference.Aliases.Any(alias => !SyntaxFacts.IsValidIdentifier(alias))
                         || reference.Aliases.Distinct(StringComparer.Ordinal).Count() != reference.Aliases.Length)
                         return new(reason, digest, []);
                     var properties = new MetadataReferenceProperties(aliases: ImmutableArray.CreateRange(reference.Aliases),
@@ -160,7 +168,7 @@ internal static class ReleaseCompilerInputs
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or JsonException
             or ArgumentException or BadImageFormatException)
         {
-            return new(reason, digest, []);
+            return new(reason, digest, [], unavailableGenerated);
         }
         finally
         {

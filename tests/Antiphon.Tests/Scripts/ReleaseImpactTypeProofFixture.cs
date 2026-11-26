@@ -37,6 +37,9 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
 
     internal ReleaseCompilerReference Core { get; }
 
+    internal ReleaseCompilerReference PinAssembly(System.Reflection.Assembly assembly) =>
+        new(Store(File.ReadAllBytes(assembly.Location)), [], false);
+
     internal ReleaseCompilerReference Emit(string assembly, string code, string[] aliases, params MetadataReference[] additional)
     {
         var compilation = CSharpCompilation.Create(assembly,
@@ -56,7 +59,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         ReleaseCompilerReference[] References, string Framework = "net9.0");
 
     internal ReleaseCompilerBinding Capture(IReadOnlyDictionary<string, string> files, IReadOnlyDictionary<string, string> generated,
-        Context[] contexts, Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null)
+        Context[] contexts, Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, string? unavailableGenerated = null)
     {
         var definition = new TreeDefinition();
         var blobs = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -79,7 +82,12 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         var expected = Hash(JsonSerializer.SerializeToUtf8Bytes(manifest, options));
         var manifestPath = Path.Combine(_workspace.Path, "manifest.json");
         File.WriteAllBytes(manifestPath, JsonSerializer.SerializeToUtf8Bytes(proposal?.Invoke(manifest) ?? manifest, options));
-        return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected);
+        if (unavailableGenerated is null) return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected);
+        var source = Encoding.UTF8.GetBytes(generated[unavailableGenerated]);
+        var payload = Path.Combine(_workspace.Path, Hash(source));
+        File.Delete(payload);
+        try { return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected); }
+        finally { Store(source); }
     }
 
     private string Store(byte[] data)

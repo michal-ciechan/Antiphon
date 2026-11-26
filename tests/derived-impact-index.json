@@ -26535,6 +26535,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactTypeProofFixture.cs",
+      "classes": [
+        "ReleaseImpactRelationTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseSelectionFixtures.cs",
       "classes": [
         "ChangeAwareReleaseTests",

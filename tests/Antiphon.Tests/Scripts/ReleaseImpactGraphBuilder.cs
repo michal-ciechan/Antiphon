@@ -18,11 +18,14 @@ internal static class ReleaseImpactGraphBuilder
     internal static ReleaseImpactTypeProof BuildWithTypeProof(IReadOnlyDictionary<string, string> inputs, ReleaseCompilerBinding binding,
         int maximumCandidates = 4096)
     {
-        var conservative = Build(inputs) with { Schema = "antiphon-release-relation-v2" };
-        return new(conservative, conservative, [], binding.ManifestDigest);
+        var origins = new List<ReleaseImpactTypeOrigin>();
+        var conservative = Build(inputs, origins.Add) with { Schema = "antiphon-release-relation-v2" };
+        return ReleaseImpactTypeResolver.Resolve(inputs, conservative, origins, binding, maximumCandidates);
     }
 
-    internal static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs)
+    internal static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs) => Build(inputs, null);
+
+    private static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs, Action<ReleaseImpactTypeOrigin>? observe)
     {
         var reasons = new SortedSet<string>(StringComparer.Ordinal)
         {
@@ -107,7 +110,12 @@ internal static class ReleaseImpactGraphBuilder
                 // subtracts a conservative project edge supplied by later composition.
                 foreach (var name in type.DescendantNodes().OfType<SimpleNameSyntax>())
                     if (typeFiles.TryGetValue(name.Identifier.ValueText, out var targets))
+                    {
                         foreach (var target in targets) Hit(target, id, "type");
+                        if (observe is not null)
+                            observe(new(id, path, name.SpanStart, name.Span.Length, name.Identifier.ValueText,
+                                targets.Order(StringComparer.Ordinal).ToArray()));
+                    }
                 foreach (var literal in type.DescendantNodes().OfType<LiteralExpressionSyntax>())
                 {
                     if (!literal.IsKind(SyntaxKind.StringLiteralExpression)) continue;
@@ -141,7 +149,7 @@ internal static class ReleaseImpactGraphBuilder
 
     private static string DirectoryOf(string path) => path.Contains('/') ? path[..(path.LastIndexOf('/') + 1)] : "";
 
-    private static string FullName(BaseTypeDeclarationSyntax type)
+    internal static string FullName(BaseTypeDeclarationSyntax type)
     {
         var spaces = type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse()
             .Select(ns => string.Join('.', ns.Name.DescendantTokens().Where(t => t.IsKind(SyntaxKind.IdentifierToken)).Select(t => t.ValueText)));
