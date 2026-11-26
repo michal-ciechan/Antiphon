@@ -26,7 +26,7 @@ public sealed class RcProjectSelectionTests
         using var fixture = new Repo();
         fixture.Baseline();
         fixture.Put("tests/derived-impact-index.json", """
-            {"schema":1,"cap":25,"allowlist":[],"windowsOnly":[],"linuxOnly":[],"capped":[],"edges":[]}
+            {"schema":1,"cap":25,"allowlist":[],"windowsOnly":[],"linuxOnly":[],"cappedPaths":[],"edges":[]}
             """);
         var source = fixture.Commit();
         var baseline = fixture.PathOf("prior");
