@@ -129,7 +129,7 @@ public static partial class ReleaseImpactAdmission
         (edge.Class.Length == 0 || chunk.Cases.Any(member => member.Class == edge.Class));
 
     private static string[]? Route(ILookup<string, string> graph, string start, string destination,
-        IReadOnlyCollection<string>? avoid = null)
+        IReadOnlyCollection<string>? excludedFirstHops = null)
     {
         var queue = new Queue<string>();
         var seen = new Dictionary<string, string?>(StringComparer.Ordinal) { [start] = null };
@@ -144,8 +144,12 @@ public static partial class ReleaseImpactAdmission
                 return chain.ToArray();
             }
             foreach (var next in graph[current])
-                if (!(avoid?.Contains(next, StringComparer.Ordinal) ?? false) && seen.TryAdd(next, current))
-                    queue.Enqueue(next);
+            {
+                // A grant names edges from this producer. Removing a downstream node would also hide routes
+                // that reach it by an independent edge through another project.
+                if (current == start && (excludedFirstHops?.Contains(next, StringComparer.Ordinal) ?? false)) continue;
+                if (seen.TryAdd(next, current)) queue.Enqueue(next);
+            }
         }
         return null;
     }
