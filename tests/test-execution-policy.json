@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "56e362c9fb71ee703e2995a601edef5fd5f15578c69e562492c1fbcb05e89c05",
+  "policyHash": "c7a290fdf45e8779d0fb38ef6b4657486940b9cc251c29e8a1bd7a67198a661d",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1483,6 +1483,7 @@
             "HostChecksSpawnPeer",
             "MismatchedPlacedWithholdsGo",
             "LostAckRetainsLaunchedChild",
+            "SlowFirstPlacementSucceedsAndStuckPeerExpires",
             "MixedFreezerCannotAttest",
             "StageWaitsForGo",
             "FailedReleaseSendSuppressesExec",
