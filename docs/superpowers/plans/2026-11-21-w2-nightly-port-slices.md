@@ -359,12 +359,21 @@ Rules:
   `NativeLinuxPolicyMatcherParityTests` in-process). Delete `test-phase-paths.ps1` and inline its resolver into
   `release-cut.ps1:120-126`. Re-pin: drop the three ps1 from ProtectedInputs; any retyping of NightlyCore.cs,
   DiscoveryIndex.cs, DiagnosticLog.cs, DiagScan.cs, NightlyPolicy.cs or ExecutionPolicy.cs happens here only.
+  Done: the shrink, the nightly-coverage and test-phase-paths deletions and the re-pin landed with S27. Unit 62 of the
+  remaining-ps1 plan (2026-11-26) finished the residue: once no script loaded them, it moved the last test fixtures that
+  dot-sourced the libraries in process (`SeamedNightlyRun` runs NightlyTests.Run on C# seams) and deleted
+  `nightly-common.ps1`, `nightly-core.ps1`, `c487-harness.ps1`, `c487-nightly-tests.ps1`, `checkpoint-process-runner.ps1`,
+  `checkpoint-file-reader.ps1` and `build-driver-environment.ps1`. `ReleaseAuthority.Scripts` is empty (an older record that
+  binds the two scripts verifies on the source trees alone), `LiveLaneCensus.ProtectedPaths` no longer lists
+  nightly-common, and `NightlyCoreStamp` went with its loader. None of the policy readers was retyped.
 - **S28 Typed core APIs (2.5 h).** Remove the PSObject and hashtable overloads of core types whose last PowerShell
   caller was in W2-nightly (DispatchSchedule, LaunchPlanner, StoppedSeedFiles, TestPhaseJournalRead,
   PriorFailureHistory, NightlyWatchdog, NightlyChunkVerdict, `QualificationTiming.Update`); remove the static
   EvidenceFiles and QualificationTiming facades. PowerShellStandard stays: W2-rc PowerShell still passes PSObjects
   into ReleaseGateCredit, ReleaseGateTags, ReleaseAuthority, NightlyDocuments, NightlyPolicy, ExecutionPolicy,
   NightlyTrx, RcRunEvidence.
+  Partly done: unit 62 removed `DelegateTimeProvider`, whose last caller was the C487 harness. The PSObject and hashtable
+  overloads and the EvidenceFiles and QualificationTiming facades are still open.
 
 ## 4. CLI subcommands
 
