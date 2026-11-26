@@ -19,6 +19,67 @@ namespace Antiphon.Tests.Scripts;
 [Category("Integration")]
 public sealed class ReleaseCutTests
 {
+    [Test]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    public void C2082_Admitted_cut_binds_the_nightly_tests_process()
+    {
+        using var world = ReleaseCutWorld.Real("c2082-cut-hop");
+        var root = RcIncrementalCut.IncrementalRoot(world.Release);
+        Directory.CreateDirectory(root);
+        var approval = Path.Combine(root, "approval.json");
+        NightlyFixture.WriteJson(approval, new
+        {
+            format = RcIncrementalCut.ApprovalFormat, replayVerdictDigest = new string('a', 64),
+            selectorHash = RcIncrementalCut.SelectorHash, trustPolicyHash = "absent", shadowRunIds = new[] { "shadow-a", "shadow-b" },
+        });
+        NightlyFixture.WriteJson(Path.Combine(root, "last-full-sweep.json"), new
+        {
+            completedUtc = NightlyFixture.DefaultNow.AddHours(-1), sha = world.Sha,
+        });
+        var inventory = Path.Combine(root, "inventory.json");
+        var digest = RcChunkReceipt.Seal(inventory, world.Sha, 1, []);
+        var comparison = RcComparisonBaseline.Choose("rc/fixture", [new RcComparisonInput
+        {
+            Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "prior", Attempt = "1",
+            CompletedUtc = NightlyFixture.DefaultNow.AddHours(-1), ReceiptPath = inventory, ReceiptDigest = digest,
+            Sealed = true, Ancestor = true, Rows = [],
+        }]);
+        RcComparisonBaseline.Record(Path.Combine(root, "comparison.json"), comparison, inventory, digest);
+
+        var launcher = new RecordingLauncher();
+        var processes = new FakeProcessTable();
+        processes.Start(processes.CurrentPid, NightlyRunWorld.ProcessStart);
+        var nightly = world.Fixture.Host(git: world.HostGit, launcher: launcher, processes: processes);
+        var bindings = new NightlyRunBindings
+        {
+            CliPath = NightlyRunWorld.StagedCli,
+            ProductRoot = world.Checkout,
+            RcEvidence = NightlyRcChain.Suppressed(),
+        };
+        world.Answer = options =>
+        {
+            options.NoReport = true;
+            return NightlyRun.Run(options, nightly, bindings);
+        };
+        var cut = world.Cut(options =>
+        {
+            options.SelectionMode = "Incremental";
+            options.RunId = "c2082-cut";
+        });
+        cut.CoverageScope.ShouldBe("Incremental", cut.IncrementalReason);
+        var launch = launcher.Launches.Single(NightlyRunHops.IsTestsHop);
+        var flags = NightlyArgs.Parse(launch.Arguments.Skip(3).ToArray(),
+            [.. NightlyTestsOptions.Valued, "--requested-selection-mode", "--incremental-approval-digest",
+                "--incremental-baseline-sha", "--incremental-inventory-path", "--incremental-inventory-digest", "--incremental-owed-digest"],
+            NightlyTestsOptions.Switches);
+        flags.Value("--requested-selection-mode").ShouldBe("Incremental");
+        flags.Value("--incremental-approval-digest").ShouldBe(RcChunkReceipt.FileDigest(approval));
+        flags.Value("--incremental-baseline-sha").ShouldBe(world.Sha);
+        flags.Value("--incremental-inventory-path").ShouldBe(inventory);
+        flags.Value("--incremental-inventory-digest").ShouldBe(digest);
+        flags.Value("--incremental-owed-digest").ShouldBe(RcComparisonBaseline.OwedDigest(new Dictionary<string, string>()));
+    }
+
     // CARD-1836 S6 (CP-6, V-6, G-20..G-24): an Incremental cut reconciles the owed roster and never reaches the publisher.
     [Test, Timeout(60_000)]
     [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
