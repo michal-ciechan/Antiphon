@@ -59,6 +59,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
         Case("T.valid.independentSeal", IndependentEnvelope(schema, wire, projections)["rootDigest"]!.GetValue<string>() ==
             good.VerifiedHandle?.RootDigest);
 
+        var quietChunk = world.Chunks.Single(chunk => chunk.Id == "Q");
+        var refreshedQuiet = quietChunk with { Cases = [.. quietChunk.Cases, quietChunk.Cases[0] with { CaseUid = "q3" }] };
+        P2.Chunk[] refreshed = [world.Chunks[0], refreshedQuiet];
+        CheckFull("T.discovery.changedAtAdmit", Admit(proposal, discovery: refreshed), "p2-selection:roster", refreshed);
+
         if (good.Rows.Count > 1 && good.Rows is System.Collections.Generic.IList<P2.Row> writable)
         {
             try { writable[1] = good.Rows[0] with { Disposition = "carry-candidate" }; }
@@ -324,6 +329,34 @@ public sealed partial class ReleaseImpactEnvelopeTests
         var duplicate = P2.Prepare(world.Request, world.Chunks, world.Authority(duplicateQuietPass: true));
         var nonzero = P2.Prepare(world.Request, world.Chunks, world.Authority(failQuietExit: true));
         var foreignAssembly = P2.Prepare(world.Request, world.Chunks, world.Authority(foreignQuietAssembly: true));
+        var failedTrx = P2World.Artifact(quiet.Evidence.Id, P2World.Trx(quietChunk, outcome: "Failed"));
+        failedTrx.ByteCount.ShouldBe(quiet.Evidence.ByteCount);
+        failedTrx.Digest.ShouldNotBe(quiet.Evidence.Digest);
+        var wrongTrxBytes = P2.Prepare(world.Request, world.Chunks, authority with
+        {
+            Origins = authority.Origins.Select(pin => pin.Chunk == "Q"
+                ? pin with { Evidence = failedTrx with { Open = quiet.Evidence.Open } }
+                : pin).ToArray(),
+        });
+        CheckFull("T.receipts.custody.rawTrxSha", Admit(wrongTrxBytes.Evidence?.WriteProposal() ?? proposal, wrongTrxBytes),
+            "p2-receipt:proof-bytes");
+
+        var inventoryArtifact = authority.Inventory.Artifact;
+        using (var inventory = inventoryArtifact.Open())
+        using (var reader = new StreamReader(inventory))
+        {
+            var text = reader.ReadToEnd();
+            var altered = P2World.Artifact(inventoryArtifact.Id,
+                Encoding.UTF8.GetBytes(text.Replace("\"result\":\"pass\"", "\"result\":\"fail\"", StringComparison.Ordinal)));
+            altered.ByteCount.ShouldBe(inventoryArtifact.ByteCount);
+            altered.Digest.ShouldNotBe(inventoryArtifact.Digest);
+            var wrongInventoryBytes = P2.Prepare(world.Request, world.Chunks, authority with
+            {
+                Inventory = authority.Inventory with { Artifact = inventoryArtifact with { Open = altered.Open } },
+            });
+            CheckFull("T.receipts.custody.rawInventorySha", Admit(proposal, wrongInventoryBytes), "p2-receipt:proof-bytes");
+        }
+
         var negativeExit = P2.Prepare(world.Request, world.Chunks, world.Authority(negativeQuietExit: true));
         var negativeResult = P2.AdmitPrepared(world.Request, world.Chunks,
             () => new MemoryStream(negativeExit.Evidence!.WriteProposal()), negativeExit);
@@ -365,10 +398,26 @@ public sealed partial class ReleaseImpactEnvelopeTests
         Case("T.snapshot.artifactOpenCount", world.QuietOpens == 1, $"opens={world.QuietOpens}");
         var openDecision = Admit(oneOpen.Evidence!.WriteProposal(), oneOpen);
         Case("T.snapshot.originalEligible", Ids(openDecision.CarryCandidates).SequenceEqual(["Q"]));
-        var retained = P2.Prepare(world.Request, world.Chunks, world.Authority(carryOrigin: true));
+        var retained = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: world.OriginBase));
         var retainedDecision = Admit(retained.Evidence!.WriteProposal(), retained);
         Case("T.receipts.originChain.validOrigin", retainedDecision.CarryCandidates.SingleOrDefault()?.Origin is
             { RunId: "run-b0", Attempt: 1 } origin && origin.Sha == world.OriginBase);
+
+        var dirtyOrigin = P2.Prepare(world.Request, world.Chunks,
+            world.Authority(carriedFrom: world.OriginBase, dirtyOriginQuiet: true));
+        dirtyOrigin.Evidence.ShouldNotBeNull(dirtyOrigin.Reason);
+        var dirtyOriginResult = Admit(dirtyOrigin.Evidence!.WriteProposal(), dirtyOrigin);
+        var owedQuiet = dirtyOriginResult.Owed.SingleOrDefault(row => row.Chunk == "Q");
+        Case("T.receipts.originChain.changedInputs", dirtyOriginResult.VerifiedHandle is not null &&
+            !dirtyOriginResult.CarryCandidates.Any() && dirtyOriginResult.CreditedCount == 0 &&
+            Ids(dirtyOriginResult.Owed).SequenceEqual(["H", "Q"]) && owedQuiet is not null &&
+            owedQuiet.Cases.SequenceEqual(quietChunk.Cases) && owedQuiet.Reasons.Any(reason => reason.Kind == "receipt" &&
+                reason.Chain.SequenceEqual(["origin-inputs-changed"])),
+            $"mode={dirtyOriginResult.EffectiveMode} carry=[{string.Join(",", Ids(dirtyOriginResult.CarryCandidates))}]");
+
+        var siblingOrigin = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: world.Sibling));
+        CheckFull("T.receipts.originChain.nonAncestor", Admit(siblingOrigin.Evidence?.WriteProposal() ?? proposal, siblingOrigin),
+            "p2-receipt:origin-ancestry");
 
         var stamped = JsonNode.Parse(retained.Evidence.WriteProposal())!.AsObject();
         var carried = stamped["projections"]!.AsObject();

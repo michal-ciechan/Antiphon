@@ -28,7 +28,7 @@ C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/Re
 | PC-20/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` | Read grants from `policyA` and skip the raw policy-drift veto. Preserve both raw policy evidence projections. | T `T.trust.candidateOnly.disputedMode`, consumer eligible |
 | PC-21/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` | For an otherwise clean carried own result, map both disposition and result to an executed pass in the `RcOwnResult` projection. Preserve the actual carried receipt. | T `T.trust.carriedOwn.disputedMode`, consumer eligible |
 | PC-22/a | `ReleaseImpactAdmission.cs`, `Admit` | Replace the current-discovery and roster reconciliation inputs with the proposal’s current cases. Preserve the execute-only Q receipt state. | T `T.missing.currentCase.mode`, Scoped with q2 missing |
-| PC-23/a | `ReleaseImpactAdmission.cs`, `Admit` | Remove the completeness check after independent projection equality. | T `T.incomplete.agreedFalse.mode`, Scoped |
+| PC-23/a | `ReleaseImpactAdmission.cs`, `Admit` | Remove the completeness check after independent projection equality. | T `T.incomplete.agreedFalse.mode` and `T.incomplete.globalContract`, Scoped |
 | PC-24/a | `ReleaseImpactAdmission.cs`, `Admit` | Bypass `snapshot.Match(proposed)` and its refusal, retaining the strict wire and completeness checks. | T `T.reseal.selection.reasonOnly.mode` and every coherent reseal, Scoped |
 | PC-25/a | `ReleaseImpactAdmission.cs`, `Admit` | In the semantic mismatch return, preserve the computed rows in the refused `Decision` instead of rebuilding from discovery. | T `T.selection.lateRefusal.candidates`, Q leaks |
 | PC-26/a | `ReleaseImpactAdmission.cs`, `Decision` constructor | Assign `Rows = rows.ToArray()` in place of the frozen collection. | T `T.snapshot.eligibleAfterCallerEdit`, H replaces Q |
@@ -41,6 +41,11 @@ C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/Re
 | PC-33/a | `ReleaseImpactAdmission.cs`, verified result construction | Stamp accepted carried-through provenance with the comparison run/attempt identity in place of the execution pin. | T `T.receipts.originChain.validOrigin`, original B0 replaced with B |
 | PC-34/a | `RcChunkReceipt.cs`, `Reusable` | Skip the exit-code refusal and retain exact scope and case checks. | T `T.receipts.failedExit.disputedMode`, Q eligible |
 | PC-35/a | `TestSelection.cs`, `Contract` | Remove only the execution-policy-to-catalog hash comparison. | T `T.compatibility.B.staleCatalogPin.mode`, Scoped |
+| PC-36/a | `ReleaseImpactAdmission.Derive.cs`, `Derive` | Write empty selection global reasons. Keep the compatibility reasons and Full fallback. | T `T.incomplete.globalContract`, Scoped with Q eligible |
+| PC-37/a | `ReleaseImpactAdmission.cs`, `Admit` | Remove `SameDiscovery` reconciliation. | T `T.discovery.changedAtAdmit`, Scoped without newly discovered q3 |
+| PC-38/a | `ReleaseImpactAdmission.Receipts.cs`, `Custody.Read` | Keep the raw byte-count check and remove the raw SHA comparison. | T `T.receipts.custody.rawTrxSha`, Scoped with Q eligible, and `T.receipts.custody.rawInventorySha`, wrong refusal reason |
+| PC-39/a | `ReleaseImpactAdmission.Receipts.cs`, `ReadReceipt` | Remove only the original input digest comparison. | T `T.receipts.originChain.changedInputs`, Q eligible |
+| PC-40/a | `ReleaseImpactAdmission.Receipts.cs`, `ReadReceipt` | Require an original commit object and skip the inventory ancestry check. | T `T.receipts.originChain.nonAncestor`, Scoped with Q eligible |
 
 All variants are pending SourceLanding Mutation. At binding, verify exact compiling replacements and the aggregate assertion failure set against the landed preimage. PC-17, PC-19, PC-22, PC-25, and PC-32 need particular attention to overlapping checks at the decision boundary. Preserve the independently approved twin and the exact one-method filters.
 
@@ -653,6 +658,91 @@ These are candidate edits at the Code preimage. The landing binder records the a
         "file": "scripts/lib/Antiphon.Nightly/TestSelection.cs",
         "before": "if (policy.SelectionCatalog?.Hash != catalogHash) throw new TestSelectionRefusal(\"catalog-pin-mismatch\");",
         "after": "_ = catalogHash;",
+        "matchCount": 1
+      }
+    ]
+  },
+  {
+    "id": "PC-36",
+    "variant": "a",
+    "method": "TamperedBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "allowedFiles": [
+      "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Derive.cs"
+    ],
+    "edits": [
+      {
+        "file": "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Derive.cs",
+        "before": "globalReasons, incompleteReasons,",
+        "after": "globalReasons = Array.Empty<string>(), incompleteReasons,",
+        "matchCount": 1
+      }
+    ]
+  },
+  {
+    "id": "PC-37",
+    "variant": "a",
+    "method": "TamperedBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "allowedFiles": [
+      "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.cs"
+    ],
+    "edits": [
+      {
+        "file": "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.cs",
+        "before": "if (!SameDiscovery(discovery, snapshot.Chunks)) return Full(discovery, \"p2-selection:roster\");",
+        "after": "",
+        "matchCount": 1
+      }
+    ]
+  },
+  {
+    "id": "PC-38",
+    "variant": "a",
+    "method": "TamperedBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "allowedFiles": [
+      "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs"
+    ],
+    "edits": [
+      {
+        "file": "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs",
+        "before": "Require((ulong)bytes.Length == artifact.ByteCount &&\n                    ReleaseImpactIntegrity.RawSha256(bytes) == artifact.Digest, \"p2-receipt:proof-bytes\");",
+        "after": "Require((ulong)bytes.Length == artifact.ByteCount, \"p2-receipt:proof-bytes\");",
+        "matchCount": 1
+      }
+    ]
+  },
+  {
+    "id": "PC-39",
+    "variant": "a",
+    "method": "TamperedBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "allowedFiles": [
+      "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs"
+    ],
+    "edits": [
+      {
+        "file": "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs",
+        "before": "else if (pin.InputDigest != expectedInput) absence = \"origin-inputs-changed\";",
+        "after": "",
+        "matchCount": 1
+      }
+    ]
+  },
+  {
+    "id": "PC-40",
+    "variant": "a",
+    "method": "TamperedBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "allowedFiles": [
+      "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs"
+    ],
+    "edits": [
+      {
+        "file": "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Receipts.cs",
+        "before": "Require(git.Commit(pin.Sha) && git.Ancestor(pin.Sha, inventory.Sha), \"p2-receipt:origin-ancestry\");",
+        "after": "Require(git.Commit(pin.Sha), \"p2-receipt:origin-ancestry\");",
         "matchCount": 1
       }
     ]
