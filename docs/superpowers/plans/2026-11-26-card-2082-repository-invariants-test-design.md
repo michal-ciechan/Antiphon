@@ -88,6 +88,12 @@ The method for each PC is the exact method in the guard inventory. Use a compili
 
 Code runs V/R. Ordinary Review judges the proposed PCs against the reviewed code and binds the mutations to reachable assertions. After land Mutation runs **every** listed variant, method-scoped, break/red/restore/green on a bound pack. Record restored SHA, exact filter, per-PC assertion, result and elapsed time. A compilation, fixture or filter error cannot satisfy a PC. Design inventory has 17 guards, 17 distinct PC IDs, zero missing, zero duplicate mappings. No post-land cycles have run in TestDesign.
 
+### Round 3 witnesses
+
+- V-1 and R-1 use the compiled roster checker for all owning assemblies. The class guard exercises a missing owner in each assembly, a constructor-qualified owner, and the retained and extracted methods' compiled execution attributes.
+- V-3 and R-2 read the durable missing project-qualified UIDs from the interrupted and missing-argument schedules.
+- V-5 and R-4 include `ReleaseCutTests.C2082_Admitted_cut_binds_the_nightly_tests_process`. The test runs the cut, sync and tests commands against an owned Git fixture and stands in for the child processes. It checks the six bindings through the checkout self-update and nightly-tests arguments, refuses a partial invariant receipt, carries the eligible ordinary neighbor, resumes the interrupted attempt from its journal, and exercises an explicit Full cut.
+
 ### Out of scope
 
 Paid providers, live session delivery, rc activation, release publication and a fresh desktop qualification are outside these Code checkpoints. Keep existing per-platform execution obligations in the published run. Qualification scheduling uses the existing child lifecycle. A synthetic child cannot establish historical Windows timing.

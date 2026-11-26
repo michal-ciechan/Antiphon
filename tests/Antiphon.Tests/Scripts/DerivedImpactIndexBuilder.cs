@@ -539,75 +539,62 @@ internal static class DerivedImpactIndexBuilder
     {
         var root = CSharpSyntaxTree.ParseText(text, ParseOptions, relative).GetRoot();
         var scan = new FileScan(relative);
-        var testsFile = relative.StartsWith("tests/", StringComparison.Ordinal);
-        var fullNames = new Dictionary<TypeDeclarationSyntax, string>();
-        foreach (var type in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
-        {
-            if (!IsClassLike(type))
-                continue;
-            var name = FullName(type);
-            fullNames[type] = name;
-            var production = relative.StartsWith("src/", StringComparison.Ordinal)
-                || relative.StartsWith("server/", StringComparison.Ordinal);
-            var simple = type.Identifier.ValueText;
-            scan.Decls.Add(new Decl(simple, name, relative, production));
-            if (testsFile && simple.EndsWith("Tests", StringComparison.Ordinal))
-                scan.Pieces.Add(CollectPiece(type, simple, name));
-        }
-
-        foreach (var literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
-        {
-            if (!literal.IsKind(SyntaxKind.StringLiteralExpression))
-                continue;
-            var value = literal.Token.ValueText;
-            if (string.IsNullOrEmpty(value))
-                continue;
-            if (value.Length < 8 && value.IndexOf('.') < 0)
-                continue;
-            scan.Strings.Add(value);
-            if (!TryOwner(literal, fullNames, out var ownerFull, out var ownerSimple))
-                continue;
-            scan.DirectStrings.Add(new OwnedText(ownerFull, ownerSimple, value, false));
-        }
-
-        foreach (var ident in root.DescendantNodes().OfType<IdentifierNameSyntax>())
-        {
-            if (!CountsAsTypeUse(ident))
-                continue;
-            var value = ident.Identifier.ValueText;
-            if (value.Length < 3)
-                continue;
-            if (!TryOwner(ident, fullNames, out var ownerFull, out var ownerSimple))
-                continue;
-            if (value == ownerSimple)
-                continue;
-            scan.Idents.Add(new OwnedText(ownerFull, ownerSimple, value, IsObjectCreation(ident)));
-        }
-
+        new IndexSyntaxWalker(scan).Visit(root);
         return scan;
     }
 
-    private static bool TryOwner(
-        SyntaxNode node,
-        Dictionary<TypeDeclarationSyntax, string> fullNames,
-        out string full,
-        out string simple)
+    private sealed class IndexSyntaxWalker(FileScan scan) : CSharpSyntaxWalker
     {
-        for (var current = node.Parent; current is not null; current = current.Parent)
+        private readonly bool _testsFile = scan.Path.StartsWith("tests/", StringComparison.Ordinal);
+        private readonly bool _productionFile = scan.Path.StartsWith("src/", StringComparison.Ordinal)
+            || scan.Path.StartsWith("server/", StringComparison.Ordinal);
+        private (string Full, string Simple)? _testOwner;
+
+        public override void Visit(SyntaxNode? node)
         {
-            if (current is not TypeDeclarationSyntax type || !IsClassLike(type))
-                continue;
-            simple = type.Identifier.ValueText;
-            if (!simple.EndsWith("Tests", StringComparison.Ordinal))
-                continue;
-            if (!fullNames.TryGetValue(type, out full!))
-                full = FullName(type);
-            return true;
+            switch (node)
+            {
+                case TypeDeclarationSyntax type when IsClassLike(type):
+                    VisitDeclaration(type);
+                    return;
+                case LiteralExpressionSyntax literal when literal.IsKind(SyntaxKind.StringLiteralExpression):
+                    VisitString(literal.Token.ValueText);
+                    return;
+                case IdentifierNameSyntax identifier when _testOwner is { } owner:
+                    var name = identifier.Identifier.ValueText;
+                    if (name.Length >= 3 && name != owner.Simple && CountsAsTypeUse(identifier))
+                        scan.Idents.Add(new OwnedText(owner.Full, owner.Simple, name, IsObjectCreation(identifier)));
+                    return;
+                default:
+                    base.Visit(node);
+                    return;
+            }
         }
 
-        full = "";
-        simple = "";
-        return false;
+        private void VisitDeclaration(TypeDeclarationSyntax type)
+        {
+            var full = FullName(type);
+            var simple = type.Identifier.ValueText;
+            scan.Decls.Add(new Decl(simple, full, scan.Path, _productionFile));
+            var previous = _testOwner;
+            if (simple.EndsWith("Tests", StringComparison.Ordinal))
+            {
+                _testOwner = (full, simple);
+                if (_testsFile)
+                    scan.Pieces.Add(CollectPiece(type, simple, full));
+            }
+            base.Visit(type);
+            _testOwner = previous;
+        }
+
+        private void VisitString(string value)
+        {
+            if (string.IsNullOrEmpty(value) || (value.Length < 8 && value.IndexOf('.') < 0))
+                return;
+            scan.Strings.Add(value);
+            if (_testOwner is { } owner)
+                scan.DirectStrings.Add(new OwnedText(owner.Full, owner.Simple, value, false));
+        }
     }
 
     // A simple name shared by two classes is not a type use: [Category] would otherwise

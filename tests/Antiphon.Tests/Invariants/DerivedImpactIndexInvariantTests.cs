@@ -23,6 +23,7 @@ public sealed class DerivedImpactIndexInvariantTests
         var started = Stopwatch.StartNew();
         var index = DerivedImpactIndexBuilder.Build(root);
         started.Stop();
+        Console.WriteLine(FormattableString.Invariant($"derived-impact rebuild seconds={started.Elapsed.TotalSeconds:F3}"));
         started.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60), "derived index rebuild");
         index.Cap.ShouldBe(DerivedImpactIndexBuilder.Cap);
         index.Allowlist.ShouldBe(DerivedImpactIndexBuilder.Allowlist);
