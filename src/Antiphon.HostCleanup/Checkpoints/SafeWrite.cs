@@ -373,7 +373,16 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
         }
 
         stream = Io.Open(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        Remember(full);
+        if (stream is not FileStream file)
+        {
+            Remember(full);
+            return null;
+        }
+
+        // Reopening the path for custody metadata stalls against our own exclusive handle on Windows.
+        context.Registry.RecordCreated(full);
+        if (CheckpointNativeIo.Untrusted(file.SafeFileHandle, out var identity) is null)
+            context.Registry.RecordIdentity(full, identity);
         return null;
     }
 
