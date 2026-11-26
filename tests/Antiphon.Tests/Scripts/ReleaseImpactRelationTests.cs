@@ -78,7 +78,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(14_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossGlobalUsings(CancellationToken cancellationToken)
     {
         const string north = "tests/T/A.cs";
@@ -119,7 +119,7 @@ public sealed class ReleaseImpactRelationTests
             .Select(consumer => consumer.Project).ShouldBe([otherProject], "GU.owners U");
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(10_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossExternAliases(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";

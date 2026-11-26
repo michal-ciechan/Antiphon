@@ -172,6 +172,25 @@ measurements where the host did not expose separate spans.
 | `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds` | 3.646, 4.950, 4.020, 4.725, 4.163 | 4.163 | 4.950 | 10 |
 | `UniqueBindingsPruneOnlyTheirOwnContributionsThroughForwarders` | 3.757, 2.373, 1.832, 1.753, 2.009 | 2.009 | 3.757 | 8 |
 
+#### Cold CP-2 follow-up
+
+Final run `20261126-183901-012c` canceled the original combined owner scenario
+at 8.955 s in a cold test host. The first compiler binding alone took 2.745 s.
+The test now has independent global-using, linked-owner and extern-alias
+scenarios with the same assertions and capture orders. The calibrated cold
+follow-up ran at `7a5459226f88930a1a6291a68e8627938202984f` on server2. Every
+slot was granted with zero wait. Samples 1, 4 and 5 began at one-minute loads
+21.88, 22.07 and 22.40. Sample 2 ended at 36.79. Sample 3 selected each method
+in its own cold host at one-minute loads 33.36, 32.50 and 30.13. Each method
+passed all five samples. The linked-owner limit stays at the existing 8 s
+ceiling (1.59× its observed p95).
+
+| Method | Samples 1–5 (s) | p50 (s) | p95/max (s) | Timeout (s) |
+|---|---|---:|---:|---:|
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossGlobalUsings` | 4.387, 5.688, 5.635, 6.629, 3.840 | 5.635 | 6.629 | 14 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners` | 0.773, 1.111, 5.043, 1.999, 0.692 | 1.111 | 5.043 | 8 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossExternAliases` | 2.485, 3.354, 4.658, 3.905, 1.876 | 3.354 | 4.658 | 10 |
+
 The replay's proof-dependent carry counter can include a carry caused by a
 difference between the planned class list and member roster. Inspect the
 matched roster and recorded removed contributions before treating a counted
@@ -184,7 +203,7 @@ Portable managed lane for every row, with target-specific compilations/Windows-p
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2076-inputs/` | portable-compiler-inputs | `/*/*/ReleaseImpactEvaluationTests/ProofRequiresBoundCompilerInputs` | D-1/2, complete and tampered compiler inputs | 1 passed, 0 failed or skipped | 1 | 12 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions*` | D-2, paired matrix and overlapping reasons | 4 passed, 0 failed or skipped | 4 | 12 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions*` | D-2, paired matrix and overlapping reasons | 6 passed, 0 failed or skipped | 6 | 12 | true |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c2076-compose/` | portable-chunk-selection | `/*/*/RcProjectSelectionTests/BothEndpointProofsPreserveIndependentlyOwedChunks` | D-3, two trees, chunk and receipt joins | 1 passed, 0 failed or skipped | 1 | 12 | true |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c2076-replay/` | portable-miss-replay | `/*/*/IncrementalSelectionSoundnessTests/ProvenSubtractionReplay*` | D-4, blind score, nonvacuity and miss records | 5 passed, 0 failed or skipped | 5 | 12 | true |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c2076-cut/` | portable-cut-withdrawal | `/*/*/ReleaseCutTests/WithdrawnTypeProofRequiresFullOnResume` | Default off, approval, miss withdrawal and repaired version | 1 passed, 0 failed or skipped | 1 | 12 | true |
