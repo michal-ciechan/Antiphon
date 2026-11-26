@@ -42,7 +42,7 @@ first row. `bin-s2-sound/` contains no `ref` substring.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---|---|---|
-| CP-1 | s2 | `tests/Antiphon.Tests -> bin-s2-sound/` | s2-sound | `/*/*/(IncrementalSelectionSoundnessTests*)|(IncrementalSelectionSoundnessInvariantTests*)/*` | V-1 | 0 failed, executed 2 | 2 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-1 | s2 | `tests/Antiphon.Tests -> bin-s2-sound/` | s2-sound | `/*/*/(IncrementalSelectionSoundnessTests*)\|(IncrementalSelectionSoundnessInvariantTests*)/*` | V-1 | 0 failed, executed 2 | 2 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | s2 | CP-1 | s2-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-2 | 0 failed, executed at least 81 | 81 | 9 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-3 | s2 | CP-1 | s2-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | V-3 | 0 failed, executed at least 27 | 27 | 9 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | s2 | n/a | s2-land | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | V-4 | exit 0 | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |

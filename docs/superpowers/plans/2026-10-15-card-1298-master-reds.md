@@ -38,7 +38,7 @@ lane census method must fail. No deliberate mutants run by Code.
 | CP-5 | S2 | CP-3 | helper | `/*/*/DelegationTestServicesTests/*` | R-1 | exactly 5 passed | 5 | 1 | true |
 | CP-6 | S2 | CP-3 | delivery | `/*/*/DelegateBranchDeliveryTests/*` | R-2 | exactly 3 passed | 3 | 3 | true |
 | CP-7 | S2 | CP-3 | tracked-baseline | `/*/*/CheckpointTrackedBaselineTests/*` | R-3 | exactly 13 passed | 13 | 5 | true |
-| CP-8 | S2 | CP-3 | guard-reader | `/*/*/(PlanCoverageBindingTests*)|(PlanCoverageBindingInvariantTests*)/*` | R-4 | exactly 6 passed | 6 | 1 | true |
+| CP-8 | S2 | CP-3 | guard-reader | `/*/*/(PlanCoverageBindingTests*)\|(PlanCoverageBindingInvariantTests*)/*` | R-4 | exactly 6 passed | 6 | 1 | true |
 
 ### Cost
 

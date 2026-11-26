@@ -245,7 +245,7 @@ public sealed class PlanCheckpointClassSelectionGuardTests
 /// tests/**/*.cs (build output, fixtures and dot directories excluded), and a namespace segment other than * must match
 /// a namespace declared in the same file.
 /// </summary>
-internal static class PlanCheckpointClassAudit
+internal static partial class PlanCheckpointClassAudit
 {
     internal const string PlansPath = "docs/superpowers/plans";
     internal const string LedgerPath = "tests/checkpoint-retired-selections.json";

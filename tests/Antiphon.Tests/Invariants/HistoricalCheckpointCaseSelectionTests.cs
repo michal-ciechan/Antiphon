@@ -26,7 +26,7 @@ public sealed class HistoricalCheckpointCaseSelectionTests
             var assembly = typeof(HistoricalCheckpointCaseSelectionTests).Assembly;
             var discovery = LiveLaneDiscovery.Run(root, assembly.GetName().Name!, assembly.Location, scratch);
             discovery.Ok.ShouldBeTrue(discovery.Error);
-            var failures = HistoricalCheckpointCaseAudit.Check(root, discovery.Nodes);
+            var failures = PlanCheckpointClassAudit.CheckHistoricalCases(root, discovery.Nodes);
             failures.ShouldBeEmpty(string.Join('\n', failures));
         }
         finally
@@ -36,14 +36,14 @@ public sealed class HistoricalCheckpointCaseSelectionTests
     }
 }
 
-internal static class HistoricalCheckpointCaseAudit
+internal static partial class PlanCheckpointClassAudit
 {
     internal const string BaselinePath = "tests/fixtures/checkpoint-historical-case-selections.json";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private sealed record Baseline(string BaselineSource, string[] ImportablePlans, RequiredRow[] Rows);
     private sealed record RequiredRow(string Plan, string Row, string Project, string[] Uids);
 
-    internal static IReadOnlyList<string> Check(string root, IReadOnlyList<LiveLaneNode> discovered)
+    internal static IReadOnlyList<string> CheckHistoricalCases(string root, IReadOnlyList<LiveLaneNode> discovered)
     {
         var baseline = JsonSerializer.Deserialize<Baseline>(File.ReadAllText(Path.Combine(root, BaselinePath)), Json)
             ?? throw new InvalidDataException("Empty historical checkpoint case baseline.");

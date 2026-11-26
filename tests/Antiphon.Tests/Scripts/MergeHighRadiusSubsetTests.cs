@@ -110,7 +110,7 @@ public sealed class MergeHighRadiusSubsetTests
         row.Filter = filter;
         row.Build = "build-1";
         row.Trx = Path.Combine(fixture.Root, "run.trx");
-        receipt.Builds = [new ReportBuild { Id = row.Build, Project = project }];
+        receipt.Builds = [new ReportBuild { Id = row.Build, Project = project, State = "green", Slot = "granted", Source = receipt.Source }];
         var reportPath = Path.Combine(fixture.Root, "report.json");
         var requiredPath = Path.Combine(fixture.Root, "required.json");
         await File.WriteAllTextAsync(requiredPath, JsonSerializer.Serialize(new
