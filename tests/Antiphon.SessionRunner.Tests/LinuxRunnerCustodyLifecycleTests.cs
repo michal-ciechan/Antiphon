@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
@@ -179,11 +180,21 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         RequireNativeLifecycle();
         await using var fx = await NativeHold.StartAsync();
         await fx.WaitForDescendantAsync();
+        var tree = fx.Store.ReadRecord<LinuxNamespaceRecord>(fx.Binding, "linux-namespace.json")
+            .ShouldNotBeNull();
+        var procs = LinuxCgroupContainment.ExecutionProcsPath(tree.NamespaceId, tree.ContainerId);
+        File.ReadAllLines(procs).ShouldContain(fx.DescendantPid.ToString(CultureInfo.InvariantCulture));
         fx.KillHost();
         Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
         var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, true, CancellationToken.None);
         status.State.ShouldBe(VerificationCustodyState.Unknown);
+        status.Reason.ShouldBe("released_unknown");
         status.Receipt.ShouldBeNull();
+        var recovery = fx.Store.ReadRecord<LinuxRecoveryRecord>(fx.Binding, "linux-recovery.json")
+            .ShouldNotBeNull();
+        recovery.ContainerId.ShouldBe(tree.ContainerId);
+        recovery.KillSucceeded.ShouldBeTrue($"recovery helper exit code {recovery.KillError}");
+        File.ReadAllLines(procs).ShouldBeEmpty();
         Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeFalse();
         File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
     }
