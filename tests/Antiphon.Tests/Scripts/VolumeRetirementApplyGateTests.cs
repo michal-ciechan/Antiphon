@@ -167,11 +167,10 @@ public sealed class VolumeRetirementApplyGateTests
     {
         C1008HostFixture.RequireNativeLinux();
         var readyPreviews = 0;
-        async Task<(int Exit, string Output)> PreparePreview(C1008HostFixture fixture)
+        async Task PreparePreview(C1008HostFixture fixture)
         {
-            var preview = await Preview(fixture);
+            await Preview(fixture);
             readyPreviews++;
-            return preview;
         }
 
         using (var host = new C1008HostFixture())
@@ -186,17 +185,21 @@ public sealed class VolumeRetirementApplyGateTests
                 .ShouldBeFalse("apply-gate: host apply off writes no journal directory");
         }
 
-        await RefuseTemp(null, PreparePreview);
-        await RefuseTemp(EnabledTypo, PreparePreview);
-        await RefuseTemp("1", PreparePreview);
-        await RefuseTemp("true", PreparePreview);
-        await RefuseTemp("enabled-" + WrongOperation, PreparePreview);
+        using var temp = new C1008HostFixture(main: false);
+        await PreparePreview(temp);
+        temp.ReloadDocker();
+        var receipt = ReadyReceipt(temp);
+        var before = await File.ReadAllBytesAsync(receipt);
+        foreach (var token in new[] { null, EnabledTypo, "1", "true", "enabled-" + WrongOperation })
+        {
+            await RefuseTemp(temp, token);
+            (await File.ReadAllBytesAsync(receipt)).ShouldBe(before,
+                "apply-gate: a refused token leaves the shared Ready receipt intact");
+        }
 
-        using var enabled = new C1008HostFixture(main: false);
-        await PreparePreview(enabled);
-        var applied = await enabled.Run("retire-temp-runner", EnabledToken);
+        var applied = await temp.Run("retire-temp-runner", EnabledToken);
         applied.Exit.ShouldBe(0, "apply-gate: the matching operation token deletes; " + applied.Output);
-        CountRemoved(enabled).ShouldBe(4, "apply-gate: the matching token deletes the four temp volumes");
+        CountRemoved(temp).ShouldBe(4, "apply-gate: the matching token deletes the four temp volumes");
         readyPreviews.ShouldBe(1, "apply-gate: all scripted temp attempts reuse one real Ready preview");
     }
 
@@ -240,22 +243,23 @@ public sealed class VolumeRetirementApplyGateTests
     public async Task Manual_apply_refuses_until_the_operation_token_matches()
     {
         C1008HostFixture.RequireNativeLinux();
-        using (var blockedFixture = new C1008HostFixture(main: false))
-        {
-            var context = await ManualApplyContext(blockedFixture);
-            var blocked = await blockedFixture.Run("retire-temp-runner", context + "\nC1609_FIXTURE_APPLY_GATE=off");
-            blocked.Exit.ShouldBe(2, "apply-gate: manual apply is off; " + blocked.Output);
-            blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
-            AssertNoVolumeRemoval(blockedFixture, "manual off");
-            AssertNoContainerStop(blockedFixture, "manual off");
-            File.Exists(Journal(blockedFixture)).ShouldBeFalse("apply-gate: manual apply off writes no journal");
-        }
+        using var fixture = new C1008HostFixture(main: false);
+        var context = await ManualApplyContext(fixture);
+        var receipt = ReadyReceipt(fixture);
+        var before = await File.ReadAllBytesAsync(receipt);
+        var blocked = await fixture.Run("retire-temp-runner", context + "\nC1609_FIXTURE_APPLY_GATE=off");
+        blocked.Exit.ShouldBe(2, "apply-gate: manual apply is off; " + blocked.Output);
+        blocked.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
+        AssertNoVolumeRemoval(fixture, "manual off");
+        AssertNoContainerStop(fixture, "manual off");
+        File.Exists(Journal(fixture)).ShouldBeFalse("apply-gate: manual apply off writes no journal");
+        (await File.ReadAllBytesAsync(receipt)).ShouldBe(before,
+            "apply-gate: manual apply off leaves the Ready receipt intact");
 
-        using var enabled = new C1008HostFixture(main: false);
-        var enabledContext = await ManualApplyContext(enabled);
-        var applied = await enabled.Run("retire-temp-runner", enabledContext + "\n" + EnabledToken);
+        fixture.ReloadDocker();
+        var applied = await fixture.Run("retire-temp-runner", context + "\n" + EnabledToken);
         applied.Exit.ShouldBe(0, "apply-gate: manual apply with the operation token deletes; " + applied.Output);
-        CountRemoved(enabled).ShouldBe(4, "apply-gate: manual apply deletes the four temp volumes");
+        CountRemoved(fixture).ShouldBe(4, "apply-gate: manual apply deletes the four temp volumes");
     }
 
     [Test]
@@ -265,7 +269,7 @@ public sealed class VolumeRetirementApplyGateTests
         C1008HostFixture.RequireNativeLinux();
         using var fixture = new C1008HostFixture(main: false);
         await Preview(fixture);
-        var receiptPath = Path.Combine(fixture.Root, "server", "retirement", VolumeRetirementFixture.Operation, "receipt.json");
+        var receiptPath = ReadyReceipt(fixture);
         var before = await File.ReadAllTextAsync(receiptPath);
         var blocked = await fixture.Run("retire-temp-runner", "C1609_FIXTURE_APPLY_GATE=off");
         blocked.Exit.ShouldBe(2, "apply-gate: a refused apply stays off; " + blocked.Output);
@@ -392,11 +396,8 @@ public sealed class VolumeRetirementApplyGateTests
 
     private const string EnabledToken = "export ANTIPHON_VOLUME_RETIREMENT_APPLY=\"enabled-${C1008_OPERATION}\"";
 
-    private static async Task RefuseTemp(string? token,
-        Func<C1008HostFixture, Task<(int Exit, string Output)>> preparePreview)
+    private static async Task RefuseTemp(C1008HostFixture fixture, string? token)
     {
-        using var fixture = new C1008HostFixture(main: false);
-        var preview = await preparePreview(fixture);
         var extra = token is null
             ? "C1609_FIXTURE_APPLY_GATE=off"
             : "export ANTIPHON_VOLUME_RETIREMENT_APPLY=" + VolumeRetirementFixture.Quote(token);
@@ -404,14 +405,16 @@ public sealed class VolumeRetirementApplyGateTests
         var label = token ?? "off";
         applied.Exit.ShouldBe(2, "apply-gate: " + label + "; " + applied.Output);
         applied.Output.ShouldContain("DIAGNOSIS=apply-gate-off", Case.Sensitive);
-        preview.Output.ShouldNotContain("DIAGNOSIS=apply-gate-off", Case.Sensitive, "apply-gate: preview is not an apply");
         AssertNoVolumeRemoval(fixture, label);
+        AssertNoContainerStop(fixture, label);
+        File.Exists(Journal(fixture)).ShouldBeFalse("apply-gate: a refused token writes no recycle journal");
     }
 
-    private static async Task<(int Exit, string Output)> Preview(C1008HostFixture fixture)
+    private static async Task Preview(C1008HostFixture fixture)
     {
         var preview = await fixture.Run("retire-temp-runner", dryRun: true);
         preview.Exit.ShouldBe(0, "apply-gate: preview stays available; " + preview.Output);
+        preview.Output.ShouldNotContain("DIAGNOSIS=apply-gate-off", Case.Sensitive, "apply-gate: preview is not an apply");
         preview.Output.ShouldContain("C1609_RETIREMENT state=Ready", Case.Sensitive);
         var names = preview.Output.Split('\n')
             .Select(line => line.TrimEnd('\r'))
@@ -421,7 +424,6 @@ public sealed class VolumeRetirementApplyGateTests
         names.Length.ShouldBe(4, "apply-gate: preview names the four temp volumes");
         preview.Output.ShouldContain("would delete: " + string.Join(' ', names), Case.Sensitive);
         fixture.Removed.ShouldBeEmpty("apply-gate: preview removes nothing");
-        return preview;
     }
 
     private static void AssertNoVolumeRemoval(C1008HostFixture fixture, string label)
@@ -442,6 +444,9 @@ public sealed class VolumeRetirementApplyGateTests
 
     private static string Journal(C1008HostFixture fixture) =>
         Path.Combine(fixture.Root, "server", "recycle", VolumeRetirementFixture.Operation + ".json");
+
+    private static string ReadyReceipt(C1008HostFixture fixture) =>
+        Path.Combine(fixture.Root, "server", "retirement", VolumeRetirementFixture.Operation, "receipt.json");
 
     private static string CutAfterPreviewConsume(string source)
     {
@@ -486,7 +491,7 @@ public sealed class VolumeRetirementApplyGateTests
     private static async Task<string> ManualApplyContext(C1008HostFixture fixture)
     {
         await VolumeRetirementFixture.ReadyPreview(fixture);
-        var receipt = Path.Combine(fixture.Root, "server", "retirement", VolumeRetirementFixture.Operation, "receipt.json");
+        var receipt = ReadyReceipt(fixture);
         var scripted = JsonNode.Parse(await File.ReadAllTextAsync(receipt))!;
         var grantPath = Path.Combine(fixture.Root, "server", "manual-authority", VolumeRetirementFixture.Operation + ".json");
         Directory.CreateDirectory(Path.GetDirectoryName(grantPath)!);
