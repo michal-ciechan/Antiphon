@@ -424,9 +424,10 @@ public sealed class Card2060PlacementHandshakeTests
     {
         RequireLinux();
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var clock = new FakeTimeProvider();
 
         // Control: the unmodified attestation is released and committed.
-        using (var world = HostAttemptWorld.Start(Environment.ProcessId))
+        using (var world = HostAttemptWorld.Start(Environment.ProcessId, clock))
         {
             var exchange = world.ExchangeAsync(bound.Token);
             using var peer = world.Connect();
@@ -438,7 +439,6 @@ public sealed class Card2060PlacementHandshakeTests
             world.Attempt.Commit().ShouldNotBeNull();
         }
 
-        var clock = new FakeTimeProvider();
         (string Case, Action<byte[]> Mutate)[] cases =
         [
             ("challenge", frame => frame[0] ^= 0x01),
