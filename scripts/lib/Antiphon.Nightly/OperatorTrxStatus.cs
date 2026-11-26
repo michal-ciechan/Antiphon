@@ -186,7 +186,7 @@ namespace Antiphon.Nightly
             try
             {
                 using var stream = RcQualificationRecords.OpenSharedRead(files, path);
-                var count = stream.ReadAtLeast(buffer, buffer.Length, throwIfEndOfStream: false);
+                var count = stream.ReadAtLeast(buffer, buffer.Length, false);
                 using var prefix = new MemoryStream(buffer, 0, count, writable: false);
                 using var reader = XmlReader.Create(prefix, ReaderSettings());
                 if (!IsTrx(reader)) return null;
