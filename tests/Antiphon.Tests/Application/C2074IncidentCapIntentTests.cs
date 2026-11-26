@@ -1,8 +1,13 @@
+using System.Net;
+using System.Net.Http.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Shouldly;
@@ -57,27 +62,7 @@ public sealed class C2074IncidentCapIntentTests
             (await db.AgentIncidents.CountAsync(i => i.AgentId == null, ct)).ShouldBe(8, "control: one null bucket");
         }
 
-        var tempRoot = Path.Combine(Path.GetTempPath(), $"c2074-prune-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempRoot);
-        int removed;
-        try
-        {
-            await using var harness = AgentSupervisionTests.BuildHarness(
-                tempRoot, [], supervision: new SupervisionSettings { IncidentCapPerAgent = 3 },
-                connectionString: schema.ConnectionString);
-            removed = await harness.Supervisor().PruneIncidentsAsync(ct);
-        }
-        finally
-        {
-            try
-            {
-                Directory.Delete(tempRoot, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Best-effort temp cleanup.
-            }
-        }
+        var removed = await PruneAsync(schema.ConnectionString, new SupervisionSettings { IncidentCapPerAgent = 3 }, ct);
 
         await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
         {
@@ -95,6 +80,107 @@ public sealed class C2074IncidentCapIntentTests
                     .Select(i => i.Id).ToListAsync(ct))
                 .ShouldBe([kill, direct], ignoreOrder: true, "the reconcile still finds both obligations");
         }
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C2078_Age_sweep_keeps_only_old_pending_release_intents(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var old = DateTime.UtcNow.AddDays(-31);
+        var sessionId = Guid.NewGuid();
+        await using var db = new AppDbContext(options);
+        var kill = Intent(db, sessionId, "pending:kill-generation:server2:" + old.Ticks, old);
+        var release = Intent(db, sessionId, "pending:server2", old);
+        Intent(db, sessionId, "reconciled", old);
+        Intent(db, sessionId, "failed:generation changed", old);
+        Intent(db, sessionId, "Pending:server2", old);
+        db.AgentIncidents.Add(new AgentIncident
+        {
+            Id = Guid.NewGuid(), Kind = AgentIncidentKind.HostBudgetChanged, Severity = AlertSeverity.Info,
+            Message = "unrelated fleet notice", FailureReason = "pending:unrelated", CreatedAt = old,
+        });
+        await db.SaveChangesAsync(ct);
+
+        var removed = await PruneAsync(schema.ConnectionString, new SupervisionSettings(), ct);
+
+        (await db.AgentIncidents.AsNoTracking().Select(i => i.Id).ToListAsync(ct))
+            .ShouldBe([kill, release], ignoreOrder: true, "only a pending release obligation survives the age sweep");
+        removed.ShouldBe(4);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task C2078_Operator_close_stops_retry_and_attention_and_preserves_history_until_prune(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var sessionId = Guid.NewGuid();
+        var old = DateTime.UtcNow.AddDays(-31);
+        var id = Intent(db, sessionId, $"pending:kill-generation:{host.AllowedRunnerId}:{old.Ticks}", old);
+        await db.SaveChangesAsync(ct);
+        var attention = AttentionServiceTests.BuildService(host.Local, db: db);
+
+        // The runner is offline. Repeated failed lookups leave one intent and its attention item.
+        for (var pass = 0; pass < 2; pass++)
+            (await RunnerSlotService.ReconcilePendingReleasesAsync(host.Directory, db, ct)).ShouldBeEmpty();
+        (await db.AgentIncidents.CountAsync(ct)).ShouldBe(1);
+        var stuck = (await attention.GetAsync(ct)).Items.Single(i => i.Kind == AttentionKind.SessionStopStuck);
+
+        var historyPath = $"/api/session-runners/slots/release-intents/{id:D}";
+        var closePath = historyPath + "/close";
+        var token = OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath);
+        var body = new { Requester = "on-call operator", Evidence = "Verified session absent in runner records." };
+        using var closed = await host.PostOperatorAsync(closePath, body, token);
+        closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        stuck.Evidence.ShouldContain(closePath);
+        (await attention.GetAsync(ct)).Items.ShouldNotContain(i => i.Kind == AttentionKind.SessionStopStuck);
+
+        using var historyRequest = new HttpRequestMessage(HttpMethod.Get, historyPath);
+        historyRequest.Headers.Add(OperatorTokenFile.Header, token);
+        using var history = await host.Http.SendAsync(historyRequest, ct);
+        history.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var receipt = await history.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(cancellationToken: ct);
+        receipt.GetProperty("intentId").GetGuid().ShouldBe(id);
+        receipt.GetProperty("sessionId").GetGuid().ShouldBe(sessionId);
+        var terminal = receipt.GetProperty("failureReason").GetString()!;
+        terminal.ShouldStartWith("closed:");
+        terminal.ShouldContain(body.Requester);
+        terminal.ShouldContain(body.Evidence);
+
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        (await RunnerSlotService.ReconcilePendingReleasesAsync(host.Directory, db, ct)).ShouldBeEmpty();
+        peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
+        (await db.AgentIncidents.AsNoTracking().SingleAsync(ct)).FailureReason.ShouldBe(terminal);
+        (await PruneAsync(schema.ConnectionString, new SupervisionSettings(), ct)).ShouldBe(1);
+        (await db.AgentIncidents.AnyAsync(ct)).ShouldBeFalse();
+    }
+
+    private static async Task<int> PruneAsync(string connectionString, SupervisionSettings settings, CancellationToken ct)
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), $"c2074-prune-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            await using var harness = AgentSupervisionTests.BuildHarness(
+                tempRoot, [], supervision: settings, connectionString: connectionString);
+            return await harness.Supervisor().PruneIncidentsAsync(ct);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempRoot, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Best-effort temp cleanup.
+            }
+        }
+
     }
 
     private static Guid Intent(AppDbContext db, Guid sessionId, string failureReason, DateTime createdAt)
