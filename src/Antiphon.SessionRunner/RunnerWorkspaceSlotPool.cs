@@ -286,7 +286,7 @@ public sealed class RunnerWorkspaceSlotPool
         if (owned is null)
             return "identity: " + broken!.Detail;
         var path = owned.Path;
-        await AbortSequencersAsync(path, ct);
+        await AbortSequencersAsync(owned, ct);
         var checkout = await SlotGitAsync(path, ct, "checkout", "--force", "-B", request.Branch, request.Sha);
         if (checkout.ExitCode != 0)
             return "checkout: " + Bound(checkout.Stderr);
@@ -544,7 +544,7 @@ public sealed class RunnerWorkspaceSlotPool
             return "identity: " + broken!.Detail;
         var path = owned.Path;
         var branch = slot.Branch;
-        await AbortSequencersAsync(path, ct);
+        await AbortSequencersAsync(owned, ct);
         var checkout = await SlotGitAsync(path, ct, "checkout", "--force", "--detach", published);
         if (checkout.ExitCode != 0)
             return "checkout: " + Bound(checkout.Stderr);
@@ -566,13 +566,29 @@ public sealed class RunnerWorkspaceSlotPool
         return null;
     }
 
-    private async Task AbortSequencersAsync(string path, CancellationToken ct)
+    /// <summary>
+    /// Aborts, then quits, each sequencer whose state is in the slot's admin directory (as LandWorkspace does): a
+    /// verb with no marker has nothing to abort, so it starts no git process. The checkout, clean and admin-file
+    /// sweep that follow clear whatever an abort leaves.
+    /// </summary>
+    private async Task AbortSequencersAsync(Owned owned, CancellationToken ct)
     {
-        foreach (var verb in new[] { "rebase", "cherry-pick", "revert", "merge" })
-            await SlotGitAsync(path, ct, verb, "--abort");
-        foreach (var verb in new[] { "rebase", "cherry-pick", "revert", "merge" })
-            await SlotGitAsync(path, ct, verb, "--quit");
+        foreach (var (verb, markers) in Sequencers)
+        {
+            if (!markers.Any(m => Path.Exists(owned.AdminDir + "/" + m))) continue;
+            await SlotGitAsync(owned.Path, ct, verb, "--abort");
+            if (markers.Any(m => Path.Exists(owned.AdminDir + "/" + m)))
+                await SlotGitAsync(owned.Path, ct, verb, "--quit");
+        }
     }
+
+    private static readonly (string Verb, string[] Markers)[] Sequencers =
+    [
+        ("rebase", ["rebase-merge", "rebase-apply"]),
+        ("cherry-pick", ["CHERRY_PICK_HEAD", "sequencer"]),
+        ("revert", ["REVERT_HEAD", "sequencer"]),
+        ("merge", ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"]),
+    ];
 
     private async Task ClearWorktreeStateAsync(Owned owned, CancellationToken ct)
     {
