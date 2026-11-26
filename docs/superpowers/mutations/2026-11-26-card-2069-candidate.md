@@ -2,7 +2,7 @@
 
 Code and landing owner `61d71670-581e-4328-ab78-dbb3602ee237`. The [verification appendix](../plans/2026-11-26-card-2069-p2-integrity-test-design.md) and the [round 2 supplement](../../investigations/2026-11-26-card-2069-code.md#round-2-verification-supplement) define the paired fixtures. The [mechanical contract](../../mechanical-pc-contract.md) governs binding at the verified landing.
 
-C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse`. Each variant has one method per phase with exit codes 0/1/0 and executed counts 1/1/1. Inspect the decisive labels as well as the method verdict. Product paths below are relative to `scripts/lib/Antiphon.Nightly/`.
+C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse`. G selects `/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse`. H selects `/*/*/ReleaseImpactEnvelopeTests/GlobalContractChangesRefuse`. Each variant has one method per phase with exit codes 0/1/0 and executed counts 1/1/1. Inspect the decisive labels as well as the method verdict. Product paths below are relative to `scripts/lib/Antiphon.Nightly/`.
 
 | Variant | Product site | Deliberate replacement | Case |
 |---|---|---|---|
@@ -19,16 +19,16 @@ C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/Re
 | PC-11/a | `ReleaseImpactAdmission.cs`, `Admit` | Replace the verified return with `Full(discovery, "p2-incomplete:admission")`. | T `T.valid.candidates`, empty |
 | PC-12/a | `ReleaseImpactAdmission.Derive.cs`, `Derive` | Remove the ancestry requirement after the commit-type checks. | T `T.context.nonAncestor.mode`, Scoped |
 | PC-13/a | `ReleaseImpactAdmission.cs`, `EvidenceSnapshot.Match` | For baseline manifest comparison compute the expected bytes from the independent rows filtered by the paths in the submitted manifest. Retain field-by-field equality for present paths. | T `T.reseal.manifest.B.omittedMember.mode`, Scoped |
-| PC-14/a | `ReleaseImpactAdmission.Source.cs`, `ReadSide` | Supply the committed raw index in the regeneration byte comparison in place of `evaluation.RegeneratedIndex`. | T `T.index.B.regenerationMismatch.mode`, Scoped |
-| PC-15/a | `ReleaseImpactAdmission.Selection.cs`, `Hits` | Keep ownership validation and suppress B-side deletion hits when adding direct edges to the hit set. | T `T.graph.oldOnly.disputedMode`, H omitted |
+| PC-14/a | `ReleaseImpactAdmission.Source.cs`, `ReadSide` | Supply the committed raw index in the regeneration byte comparison in place of `evaluation.RegeneratedIndex`. | G `T.index.B.regenerationMismatch.mode`, Scoped |
+| PC-15/a | `ReleaseImpactAdmission.Selection.cs`, `Hits` | Keep ownership validation and suppress B-side deletion hits when adding direct edges to the hit set. | G `T.graph.oldOnly.disputedMode`, H omitted |
 | PC-16/a | `ReleaseImpactAdmission.Selection.cs`, `Select` | Compare the B/A case digests in the equivalence predicate in place of `RcChunkDigest.Compare`. | T `T.targetInputs.sameCasesDirtyInputs.disputedMode`, Q eligible |
 | PC-17/a | `ReleaseImpactAdmission.cs`, `Admit` | When independent comparison refuses the receipts role, substitute the addressed clean proposal artifact for missing custody and return its asserted origin as eligible. Preserve the Full result for a missing copy. | T `T.receipts.copyOnly.disputedMode`, Scoped with a copied original |
 | PC-18/a | `ReleaseImpactAdmission.Receipts.cs`, `ReadReceipt` | Replace ordered multiset equality with containment of each required UID among observed passed cases. | T `T.receipts.duplicatePass.disputedMode`, Q eligible |
 | PC-19/a | `ReleaseImpactAdmission.cs`, `EvidenceSnapshot.Match` | Permit an already-seen proposal for the same candidate on a revision mismatch, bypassing the obligations mismatch. Keep the broader candidate identity guard. | T `T.revision.stale.mode`, Scoped |
-| PC-20/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` | Read grants from `policyA` and skip the raw policy-drift veto. Preserve both raw policy evidence projections. | T `T.trust.candidateOnly.disputedMode`, consumer eligible |
-| PC-21/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` | For an otherwise clean carried own result, map both disposition and result to an executed pass in the `RcOwnResult` projection. Preserve the actual carried receipt. | T `T.trust.carriedOwn.disputedMode`, consumer eligible |
+| PC-20/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` | Read grants from `policyA` and skip the raw policy-drift veto. Preserve both raw policy evidence projections. | G `T.trust.candidateOnly.disputedMode`, consumer eligible |
+| PC-21/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` | For an otherwise clean carried own result, map both disposition and result to an executed pass in the `RcOwnResult` projection. Preserve the actual carried receipt. | G `T.trust.carriedOwn.disputedMode`, consumer eligible |
 | PC-22/a | `ReleaseImpactAdmission.cs`, `Admit` | Replace the current-discovery and roster reconciliation inputs with the proposal’s current cases. Preserve the execute-only Q receipt state. | T `T.missing.currentCase.mode`, Scoped with q2 missing |
-| PC-23/a | `ReleaseImpactAdmission.cs`, `Admit` | Remove the completeness check after independent projection equality. | T `T.incomplete.agreedFalse.mode` and `T.incomplete.globalContract`, Scoped |
+| PC-23/a | `ReleaseImpactAdmission.cs`, `Admit` | Remove the completeness check after independent projection equality. | T `T.incomplete.agreedFalse.mode`, Scoped. H `T.incomplete.globalContract` is a separate cross-check |
 | PC-24/a | `ReleaseImpactAdmission.cs`, `Admit` | Bypass `snapshot.Match(proposed)` and its refusal, retaining the strict wire and completeness checks. | T `T.reseal.selection.reasonOnly.mode` and every coherent reseal, Scoped |
 | PC-25/a | `ReleaseImpactAdmission.cs`, `Admit` | In the semantic mismatch return, preserve the computed rows in the refused `Decision` instead of rebuilding from discovery. | T `T.selection.lateRefusal.candidates`, Q leaks |
 | PC-26/a | `ReleaseImpactAdmission.cs`, `Decision` constructor | Assign `Rows = rows.ToArray()` in place of the frozen collection. | T `T.snapshot.eligibleAfterCallerEdit`, H replaces Q |
@@ -36,12 +36,12 @@ C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/Re
 | PC-28/a | `ReleaseImpactIntegrity.cs`, `ProofObjects.Get` | Preserve length validation and remove the proof body SHA comparison. | T `T.address.sameMeaningChangedBytes.mode`, Scoped |
 | PC-29/a | `ReleaseImpactAdmission.Derive.cs`, `ReadTool` | Use the reviewed file pins without checking the actual installed file against its pin. Keep all context and tool source commit checks. | T `T.algorithm.actualInstall.mode`, Scoped |
 | PC-30/a | `ReleaseImpactAdmission.Receipts.cs`, `ReadReceipt` | Keep the verified custody read and open the artifact again for the TRX parser. | T `T.snapshot.artifactOpenCount` becomes 2 and `T.snapshot.originalEligible` becomes false |
-| PC-31/a | `RcTrustedProjectGate.cs`, `GateFailure` | Remove the hash inequality while preserving extractor version equality and receipt existence. | T `T.trust.contractDrift.disputedMode`, consumer eligible |
-| PC-32/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` and `Select` | Suppress the direct hit in the gate input and clear the corresponding direct selection reason after a passed gate. Keep the non-gate reasons and typed graph projection. | T `T.trust.directHit.disputedMode`, directly hit consumer eligible |
+| PC-31/a | `RcTrustedProjectGate.cs`, `GateFailure` | Remove the hash inequality while preserving extractor version equality and receipt existence. | G `T.trust.contractDrift.disputedMode`, consumer eligible |
+| PC-32/a | `ReleaseImpactAdmission.Selection.cs`, `ComputeTrust` and `Select` | Suppress the direct hit in the gate input and clear the corresponding direct selection reason after a passed gate. Keep the non-gate reasons and typed graph projection. | G `T.trust.directHit.disputedMode`, directly hit consumer eligible |
 | PC-33/a | `ReleaseImpactAdmission.cs`, verified result construction | Stamp accepted carried-through provenance with the comparison run/attempt identity in place of the execution pin. | T `T.receipts.originChain.validOrigin`, original B0 replaced with B |
 | PC-34/a | `RcChunkReceipt.cs`, `Reusable` | Skip the exit-code refusal and retain exact scope and case checks. | T `T.receipts.failedExit.disputedMode`, Q eligible |
-| PC-35/a | `TestSelection.cs`, `Contract` | Remove only the execution-policy-to-catalog hash comparison. | T `T.compatibility.B.staleCatalogPin.mode`, Scoped |
-| PC-36/a | `ReleaseImpactAdmission.Derive.cs`, `Derive` | Write empty selection global reasons. Keep the compatibility reasons and Full fallback. | T `T.incomplete.globalContract`, Scoped with Q eligible |
+| PC-35/a | `TestSelection.cs`, `Contract` | Remove only the execution-policy-to-catalog hash comparison. | G `T.compatibility.B.staleCatalogPin.mode`, Scoped |
+| PC-36/a | `ReleaseImpactAdmission.Derive.cs`, `Derive` | Write empty selection global reasons. Keep the compatibility reasons and Full fallback. | H `T.incomplete.globalContract`, Scoped with Q eligible |
 | PC-37/a | `ReleaseImpactAdmission.cs`, `Admit` | Remove `SameDiscovery` reconciliation. | T `T.discovery.changedAtAdmit`, Scoped without newly discovered q3 |
 | PC-38/a | `ReleaseImpactAdmission.Receipts.cs`, `Custody.Read` | Keep the raw byte-count check and remove the raw SHA comparison. | T `T.receipts.custody.rawTrxSha`, Scoped with Q eligible, and `T.receipts.custody.rawInventorySha`, wrong refusal reason |
 | PC-39/a | `ReleaseImpactAdmission.Receipts.cs`, `ReadReceipt` | Remove only the original input digest comparison. | T `T.receipts.originChain.changedInputs`, Q eligible |
@@ -279,8 +279,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-14",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Source.cs"
     ],
@@ -296,8 +296,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-15",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Selection.cs"
     ],
@@ -381,8 +381,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-20",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Selection.cs"
     ],
@@ -404,8 +404,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-21",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Selection.cs"
     ],
@@ -574,8 +574,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-31",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/RcTrustedProjectGate.cs"
     ],
@@ -591,8 +591,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-32",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Selection.cs"
     ],
@@ -648,8 +648,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-35",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GraphAndTrustBindingsRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GraphAndTrustBindingsRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/TestSelection.cs"
     ],
@@ -665,8 +665,8 @@ These are candidate edits at the Code preimage. The landing binder records the a
   {
     "id": "PC-36",
     "variant": "a",
-    "method": "TamperedBindingsRefuse",
-    "filter": "/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse",
+    "method": "GlobalContractChangesRefuse",
+    "filter": "/*/*/ReleaseImpactEnvelopeTests/GlobalContractChangesRefuse",
     "allowedFiles": [
       "scripts/lib/Antiphon.Nightly/ReleaseImpactAdmission.Derive.cs"
     ],
@@ -749,3 +749,25 @@ These are candidate edits at the Code preimage. The landing binder records the a
   }
 ]
 ```
+
+## Round 3 mutation handoff
+
+The original Code and landing owner is `61d71670-581e-4328-ab78-dbb3602ee237`. The prior candidate register remains the source of the 40 unbound single-variant PCs. This addendum records the witness locations after the timeout split. Mutation must bind the landed preimages and verify each exact method with separate baseline, deliberate defect, restoration and green evidence.
+
+| Existing variants | Exact method on ReleaseImpactEnvelopeTests | Pending coverage |
+|---|---|---|
+| PC-1/a, PC-2/a, PC-3/a, PC-4/a, PC-5/a, PC-6/a, PC-7/a | P2CanonicalBytes | Original decisive labels |
+| PC-8/a, PC-9/a, PC-10/a, PC-11/a, PC-12/a, PC-13/a, PC-16/a, PC-17/a, PC-18/a, PC-19/a, PC-22/a, PC-23/a, PC-24/a, PC-25/a, PC-26/a, PC-27/a, PC-28/a, PC-29/a, PC-30/a, PC-33/a, PC-34/a, PC-37/a, PC-38/a, PC-39/a, PC-40/a | TamperedBindingsRefuse | Original decisive labels. PC-23/a uses T.incomplete.agreedFalse.mode here. Its selector-drift cross-check moved to GlobalContractChangesRefuse. |
+| PC-14/a, PC-15/a, PC-20/a, PC-21/a, PC-31/a, PC-32/a, PC-35/a | GraphAndTrustBindingsRefuse | Original decisive labels |
+| PC-36/a | GlobalContractChangesRefuse | T.incomplete.globalContract |
+
+Review 9a5bb8c1 observed the following four defects. They remain pending deliberate execution on the new witnesses. Each method filter is `/*/*/ReleaseImpactEnvelopeTests/<method>`. The original recipes are in `/work/code-evidence/9a5bb8c1-review/review-mutants-and-probes.patch`. Review 801d2b17 stored the round 2 and round 3 recipes in `/work/code-evidence/801d2b17-review/review-mutants.patch`.
+
+| New variant | Production site and edit | Witness and expected failure |
+|---|---|---|
+| PC-41/a (n1) | ReleaseImpactAdmission.Derive.cs, Derive. Enumerate only runtimeHash and selectorHash. | GlobalContractChangesRefuse. T.incomplete.globalPolicyContract and T.incomplete.globalCatalogContract return Scoped with Q eligible. Their .reasons rows also fail. |
+| PC-42/a (n2) | ReleaseImpactAdmission.Derive.cs, Derive. Clear globalReasons when its first item is anything other than contract-changed:selectorHash. | GlobalContractChangesRefuse. Same policy/catalog rows and exposure as n1. |
+| PC-43/a (n7) | ReleaseImpactAdmission.Receipts.cs, ReadReceipt. Accept an origin if the inventory SHA is also its ancestor (reverse direction). | TamperedBindingsRefuse. T.receipts.originChain.descendant admits the candidate execution as Q's origin. |
+| PC-44/a (n8) | ReleaseImpactAdmission.cs, SameDiscovery. Compare ordered CaseUid strings in place of complete Case records. | TamperedBindingsRefuse. T.discovery.renamedAtAdmit admits the old Q method. |
+
+An isolated catalog omission can still force Full because a valid catalog repin changes policyHash. T.incomplete.globalCatalogContract.reasons requires the catalog reason as well. An isolated runtimeHash omission has no observable admission effect for a genuine global.json edit. The pinned Git diff reaches RcTrustedProjectGate's global-input veto before the contract comparison. T.incomplete.globalRuntimeContract verifies that the genuine SDK pin changes only runtimeHash and refuses with p2-incomplete:trust-global, the exact roster owed and zero carry.
