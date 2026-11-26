@@ -666,14 +666,16 @@ public sealed class PostgresSnapshotTests
         File.WriteAllText(Path.Combine(dir, "keep.dump.age"), "y");
         File.WriteAllText(Path.Combine(dir, "notes.txt"), "z");
         const string dumpName = "antiphon-20261021T010101Z.dump";
-        var old = DateTime.UtcNow.AddHours(-8);
+        // Ages are relative to the world's fixed clock (the sweep's cutoff), not the real one, so the case holds on any date.
+        var now = world.Clock.GetUtcNow().UtcDateTime;
+        var old = now.AddHours(-8);
         string Run(string pair, string content, bool aged, params string[] extra)
         {
             var path = Path.Combine(dir, "run-" + string.Concat(Enumerable.Repeat(pair, 16)));
             Directory.CreateDirectory(path);
             File.WriteAllText(Path.Combine(path, dumpName), content);
             foreach (var name in extra) File.WriteAllText(Path.Combine(path, name), "keep");
-            if (aged) Directory.SetLastWriteTimeUtc(path, old);
+            Directory.SetLastWriteTimeUtc(path, aged ? old : now);
             return path;
         }
 
