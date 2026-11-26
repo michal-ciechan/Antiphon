@@ -9,7 +9,16 @@ public sealed class SessionRuntimeActionHostedService(SessionRuntimeActionCoordi
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken);
-        // A host deadline never releases execution ownership while an effect still runs.
-        if (ExecuteTask is not null) await ExecuteTask;
+        if (ExecuteTask is not { } execution) return;
+
+        // Keep execution ownership until any in-flight effect finishes, even past the host deadline.
+        try
+        {
+            await execution;
+        }
+        catch (OperationCanceledException) when (execution.IsCanceled)
+        {
+            // A queued worker can be canceled before the coordinator starts.
+        }
     }
 }
