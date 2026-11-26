@@ -927,8 +927,8 @@ public sealed class AntiphonCliLauncherTests
             "    [int]$LogRetainDays = 5,", "    [int]$LogRetainCount = 10");
     }
 
-    // ---- unit 36: scripts/autostart-session-runner.ps1, the launcher the logon task "Antiphon Session Runner" (and the phase 1
-    // clone, by hand) starts by path ----
+    // ---- unit 36: scripts/autostart-session-runner.ps1, the launcher the logon task "Antiphon Session Runner" (as registered
+    // before unit 61, whose action runs the command itself) and the phase 1 clone, by hand, start by path ----
 
     [Test]
     public async Task Autostart_session_runner_launcher_names_itself_the_supervisor_and_passes_an_explicit_config_only()
@@ -1034,8 +1034,8 @@ public sealed class AntiphonCliLauncherTests
 
     // ---- unit 31: the AppHost chain's launchers. scripts/restart-apphost.ps1 and scripts/set-apphost-maintenance.ps1
     // (scripts/cutover-postgres-server2.ps1 starts them by path), scripts/watchdog-apphost.ps1,
-    // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks the install-autostart command
-    // registers start them by path). Unit 49 deleted the repository root's verify-dev-stack.ps1 with scripts/deploy-local.ps1, its
+    // scripts/apphost-watchdog-state-observer.ps1 and scripts/autostart-apphost.ps1 (the Scheduled Tasks registered before unit 61
+    // start them by path; since unit 61 the actions run the commands). Unit 49 deleted the repository root's verify-dev-stack.ps1 with scripts/deploy-local.ps1, its
     // last by-path starter: the deploy-local command runs restart-apphost and verify-dev-stack in process (DeployLocalTests) ----
 
     private static Dictionary<string, string> Echo(string command, string? exit = null)
@@ -1444,5 +1444,92 @@ public sealed class AntiphonCliLauncherTests
             run.Stderr.Trim().ShouldStartWith("antiphon-cli: ANTIPHON_SCRIPTS_DLL names no file");
             run.Stdout.Trim().ShouldBeEmpty();
         }
+    }
+
+    // ---- unit 61 (N3): the actions the install-autostart and install-cleanup-task commands register run the CLI command with no
+    // repository .ps1: the hidden PowerShell host runs <checkout>\scripts\antiphon.cmd and exits with the command's exit code (9
+    // when the entry cannot start). They run here as the Task Scheduler starts them (one argument string, the registered working
+    // directory or the system directory) against a checkout whose path holds a space, a single quote and parentheses and whose
+    // published CLI is cli-echo; CreateNoWindow keeps -WindowStyle Hidden away from this console. Nothing is registered: the
+    // installers write to a recording Task Scheduler. ----
+
+    private sealed record FiredAction(LauncherRun Run, int Shell);
+
+    private static async Task<FiredAction> Fire(ScheduledTaskDefinition task, string command, string exit)
+    {
+        var start = new ProcessStartInfo(task.Action.Execute, task.Action.Arguments)
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+            WorkingDirectory = task.Action.WorkingDirectory ?? Environment.SystemDirectory,
+        };
+        start.Environment["CLI_ECHO_COMMAND"] = command;
+        start.Environment["CLI_ECHO_EXIT"] = exit;
+        start.Environment["CLI_ECHO_ENV"] = "ANTIPHON_CLI_CHECK";
+        var process = Process.Start(start) ?? throw new InvalidOperationException("the task's PowerShell host did not start");
+        var shell = process.Id;
+        return new FiredAction(await Finish(process), shell);
+    }
+
+    private static string Folder(string? path) => Path.GetFullPath(path.ShouldNotBeNull()).TrimEnd(Path.DirectorySeparatorChar);
+
+    [Test]
+    public async Task Registered_task_actions_run_the_cli_command_and_return_its_exit_code()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("the task actions run scripts\\antiphon.cmd, a Windows entry");
+        using var fixture = NightlyFixture.Create("task-action");
+        var root = fixture.PathOf("it's a checkout (1)");
+        Directory.CreateDirectory(Path.Combine(root, "scripts"));
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "antiphon.cmd"), Path.Combine(root, "scripts", "antiphon.cmd"));
+        File.WriteAllText(Path.Combine(root, "docker-compose.dev.yml"), "services: {}\n");
+        const string published = "0123456789abcdef01234567";
+        var folder = Path.Combine(root, "bin-launcher", "antiphon-scripts", published);
+        Directory.CreateDirectory(folder);
+        File.Copy(StagedEcho, Path.Combine(folder, "Antiphon.Scripts.dll"));
+        File.Copy(Path.Combine(Path.GetDirectoryName(StagedEcho)!, "Antiphon.ScriptHarnessHost.runtimeconfig.json"), Path.Combine(folder, "Antiphon.Scripts.runtimeconfig.json"));
+        File.WriteAllText(Path.Combine(root, "bin-launcher", "antiphon-scripts", "current"), published);
+
+        var tasks = new AutostartInstallTests.RecordingTasks();
+        static string? OnPath(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .SelectMany(directory => new[] { Path.Combine(directory, name), Path.Combine(directory, name + ".exe") }).FirstOrDefault(File.Exists);
+        // Docker answers "not running": the compose step is skipped and the tasks are still registered.
+        var machine = new AutostartInstallMachine(new System.IO.Abstractions.FileSystem(), tasks, name => Environment.GetEnvironmentVariable(name)!, name => OnPath(name)!,
+            (_, _) => 1);
+        var output = new StringWriter();
+        var host = new NightlyHost
+        {
+            Clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 11, 26, 9, 0, 0, TimeSpan.Zero)), Git = new FakeGit().Run,
+            Launcher = new RecordingLauncher(), Processes = new FakeProcessTable(), Probe = new FakeHostProbe(), Out = output, Error = output, Trace = TextWriter.Null,
+        };
+        AutostartInstall.Run(AutostartInstallOptions.Parse([], root), host, machine).ShouldBe(0, output.ToString());
+        AutostartInstall.RunCleanupTask(CleanupTaskInstallOptions.Parse([], root), host, machine).ShouldBe(0, output.ToString());
+        tasks.Registered.Count.ShouldBe(5);
+
+        (string Name, string Command, int Exit, string[]? Expected)[] cases =
+        [
+            // Null: the launcher passed its own PID; the action passes the host's ($PID), the task's process, the supervisor.
+            ("Antiphon Session Runner", "autostart-session-runner", 37, null),
+            ("Antiphon AppHost", "autostart-apphost", 0, []),
+            ("Antiphon AppHost Watchdog", "watchdog-apphost", 3, []),
+            ("Antiphon AppHost Watchdog State Observer", "apphost-watchdog-state-observer", 0, []),
+            ("Antiphon Build Junk Cleanup", "cleanup-build-junk", 0, ["--repo-root", root, "--skip-if-modified-within-minutes", "60"]),
+        ];
+        foreach (var (name, command, exit, expected) in cases)
+        {
+            var task = tasks.Registered[name].ShouldNotBeNull(name);
+            var fired = await Fire(task, command, exit.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            fired.Run.Exit.ShouldBe(exit, name + ": " + fired.Run.Stderr);
+            var echo = fired.Run.Echo();
+            Arguments(echo).ShouldBe(expected ?? ["--supervisor-pid", fired.Shell.ToString(System.Globalization.CultureInfo.InvariantCulture)], name);
+            echo.GetProperty("pid").GetInt32().ShouldNotBe(fired.Shell, name + ": the command runs under cmd.exe, a child of the host");
+            Folder(echo.GetProperty("environment").GetProperty("ANTIPHON_CLI_CHECK").GetString()).ShouldBe(Folder(root), StringCompareShould.IgnoreCase);
+            Folder(echo.GetProperty("workingDirectory").GetString()).ShouldBe(Folder(task.Action.WorkingDirectory ?? Environment.SystemDirectory), StringCompareShould.IgnoreCase);
+        }
+        tasks.Registered["Antiphon Build Junk Cleanup"]!.Action.WorkingDirectory.ShouldBeNull("the cleanup task never had one");
+
+        // The entry gone (a moved checkout): the host exits 9, never 0.
+        File.Delete(Path.Combine(root, "scripts", "antiphon.cmd"));
+        var missing = await Fire(tasks.Registered["Antiphon AppHost Watchdog"]!, "watchdog-apphost", "0");
+        missing.Run.Exit.ShouldBe(9, missing.Run.Stderr);
+        missing.Run.Stdout.Trim().ShouldBeEmpty();
     }
 }

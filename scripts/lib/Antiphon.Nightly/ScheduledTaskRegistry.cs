@@ -62,6 +62,12 @@ namespace Antiphon.Nightly
         /// <summary>Get-ScheduledTask -TaskName: the task is registered. Throws when the inventory cannot be read.</summary>
         bool Exists(string name);
 
+        /// <summary>
+        /// (Get-ScheduledTask).State -eq 'Disabled': the task is registered and disabled; false when it is enabled or absent.
+        /// Throws when the inventory cannot be read. The installers re-register a disabled task disabled (unit 61).
+        /// </summary>
+        bool Disabled(string name);
+
         /// <summary>Unregister-ScheduledTask: removes the task (stopping a running instance). Throws when it cannot.</summary>
         void Delete(string name);
 
@@ -83,6 +89,13 @@ namespace Antiphon.Nightly
 
         /// <inheritdoc />
         public bool Exists(string name) => Guard("Read " + name, () => Find(Folder(), name) != null);
+
+        /// <inheritdoc />
+        public bool Disabled(string name) => Guard("Read " + name, () =>
+        {
+            var task = Find(Folder(), name);
+            return task != null && !Convert.ToBoolean(Get(task, "Enabled"), CultureInfo.InvariantCulture);
+        });
 
         /// <inheritdoc />
         public void Delete(string name) => Guard("Delete " + name, () => Invoke(Folder(), "DeleteTask", name, 0));

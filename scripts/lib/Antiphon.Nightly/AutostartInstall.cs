@@ -7,28 +7,42 @@
 //   antiphon-scripts install-cleanup-task [--uninstall]
 //
 // install-autostart brings up the docker-compose.dev.yml services (restart: unless-stopped; runbook G-1:
-// ANTIPHON_SKIP_DEV_POSTGRES=1 brings up every service but postgres) and registers up to four per-user Scheduled Tasks, each
-// running a kept launcher by path under the resolved PowerShell host (-NonInteractive -NoProfile -ExecutionPolicy Bypass
-// -WindowStyle Hidden -File "<checkout>\scripts\<launcher>.ps1", working directory the checkout), so a task registered before
-// or after this port starts the same file:
+// ANTIPHON_SKIP_DEV_POSTGRES=1 brings up every service but postgres) and registers up to four per-user Scheduled Tasks. Since
+// unit 61 (N3) each task runs its CLI command with no repository .ps1: the resolved PowerShell host, hidden, runs the
+// checkout's scripts\antiphon.cmd and exits with the command's exit code (CliAction):
 //
-//   "Antiphon Session Runner"   at logon; no time limit, 3 restarts a minute apart      autostart-session-runner.ps1
-//   "Antiphon AppHost"          logon + --apphost-delay; 1 h limit, 2 restarts 5 min apart autostart-apphost.ps1
+//   <host> -NoProfile -NonInteractive -WindowStyle Hidden -Command "& '<checkout>\scripts\antiphon.cmd' <command> <arguments>;
+//       if ($null -eq $LASTEXITCODE) { exit 9 }; exit $LASTEXITCODE"
+//
+// cmd.exe and dotnet inherit the hidden host's console, so no window appears that the launchers' tasks did not show; exit 9
+// is a missing or unstartable entry (the launchers' own code for a CLI that cannot start). The arguments are the ones each
+// kept launcher passed when its task gave it none, and the working directory, time limits and restarts are unchanged:
+//
+//   "Antiphon Session Runner"   at logon; no time limit, 3 restarts a minute apart
+//                               autostart-session-runner --supervisor-pid $PID (the task's process stays the recorded supervisor)
+//   "Antiphon AppHost"          logon + --apphost-delay; 1 h limit, 2 restarts 5 min apart       autostart-apphost
 //   "Antiphon AppHost Watchdog" logon + --watchdog-delay, then every 2 min, and every 2 min from 2 min after the install
 //                               (the logon trigger alone leaves NextRunTime blank while the user is logged on); 30 min limit
-//                                                                                        watchdog-apphost.ps1
-//   "Antiphon AppHost Watchdog State Observer" the watchdog's triggers; 5 min limit     apphost-watchdog-state-observer.ps1
+//                                                                                                 watchdog-apphost
+//   "Antiphon AppHost Watchdog State Observer" the watchdog's triggers; 5 min limit              apphost-watchdog-state-observer
+//
+// The checkout path is a PowerShell single-quoted literal (quotes doubled) inside the -Command text, and cmd.exe sees it quoted;
+// a path holding % (cmd.exe expands it even inside quotes), ; (the dotnet host cannot start under it), [ or ] (Windows
+// PowerShell reads them as wildcards) or " is refused before anything changes (PathRefusal). Tasks registered before unit 61
+// still start the kept launchers by path until the owner re-registers them (the runbook in the plan's N3 row).
 //
 // Re-registering is delete then register, which TERMINATES a running instance: --apphost-only leaves the session runner's task
-// (and its live supervisor) alone. --no-watchdog does not skip the observer; --no-apphost skips the AppHost, the watchdog and the
-// observer. --uninstall removes the same selection and leaves the Postgres container and its data. The PowerShell host is pwsh 7
-// from Program Files, Program Files (x86) or the per-user WindowsApps alias (version-independent), else pwsh on PATH, never a
-// version-pinned MSIX package path (it vanishes on the next PowerShell update and the task silently stops), else
-// powershell.exe. install-cleanup-task registers "Antiphon Build Junk Cleanup" (cleanup-build-junk.ps1, weekly Monday 09:00
+// (and its live supervisor) alone. A task that is registered disabled (the CARD-1744 maintenance end state disables the AppHost
+// logon task and the watchdog) is re-registered disabled. --no-watchdog does not skip the observer; --no-apphost skips the
+// AppHost, the watchdog and the observer. --uninstall removes the same selection and leaves the Postgres container and its
+// data. The PowerShell host is pwsh 7 from Program Files, Program Files (x86) or the per-user WindowsApps alias
+// (version-independent), else pwsh on PATH, never a version-pinned MSIX package path (it vanishes on the next PowerShell update
+// and the task silently stops), else powershell.exe. install-cleanup-task registers "Antiphon Build Junk Cleanup"
+// (cleanup-build-junk --repo-root <checkout> --skip-if-modified-within-minutes 60, no working directory, weekly Monday 09:00
 // and at logon, 2 h limit) under pwsh on PATH, else powershell.exe.
 //
-// Exit 0 done; 1 a missing launcher or compose file, a failed compose bring-up, a task the Task Scheduler refused, or not
-// Windows (one line). Plain C#: no PowerShell types. ASCII only.
+// Exit 0 done; 1 a missing scripts\antiphon.cmd or compose file, a refused checkout path, a failed compose bring-up, a task the
+// Task Scheduler refused, or not Windows (one line). Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -93,7 +107,7 @@ namespace Antiphon.Nightly
         /// <summary>The watchdog's and the observer's delay after logon (ISO 8601): the logon AppHost launch can hold 17202 dead for minutes.</summary>
         public string WatchdogDelay { get; init; } = "PT15M";
 
-        /// <summary>The checkout whose launchers the tasks run.</summary>
+        /// <summary>The checkout whose CLI the tasks run.</summary>
         public string RepoRoot { get; init; } = "";
 
         /// <summary>The flags after the command name; the checkout comes from the CLI.</summary>
@@ -132,7 +146,7 @@ namespace Antiphon.Nightly
         /// <summary>Remove the task instead of registering it.</summary>
         public bool Uninstall { get; init; }
 
-        /// <summary>The checkout whose cleanup-build-junk.ps1 the task runs.</summary>
+        /// <summary>The checkout whose cleanup-build-junk command the task runs.</summary>
         public string RepoRoot { get; init; } = "";
 
         /// <summary>The flags after the command name; the checkout comes from the CLI.</summary>
@@ -155,8 +169,14 @@ namespace Antiphon.Nightly
     /// <summary>The installers (install-autostart.ps1's and install-cleanup-task.ps1's bodies).</summary>
     public static class AutostartInstall
     {
-        /// <summary>A task action's argument prefix: the launcher file follows, quoted.</summary>
-        public const string HiddenFile = "-NonInteractive -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ";
+        /// <summary>A task action's argument prefix: the -Command text follows, double-quoted (CliAction).</summary>
+        public const string HiddenCommand = "-NoProfile -NonInteractive -WindowStyle Hidden -Command ";
+
+        /// <summary>The action's exit when the entry could not be started ($LASTEXITCODE unset): the launchers' code for that.</summary>
+        public const int EntryUnavailable = 9;
+
+        /// <summary>The checkout path characters the action cannot carry (PathRefusal).</summary>
+        private static readonly char[] Uncarried = { '%', ';', '[', ']', '"' };
 
         private static readonly Regex PinnedMsix = new Regex(@"WindowsApps\\Microsoft\.PowerShell_", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
@@ -203,14 +223,20 @@ namespace Antiphon.Nightly
             }
             try
             {
-                var launcher = machine.Files.Path.Combine(options.RepoRoot, "scripts", "cleanup-build-junk.ps1");
+                var root = options.RepoRoot;
+                var refusal = PathRefusal(root);
+                if (refusal != null) throw new Failure(refusal);
+                var entry = Entry(machine.Files, root);
+                if (!machine.Files.File.Exists(entry)) throw new Failure("Missing " + entry);
                 var shell = machine.FindApplication("pwsh") ?? "powershell.exe";
                 var user = User(machine);
                 var local = host.Clock.GetLocalNow();
                 var nine = new DateTimeOffset(local.Year, local.Month, local.Day, 9, 0, 0, local.Offset);
+                // cleanup-build-junk.ps1's parameters as it passed them: -RepoRoot (its checkout) and -SkipIfModifiedWithinMinutes 60.
                 var definition = new ScheduledTaskDefinition(name,
                     "Deletes regenerable alternate build outputs (bin-verify, bin-ptyhost, bin-profile*) so they cannot accumulate and slow builds.",
-                    new ScheduledTaskAction(shell, HiddenFile + "\"" + launcher + "\"", null),
+                    new ScheduledTaskAction(shell, CliAction(machine.Files, root,
+                        "cleanup-build-junk --repo-root " + Quote(ArgumentPath(root)) + " --skip-if-modified-within-minutes 60"), null),
                     new[]
                     {
                         new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Weekly, StartBoundary: Boundary(nine), DaysOfWeek: 2, WeeksInterval: 1),
@@ -218,12 +244,12 @@ namespace Antiphon.Nightly
                     },
                     user,
                     new ScheduledTaskSettings(false, false, true, "PT2H"));
-                if (machine.Tasks.Exists(name)) machine.Tasks.Delete(name);
-                machine.Tasks.Register(definition);
-                host.Out.WriteLine("Registered task '" + name + "' (weekly Mon 09:00 + at logon) running " + launcher);
+                var disabled = Replace(machine, definition);
+                host.Out.WriteLine("Registered task '" + name + "' (weekly Mon 09:00 + at logon) running " + entry + " cleanup-build-junk"
+                    + (disabled ? " (disabled, as it was)" : ""));
                 return 0;
             }
-            catch (Exception e) when (e is InvalidOperationException || e is IOException || e is UnauthorizedAccessException)
+            catch (Exception e) when (e is Failure || e is InvalidOperationException || e is IOException || e is UnauthorizedAccessException)
             {
                 host.Error.WriteLine("install-cleanup-task: " + e.Message);
                 return 1;
@@ -236,6 +262,59 @@ namespace Antiphon.Nightly
         /// <summary>A Once or Weekly start boundary as the cmdlets wrote it: the local time in UTC, to the second, with Z.</summary>
         public static string Boundary(DateTimeOffset local) =>
             local.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+
+        /// <summary>The checkout's CLI entry the actions run: &lt;checkout&gt;\scripts\antiphon.cmd.</summary>
+        public static string Entry(IFileSystem files, string root)
+        {
+            if (files == null) throw new ArgumentNullException(nameof(files));
+            return files.Path.Combine(root ?? "", "scripts", "antiphon.cmd");
+        }
+
+        /// <summary>
+        /// A task action's argument string for one CLI command: the PowerShell host, hidden, runs the checkout's scripts\antiphon.cmd
+        /// with tail (the command and its arguments, PowerShell text: a path already quoted by Quote, $PID left to expand) and
+        /// exits with its exit code, or 9 when the entry could not be started.
+        /// </summary>
+        public static string CliAction(IFileSystem files, string root, string tail) =>
+            HiddenCommand + "\"& " + Quote(Entry(files, root)) + " " + tail + "; if ($null -eq $LASTEXITCODE) { exit "
+            + EntryUnavailable.ToString(CultureInfo.InvariantCulture) + " }; exit $LASTEXITCODE\"";
+
+        /// <summary>
+        /// A PowerShell single-quoted string literal of value: each quote PowerShell reads as a single quote (the ASCII one and
+        /// U+2018, U+2019, U+201A, U+201B) doubled, so $, ` and spaces stay literal.
+        /// </summary>
+        public static string Quote(string value)
+        {
+            var text = new System.Text.StringBuilder("'");
+            foreach (var ch in value ?? "")
+            {
+                text.Append(ch);
+                if (ch == '\'' || ch == (char)0x2018 || ch == (char)0x2019 || ch == (char)0x201A || ch == (char)0x201B) text.Append(ch);
+            }
+            return text.Append('\'').ToString();
+        }
+
+        /// <summary>
+        /// Null when the action can carry the checkout path; else the one-line refusal. Refused: % (cmd.exe expands %NAME% even
+        /// inside quotes), ; (the dotnet host cannot start an application under it), [ and ] (Windows PowerShell reads them as
+        /// wildcards and runs elsewhere), " (it would end the -Command text), and an empty path.
+        /// </summary>
+        public static string PathRefusal(string root)
+        {
+            if (string.IsNullOrWhiteSpace(root)) return "no checkout path for the task action.";
+            var index = root.IndexOfAny(Uncarried);
+            if (index < 0) return null;
+            return "the checkout path holds '" + root[index] + "', which a task action cannot carry through PowerShell, cmd.exe and dotnet"
+                + " (refused: % ; [ ] \"): " + root;
+        }
+
+        // A path argument as the launchers passed it: trailing separators trimmed (a quoted trailing backslash escapes the closing
+        // quote), a drive root kept.
+        private static string ArgumentPath(string path)
+        {
+            var trimmed = (path ?? "").TrimEnd('\\', '/');
+            return trimmed.Length > 0 && !trimmed.EndsWith(":", StringComparison.Ordinal) ? trimmed : path;
+        }
 
         /// <summary>
         /// The task action's PowerShell host: the first existing pwsh 7 of Program Files, Program Files (x86), the per-user
@@ -273,7 +352,6 @@ namespace Antiphon.Nightly
             void Note(string message) => output.WriteLine("  " + message);
             var files = machine.Files;
             var root = options.RepoRoot;
-            string Launcher(string name) => files.Path.Combine(root, "scripts", name);
             var composeFile = files.Path.Combine(root, "docker-compose.dev.yml");
             var appHost = !options.NoAppHost;
             var watchdog = appHost && !options.NoWatchdog;
@@ -305,21 +383,23 @@ namespace Antiphon.Nightly
                 return;
             }
 
-            // Pre-flight: every launcher a task will run, and the compose file.
-            var runnerLauncher = Launcher("autostart-session-runner.ps1");
-            var appHostLauncher = Launcher("autostart-apphost.ps1");
-            var watchdogLauncher = Launcher("watchdog-apphost.ps1");
-            var observerLauncher = Launcher("apphost-watchdog-state-observer.ps1");
-            if (!files.File.Exists(runnerLauncher)) throw new Failure("Missing " + runnerLauncher);
+            // Pre-flight: a checkout path the actions can carry, the CLI entry every task runs, and the compose file.
+            var refusal = PathRefusal(root);
+            if (refusal != null) throw new Failure(refusal);
+            var entry = Entry(files, root);
+            if (!files.File.Exists(entry)) throw new Failure("Missing " + entry);
             if (!files.File.Exists(composeFile)) throw new Failure("Missing " + composeFile);
-            if (appHost && !files.File.Exists(appHostLauncher)) throw new Failure("Missing " + appHostLauncher);
-            if (watchdog && !files.File.Exists(watchdogLauncher)) throw new Failure("Missing " + watchdogLauncher);
-            if (observer && !files.File.Exists(observerLauncher)) throw new Failure("Missing " + observerLauncher);
 
             var shell = PowerShellHost(machine) ?? throw new Failure("No PowerShell host: neither pwsh 7 nor powershell.exe was found.");
             Note("PowerShell host for task: " + shell);
+            Note("Each task runs " + entry + " <command>, hidden; the command's exit code is the task's.");
             var user = User(machine);
-            ScheduledTaskAction Action(string launcher) => new ScheduledTaskAction(shell, HiddenFile + "\"" + launcher + "\"", root);
+            ScheduledTaskAction Action(string tail) => new ScheduledTaskAction(shell, CliAction(files, root, tail), root);
+            void Register(ScheduledTaskDefinition definition)
+            {
+                if (Replace(machine, definition))
+                    Note("Task was disabled: re-registered disabled (enable it on purpose: Enable-ScheduledTask -TaskName '" + definition.Name + "').");
+            }
 
             // 1. The dev compose services (Postgres unless runbook G-1 skips it).
             Step("Bringing up always-on PostgreSQL (docker-compose.dev.yml)...");
@@ -358,9 +438,11 @@ namespace Antiphon.Nightly
             else
             {
                 Step("Registering logon Scheduled Task '" + options.TaskName + "'...");
-                Replace(machine, new ScheduledTaskDefinition(options.TaskName,
+                // autostart-session-runner.ps1 passed its own PID: the task's process (the PowerShell host, $PID) stays the
+                // supervisor the AppHost and restart-session-runner find in logs/session-runner.supervisor.pid.
+                Register(new ScheduledTaskDefinition(options.TaskName,
                     "Starts the Antiphon session-runner daemon (port 17204) at logon so agents can run.",
-                    Action(runnerLauncher),
+                    Action("autostart-session-runner --supervisor-pid $PID"),
                     new[] { new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Logon, UserId: user) },
                     user,
                     // No time limit (a long-lived supervisor); restarts as the backstop when it dies.
@@ -372,9 +454,9 @@ namespace Antiphon.Nightly
             if (appHost)
             {
                 Step("Registering logon Scheduled Task '" + options.AppHostTaskName + "'...");
-                Replace(machine, new ScheduledTaskDefinition(options.AppHostTaskName,
+                Register(new ScheduledTaskDefinition(options.AppHostTaskName,
                     "Starts the Antiphon Aspire AppHost (server 17202 / client 17203 / dashboard 17205) at logon, after waiting for Docker Desktop.",
-                    Action(appHostLauncher),
+                    Action("autostart-apphost"),
                     new[] { new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Logon, UserId: user, Delay: options.AppHostDelay) },
                     user,
                     new ScheduledTaskSettings(true, true, true, "PT1H", 2, "PT5M")));
@@ -398,9 +480,9 @@ namespace Antiphon.Nightly
             if (watchdog)
             {
                 Step("Registering watchdog Scheduled Task '" + options.WatchdogTaskName + "'...");
-                Replace(machine, new ScheduledTaskDefinition(options.WatchdogTaskName,
-                    "Probes Antiphon AppHost HTTP health (17202/health and 17203) every 2 minutes; restarts via restart-apphost.ps1 if both stay down. Never touches the session-runner on 17204.",
-                    Action(watchdogLauncher), Repeating(options.WatchdogDelay), user,
+                Register(new ScheduledTaskDefinition(options.WatchdogTaskName,
+                    "Probes Antiphon AppHost HTTP health (17202/health and 17203) every 2 minutes; restarts it (the restart-apphost command, in process) if both stay down. Never touches the session-runner on 17204.",
+                    Action("watchdog-apphost"), Repeating(options.WatchdogDelay), user,
                     new ScheduledTaskSettings(true, true, true, "PT30M")));
                 output.WriteLine("  Task registered (logon+" + options.WatchdogDelay + " then every 2 min as " + machine.Variables("USERNAME") + ").");
             }
@@ -414,9 +496,9 @@ namespace Antiphon.Nightly
             if (observer)
             {
                 Step("Registering watchdog-state observer Scheduled Task '" + options.WatchdogStateObserverTaskName + "'...");
-                Replace(machine, new ScheduledTaskDefinition(options.WatchdogStateObserverTaskName,
+                Register(new ScheduledTaskDefinition(options.WatchdogStateObserverTaskName,
                     "Samples Antiphon AppHost Watchdog Scheduled Task state every 2 minutes into logs/apphost-watchdog-state.json. Detection only; never restarts or re-enables the watchdog.",
-                    Action(observerLauncher), Repeating(options.WatchdogDelay), user,
+                    Action("apphost-watchdog-state-observer"), Repeating(options.WatchdogDelay), user,
                     new ScheduledTaskSettings(true, true, true, "PT5M")));
                 output.WriteLine("  Task registered (logon+" + options.WatchdogDelay + " then every 2 min as " + machine.Variables("USERNAME") + ").");
             }
@@ -461,11 +543,18 @@ namespace Antiphon.Nightly
             Note("Remove auto-start later:                            scripts\\antiphon.cmd install-autostart --uninstall");
         }
 
-        // Idempotent: an existing task of the name is removed first (which stops a running instance), then the task is registered.
-        private static void Replace(AutostartInstallMachine machine, ScheduledTaskDefinition definition)
+        // Idempotent: an existing task of the name is removed first (which stops a running instance), then the task is registered;
+        // one that was disabled is registered disabled (true), so a re-registration never re-enables a task on its own.
+        private static bool Replace(AutostartInstallMachine machine, ScheduledTaskDefinition definition)
         {
-            if (machine.Tasks.Exists(definition.Name)) machine.Tasks.Delete(definition.Name);
-            machine.Tasks.Register(definition);
+            var disabled = false;
+            if (machine.Tasks.Exists(definition.Name))
+            {
+                disabled = machine.Tasks.Disabled(definition.Name);
+                machine.Tasks.Delete(definition.Name);
+            }
+            machine.Tasks.Register(disabled ? definition with { Enabled = false } : definition);
+            return disabled;
         }
 
         // Docker Desktop's "Start when you log in": AutoStart of %APPDATA%\Docker\settings-store.json, else settings.json; null

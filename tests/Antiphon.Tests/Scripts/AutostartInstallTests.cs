@@ -11,9 +11,11 @@ namespace Antiphon.Tests.Scripts;
 /// The always-on installers: the install-autostart and install-cleanup-task commands (Antiphon.Nightly.AutostartInstall; unit 36
 /// of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md deleted scripts/install-autostart.ps1 and
 /// scripts/install-cleanup-task.ps1). In process on a mock file system with a recording Task Scheduler and docker: the same
-/// task names, the actions that run the kept launchers by path (so tasks registered before the port keep working), the
-/// triggers and settings the cmdlets built, the -AppHostOnly / -NoWatchdog / -NoAppHost selection, uninstall, the PowerShell
-/// host choice and runbook G-1. No real task is registered (ScheduledTaskRegistryTests reads one disabled throwaway task back).
+/// task names, the actions that run the CLI command through the hidden PowerShell host with no repository .ps1 (unit 61, N3:
+/// the arguments each kept launcher passed, the checkout path quoted or refused), a disabled task kept disabled, the triggers
+/// and settings the cmdlets built, the -AppHostOnly / -NoWatchdog / -NoAppHost selection, uninstall, the PowerShell host
+/// choice and runbook G-1. No real task is registered (ScheduledTaskRegistryTests reads one disabled throwaway task back);
+/// AntiphonCliLauncherTests runs the registered actions against a checkout whose published CLI is cli-echo.
 /// </summary>
 [Category("Unit")]
 public sealed class AutostartInstallTests
@@ -29,6 +31,8 @@ public sealed class AutostartInstallTests
         public List<string> Calls { get; } = [];
 
         public bool Exists(string name) => Registered.ContainsKey(name);
+
+        public bool Disabled(string name) => Registered.TryGetValue(name, out var definition) && definition is { Enabled: false };
 
         public void Delete(string name)
         {
@@ -60,12 +64,14 @@ public sealed class AutostartInstallTests
         public StringWriter Out { get; } = new();
         public StringWriter Error { get; } = new();
 
-        public World(bool launchers = true)
+        public string Checkout { get; }
+
+        // The checkout holds the compose file and, unless bare, the CLI entry (no launcher: the actions name none).
+        public World(bool entry = true, string checkout = Root)
         {
-            Files.AddFile(Path.Combine(Root, "docker-compose.dev.yml"), new MockFileData("services:\n  postgres:\n    image: postgres\n  redpanda:\n    image: redpanda\n"));
-            if (launchers)
-                foreach (var name in new[] { "autostart-session-runner.ps1", "autostart-apphost.ps1", "watchdog-apphost.ps1", "apphost-watchdog-state-observer.ps1" })
-                    Files.AddFile(Path.Combine(Root, "scripts", name), new MockFileData("#requires -Version 5.1"));
+            Checkout = checkout;
+            Files.AddFile(Path.Combine(checkout, "docker-compose.dev.yml"), new MockFileData("services:\n  postgres:\n    image: postgres\n  redpanda:\n    image: redpanda\n"));
+            if (entry) Files.AddFile(Path.Combine(checkout, "scripts", "antiphon.cmd"), new MockFileData("@echo off"));
             Files.AddFile(Pwsh7, new MockFileData(""));
         }
 
@@ -82,18 +88,21 @@ public sealed class AutostartInstallTests
             Error = Error, Trace = TextWriter.Null,
         };
 
-        public int Install(params string[] arguments) => AutostartInstall.Run(AutostartInstallOptions.Parse(arguments, Root), Host(), Machine());
+        public int Install(params string[] arguments) => AutostartInstall.Run(AutostartInstallOptions.Parse(arguments, Checkout), Host(), Machine());
 
-        public int Cleanup(params string[] arguments) => AutostartInstall.RunCleanupTask(CleanupTaskInstallOptions.Parse(arguments, Root), Host(), Machine());
+        public int Cleanup(params string[] arguments) => AutostartInstall.RunCleanupTask(CleanupTaskInstallOptions.Parse(arguments, Checkout), Host(), Machine());
 
         public ScheduledTaskDefinition Task(string name) => Tasks.Registered[name].ShouldNotBeNull(name);
     }
 
-    private static string Hidden(string launcher) =>
-        "-NonInteractive -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + Path.Combine(Root, "scripts", launcher) + "\"";
+    // The action every task runs: the hidden host runs <checkout>\scripts\antiphon.cmd <tail> and exits with its exit code (9: the
+    // entry never started). The path is a PowerShell single-quoted literal.
+    private static string Cli(string tail, string checkout = Root) =>
+        "-NoProfile -NonInteractive -WindowStyle Hidden -Command \"& '" + Path.Combine(checkout, "scripts", "antiphon.cmd").Replace("'", "''") + "' " + tail
+        + "; if ($null -eq $LASTEXITCODE) { exit 9 }; exit $LASTEXITCODE\"";
 
     [Test]
-    public void Install_registers_the_four_tasks_running_the_kept_launchers_by_path()
+    public void Install_registers_the_four_tasks_running_the_cli_commands_with_no_launcher()
     {
         var world = new World();
         world.Install().ShouldBe(0, world.Out.ToString() + world.Error);
@@ -102,14 +111,18 @@ public sealed class AutostartInstallTests
         const string user = @"DESKTOP\op";
 
         var runner = world.Task("Antiphon Session Runner");
-        runner.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Hidden("autostart-session-runner.ps1"), Root));
+        // autostart-session-runner.ps1 passed its own PID; $PID is the task's process, the host, which stays the recorded supervisor.
+        runner.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Cli("autostart-session-runner --supervisor-pid $PID"), Root));
+        if (OperatingSystem.IsWindows())
+            runner.Action.Arguments.ShouldBe(@"-NoProfile -NonInteractive -WindowStyle Hidden -Command ""& 'C:\src\Antiphon\scripts\antiphon.cmd' autostart-session-runner"
+                + @" --supervisor-pid $PID; if ($null -eq $LASTEXITCODE) { exit 9 }; exit $LASTEXITCODE""");
         runner.Triggers.ShouldBe([new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Logon, UserId: user)]);
         (runner.UserId, runner.Enabled).ShouldBe((user, true));
         runner.Settings.ShouldBe(new ScheduledTaskSettings(true, true, true, "PT0S", 3, "PT1M"));
         runner.Description.ShouldBe("Starts the Antiphon session-runner daemon (port 17204) at logon so agents can run.");
 
         var appHost = world.Task("Antiphon AppHost");
-        appHost.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Hidden("autostart-apphost.ps1"), Root));
+        appHost.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Cli("autostart-apphost"), Root));
         appHost.Triggers.ShouldBe([new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Logon, UserId: user, Delay: "PT1M")]);
         appHost.Settings.ShouldBe(new ScheduledTaskSettings(true, true, true, "PT1H", 2, "PT5M"));
 
@@ -120,18 +133,80 @@ public sealed class AutostartInstallTests
             new(ScheduledTaskTriggerKind.Once, StartBoundary: "2026-11-24T08:32:15Z", RepetitionInterval: "PT2M", RepetitionDuration: "P3650D"),
         ];
         var watchdog = world.Task("Antiphon AppHost Watchdog");
-        watchdog.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Hidden("watchdog-apphost.ps1"), Root));
+        watchdog.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Cli("watchdog-apphost"), Root));
         watchdog.Triggers.ShouldBe(repeating);
         watchdog.Settings.ShouldBe(new ScheduledTaskSettings(true, true, true, "PT30M"));
-        watchdog.Description.ShouldContain("restarts via restart-apphost.ps1 if both stay down. Never touches the session-runner on 17204.");
+        watchdog.Description.ShouldContain("restarts it (the restart-apphost command, in process) if both stay down. Never touches the session-runner on 17204.");
         var observer = world.Task("Antiphon AppHost Watchdog State Observer");
-        observer.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Hidden("apphost-watchdog-state-observer.ps1"), Root));
+        observer.Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Cli("apphost-watchdog-state-observer"), Root));
+        foreach (var task in world.Tasks.Registered.Values)
+        {
+            task!.Enabled.ShouldBeTrue(task.Name);
+            task.Action.Arguments.ShouldNotContain(".ps1", Case.Insensitive, task.Name);
+            task.Description.ShouldNotContain(".ps1", Case.Insensitive, task.Name);
+        }
         observer.Triggers.ShouldBe(repeating);
         observer.Settings.ShouldBe(new ScheduledTaskSettings(true, true, true, "PT5M"));
 
         world.Docker.Select(call => string.Join(" ", call.Arguments)).ShouldBe(["info", "compose -f " + Path.Combine(Root, "docker-compose.dev.yml") + " up -d"]);
         world.Out.ToString().ShouldContain("  PowerShell host for task: " + Pwsh7);
+        world.Out.ToString().ShouldContain("  Each task runs " + Path.Combine(Root, "scripts", "antiphon.cmd") + " <command>, hidden; the command's exit code is the task's.");
         world.Out.ToString().ShouldContain("Remove auto-start later:                            scripts\\antiphon.cmd install-autostart --uninstall");
+    }
+
+    // Re-registration never re-enables a task: the CARD-1744 maintenance end state keeps the AppHost logon task and the watchdog
+    // disabled, and the AppHost autostart does not read the maintenance marker.
+    [Test]
+    public void A_disabled_task_is_re_registered_disabled()
+    {
+        var world = new World();
+        world.Install().ShouldBe(0);
+        foreach (var name in new[] { "Antiphon AppHost", "Antiphon AppHost Watchdog" })
+            world.Tasks.Registered[name] = world.Task(name) with { Enabled = false };
+        world.Tasks.Calls.Clear();
+        world.Install("--apphost-only").ShouldBe(0, world.Error.ToString());
+        world.Tasks.Calls.ShouldBe(["delete Antiphon AppHost", "register Antiphon AppHost", "delete Antiphon AppHost Watchdog", "register Antiphon AppHost Watchdog",
+            "delete Antiphon AppHost Watchdog State Observer", "register Antiphon AppHost Watchdog State Observer"]);
+        world.Task("Antiphon AppHost").Enabled.ShouldBeFalse();
+        world.Task("Antiphon AppHost").Action.ShouldBe(new ScheduledTaskAction(Pwsh7, Cli("autostart-apphost"), Root), "the new action, still disabled");
+        world.Task("Antiphon AppHost Watchdog").Enabled.ShouldBeFalse();
+        world.Task("Antiphon AppHost Watchdog State Observer").Enabled.ShouldBeTrue();
+        world.Task("Antiphon Session Runner").Enabled.ShouldBeTrue();
+        world.Out.ToString().ShouldContain("  Task was disabled: re-registered disabled (enable it on purpose: Enable-ScheduledTask -TaskName 'Antiphon AppHost Watchdog').");
+
+        world.Tasks.Registered["Antiphon Build Junk Cleanup"] = world.Task("Antiphon AppHost") with { Name = "Antiphon Build Junk Cleanup" };
+        world.Out.GetStringBuilder().Clear();
+        world.Cleanup().ShouldBe(0);
+        world.Task("Antiphon Build Junk Cleanup").Enabled.ShouldBeFalse();
+        world.Out.ToString().ShouldEndWith("(disabled, as it was)" + Environment.NewLine);
+    }
+
+    // The checkout path is a PowerShell single-quoted literal (every quote PowerShell reads as one doubled); a path the action
+    // cannot carry through PowerShell, cmd.exe and dotnet is refused before docker or the Task Scheduler is touched.
+    [Test]
+    public void The_checkout_path_is_quoted_for_powershell_or_refused()
+    {
+        AutostartInstall.Quote(@"C:\it's a $PID `dir (1) & ^ !").ShouldBe(@"'C:\it''s a $PID `dir (1) & ^ !'");
+        AutostartInstall.Quote("a\u2018b\u2019c\u201Ad\u201Be").ShouldBe("'a\u2018\u2018b\u2019\u2019c\u201A\u201Ad\u201B\u201Be'");
+        foreach (var carried in new[] { @"C:\src\Antiphon", @"C:\it's a dir (1)", @"C:\a&b^c!d,e=f", @"C:\$x`y" })
+            AutostartInstall.PathRefusal(carried).ShouldBeNull(carried);
+        foreach (var refused in new[] { @"C:\a%OS%b", @"C:\a;b", @"C:\a[1]", @"C:\a]b", "C:\\a\"b", "", "  " })
+            AutostartInstall.PathRefusal(refused).ShouldNotBeNull(refused);
+
+        var quoted = new World(checkout: @"C:\it's a checkout");
+        quoted.Install("--no-apphost").ShouldBe(0, quoted.Error.ToString());
+        quoted.Task("Antiphon Session Runner").Action
+            .ShouldBe(new ScheduledTaskAction(Pwsh7, Cli("autostart-session-runner --supervisor-pid $PID", @"C:\it's a checkout"), @"C:\it's a checkout"));
+
+        var refusedWorld = new World(checkout: @"C:\a%USERNAME%b");
+        refusedWorld.Install().ShouldBe(1);
+        refusedWorld.Error.ToString().Trim().ShouldBe(@"install-autostart: the checkout path holds '%', which a task action cannot carry through PowerShell, cmd.exe and dotnet"
+            + @" (refused: % ; [ ] ""): C:\a%USERNAME%b");
+        refusedWorld.Docker.ShouldBeEmpty();
+        refusedWorld.Tasks.Calls.ShouldBeEmpty();
+        refusedWorld.Cleanup().ShouldBe(1);
+        refusedWorld.Error.ToString().ShouldContain("install-cleanup-task: the checkout path holds '%'");
+        refusedWorld.Tasks.Calls.ShouldBeEmpty();
     }
 
     [Test]
@@ -182,11 +257,15 @@ public sealed class AutostartInstallTests
     }
 
     [Test]
-    public void A_missing_launcher_or_a_failed_compose_registers_nothing()
+    public void A_missing_cli_entry_or_a_failed_compose_registers_nothing()
     {
-        var bare = new World(launchers: false);
+        var bare = new World(entry: false);
         bare.Install().ShouldBe(1);
-        bare.Error.ToString().Trim().ShouldBe("install-autostart: Missing " + Path.Combine(Root, "scripts", "autostart-session-runner.ps1"));
+        bare.Error.ToString().Trim().ShouldBe("install-autostart: Missing " + Path.Combine(Root, "scripts", "antiphon.cmd"));
+        bare.Tasks.Calls.ShouldBeEmpty();
+        bare.Docker.ShouldBeEmpty();
+        bare.Cleanup().ShouldBe(1);
+        bare.Error.ToString().ShouldContain("install-cleanup-task: Missing " + Path.Combine(Root, "scripts", "antiphon.cmd"));
         bare.Tasks.Calls.ShouldBeEmpty();
 
         var failed = new World { ComposeUp = 1 };
@@ -243,13 +322,16 @@ public sealed class AutostartInstallTests
         world.OnPath["pwsh"] = @"C:\Tools\pwsh.exe";
         world.Cleanup().ShouldBe(0);
         var task = world.Task("Antiphon Build Junk Cleanup");
-        task.Action.ShouldBe(new ScheduledTaskAction(@"C:\Tools\pwsh.exe", Hidden("cleanup-build-junk.ps1"), null!));
+        // cleanup-build-junk.ps1's arguments (-RepoRoot, its checkout, and -SkipIfModifiedWithinMinutes 60); no working directory, as before.
+        task.Action.ShouldBe(new ScheduledTaskAction(@"C:\Tools\pwsh.exe",
+            Cli("cleanup-build-junk --repo-root '" + Root + "' --skip-if-modified-within-minutes 60"), null!));
         task.Triggers.ShouldBe([
             new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Weekly, StartBoundary: "2026-11-24T09:00:00Z", DaysOfWeek: 2, WeeksInterval: 1),
             new ScheduledTaskTrigger(ScheduledTaskTriggerKind.Logon, UserId: @"DESKTOP\op"),
         ]);
         task.Settings.ShouldBe(new ScheduledTaskSettings(false, false, true, "PT2H"));
-        world.Out.ToString().Trim().ShouldBe("Registered task 'Antiphon Build Junk Cleanup' (weekly Mon 09:00 + at logon) running " + Path.Combine(Root, "scripts", "cleanup-build-junk.ps1"));
+        world.Out.ToString().Trim().ShouldBe("Registered task 'Antiphon Build Junk Cleanup' (weekly Mon 09:00 + at logon) running "
+            + Path.Combine(Root, "scripts", "antiphon.cmd") + " cleanup-build-junk");
         world.Cleanup().ShouldBe(0);
         world.Tasks.Calls.ShouldBe(["register Antiphon Build Junk Cleanup", "delete Antiphon Build Junk Cleanup", "register Antiphon Build Junk Cleanup"]);
         world.Cleanup("--uninstall").ShouldBe(0);

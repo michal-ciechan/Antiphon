@@ -31,10 +31,13 @@ public sealed class ScheduledTaskRegistryTests
             ],
             user, new ScheduledTaskSettings(true, true, true, "PT0S", 3, "PT1M"), Enabled: false);
         registry.Exists(name).ShouldBeFalse();
+        registry.Disabled(name).ShouldBeFalse("an absent task is not disabled");
         try
         {
             registry.Register(definition);
             registry.Exists(name).ShouldBeTrue();
+            // Unit 61: the installers read this before a re-registration and keep a disabled task disabled.
+            registry.Disabled(name).ShouldBeTrue();
             var xml = XDocument.Parse(ScheduledTaskRegistry.Xml(name).ShouldNotBeNull());
             string Value(string element) => xml.Descendants().First(node => node.Name.LocalName == element).Value;
             IEnumerable<XElement> All(string element) => xml.Descendants().Where(node => node.Name.LocalName == element);
