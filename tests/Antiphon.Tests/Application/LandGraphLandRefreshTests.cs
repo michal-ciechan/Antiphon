@@ -377,7 +377,7 @@ public sealed class LandGraphLandRefreshTests
         rule.ShouldContain("never asks");
         rule.ShouldContain(forbidden);
         rule.ShouldContain("policyHash");
-        rule.ShouldContain("-PrintInputDigest");
+        rule.ShouldContain("live-lane-input-digest");
         rule.ShouldContain("_PtyHostArtifactsArguments");
         rule.ShouldContain("malformed manifest");
         Count(loop, "<a id=\"land-graph-refresh\"></a>").ShouldBe(1);

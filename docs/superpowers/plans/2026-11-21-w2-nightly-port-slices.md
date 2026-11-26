@@ -317,7 +317,7 @@ Rules:
   `C:\Antiphon\nightly\checkout`, the help text naming origin/master), the compact JSON completion record as the last
   stdout line, the exit code, `-PassThru` (run-core property names; release-cut reads `ExitCode` and `Refusal`) from
   `--result-file`, the refusal of a non-empty `-SeamsPath`, and no dot-sources.
-- **S21 Live lane: outcome, run and pin owner (3 h).** Port live-lane-outcome, live-lane-run and the native mode of
+- **S21 Live lane: outcome, run and pin owner (3 h). Done (unit 56 of the remaining-ps1 plan, 2026-11-26).** The owner approved the re-key ("I am fine with moving digests to be based on new files etc, go for it") and asked for the lane's sources in one isolated project dedicated to running real Claude: `scripts/lib/Antiphon.LiveLane`, which references nothing; the contractFiles name it and its build inputs; the pin did not move (`064805d59`), the fingerprint did, and the paid receipts are stale. Receipts per Claude version are S22. The slice as planned: Port live-lane-outcome, live-lane-run and the native mode of
   run-live-lane; CLI `live-lane-run` (still always native-unqualified, exit 20). The pin owner moves to C#:
   ProtectedInputs, `Get-ProtectedInputDigest`, `Read-Census` and the sentinels -> `LiveLaneInputDigest.cs`, CLI
   `live-lane-input-digest`; the list is unchanged, so the C# digest must equal the current pin (no re-pin). Delete the
@@ -425,7 +425,7 @@ each moves `tests/test-execution-policy.json`.
    yet); S25 needs the CI owner to re-key the `rc-input-reader-census.json` row; W2-nightly must not port
    `test-selection.ps1` (the canonical JSON comes from moving PsJson).
 6. `ManifestPublicationHarness.ps1` moves from W2-rc to S08 (its subject is the test-phase journal).
-7. Operator approval: `tests/live-lane-inputs.json` contractFiles (S21) resets the paid lane receipts; review
+7. Operator approval: `tests/live-lane-inputs.json` contractFiles (S21; approved 2026-11-26, done in unit 56) resets the paid lane receipts; review
    approves all three re-pins.
 8. Windows lock risk: a nightly-run process holds its dll for hours, so the S01 launcher runs from a copy of the build;
    `scripts/antiphon` today runs in place.

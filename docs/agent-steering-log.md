@@ -536,6 +536,39 @@ server settings, Scheduled Tasks) onto the CLI before porting rarely run tooling
 
 ---
 
+## 2026-11-26 - S21: re-key the live lane to the C# sources; receipts per Claude version
+
+**Context:** W2's slice S21 (`docs/superpowers/plans/2026-11-21-w2-nightly-port-slices.md`) ports the live lane's
+outcome and run to C#. That moves the protected-input pin into C# and deletes the lane's PowerShell. The lane's
+fingerprint covers its `contractFiles` (`tests/live-lane-inputs.json`), which name those `.ps1` files. Re-keying them
+to the C# sources moves the fingerprint and resets the paid live-lane receipts.
+
+**What the agent recommended:** Keep deferring S21. The live lane is opt-in and paid, not part of normal operations,
+and the reset would buy nothing day to day.
+
+**Why the agent picked it:** The owner had just ordered the work by normal operations first. A receipt reset means a
+paid run before the lane has a valid receipt again.
+
+**What the owner preferred:** "I am fine with moving digests to be based on new files etc, go for it? There should
+also be a way to say digest vs what versions of Claude it was tested against so we can verify multiple version of
+Claude". S21 goes ahead and its contract files point at the C# sources. When the receipt and status code moves to C#
+(S22), the Claude CLI version becomes its own axis next to the code digest. Each receipt records the version it ran
+against, the status shows which versions passed for a digest, and a policy can require more than one version.
+
+The owner then added: "the source files for this digest should all be in an isolated project dedicated to running
+real Claude". The live-lane C# lives in its own self-contained project with no reference to the frequently changing
+nightly or CLI code. The lane's contract files are that project and its build inputs, so the digest moves only when
+the live-lane code does.
+
+**Principle (the agent's reading):** Moving a digest onto new sources is cheap when the owner accepts the reset. What
+a receipt proves should separate "this code" from "this Claude", so one code digest can carry evidence for several
+Claude versions.
+
+**Candidate guidance:** "Key evidence by every independent axis it depends on (code digest, tool version), not one
+opaque fingerprint, so the evidence can be checked per axis."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
