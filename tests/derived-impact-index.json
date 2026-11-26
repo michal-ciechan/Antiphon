@@ -233,7 +233,7 @@
     },
     {
       "path": "global.json",
-      "classes": 43,
+      "classes": 44,
       "reason": "allowlist"
     },
     {
@@ -2209,12 +2209,12 @@
       "reason": "cap",
       "owed": 40,
       "first": [
+        "GrokRunnerImageContractTests",
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
         "JqRunnerImageContractInvariantTests",
         "OsWitnessCheckInvariantTests",
         "PackageVersionPinContractTests",
-        "PlanCheckpointClassSelectionGuardTests",
         "QualificationCheckoutSourceTests",
         "RegisterPostgresSnapshotInvariantTests"
       ]
@@ -2237,18 +2237,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
         "QualificationEtaTests",
         "RcRunEvidenceTests",
+        "ReleaseCutTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
         "ReviewEngineScriptsTests",
-        "RunnerRestartOsTests",
-        "ServerDockerInputsTests"
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -2285,18 +2285,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 58,
+      "classes": 59,
       "reason": "cap",
-      "owed": 33,
+      "owed": 34,
       "first": [
+        "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ClientChecksTests",
         "ClientModeTests",
         "DaemonBuildCheckTests",
         "DesktopPostgresTests",
         "ExpectedDurationSyncTests",
-        "ImpactIndexRegenerationTests",
-        "KeepSixCommandTests"
+        "ImpactIndexRegenerationTests"
       ]
     },
     {
@@ -3676,6 +3676,7 @@
     {
       "path": "docs/superpowers/plans/2026-11-26-card-2082-candidate-roster.json",
       "classes": [
+        "HistoricalCheckpointCaseSelectionTests",
         "PlanCheckpointClassSelectionGuardTests"
       ]
     },
@@ -4524,6 +4525,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -4544,6 +4546,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -4564,6 +4567,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -4584,6 +4588,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -4813,6 +4818,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -25838,10 +25844,10 @@
         "DockerStackContractTests",
         "DockerStackDocumentationTests",
         "DotnetToolManifestContractTests",
-        "GrokRunnerImageContractTests",
         "HangfireStorageSelectionTests",
         "HostCleanupCheckpointExtractionTests",
         "LandGraphAuditProjectInstanceTests",
+        "PlanCheckpointClassSelectionGuardTests",
         "PostgresPoolConfigurationTests",
         "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
@@ -26596,6 +26602,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
@@ -26611,6 +26618,7 @@
         "NightlyRunTests",
         "NightlyScriptsTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateRunTests",
         "ReleaseSelectionHopSeedTests",
         "ToolchainFloorWarningTests"
@@ -26629,6 +26637,7 @@
         "NightlyPrerequisiteTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
+        "ReleaseCutTests",
         "ReleaseGatePlatformTests",
         "ToolchainFloorWarningTests"
       ]
@@ -26645,7 +26654,6 @@
         "C1744G3PhoneHomeSupervisionTests",
         "Card0490BootDiskTests",
         "CheckpointToolCommandTests",
-        "ClassCostMeasurementTests",
         "DaemonSupervisorTests",
         "DeployLocalTests",
         "LandGraphCommandTests",
@@ -26658,6 +26666,7 @@
         "PostgresSnapshotJobTests",
         "QualificationTimingTests",
         "RegisterPostgresSnapshotTests",
+        "ReleaseCutTests",
         "ReleaseGateLibraryTests",
         "RunnerRestartOsTests",
         "ServerRepositoryMirrorsTests"
@@ -30012,6 +30021,7 @@
         "NightlyScriptsTests",
         "RcProjectSelectionTests",
         "RcStoppedRunSeedTests",
+        "ReleaseCutTests",
         "ReleaseGateE2EEvidenceTests",
         "ReleaseGateFollowupTests",
         "ReleaseGatePlatformTests",
