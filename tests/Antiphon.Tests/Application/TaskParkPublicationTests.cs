@@ -71,6 +71,32 @@ public sealed class TaskParkPublicationTests
             await w.GitTextAsync(w.Path, "remote", "remove", "origin");
             (await w.PrepareAsync()).Outcome.ShouldBe(TaskParkPublicationOutcome.Unknown, "unavailable endpoint read");
         }
+        foreach (var writer in new[] { "local", "foreign" })
+        {
+            // The desktop's first publication pushes first; only the refused push reads the remote to name why. A
+            // writer whose commit this repository lacks (foreign) cannot be an ancestor either.
+            await using var w = await PublicationWorld.CreateAsync();
+            await w.CommitAsync("local.txt");
+            string other;
+            if (writer == "local")
+            {
+                await w.GitTextAsync(w.Repository, "commit", "--allow-empty", "-m", "remote writer");
+                other = await w.GitTextAsync(w.Repository, "rev-parse", "HEAD");
+                await w.GitTextAsync(w.Repository, "push", "origin", "HEAD:" + w.FullRef);
+            }
+            else
+            {
+                other = await w.GitTextAsync(w.Origin, "-c", "user.name=foreign", "-c", "user.email=foreign@example.invalid",
+                    "commit-tree", w.Baseline + "^{tree}", "-p", w.Baseline, "-m", "foreign remote writer");
+                await w.GitTextAsync(w.Origin, "update-ref", w.FullRef, other);
+            }
+            w.Git.Commands.Clear();
+            var refused = await w.PrepareAsync();
+            refused.Outcome.ShouldBe(TaskParkPublicationOutcome.Held, writer);
+            refused.Reason.ShouldBe("park_remote_not_ancestor", writer);
+            (await w.RemoteShaAsync()).ShouldBe(other, writer + " remote preserved");
+            w.Git.Commands.Single(c => c[0] == "push").ShouldNotContain(a => a.StartsWith("--force") || a.StartsWith('+'), writer);
+        }
         await using (var w = await PublicationWorld.CreateAsync(remote: true))
         {
             var tip = await w.CommitAsync("remote.txt");
@@ -337,16 +363,7 @@ public sealed class TaskParkPublicationTests
                 w.Fixture.Options.Enabled = true;
                 w.Leases = new(w.Git);
                 w.Reservations = new WorkspaceReservationJournal(w.Fixture.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
-                await w.GitTextAsync(w.Root, "init", "--bare", "-b", "master", w.Origin);
-                await w.GitTextAsync(w.Root, "init", "-b", "master", w.Repository);
-                await w.ConfigureAsync(w.Repository);
-                await File.WriteAllTextAsync(System.IO.Path.Combine(w.Repository, "base.txt"), "base source");
-                await w.GitTextAsync(w.Repository, "add", "base.txt");
-                await w.GitTextAsync(w.Repository, "commit", "-m", "base");
-                await w.GitTextAsync(w.Repository, "remote", "add", "origin", w.Origin);
-                await w.GitTextAsync(w.Repository, "push", "origin", "master");
-                w.Baseline = await w.GitTextAsync(w.Repository, "rev-parse", "HEAD");
-                await w.GitTextAsync(w.Repository, "worktree", "add", "-b", w.Branch, w.LocalPath, w.Baseline);
+                w.Baseline = await w.SourceTreeAsync(remote);
                 w.Path = w.LocalPath;
                 var common = await w.Git.CommonDirectoryAsync(w.Repository, default);
                 w.Source = new(w.Repository, common, w.Fixture.TaskId, w.LocalPath, w.FullRef, w.Baseline,
@@ -357,9 +374,6 @@ public sealed class TaskParkPublicationTests
                     var repo = System.IO.Path.Combine(w.Root, "runner-repo");
                     var allowed = System.IO.Path.Combine(w.Root, "remote");
                     w.Path = System.IO.Path.Combine(allowed, "worktrees", "task-" + w.Fixture.TaskId.ToString("N")[..8]);
-                    await w.GitTextAsync(w.Root, "clone", w.Origin, repo);
-                    await w.ConfigureAsync(repo);
-                    await w.GitTextAsync(repo, "worktree", "add", "-b", w.Branch, w.Path, w.Baseline);
                     // The real starter keeps the runner's in-process reads on (a lambda turns them off).
                     runtime = new(new RunnerWorkspaceService(repo, allowed, w.Origin, Process.Start)
                     {
@@ -429,6 +443,64 @@ public sealed class TaskParkPublicationTests
             result.ExitCode.ShouldBe(0, result.Diagnostic);
             return result.Output.Trim();
         }
+        /// <summary>The origin, desktop repository and owned worktree (plus, for <paramref name="remote"/>, the runner
+        /// clone and its worktree) under <see cref="Root"/>. Cloned from a per-process GitTreeTemplate whose token is
+        /// the task id's first 8 hex digits (the branch and worktree names carry it) instead of 15-22 git processes
+        /// per world; built with git when templates are off or the template is refused. Returns the baseline.</summary>
+        private async Task<string> SourceTreeAsync(bool remote)
+        {
+            var token = Fixture.TaskId.ToString("N")[..8];
+            if (GitTreeTemplate.Enabled)
+            {
+                try
+                {
+                    var template = await GitTreeTemplate.BuildOnceAsync("c1065-publication-source"
+                        + (remote ? "-remote" : "") + (_cardBranch ? "-card" : ""), ["task"],
+                        async (templateRoot, tokens) => new() { ["sha"] = await BuildSourceTreeAsync(templateRoot, tokens["task"], remote) },
+                        tokenLength: 8);
+                    var clone = template.CloneTo(Root, new Dictionary<string, string> { ["task"] = token });
+                    return clone.Map(template.Values["sha"]);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException)
+                {
+                    Console.Error.WriteLine($"publication source template not used: {ex.GetType().Name}: {ex.Message}");
+                    foreach (var entry in System.IO.Directory.EnumerateFileSystemEntries(Root))
+                    {
+                        if (System.IO.Directory.Exists(entry)) GitTreeTemplate.DeleteTree(entry);
+                        else File.Delete(entry);
+                    }
+                }
+            }
+            return await BuildSourceTreeAsync(Root, token, remote);
+        }
+
+        private async Task<string> BuildSourceTreeAsync(string root, string token, bool remote)
+        {
+            var origin = System.IO.Path.Combine(root, "origin.git");
+            var repository = System.IO.Path.Combine(root, "repo");
+            var branch = (_cardBranch ? "feat/card-1213-code-" : "feat/card-task-") + token;
+            await GitTextAsync(root, "init", "--bare", "-b", "master", origin);
+            await GitTextAsync(root, "init", "-b", "master", repository);
+            await ConfigureAsync(repository);
+            await File.WriteAllTextAsync(System.IO.Path.Combine(repository, "base.txt"), "base source");
+            await GitTextAsync(repository, "add", "base.txt");
+            await GitTextAsync(repository, "commit", "-m", "base");
+            await GitTextAsync(repository, "remote", "add", "origin", origin);
+            await GitTextAsync(repository, "push", "origin", "master");
+            var baseline = await GitTextAsync(repository, "rev-parse", "HEAD");
+            await GitTextAsync(repository, "worktree", "add", "-b", branch,
+                System.IO.Path.Combine(root, "worktrees", "task-" + token), baseline);
+            if (remote)
+            {
+                var runnerRepo = System.IO.Path.Combine(root, "runner-repo");
+                await GitTextAsync(root, "clone", origin, runnerRepo);
+                await ConfigureAsync(runnerRepo);
+                await GitTextAsync(runnerRepo, "worktree", "add", "-b", branch,
+                    System.IO.Path.Combine(root, "remote", "worktrees", "task-" + token), baseline);
+            }
+            return baseline;
+        }
+
         private async Task ConfigureAsync(string path)
         {
             await GitTextAsync(path, "config", "user.name", "CARD-1065 test");
