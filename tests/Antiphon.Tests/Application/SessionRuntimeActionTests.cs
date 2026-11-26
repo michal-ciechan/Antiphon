@@ -352,6 +352,21 @@ public class SessionRuntimeActionTests
     }
 
     [Test]
+    public async Task C1259_stop_joins_a_worker_cancelled_before_execution()
+    {
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        var coordinator = new SessionRuntimeActionCoordinator(services.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System, NullLogger<SessionRuntimeActionCoordinator>.Instance);
+        using var worker = new SessionRuntimeActionHostedService(coordinator);
+
+        // Cancelling startup before scheduling gives the same task state as stopping
+        // while BackgroundService's queued execution is still waiting for a thread.
+        await worker.StartAsync(new CancellationToken(canceled: true));
+        worker.ExecuteTask!.IsCanceled.ShouldBeTrue();
+        await worker.StopAsync(default);
+    }
+
+    [Test]
     [Arguments("before-wake")]
     [Arguments("during-confirm")]
     [Arguments("after-input")]
@@ -440,8 +455,13 @@ public class SessionRuntimeActionTests
             if (variant == "uncooperative-effect")
             {
                 await AwaitReadyAsync(entered.Task, "The uncooperative effect");
-                stopping = first.StopAsync(default);
-                stopping.IsCompleted.ShouldBeFalse();
+                var shutdownClock = new FakeTimeProvider();
+                var shutdownBudget = TimeSpan.FromMilliseconds(1);
+                using var deadline = new CancellationTokenSource(shutdownBudget, shutdownClock);
+                shutdownClock.Advance(shutdownBudget);
+                deadline.IsCancellationRequested.ShouldBeTrue();
+                stopping = first.StopAsync(deadline.Token);
+                stopping.IsCompleted.ShouldBeFalse("an expired host deadline cannot release the held effect");
                 receiver.Payloads.ShouldBeEmpty();
                 // CARD-1304 D-2: while Stop waits on the held effect, its owner and scope stay live.
                 OwnerCount(Actions(f)).ShouldBe(1, "the held effect still owns its session");
