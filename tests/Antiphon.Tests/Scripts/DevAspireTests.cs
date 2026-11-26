@@ -385,6 +385,17 @@ public sealed class DevAspireTests
 
             File.WriteAllText(Path.Combine(output, "Antiphon.Scripts.dll"), "rebuilt");
             AppHostCli.RunCopy(checkout, ["dotnet", "exec", Path.Combine(output, "Antiphon.Scripts.dll")]).Last().ShouldNotBe(argv.Last(), "a rebuilt CLI gets its own copy");
+
+            // Unit 57: a published build of the cached launcher (its cli-identity manifest beside the dll) is never written
+            // again and its lease keeps it, so the child runs it in place and no copy is made.
+            var published = Path.Combine(checkout, "bin-launcher", "antiphon-scripts", "0123456789abcdef01234567");
+            Directory.CreateDirectory(published);
+            File.WriteAllText(Path.Combine(published, "Antiphon.Scripts.dll"), "published");
+            File.WriteAllText(Path.Combine(published, AppHostCli.PublishedStamp), "manifest");
+            var runs = Directory.GetDirectories(Path.Combine(checkout, "bin-launcher"), "run-*").Length;
+            AppHostCli.RunCopy(checkout, ["dotnet", "exec", Path.Combine(published, "Antiphon.Scripts.dll")])
+                .ShouldBe(["dotnet", "exec", Path.Combine(published, "Antiphon.Scripts.dll")]);
+            Directory.GetDirectories(Path.Combine(checkout, "bin-launcher"), "run-*").Length.ShouldBe(runs, "a published build is not copied");
         }
         finally
         {

@@ -54,7 +54,7 @@ public sealed class AntiphonCliLauncherTests
         return fixture;
     }
 
-    private static Process Start(NightlyFixture fixture, string dll, string command, string[] arguments, string resultFile = "",
+    private static Process Start(NightlyFixture fixture, string? dll, string command, string[] arguments, string resultFile = "",
         IReadOnlyDictionary<string, string>? environment = null)
     {
         var request = fixture.PathOf("request-" + Guid.NewGuid().ToString("N") + ".json");
@@ -68,7 +68,9 @@ public sealed class AntiphonCliLauncherTests
         };
         foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.PathOf("drive.ps1"), "-Request", request })
             start.ArgumentList.Add(argument);
-        start.Environment["ANTIPHON_SCRIPTS_DLL"] = dll;
+        // No dll: the launcher runs the published build bin-launcher/antiphon-scripts/current names.
+        if (dll == null) start.Environment.Remove("ANTIPHON_SCRIPTS_DLL");
+        else start.Environment["ANTIPHON_SCRIPTS_DLL"] = dll;
         foreach (var pair in environment ?? new Dictionary<string, string>()) start.Environment[pair.Key] = pair.Value;
         return Process.Start(start) ?? throw new InvalidOperationException("the launcher shell did not start");
     }
@@ -85,7 +87,7 @@ public sealed class AntiphonCliLauncherTests
         }
     }
 
-    private static Task<LauncherRun> Run(NightlyFixture fixture, string dll, string command, string[] arguments, string resultFile = "",
+    private static Task<LauncherRun> Run(NightlyFixture fixture, string? dll, string command, string[] arguments, string resultFile = "",
         IReadOnlyDictionary<string, string>? environment = null) =>
         Finish(Start(fixture, dll, command, arguments, resultFile, environment));
 
@@ -168,48 +170,68 @@ public sealed class AntiphonCliLauncherTests
         Arguments(written.RootElement).ShouldBe(new[] { "--x", "1", "--result-file", result });
     }
 
+    // Unit 57 (N0, the cached launcher): the published build bin-launcher/antiphon-scripts/current names runs in place, with
+    // ANTIPHON_CLI_CHECK set to the checkout so it checks itself before the command (CliLauncherTests own that check); no run
+    // copy is made. ANTIPHON_SCRIPTS_DLL (tests) runs its dll in place and unchecked, and nothing is built.
     [Test]
-    public async Task The_cli_runs_from_a_copy_and_the_source_dll_stays_unlocked()
+    public async Task The_published_cli_runs_in_place_and_checks_itself_and_an_override_runs_unchecked()
     {
         using var fixture = Checkout();
-        var source = fixture.PathOf("source");
-        Directory.CreateDirectory(source);
-        foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(StagedEcho)!))
-            File.Copy(file, Path.Combine(source, Path.GetFileName(file)));
-        var dll = Path.Combine(source, Path.GetFileName(StagedEcho));
-        var release = fixture.PathOf("release");
-        var launcherRoot = fixture.PathOf("bin-launcher");
-
-        var process = Start(fixture, dll, "cli-echo", [], environment: new Dictionary<string, string> { ["CLI_ECHO_HOLD"] = release });
-        try
+        var environment = new Dictionary<string, string>
         {
-            var first = await process.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(120));
-            first.ShouldNotBeNull("the held CLI printed nothing");
-            using var echo = JsonDocument.Parse(first);
-            var running = echo.RootElement.GetProperty("baseDirectory").GetString()!;
-            running.ShouldStartWith(Path.Combine(launcherRoot, "run-"), Case.Insensitive);
-            if (OperatingSystem.IsWindows())
-            {
-                // While the CLI runs, the source can be rewritten (a build) but the loaded copy cannot.
-                using (new FileStream(dll, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
-                Should.Throw<IOException>(() => new FileStream(Path.Combine(running, Path.GetFileName(dll)), FileMode.Open, FileAccess.ReadWrite, FileShare.None).Dispose());
-            }
-        }
-        finally
-        {
-            File.WriteAllText(release, "go");
-        }
-        var held = await Finish(process);
-        held.Exit.ShouldBe(0, held.Stderr);
+            ["CLI_ECHO_ENV"] = "ANTIPHON_CLI_CHECK,ANTIPHON_SCRIPTS_DLL",
+            ["ANTIPHON_CLI_CHECK"] = "inherited",
+        };
 
-        // The same output reuses its copy; a changed output gets a new one.
-        (await Run(fixture, dll, "cli-echo", [])).Exit.ShouldBe(0);
-        Directory.GetDirectories(launcherRoot, "run-*").Length.ShouldBe(1);
-        File.WriteAllText(Path.Combine(source, "extra.txt"), "changed");
-        var changed = await Run(fixture, dll, "cli-echo", []);
-        changed.Exit.ShouldBe(0, changed.Stderr);
-        Directory.GetDirectories(launcherRoot, "run-*").Length.ShouldBe(2);
-        File.Exists(Path.Combine(changed.Echo().GetProperty("baseDirectory").GetString()!, "extra.txt")).ShouldBeTrue();
+        var overridden = await Run(fixture, StagedEcho, "cli-echo", ["--x"], environment: environment);
+        overridden.Exit.ShouldBe(0, overridden.Stderr);
+        var echo = overridden.Echo();
+        echo.GetProperty("baseDirectory").GetString()!.TrimEnd('\\', '/').ShouldBe(Path.GetDirectoryName(StagedEcho)!.TrimEnd('\\', '/'), StringCompareShould.IgnoreCase);
+        echo.GetProperty("environment").GetProperty("ANTIPHON_CLI_CHECK").ValueKind.ShouldBe(JsonValueKind.Null, "an override is never checked");
+        Directory.Exists(fixture.PathOf("bin-launcher")).ShouldBeFalse("nothing is built or copied");
+
+        // The published build: the echo host under the CLI's name, in a folder named by an identity.
+        const string name = "0123456789abcdef01234567";
+        var published = fixture.PathOf("bin-launcher", "antiphon-scripts", name);
+        Directory.CreateDirectory(published);
+        foreach (var file in Directory.EnumerateFiles(Path.GetDirectoryName(StagedEcho)!).Where(file => !file.EndsWith(".deps.json", StringComparison.Ordinal)))
+            File.Copy(file, Path.Combine(published, Path.GetFileName(file).Replace("Antiphon.ScriptHarnessHost", "Antiphon.Scripts", StringComparison.Ordinal)));
+        File.WriteAllText(fixture.PathOf("bin-launcher", "antiphon-scripts", "current"), name);
+
+        var run = await Run(fixture, null, "cli-echo", ["--y", "a b"], environment: environment);
+        run.Exit.ShouldBe(0, run.Stderr);
+        var current = run.Echo();
+        Arguments(current).ShouldBe(new[] { "--y", "a b" });
+        current.GetProperty("baseDirectory").GetString()!.TrimEnd('\\', '/').ShouldBe(published, StringCompareShould.IgnoreCase);
+        current.GetProperty("environment").GetProperty("ANTIPHON_CLI_CHECK").GetString()!.TrimEnd('\\', '/').ShouldBe(fixture.Root.TrimEnd('\\', '/'), StringCompareShould.IgnoreCase);
+        current.GetProperty("environment").GetProperty("ANTIPHON_SCRIPTS_DLL").ValueKind.ShouldBe(JsonValueKind.Null);
+        Directory.GetDirectories(fixture.PathOf("bin-launcher")).Select(Path.GetFileName).ShouldBe(new[] { "antiphon-scripts" }, "no run copy");
+    }
+
+    // Unit 57: Main checks its build only when a launcher asks (ANTIPHON_CLI_CHECK). The staged CLI is no published build, so
+    // asked, it publishes the named checkout's CLI first; this checkout has no CLI project: exit 9 and one stderr line.
+    [Test]
+    public async Task The_cli_checks_itself_only_when_a_launcher_asks()
+    {
+        using var fixture = Checkout();
+
+        var plain = await Exec(StagedCli, ["no-such-command"], null);
+        plain.Exit.ShouldBe(2, plain.Stderr);
+        plain.Stderr.ShouldStartWith("usage: antiphon-scripts");
+
+        var asked = await Exec(StagedCli, ["no-such-command"], fixture.Root);
+        asked.Exit.ShouldBe(9, asked.Stderr);
+        asked.Stdout.Trim().ShouldBeEmpty();
+        asked.Stderr.Trim().ShouldBe("antiphon-cli: " + fixture.Root.TrimEnd('\\', '/') + " has no scripts/lib/Antiphon.Scripts/Antiphon.Scripts.csproj");
+    }
+
+    private static Task<LauncherRun> Exec(string dll, string[] arguments, string? check)
+    {
+        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in new[] { "exec", dll }.Concat(arguments)) start.ArgumentList.Add(argument);
+        if (check == null) start.Environment.Remove("ANTIPHON_CLI_CHECK");
+        else start.Environment["ANTIPHON_CLI_CHECK"] = check;
+        return Finish(Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start"));
     }
 
     // ---- W2-nightly S05: scripts/nightly-health.ps1, the launcher Windmill's readiness job runs ----

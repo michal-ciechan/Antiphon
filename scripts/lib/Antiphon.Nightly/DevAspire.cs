@@ -14,8 +14,9 @@
 // up the dev compose services (runbook G-1: ANTIPHON_SKIP_DEV_POSTGRES=1 leaves the desktop Postgres stopped; DevCompose),
 // runs the advisory daemon build check, removes aspire.* directories older than two hours from %TEMP%, creates logs/,
 // server/logs/, server/logs/sessions/, backups/ and C:\Antiphon\worktrees, and (without --no-build) restores the AppHost under a
-// build slot and runs npm install in client/. It empties logs/apphost.log and starts run-apphost detached (this CLI from its
-// run copy under bin-launcher, so the long-lived wrapper never holds the build output): the wrapper builds the AppHost under a
+// build slot and runs npm install in client/. It empties logs/apphost.log and starts run-apphost detached (this CLI in place
+// when it is a published build, else from a run copy under bin-launcher, so the long-lived wrapper never holds output a build
+// writes; AppHostCli.RunCopy): the wrapper builds the AppHost under a
 // build slot stamped with HEAD (-p:SourceRevisionId; HEAD unreadable refuses), then runs it (dotnet run --no-build), both
 // outputs and the build's LIVE_TIMING line in logs/apphost.log. Its pid goes to logs/apphost.pid. dev-aspire waits up to 90 s
 // for the dashboard URL (the log's "Login to the dashboard at" line, else the Aspire.Dashboard process's listener), writes it
@@ -450,18 +451,24 @@ namespace Antiphon.Nightly
     }
 
     /// <summary>
-    /// This CLI's run copy for a detached child (dev-aspire, run-apphost): bin-launcher/run-&lt;hash&gt; of the checkout, the copy
-    /// scripts/lib/antiphon-cli.ps1 makes (the SHA-256 of the output's relative names and bytes, 24 hex characters). A child
-    /// that runs for days must never hold the build output that the next `scripts/antiphon` build writes.
+    /// This CLI's run copy for a detached child (dev-aspire, run-apphost): bin-launcher/run-&lt;hash&gt; of the checkout (the
+    /// SHA-256 of the output's relative names and bytes, 24 hex characters). A child that runs for days must never hold build
+    /// output that a later build writes. A published build of the cached launcher (N0, unit 57:
+    /// bin-launcher/antiphon-scripts/&lt;identity&gt;/, which holds a cli-identity manifest) is never written again and its
+    /// lease keeps it while the child runs, so it is run in place; only another build (a test's) is copied.
     /// </summary>
     public static class AppHostCli
     {
-        /// <summary>The argv that starts the run copy: cli with its last element (the dll or the executable) moved into the copy, made when missing.</summary>
+        /// <summary>A published build's manifest (Antiphon.CliLauncher's CliCache.StampName).</summary>
+        public const string PublishedStamp = "cli-identity";
+
+        /// <summary>The argv that starts the run copy: cli with its last element (the dll or the executable) moved into the copy, made when missing; a published build's argv as it is.</summary>
         public static IReadOnlyList<string> RunCopy(string root, IReadOnlyList<string> cli)
         {
             if (cli == null || cli.Count == 0) throw new ArgumentException("the CLI argv is empty", nameof(cli));
             var entry = Path.GetFullPath(cli[cli.Count - 1]);
             var source = Path.GetDirectoryName(entry);
+            if (File.Exists(Path.Combine(source, PublishedStamp))) return cli.ToList();
             var launcher = Path.Combine(root, "bin-launcher");
             var run = Path.Combine(launcher, "run-" + OutputHash(source));
             var target = Path.Combine(run, Path.GetFileName(entry));
@@ -478,7 +485,7 @@ namespace Antiphon.Nightly
                 }
                 if (!File.Exists(target)) throw new IOException("the run copy " + run + " has no " + Path.GetFileName(entry));
             }
-            // In use now: antiphon-cli.ps1's 7-day sweep goes by this time.
+            // In use now: the cached launcher's 7-day sweep of run-* folders (CliCache.Prune) goes by this time.
             try { Directory.SetLastWriteTimeUtc(run, DateTime.UtcNow); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
             var argv = cli.ToList();

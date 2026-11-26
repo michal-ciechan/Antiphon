@@ -1,12 +1,63 @@
 #!/bin/sh
-# antiphon <command> [arguments]: runs antiphon-scripts (scripts/lib/Antiphon.Scripts) from this checkout and
-# passes the arguments, stdin, stdout, stderr and exit code through untouched.
-# Minimal form: every call builds the project (a no-op when nothing changed) into <checkout>/bin-launcher (ignored,
-# and outside scripts/ so fixtures that copy scripts/lib never carry it), with the build output on stderr, and a
-# failed build exits 9. The cached launcher in section 2.2 of
-# docs/superpowers/plans/2026-11-19-ps1-to-csharp-migration-plan.md replaces this. scripts/antiphon.cmd is the Windows twin.
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 9
-project="$root/scripts/lib/Antiphon.Scripts"
-artifacts="$root/bin-launcher/antiphon-scripts"
-dotnet msbuild "$project" -restore -p:Configuration=Release "-p:ArtifactsPath=$artifacts" -nologo -v:q -tl:off -clp:NoSummary -nodeReuse:false -p:UseSharedCompilation=false >&2 || exit 9
-exec dotnet exec "$artifacts/bin/Antiphon.Scripts/release/Antiphon.Scripts.dll" "$@"
+# antiphon <command> [arguments]: runs antiphon-scripts (scripts/lib/Antiphon.Scripts) from this checkout and passes the
+# arguments, stdin, stdout, stderr and exit code through untouched; exit 9 (one stderr line) when the CLI could not be
+# built or started. scripts/antiphon.cmd is the Windows twin, with the same cache and protocol (docs/testing-and-build.md,
+# "The CLI entry (cached launcher)").
+# Warm: bin-launcher/antiphon-scripts/current names the published build of the CLI's inputs, and this execs it with
+# ANTIPHON_CLI_CHECK set: one dotnet process, no msbuild. Before any command the CLI checks its inputs' identity and, when
+# they changed, builds and publishes the current one under the build lock and runs that instead (scripts/lib/Antiphon.CliLauncher).
+# First run (nothing published): the launcher project is built into a fresh boot-<pid>-<n> folder and publishes the CLI.
+case $0 in
+	*/*) here=${0%/*} ;;
+	*) here=. ;;
+esac
+root=$(CDPATH= cd -- "$here/.." && pwd) || exit 9
+cache="$root/bin-launcher/antiphon-scripts"
+
+resolve() {
+	dll=
+	id=
+	[ -f "$cache/current" ] || return 0
+	IFS= read -r id <"$cache/current" || [ -n "$id" ] || return 0
+	case $id in
+		'' | *[!0-9a-f]*) return 0 ;;
+	esac
+	if [ -f "$cache/$id/Antiphon.Scripts.dll" ]; then dll="$cache/$id/Antiphon.Scripts.dll"; fi
+	return 0
+}
+
+bootstrap() {
+	mkdir -p "$cache" || return 1
+	n=0
+	boot="$cache/boot-$$-$n"
+	until mkdir "$boot" 2>/dev/null; do
+		n=$((n + 1))
+		if [ "$n" -ge 20 ]; then
+			echo "antiphon-cli: cannot create a bootstrap folder under $cache" >&2
+			return 1
+		fi
+		boot="$cache/boot-$$-$n"
+	done
+	(cd "$root" && exec dotnet build "$root/scripts/lib/Antiphon.CliLauncher/Antiphon.CliLauncher.csproj" -c Release -o "$boot/out" \
+		--artifacts-path "$boot/artifacts" -nologo -v q -nodeReuse:false -p:UseSharedCompilation=false) >"$boot/build.log" 2>&1
+	built=$?
+	if [ "$built" -ne 0 ] || [ ! -f "$boot/out/Antiphon.CliLauncher.dll" ]; then
+		echo "antiphon-cli: the launcher did not build (exit $built, log $boot/build.log)" >&2
+		return 1
+	fi
+	dotnet exec "$boot/out/Antiphon.CliLauncher.dll" publish "$root"
+	published=$?
+	rm -rf "$boot"
+	[ "$published" -eq 0 ] || return 1
+	resolve
+}
+
+resolve
+if [ -z "$dll" ]; then bootstrap || exit 9; fi
+if [ -z "$dll" ]; then
+	echo "antiphon-cli: no published CLI under $cache after the build" >&2
+	exit 9
+fi
+ANTIPHON_CLI_CHECK=$root
+export ANTIPHON_CLI_CHECK
+exec dotnet exec "$dll" "$@"

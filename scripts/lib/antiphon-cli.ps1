@@ -5,14 +5,17 @@
 # Invoke-AntiphonCli -Command <name> -Arguments <string[]> [-ResultFile <path>] [-Verbatim <string[]>] returns the CLI's
 # exit code, so an entry ends with: exit (Invoke-AntiphonCli ...). The CLI runs as `dotnet exec <dll> <name> <arguments>` on this
 # process's own stdin, stdout and stderr (no PowerShell pipeline in between), in the current file-system location.
-# Exit 9 is the launcher's own: the build failed or the CLI could not be started; one line on stderr says why.
+# Exit 9 is the launcher's own: the CLI could not be built or started; one line on stderr says why.
 #
-# Build: the msbuild line of scripts/antiphon into <checkout>/bin-launcher/antiphon-scripts, one build at a time
-# (bin-launcher/build.lock); its output goes to bin-launcher/build.log, never to stdout. A no-op when nothing changed.
-# Run: from a copy of the build output, bin-launcher/run-<hash>/ (hash of the output's names and bytes), never in
-# place: a nightly-run process holds its dll for hours on Windows, and the next build must still write the output.
-# A copy unused for 7 days is removed when a new one is made. ANTIPHON_SCRIPTS_DLL names a built dll instead
-# (tests): nothing is built, and the dll's directory is copied the same way.
+# The cached launcher (N0, unit 57), shared with scripts/antiphon and scripts/antiphon.cmd (docs/testing-and-build.md, "The
+# CLI entry (cached launcher)"): bin-launcher/antiphon-scripts/current names the published build of the CLI's inputs,
+# bin-launcher/antiphon-scripts/<identity>/, and the CLI runs from there with ANTIPHON_CLI_CHECK set to this checkout. Before
+# any command it checks its inputs' identity and, when they changed, builds and publishes the current one under the build
+# lock and runs that instead (scripts/lib/Antiphon.CliLauncher). A published folder is never written again, so the CLI runs
+# in place (a nightly-run process may hold its dll for hours; the next build publishes beside it). With nothing published
+# yet, the launcher project is built into a fresh bin-launcher/antiphon-scripts/boot-<guid>/ and publishes the CLI; its
+# build output goes to that folder's build.log, never to stdout. ANTIPHON_SCRIPTS_DLL names a built dll instead (tests): it
+# runs as it is, unchecked (the variable is removed for it), and nothing is built.
 #
 # Arguments: a launcher translates -Name value to --name value, a switch to a bare --name, and a [string[]] to one
 # comma-joined value. An empty (or blank) value is dropped together with the --flag before it: Windows PowerShell
@@ -68,95 +71,26 @@ function Write-AntiphonCliFailure {
     [Console]::Error.WriteLine('antiphon-cli: ' + ($Message -replace '[\r\n]+', ' '))
 }
 
-function Get-AntiphonCliOutputHash {
-    # SHA-256 over the directory's relative file names and bytes (ordinal order), 24 hex characters.
-    param([string]$Directory)
-    $root = $Directory.TrimEnd([char]92, [char]47)
-    $names = New-Object System.Collections.Generic.List[string]
-    foreach ($file in [IO.Directory]::GetFiles($root, '*', [IO.SearchOption]::AllDirectories)) {
-        $names.Add($file.Substring($root.Length + 1).Replace([char]92, [char]47))
-    }
-    $names.Sort([StringComparer]::Ordinal)
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-        $stream = New-Object System.IO.MemoryStream
-        foreach ($name in $names) {
-            $header = [Text.Encoding]::UTF8.GetBytes($name + "`n")
-            $stream.Write($header, 0, $header.Length)
-            $bytes = [IO.File]::ReadAllBytes([IO.Path]::Combine($root, $name))
-            $stream.Write($bytes, 0, $bytes.Length)
-        }
-        $hash = $sha.ComputeHash($stream.ToArray())
-    } finally { $sha.Dispose() }
-    return ([BitConverter]::ToString($hash).Replace('-', '').Substring(0, 24).ToLowerInvariant())
-}
-
-function Copy-AntiphonCliDirectory {
-    param([string]$Source, [string]$Target)
-    $root = $Source.TrimEnd([char]92, [char]47)
-    [void][IO.Directory]::CreateDirectory($Target)
-    foreach ($directory in [IO.Directory]::GetDirectories($root, '*', [IO.SearchOption]::AllDirectories)) {
-        [void][IO.Directory]::CreateDirectory([IO.Path]::Combine($Target, $directory.Substring($root.Length + 1)))
-    }
-    foreach ($file in [IO.Directory]::GetFiles($root, '*', [IO.SearchOption]::AllDirectories)) {
-        [IO.File]::Copy($file, [IO.Path]::Combine($Target, $file.Substring($root.Length + 1)), $true)
-    }
-}
-
-function Remove-AntiphonCliStaleCopies {
-    # Best effort. A copy still in use cannot be renamed on Windows, so it stays; a renamed one is deleted.
-    param([string]$LauncherRoot, [string]$Keep)
-    $cutoff = [DateTime]::UtcNow.AddDays(-7)
-    foreach ($directory in [IO.Directory]::GetDirectories($LauncherRoot)) {
-        $name = [IO.Path]::GetFileName($directory)
-        if ($directory -eq $Keep) { continue }
-        if (-not ($name.StartsWith('run-') -or $name.StartsWith('tmp-') -or $name.StartsWith('trash-'))) { continue }
-        try {
-            if (-not $name.StartsWith('trash-')) {
-                if ([IO.Directory]::GetLastWriteTimeUtc($directory) -gt $cutoff) { continue }
-                $trash = [IO.Path]::Combine($LauncherRoot, 'trash-' + [guid]::NewGuid().ToString('N'))
-                [IO.Directory]::Move($directory, $trash)
-                $directory = $trash
-            }
-            [IO.Directory]::Delete($directory, $true)
-        } catch { }
-    }
-}
-
-function Get-AntiphonCliRunCopy {
-    # The run copy of the directory that holds DllPath: bin-launcher/run-<hash>/<dll name>. $null after one stderr line.
-    param([string]$LauncherRoot, [string]$DllPath)
-    $source = [IO.Path]::GetDirectoryName($DllPath)
-    $hash = Get-AntiphonCliOutputHash -Directory $source
-    $run = [IO.Path]::Combine($LauncherRoot, 'run-' + $hash)
-    $dll = [IO.Path]::Combine($run, [IO.Path]::GetFileName($DllPath))
-    if (-not [IO.File]::Exists($dll)) {
-        # A whole copy appears under its final name at once; when another launcher wins the rename, its copy is used.
-        $temporary = [IO.Path]::Combine($LauncherRoot, 'tmp-' + [guid]::NewGuid().ToString('N'))
-        Copy-AntiphonCliDirectory -Source $source -Target $temporary
-        try { [IO.Directory]::Move($temporary, $run) }
-        catch { try { [IO.Directory]::Delete($temporary, $true) } catch { } }
-        if (-not [IO.File]::Exists($dll)) {
-            Write-AntiphonCliFailure ('the run copy ' + $run + ' has no ' + [IO.Path]::GetFileName($DllPath))
-            return $null
-        }
-        Remove-AntiphonCliStaleCopies -LauncherRoot $LauncherRoot -Keep $run
-    }
-    # In use now: the 7-day sweep goes by this time.
-    try { [IO.Directory]::SetLastWriteTimeUtc($run, [DateTime]::UtcNow) } catch { }
-    return $dll
-}
-
 function Invoke-AntiphonCliProcess {
     # Starts FileName with an already quoted command line. Redirected: returns @{ ExitCode; Output } (stdout then
-    # stderr). Otherwise the child shares this process's streams and the result has the exit code only.
-    param([string]$FileName, [string]$CommandLine, [switch]$Capture)
+    # stderr). Otherwise the child shares this process's streams and the result has the exit code only. Environment
+    # sets (a string) or removes ($null) variables for the child only; WorkingDirectory defaults to the current location.
+    param([string]$FileName, [string]$CommandLine, [switch]$Capture, [string]$WorkingDirectory = '', [hashtable]$Environment = @{})
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $FileName
     $start.Arguments = $CommandLine
     $start.UseShellExecute = $false
-    $location = (Get-Location -PSProvider FileSystem).ProviderPath
+    $location = $WorkingDirectory
+    if ([string]::IsNullOrEmpty($location)) { $location = (Get-Location -PSProvider FileSystem).ProviderPath }
     if (-not [string]::IsNullOrEmpty($location)) { $start.WorkingDirectory = $location }
+    foreach ($name in @($Environment.Keys)) {
+        $value = $Environment[$name]
+        if ($null -eq $value) {
+            if ($start.EnvironmentVariables.ContainsKey($name)) { $start.EnvironmentVariables.Remove($name) }
+        } else {
+            $start.EnvironmentVariables[$name] = [string]$value
+        }
+    }
     if ($Capture) {
         $start.RedirectStandardOutput = $true
         $start.RedirectStandardError = $true
@@ -174,47 +108,46 @@ function Invoke-AntiphonCliProcess {
     } finally { $process.Dispose() }
 }
 
-function Build-AntiphonCli {
-    # The scripts/antiphon build under bin-launcher/build.lock. Returns the built dll, or $null after one stderr line.
-    param([string]$Root, [string]$LauncherRoot)
-    # Forward slashes, as scripts/antiphon.cmd passes them: one ArtifactsPath string keeps one restore.
-    $slashRoot = $Root.Replace([char]92, [char]47)
-    $project = $slashRoot + '/scripts/lib/Antiphon.Scripts'
-    $artifacts = $slashRoot + '/bin-launcher/antiphon-scripts'
-    $built = [IO.Path]::Combine($LauncherRoot, 'antiphon-scripts', 'bin', 'Antiphon.Scripts', 'release', 'Antiphon.Scripts.dll')
-    $log = [IO.Path]::Combine($LauncherRoot, 'build.log')
-    $lockPath = [IO.Path]::Combine($LauncherRoot, 'build.lock')
-    $lock = $null
-    $deadline = [DateTime]::UtcNow.AddMinutes(10)
-    while ($null -eq $lock) {
-        try { $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
-        catch [IO.IOException] {
-            if ([DateTime]::UtcNow -gt $deadline) {
-                Write-AntiphonCliFailure ('build lock ' + $lockPath + ' still held after 10 minutes')
-                return $null
-            }
-            Start-Sleep -Milliseconds 200
-        }
+function Get-AntiphonCliPublished {
+    # The published CLI the pointer names: <cache>/<identity>/Antiphon.Scripts.dll, or $null.
+    param([string]$Cache)
+    try { $name = [IO.File]::ReadAllText([IO.Path]::Combine($Cache, 'current')).Trim() } catch { return $null }
+    if ($name -cnotmatch '^[0-9a-f]{24}$') { return $null }
+    $dll = [IO.Path]::Combine([IO.Path]::Combine($Cache, $name), 'Antiphon.Scripts.dll')
+    if ([IO.File]::Exists($dll)) { return $dll }
+    return $null
+}
+
+function Install-AntiphonCli {
+    # First run: builds scripts/lib/Antiphon.CliLauncher into a fresh boot-<guid> folder and runs its publish, which builds
+    # and publishes the CLI under the build lock. $true, or $false after one stderr line (publish writes its own).
+    param([string]$Root, [string]$Cache)
+    $boot = [IO.Path]::Combine($Cache, 'boot-' + [guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($boot)
+    $project = [IO.Path]::Combine($Root, 'scripts', 'lib', 'Antiphon.CliLauncher', 'Antiphon.CliLauncher.csproj')
+    $log = [IO.Path]::Combine($boot, 'build.log')
+    $launcher = [IO.Path]::Combine($boot, 'out', 'Antiphon.CliLauncher.dll')
+    $arguments = @('build', $project, '-c', 'Release', '-o', [IO.Path]::Combine($boot, 'out'), '--artifacts-path', [IO.Path]::Combine($boot, 'artifacts'),
+        '-nologo', '-v', 'q', '-nodeReuse:false', '-p:UseSharedCompilation=false')
+    $line = (@($arguments | ForEach-Object { ConvertTo-AntiphonCliQuotedArgument $_ }) -join ' ')
+    try { $build = Invoke-AntiphonCliProcess -FileName 'dotnet' -CommandLine $line -Capture -WorkingDirectory $Root }
+    catch {
+        Write-AntiphonCliFailure ('cannot start the launcher build (dotnet build): ' + $_.Exception.Message)
+        return $false
     }
-    try {
-        $arguments = @('msbuild', $project, '-restore', '-p:Configuration=Release', ('-p:ArtifactsPath=' + $artifacts), '-nologo', '-v:q',
-            '-tl:off', '-clp:NoSummary', '-nodeReuse:false', '-p:UseSharedCompilation=false')
-        $line = (@($arguments | ForEach-Object { ConvertTo-AntiphonCliQuotedArgument $_ }) -join ' ')
-        try { $build = Invoke-AntiphonCliProcess -FileName 'dotnet' -CommandLine $line -Capture }
-        catch {
-            Write-AntiphonCliFailure ('cannot start the build (dotnet msbuild): ' + $_.Exception.Message)
-            return $null
-        }
-        [IO.File]::WriteAllText($log, [string]$build.Output)
-        if ($build.ExitCode -ne 0 -or -not [IO.File]::Exists($built)) {
-            $first = @(([string]$build.Output) -split "`r?`n" | Where-Object { $_ -match 'error' } | Select-Object -First 1)
-            $detail = ''
-            if ($first.Count -gt 0) { $detail = ': ' + $first[0].Trim() }
-            Write-AntiphonCliFailure ('build failed (exit ' + $build.ExitCode + ', log ' + $log + ')' + $detail)
-            return $null
-        }
-        return (Get-AntiphonCliRunCopy -LauncherRoot $LauncherRoot -DllPath $built)
-    } finally { $lock.Dispose() }
+    [IO.File]::WriteAllText($log, [string]$build.Output)
+    if ($build.ExitCode -ne 0 -or -not [IO.File]::Exists($launcher)) {
+        Write-AntiphonCliFailure ('the launcher did not build (exit ' + $build.ExitCode + ', log ' + $log + ')')
+        return $false
+    }
+    $line = (@('exec', $launcher, 'publish', $Root) | ForEach-Object { ConvertTo-AntiphonCliQuotedArgument $_ }) -join ' '
+    try { $publish = Invoke-AntiphonCliProcess -FileName 'dotnet' -CommandLine $line -WorkingDirectory $Root }
+    catch {
+        Write-AntiphonCliFailure ('cannot start the launcher (dotnet exec): ' + $_.Exception.Message)
+        return $false
+    }
+    try { [IO.Directory]::Delete($boot, $true) } catch { }
+    return ($publish.ExitCode -eq 0)
 }
 
 function Invoke-AntiphonCli {
@@ -226,23 +159,33 @@ function Invoke-AntiphonCli {
     )
     try {
         $root = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..', '..'))
-        $launcherRoot = [IO.Path]::Combine($root, 'bin-launcher')
-        [void][IO.Directory]::CreateDirectory($launcherRoot)
+        $cache = [IO.Path]::Combine([IO.Path]::Combine($root, 'bin-launcher'), 'antiphon-scripts')
+        $environment = @{}
         $override = [Environment]::GetEnvironmentVariable('ANTIPHON_SCRIPTS_DLL')
         if (-not [string]::IsNullOrWhiteSpace($override)) {
-            $source = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($override)
-            if (-not [IO.File]::Exists($source)) {
-                Write-AntiphonCliFailure ('ANTIPHON_SCRIPTS_DLL names no file: ' + $source)
+            $dll = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($override)
+            if (-not [IO.File]::Exists($dll)) {
+                Write-AntiphonCliFailure ('ANTIPHON_SCRIPTS_DLL names no file: ' + $dll)
                 $global:LASTEXITCODE = 9
                 return 9
             }
-            $dll = Get-AntiphonCliRunCopy -LauncherRoot $launcherRoot -DllPath $source
+            $environment['ANTIPHON_CLI_CHECK'] = $null
         } else {
-            $dll = Build-AntiphonCli -Root $root -LauncherRoot $launcherRoot
-        }
-        if ($null -eq $dll) {
-            $global:LASTEXITCODE = 9
-            return 9
+            $dll = Get-AntiphonCliPublished -Cache $cache
+            if ($null -eq $dll) {
+                [void][IO.Directory]::CreateDirectory($cache)
+                if (-not (Install-AntiphonCli -Root $root -Cache $cache)) {
+                    $global:LASTEXITCODE = 9
+                    return 9
+                }
+                $dll = Get-AntiphonCliPublished -Cache $cache
+                if ($null -eq $dll) {
+                    Write-AntiphonCliFailure ('no published CLI under ' + $cache + ' after the build')
+                    $global:LASTEXITCODE = 9
+                    return 9
+                }
+            }
+            $environment['ANTIPHON_CLI_CHECK'] = $root
         }
         $argv = New-Object System.Collections.Generic.List[string]
         $argv.Add('exec')
@@ -263,7 +206,7 @@ function Invoke-AntiphonCli {
         $global:LASTEXITCODE = 9
         return 9
     }
-    try { $run = Invoke-AntiphonCliProcess -FileName 'dotnet' -CommandLine $line }
+    try { $run = Invoke-AntiphonCliProcess -FileName 'dotnet' -CommandLine $line -Environment $environment }
     catch {
         Write-AntiphonCliFailure ('cannot start the CLI (dotnet exec): ' + $_.Exception.Message)
         $global:LASTEXITCODE = 9
