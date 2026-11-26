@@ -204,7 +204,9 @@ public sealed partial class AttentionService
                         ? "Antiphon stop requested; signal unknown; exit unobserved. "
                         : SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal,
                             session.TerminationSource, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)) + ". ")
-                    + string.Join("; ", debt.Take(5).Select(i => $"{i.FailureReason}: {Excerpt(i.Message)}")),
+                    + string.Join("; ", debt.Take(5).Select(i => $"{i.FailureReason}: {Excerpt(i.Message)}. "
+                        + "After verifying the outcome, POST "
+                        + $"/api/session-runners/slots/release-intents/{i.Id:D}/close with requester and evidence")),
                 since, null, owner is null ? [AttentionAction.OpenDrawer] : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer],
                 ModelKind: session?.AgentKind.ToString(), ConditionKey: $"session-stop-stuck:{id:N}"));
         }

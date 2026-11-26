@@ -630,7 +630,8 @@ transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the de
   `Delegation:PoolReleaseGraceSeconds`. Warm, standing, sourced and mid-turn owners are excluded.
 - `SessionStopStuck` (45, Error): Stopping unchanged for five minutes, or an unresolved
   generation-conditional deferred kill older than five minutes, even for a terminal session row.
-  Evidence names the kill intent and distinguishes confirmed live, confirmed absent and unknown.
+  Evidence distinguishes confirmed live, confirmed absent and unknown. It includes the
+  operator close path for each displayed pending intent.
 - `SessionUnowned` (46, Warning): a live session older than ten minutes with no card,
   current agent pointer or open task. A historical `StandingAgentId` is evidence only,
   not current ownership. Remote sessions require confirmed live inventory; an unknown
@@ -660,6 +661,22 @@ bookkeeping — last resort only, and `kill-all` is scorched earth across every 
 
 A released process must end in one of three states — killed, pooled warm, or owned by a standing
 agent (CARD-0221). A stalled session is a detection and decision state, never an automatic kill.
+
+### Close a runner slot release intent (CARD-2078)
+
+Copy the intent ID from the `SessionStopStuck` evidence. After verifying the outcome,
+send `POST /api/session-runners/slots/release-intents/{intentId}/close` with
+`{ "requester": "your name or operator handle", "evidence": "what you verified" }`.
+Both fields are required, and evidence can be up to 2,000 characters.
+`GET /api/session-runners/slots/release-intents/{intentId}` reads the same incident history.
+Both routes require `X-Antiphon-Operator-Token`.
+
+Closing records the supplied requester, server time and evidence in the incident's terminal
+`failureReason`. It sends no runner command. A kill already sent may finish, and a terminal intent
+returns 409 `runner_slot_intent_settled` on close. The pending-kill condition clears on the next
+attention read once its pending intents settle. An independent Stopping condition can persist.
+Pending intents survive both retention sweeps. Terminal history follows the age and count limits,
+so an intent created over 30 days ago becomes eligible for deletion on the next sweep after close.
 
 ## Not here
 

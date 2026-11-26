@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using Antiphon.Server.Application.Dtos;
+using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -21,7 +21,7 @@ namespace Antiphon.Tests.Application;
 /// regeneration), stall incidents whose agent row is gone (group 86) and the runner slot release
 /// intents. A pending intent is the only durable record of a release or a deferred kill that
 /// <c>RunnerSlotService.ReconcilePendingReleasesAsync</c> still owes, so newer unrelated null
-/// rows must never cap it away. Ordinary age retention is unchanged.
+/// rows must never cap it away. CARD-2078 applies the same exemption to age retention.
 /// </summary>
 [Category("Integration")]
 public sealed class C2074IncidentCapIntentTests
@@ -127,22 +127,57 @@ public sealed class C2074IncidentCapIntentTests
         for (var pass = 0; pass < 2; pass++)
             (await RunnerSlotService.ReconcilePendingReleasesAsync(host.Directory, db, ct)).ShouldBeEmpty();
         (await db.AgentIncidents.CountAsync(ct)).ShouldBe(1);
+        (await PruneAsync(schema.ConnectionString, new SupervisionSettings(), ct)).ShouldBe(0);
         var stuck = (await attention.GetAsync(ct)).Items.Single(i => i.Kind == AttentionKind.SessionStopStuck);
 
         var historyPath = $"/api/session-runners/slots/release-intents/{id:D}";
         var closePath = historyPath + "/close";
         var token = OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath);
         var body = new { Requester = "on-call operator", Evidence = "Verified session absent in runner records." };
-        using var closed = await host.PostOperatorAsync(closePath, body, token);
-        closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var unauthorized = await host.PostOperatorAsync(closePath, body, null);
+        unauthorized.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        using var missingEvidence = await host.PostOperatorAsync(closePath, body with { Evidence = " " }, token);
+        missingEvidence.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+
+        await using var peer = await host.ConnectPeerAsync();
+        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        var controlSessionId = Guid.NewGuid();
+        Intent(db, controlSessionId, $"pending:kill-generation:{host.AllowedRunnerId}:{old.Ticks}", old.AddMinutes(-1));
+        await db.SaveChangesAsync(ct);
+        var allowReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        peer.ReplyAsync = async frame =>
+        {
+            if (frame.Operation == PhoneHomeOperation.KillGeneration)
+                await allowReply.Task.WaitAsync(ct);
+            return null;
+        };
+        await using var reconcileDb = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var reconcile = RunnerSlotService.ReconcilePendingReleasesAsync(host.Directory, reconcileDb, ct);
+        try
+        {
+            // Both rows are in the running pass's snapshot. Hold its first kill until the API closes the second.
+            var first = await peer.WaitForAsync(PhoneHomeOperation.KillGeneration, TimeSpan.FromSeconds(10));
+            first.Payload!.Value.GetProperty("sessionId").GetGuid().ShouldBe(controlSessionId);
+            using var closed = await host.PostOperatorAsync(closePath, body, token);
+            closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        }
+        finally
+        {
+            allowReply.TrySetResult();
+            await reconcile;
+        }
+
         stuck.Evidence.ShouldContain(closePath);
-        (await attention.GetAsync(ct)).Items.ShouldNotContain(i => i.Kind == AttentionKind.SessionStopStuck);
+        (await attention.GetAsync(ct)).Items.ShouldNotContain(i => i.Kind == AttentionKind.SessionStopStuck
+            && i.SessionId == sessionId);
+        using var repeated = await host.PostOperatorAsync(closePath, body with { Evidence = "Second closure." }, token);
+        repeated.StatusCode.ShouldBe(HttpStatusCode.Conflict);
 
         using var historyRequest = new HttpRequestMessage(HttpMethod.Get, historyPath);
         historyRequest.Headers.Add(OperatorTokenFile.Header, token);
         using var history = await host.Http.SendAsync(historyRequest, ct);
         history.StatusCode.ShouldBe(HttpStatusCode.OK);
-        var receipt = await history.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>(cancellationToken: ct);
+        var receipt = await history.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
         receipt.GetProperty("intentId").GetGuid().ShouldBe(id);
         receipt.GetProperty("sessionId").GetGuid().ShouldBe(sessionId);
         var terminal = receipt.GetProperty("failureReason").GetString()!;
@@ -150,13 +185,12 @@ public sealed class C2074IncidentCapIntentTests
         terminal.ShouldContain(body.Requester);
         terminal.ShouldContain(body.Evidence);
 
-        await using var peer = await host.ConnectPeerAsync();
-        host.Directory.MarkRecovered(await host.WaitLiveAsync());
+        (await reconcile).ShouldBe([controlSessionId]);
         (await RunnerSlotService.ReconcilePendingReleasesAsync(host.Directory, db, ct)).ShouldBeEmpty();
-        peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(0);
-        (await db.AgentIncidents.AsNoTracking().SingleAsync(ct)).FailureReason.ShouldBe(terminal);
-        (await PruneAsync(schema.ConnectionString, new SupervisionSettings(), ct)).ShouldBe(1);
-        (await db.AgentIncidents.AnyAsync(ct)).ShouldBeFalse();
+        peer.RequestCount(PhoneHomeOperation.KillGeneration).ShouldBe(1, "only the open control intent was retried");
+        (await db.AgentIncidents.AsNoTracking().SingleAsync(i => i.Id == id, ct)).FailureReason.ShouldBe(terminal);
+        (await PruneAsync(schema.ConnectionString, new SupervisionSettings(), ct)).ShouldBe(2);
+        (await db.AgentIncidents.AnyAsync(i => i.Id == id, ct)).ShouldBeFalse();
     }
 
     private static async Task<int> PruneAsync(string connectionString, SupervisionSettings settings, CancellationToken ct)
@@ -180,7 +214,6 @@ public sealed class C2074IncidentCapIntentTests
                 // Best-effort temp cleanup.
             }
         }
-
     }
 
     private static Guid Intent(AppDbContext db, Guid sessionId, string failureReason, DateTime createdAt)

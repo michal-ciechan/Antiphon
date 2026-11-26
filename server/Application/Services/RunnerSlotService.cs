@@ -155,7 +155,7 @@ public static class RunnerSlotService
 
     /// <summary>
     /// Where each of the given intents stands: <c>released</c> once audited, <c>failed</c> when
-    /// refused or claimed, <c>pending</c> while the outcome is still unknown.
+    /// refused or claimed, <c>closed</c> after an operator closes it, or <c>pending</c>.
     /// </summary>
     public static async Task<IReadOnlyList<RunnerSlotIntentOutcomeDto>> IntentOutcomesAsync(
         AppDbContext db, IReadOnlyCollection<Guid> intentIds, CancellationToken ct)
@@ -172,7 +172,33 @@ public static class RunnerSlotService
             row.SessionId ?? Guid.Empty,
             row.FailureReason == ReconciledMarker ? "released"
                 : row.FailureReason?.StartsWith(FailedPrefix, StringComparison.Ordinal) == true ? "failed"
+                : row.FailureReason?.StartsWith(ClosedPrefix, StringComparison.Ordinal) == true ? "closed"
                 : "pending")).ToArray();
+    }
+
+    public static async Task<RunnerSlotIntentHistoryDto> GetIntentAsync(
+        AppDbContext db, Guid intentId, CancellationToken ct) =>
+        await db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Id == intentId && i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent)
+            .Select(i => new RunnerSlotIntentHistoryDto(i.Id, i.SessionId, i.Message, i.FailureReason, i.CreatedAt))
+            .SingleOrDefaultAsync(ct)
+        ?? throw new NotFoundException("Runner slot release intent", intentId);
+
+    public static async Task<RunnerSlotIntentHistoryDto> CloseIntentAsync(
+        AppDbContext db, Guid intentId, string requester, string evidence, TimeProvider clock, CancellationToken ct)
+    {
+        var intent = await GetIntentAsync(db, intentId, ct);
+        if (intent.FailureReason?.StartsWith(PendingPrefix, StringComparison.Ordinal) == true)
+        {
+            var outcome = $"{ClosedPrefix}{clock.GetUtcNow():O} by {requester}: {evidence}";
+            var originalState = $" (was {intent.FailureReason})";
+            if (outcome.Length + originalState.Length <= AgentIncident.FailureReasonMaxLength)
+                outcome += originalState;
+            if (await MarkAsync(db, intentId, outcome, ct) == 1)
+                return intent with { FailureReason = outcome };
+        }
+
+        throw new ConflictException("The runner slot release intent has already settled.", "runner_slot_intent_settled");
     }
 
     /// <summary>
@@ -229,21 +255,28 @@ public static class RunnerSlotService
         PhoneHomeRunnerDirectory directory, AppDbContext db, Guid intentId, string runnerId, Guid sessionId,
         DateTime generation, string? reason, CancellationToken ct)
     {
-        var result = await directory.Resolve(runnerId).KillGenerationAsync(sessionId, generation, ct);
+        var runner = directory.Resolve(runnerId);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        // The scan may have read this intent before an operator closed it. Lock and reread
+        // before dispatch, and hold the lock through the bounded runner call and terminal write.
+        var current = await db.AgentIncidents
+            .FromSqlInterpolated($"SELECT * FROM \"AgentIncidents\" WHERE \"Id\" = {intentId} FOR UPDATE SKIP LOCKED")
+            .AsNoTracking()
+            .SingleOrDefaultAsync(ct);
+        if (current is null || current.Kind != AgentIncidentKind.RunnerSlotReleaseIntent
+            || current.FailureReason?.StartsWith(PendingPrefix, StringComparison.Ordinal) != true)
+            return false;
+
+        var result = await runner.KillGenerationAsync(sessionId, generation, ct);
         if (result.Outcome == KillGenerationOutcomes.Mismatch)
         {
             await MarkAsync(db, intentId,
                 FailedPrefix + $"runner holds session {sessionId:D} under another generation; nothing killed", ct);
+            await transaction.CommitAsync(ct);
             return false;
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var claimed = await db.AgentIncidents
-            .Where(incident => incident.Id == intentId && incident.FailureReason != null
-                && incident.FailureReason.StartsWith(PendingPrefix))
-            .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, ReconciledMarker), ct);
-        if (claimed == 0)
-            return false;
+        await MarkAsync(db, intentId, ReconciledMarker, ct);
         var message = $"Runner '{runnerId}' session {sessionId:D} generation {generation:O} deferred kill: "
             + $"{result.Outcome} ({reason})";
         if (message.Length > AgentIncident.MessageMaxLength)
@@ -264,11 +297,12 @@ public static class RunnerSlotService
 
     private const string PendingPrefix = "pending:";
 
-    /// <summary>The <c>FailureReason</c> prefix of an intent the reconcile still owes (CARD-2074 prune exemption).</summary>
+    /// <summary>The <c>FailureReason</c> prefix of an intent the reconcile still owes.</summary>
     internal const string PendingIntentPrefix = PendingPrefix;
     private const string KillGenerationMarker = "kill-generation:";
     private const string OrphanMarker = "orphan:";
     private const string FailedPrefix = "failed:";
+    private const string ClosedPrefix = "closed:";
     private const string ReconciledMarker = "reconciled";
 
     private static (string RunnerId, bool FromOrphanSweep) ParsePending(string failureReason)
@@ -331,7 +365,8 @@ public static class RunnerSlotService
 
     private static Task<int> MarkAsync(AppDbContext db, Guid intentId, string failureReason, CancellationToken ct) =>
         db.AgentIncidents
-            .Where(incident => incident.Id == intentId && incident.FailureReason != null
+            .Where(incident => incident.Id == intentId && incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                && incident.FailureReason != null
                 && incident.FailureReason.StartsWith(PendingPrefix))
             .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, failureReason), ct);
 
