@@ -281,6 +281,18 @@ public sealed partial class ReleaseImpactEnvelopeTests
         var incomplete = P2.Prepare(world.Request, world.Chunks, world.Authority(unresolved: true));
         var honestlyIncomplete = incomplete.Evidence!.WriteProposal();
         CheckFull("T.incomplete.agreedFalse.mode", Admit(honestlyIncomplete, incomplete), "p2-incomplete:");
+        await using (var selectorChanged = await P2World.Create(changeSelector: true))
+        {
+            var changed = P2.Prepare(selectorChanged.Request, selectorChanged.Chunks, selectorChanged.Authority());
+            changed.Evidence.ShouldNotBeNull(changed.Reason);
+            var changedProposal = changed.Evidence!.WriteProposal();
+            var compatibility = JsonNode.Parse(changedProposal)!["projections"]!["compatibility"]!;
+            compatibility["globalReasons"]!.AsArray().Select(reason => reason!.GetValue<string>())
+                .ShouldBe(["contract-changed:selectorHash"]);
+            var result = Admit(changedProposal, changed, selectorChanged.Request, selectorChanged.Chunks);
+            Case("T.incomplete.globalContract", Full(result, selectorChanged.Chunks, "p2-incomplete:selection"),
+                $"mode={result.EffectiveMode} carry=[{string.Join(",", Ids(result.CarryCandidates))}] reason={result.Reason}");
+        }
         var revision = world.Request with { Revision = world.Request.Revision + 1 };
         var lateAuthority = authority with
         {
