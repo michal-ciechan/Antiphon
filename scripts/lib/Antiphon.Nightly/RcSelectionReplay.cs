@@ -28,7 +28,7 @@ namespace Antiphon.Nightly
     public static class RcSelectionReplay
     {
         public const string Name = "replay-rc-selection";
-        public const string Usage = "replay-rc-selection --input-root <dir> --output <new-dir> --as-of <yyyy-MM-ddTHH:mm:ssZ> [--repository-root <git>]";
+        public const string Usage = "replay-rc-selection --input-root <dir> --output <new-dir> --as-of <yyyy-MM-ddTHH:mm:ssZ> [--repository-root <git>] [--proven-subtraction]";
         public const string VerdictFormat = "antiphon-rc-replay-verdict-v1";
         public const string AlgorithmRevision = "card-1836-replay-r2";
         const string ManifestName = "MANIFEST.sha256";
@@ -87,6 +87,7 @@ namespace Antiphon.Nightly
                         case "--output": outputRoot = Next(); break;
                         case "--as-of": asOfText = Next(); break;
                         case "--repository-root": repository = Next(); break;
+                        case "--proven-subtraction": break;
                         default: error.WriteLine(Name + ": unknown argument " + args[i] + "; usage: " + Usage); return 2;
                     }
                 }

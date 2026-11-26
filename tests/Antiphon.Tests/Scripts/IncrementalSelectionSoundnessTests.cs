@@ -23,6 +23,86 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class IncrementalSelectionSoundnessTests
 {
+
+    [Test, Timeout(60_000)]
+    public async Task ProvenSubtractionReplayRecordsEverySkippedFailure(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld();
+        await world.InitializeAsync(cancellationToken);
+        var input = world.Input("missed", fails: true);
+        var output = world.Output("missed");
+        var code = Replay(input, output, true);
+        code.ShouldBe(1, "P.incident");
+        using var verdict = Read(output, "verdict.json");
+        verdict.RootElement.GetProperty("proofDependentCarries").GetInt32().ShouldBe(1, "P.opportunity");
+        verdict.RootElement.GetProperty("enables").GetBoolean().ShouldBeFalse("P.criterion");
+        var runThree = verdict.RootElement.GetProperty("runs")[2].GetProperty("matrix");
+        runThree.GetProperty("carry/FAIL").GetInt32().ShouldBe(1, "P.incident");
+        runThree.GetProperty("run/clean").GetInt32().ShouldBe(1, "P.incident");
+        foreach (var run in new[] { 0, 1, 3, 4 })
+            verdict.RootElement.GetProperty("runs")[run].GetProperty("matrix").GetProperty("run/clean").GetInt32().ShouldBe(2);
+
+        var records = verdict.RootElement.GetProperty("missRecords").EnumerateArray().ToArray();
+        records.Length.ShouldBe(2, "P.records");
+        var identities = new List<string>();
+        foreach (var record in records)
+        {
+            var path = record.GetProperty("path").GetString()!;
+            var raw = File.ReadAllBytes(Path.Combine(output, path));
+            DigestBytes(raw).ShouldBe(record.GetProperty("sha256").GetString(), "P.evidence");
+            using var stored = JsonDocument.Parse(raw);
+            var doc = stored.RootElement.GetProperty("observation");
+            identities.Add(doc.GetProperty("case").GetProperty("caseKey").GetString()!);
+            doc.GetProperty("candidateSha").GetString().ShouldBe(world.Sha(3));
+            doc.GetProperty("baselineSha").GetString().ShouldBe(world.Sha(2));
+            doc.GetProperty("chunk").GetString().ShouldBe("left");
+            doc.GetProperty("actual").GetString().ShouldBe("FAIL");
+            var changes = doc.GetProperty("diff").EnumerateArray().ToArray();
+            changes.Length.ShouldBe(1, "P.evidence diff");
+            changes[0].GetProperty("status").GetString().ShouldBe("M");
+            changes[0].GetProperty("oldPath").GetString().ShouldBe(ProvenReplayWorld.Changed);
+            changes[0].GetProperty("newPath").GetString().ShouldBe(ProvenReplayWorld.Changed);
+        }
+        identities.Order(StringComparer.Ordinal).ShouldBe(["l1", "l2"], "P.records");
+        records.Select(record => record.GetProperty("missId").GetString()).Distinct().Count().ShouldBe(2);
+
+        var clean = world.Output("clean");
+        Replay(world.Input("clean", fails: false), clean, true).ShouldBe(0, "P.clean");
+        using var cleanVerdict = Read(clean, "verdict.json");
+        cleanVerdict.RootElement.GetProperty("enables").GetBoolean().ShouldBeFalse();
+        var initial = "predictions/3.json";
+        var resolved = "predictions/3.resolved.json";
+        File.ReadAllBytes(Path.Combine(clean, initial)).ShouldBe(File.ReadAllBytes(Path.Combine(output, initial)), "P.blind");
+        File.ReadAllBytes(Path.Combine(clean, resolved)).ShouldBe(File.ReadAllBytes(Path.Combine(output, resolved)), "P.resolved");
+        DigestBytes(File.ReadAllBytes(Path.Combine(output, resolved))).ShouldBe(
+            verdict.RootElement.GetProperty("resolvedPredictionDigests").GetProperty("3").GetString(), "P.resolved digest");
+
+        var ordinary = world.Output("ordinary");
+        Replay(input, ordinary, false).ShouldBe(3, "P.legacy");
+        using var ordinaryVerdict = Read(ordinary, "verdict.json");
+        ordinaryVerdict.RootElement.GetProperty("caughtFailures").GetArrayLength().ShouldBe(1);
+        ordinaryVerdict.RootElement.GetProperty("missedFailures").GetArrayLength().ShouldBe(0);
+
+        var unknown = world.Output("unknown");
+        Replay(world.Input("unknown", fails: true, carryHasEvidence: false), unknown, true).ShouldBe(1, "P.unknown");
+        using var unknownVerdict = Read(unknown, "verdict.json");
+        var unknownFile = unknownVerdict.RootElement.GetProperty("missRecords")[0].GetProperty("path").GetString()!;
+        using var unknownRecord = Read(unknown, unknownFile);
+        unknownRecord.RootElement.GetProperty("observation").GetProperty("case").GetProperty("kind").GetString()
+            .ShouldBe("chunk-unknown-case");
+
+        int Replay(string custody, string destination, bool enabled)
+        {
+            string[] arguments = ["--input-root", custody, "--output", destination,
+                "--as-of", ProvenReplayWorld.AsOf, "--repository-root", world.Repository];
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+            return RcSelectionReplay.Run(enabled ? [..arguments, "--proven-subtraction"] : arguments, stdout, stderr);
+        }
+
+        static JsonDocument Read(string root, string name) => JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, name)));
+        static string DigestBytes(byte[] bytes) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+    }
     // CARD-1836 S5 (CP-5, V-5, R-4, R-5, G-14..G-19): the offline five-run replay exposes a hidden miss and blocks activation.
     [Test, Timeout(60_000)]
     public void Five_run_replay_exposes_a_missed_failure_before_activation(CancellationToken cancellationToken)
