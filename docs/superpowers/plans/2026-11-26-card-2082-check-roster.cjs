@@ -134,13 +134,11 @@ function checkImplementation(roster, caseFile, masterFile) {
     if (entry.status === 'applied') {
       const observed = keyed.get(project + '/' + entry.owner) ?? [];
       assert(observed.length > 0 && observed.every(isInvariant), key + ' has no classified compiled invariant owner');
+      assert(Array.isArray(entry.uids) && entry.uids.length > 0, key + ' requires the expanded invariant UIDs');
+      assert.deepEqual(observed.map(test => test.uid).sort(), entry.uids.slice().sort(), key + ' expanded arguments');
       if (disposition === 'MOVE') {
-        assert(Array.isArray(entry.uids) && entry.uids.length > 0, key + ' requires the expanded MOVE UIDs');
-        assert.deepEqual(observed.map(test => test.uid).sort(), entry.uids.slice().sort(), key + ' expanded arguments');
         assert(original.every(isInvariant), key + ' still compiles in an ordinary owner');
       } else {
-        assert(Number.isInteger(entry.minCases) && entry.minCases > 0 && observed.length >= entry.minCases,
-          key + ' requires its extracted invariant cases');
         assert(original.length > 0 && original.every(test => !test.cats.includes('RepositoryInvariant')),
           key + ' lost its ordinary SPLIT cases');
       }

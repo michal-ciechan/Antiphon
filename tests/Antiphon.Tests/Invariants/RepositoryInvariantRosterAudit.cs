@@ -41,15 +41,15 @@ internal static class RepositoryInvariantRosterAudit
                     var observed = byOwner[owner].ToArray();
                     if (checkCases && (observed.Length == 0 || observed.Any(test => !Invariant(test))))
                         errors.Add($"{name}: no compiled invariant cases at {owner}");
+                    var expected = entry.GetProperty("uids").EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal);
+                    if (checkCases && !expected.SequenceEqual(observed.Select(test => test.Uid).Order(StringComparer.Ordinal)))
+                        errors.Add($"{name}: expanded {disposition} cases disagree with the roster");
                     if (disposition == "MOVE")
                     {
-                        var expected = entry.GetProperty("uids").EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal);
-                        if (checkCases && (!expected.SequenceEqual(observed.Select(test => test.Uid).Order(StringComparer.Ordinal))
-                            || original.Any(test => !Invariant(test))))
-                            errors.Add(name + ": expanded MOVE cases disagree with the roster");
+                        if (checkCases && original.Any(test => !Invariant(test)))
+                            errors.Add(name + ": moved case still compiles in an ordinary owner");
                     }
-                    else if (checkCases && (observed.Length < entry.GetProperty("minCases").GetInt32()
-                        || !original.Any() || original.Any(Classified)))
+                    else if (checkCases && (!original.Any() || original.Any(Classified)))
                         errors.Add(name + ": compiled SPLIT needs the extracted and retained cases");
                     break;
                 case "deferred":
