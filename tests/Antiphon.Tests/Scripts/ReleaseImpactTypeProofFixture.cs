@@ -25,7 +25,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         _repository = new(Repository.Init(Path.Combine(_workspace.Path, "git"), true));
         var dotnetRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location)!, "..", "..", ".."));
         var sdk = Directory.EnumerateDirectories(Path.Combine(dotnetRoot, "sdk"))
-            .Select(path => (Path: path, Version: Version.TryParse(Path.GetFileName(path), out var version) ? version : null))
+            .Select(path => (Path: path, Version: System.Version.TryParse(Path.GetFileName(path), out var version) ? version : null))
             .Where(entry => entry.Version?.Major == 10).MaxBy(entry => entry.Version).Path;
         _sdk = Store(File.ReadAllBytes(Path.Combine(sdk, "dotnet.dll")));
         _compiler = Hash(File.ReadAllBytes(typeof(CSharpCompilation).Assembly.Location));
