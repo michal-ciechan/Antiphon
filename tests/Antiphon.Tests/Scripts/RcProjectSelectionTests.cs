@@ -246,6 +246,7 @@ public sealed class RcProjectSelectionTests
             var ordinaryIndex = files[index];
 
             repo.Git("checkout", "-q", "--detach", baseline);
+            files[south] = southAtBaseline;
             var cappedIndex = System.Text.Json.Nodes.JsonNode.Parse(ordinaryIndex)!;
             cappedIndex["cappedPaths"] = new System.Text.Json.Nodes.JsonArray(south, uncatalogued);
             Put(index, cappedIndex.ToJsonString());
@@ -347,7 +348,11 @@ public sealed class RcProjectSelectionTests
             };
             var run = await C1514Support.RunProcess(start, cancellationToken);
             run.ExitCode.ShouldBe(0, label + " producer " + run.Text);
-            return (output, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(output))));
+            var bytes = File.ReadAllBytes(output);
+            using var graph = JsonDocument.Parse(bytes);
+            graph.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeTrue(
+                label + " compiler binding " + graph.RootElement.GetProperty("reason").GetString());
+            return (output, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)));
         }
 
         static string Digest(string value) => Convert.ToHexStringLower(
