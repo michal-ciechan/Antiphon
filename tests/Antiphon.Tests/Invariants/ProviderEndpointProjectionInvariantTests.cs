@@ -26,6 +26,19 @@ public sealed class ProviderEndpointProjectionInvariantTests
         }
     }
 
+    [Test]
+    public void Settings_and_launch_agree_on_path_embedded_userinfo()
+    {
+        const string sentence = "CARD-1827: path-embedded userinfo is accepted path text";
+        foreach (var relative in new[]
+                 {
+                     "server/Application/Services/ProviderEndpointSettings.cs",
+                     "server/Application/Services/ProviderEndpoint.cs",
+                     "docs/agent-credentials.md",
+                 })
+            RepoFile(relative).ShouldContain(sentence, Case.Sensitive, relative);
+    }
+
     private static string RepoFile(string relative)
     {
         var directory = AppContext.BaseDirectory;

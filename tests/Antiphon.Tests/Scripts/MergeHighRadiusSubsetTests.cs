@@ -20,7 +20,13 @@ public sealed class MergeHighRadiusSubsetTests
     {
         const string category = "/*/*/*/*[Category=RepositoryInvariant]";
         var root = Root();
-        string[] expectedOwners = ["tests/Antiphon.Tests", "tests/Antiphon.Messaging.Tests", "tests/Antiphon.Agents.Pty.Tests"];
+        string[] expectedOwners =
+        [
+            "tests/Antiphon.Agents.Pty.Tests", "tests/Antiphon.E2E", "tests/Antiphon.GitInProcess.Tests",
+            "tests/Antiphon.MarkdownPdf.Tests", "tests/Antiphon.Messaging.Tests", "tests/Antiphon.PtyHost.Tests",
+            "tests/Antiphon.Resilience.Tests", "tests/Antiphon.Server.Git.Tests", "tests/Antiphon.SessionRunner.Tests",
+            "tests/Antiphon.Tests",
+        ];
         var standaloneRun = await RunAsync(root, "--repository-invariants", "--json");
         standaloneRun.Exit.ShouldBe(0, standaloneRun.Text);
         using var standalone = JsonDocument.Parse(standaloneRun.Stdout);
@@ -36,8 +42,7 @@ public sealed class MergeHighRadiusSubsetTests
             invariants.ShouldBe(Invariants(standalone.RootElement, "filters"), range);
             Invariants(payload, "windowsFilters").ShouldBe(Invariants(standalone.RootElement, "windowsFilters"), range);
             var owners = invariants.Select(row => row.Split('\0')[0]).Distinct().ToArray();
-            foreach (var owner in expectedOwners)
-                owners.ShouldContain(owner, range);
+            owners.ShouldBe(expectedOwners, ignoreOrder: true);
             var ordinary = filters.Where(row => !row.GetProperty("id").GetString()!.StartsWith("CP-invariants-", StringComparison.Ordinal))
                 .Select(row => row.GetProperty("treenodeFilter").GetString()).ToArray();
             ordinary.ShouldContain(filter => filter!.Contains("CheckpointReceiptSafetyTests", StringComparison.Ordinal));

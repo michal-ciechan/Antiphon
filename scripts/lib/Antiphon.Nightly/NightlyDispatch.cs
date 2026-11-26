@@ -201,6 +201,7 @@ namespace Antiphon.Nightly
                     expected.Add(PsValue.Str(PsValue.Prop(suite, "id")) + "\0" + PsValue.Str(PsValue.Prop(chunk, "id")));
             var entries = Each(PsValue.Prop(schedule, "entries"));
             var seen = new HashSet<string>(StringComparer.Ordinal);
+            var prefixRemaining = entries.Count(entry => NightlyTestsPlan.IsInvariantChunk(PsValue.Prop(entry, "ChunkRef")));
             foreach (var entry in entries)
             {
                 var suiteId = PsValue.Prop(entry, "suite");
@@ -226,6 +227,12 @@ namespace Antiphon.Nightly
                 {
                     if (!finishedPrefix.Contains(Identity(suite, chunk)))
                         RunInvariantChunk(state, steps, suite, chunk, finishedPrefix, selectedSuites);
+                    if (--prefixRemaining == 0)
+                    {
+                        PsValue.AddMemberForce(schedule, "invariantPrefix", PsValue.Record(("complete", true),
+                            ("executedGroups", finishedPrefix.Count)));
+                        WriteBestEffort(state, schedule);
+                    }
                 }
                 else steps.RunChunk(suite, chunk);
                 var key = PsValue.Str(PsValue.Prop(entry, "suite"));
@@ -245,12 +252,15 @@ namespace Antiphon.Nightly
             try
             {
                 steps.RunChunk(suite, chunk);
-                if (state.SuiteResults.Count > before)
-                {
-                    var result = state.SuiteResults[state.SuiteResults.Count - 1];
-                    if (PsValue.Str(PsValue.Prop(result, "result")) != "pass" || !PsValue.IsTrue(PsValue.Prop(result, "coverageComplete")))
-                        throw new NightlyRefusal("repository-invariant-failed:" + id.Suite + "/" + id.Chunk);
-                }
+                if (state.SuiteResults.Count != before + 1)
+                    throw new NightlyRefusal("repository-invariant-missing-result:" + id.Suite + "/" + id.Chunk);
+                var result = state.SuiteResults[before];
+                var planned = Each(PsValue.Prop(chunk, "plannedInvariantUids")).Select(PsValue.Str).Order(StringComparer.Ordinal).ToArray();
+                var actual = Each(PsValue.Prop(result, "observedInvariantUids")).Select(PsValue.Str).Order(StringComparer.Ordinal);
+                if (PsValue.Str(PsValue.Prop(result, "id")) != id.Suite || PsValue.Str(PsValue.Prop(result, "chunk")) != id.Chunk
+                    || PsValue.Str(PsValue.Prop(result, "result")) != "pass" || !PsValue.IsTrue(PsValue.Prop(result, "coverageComplete"))
+                    || planned.Length == 0 || !planned.SequenceEqual(actual, StringComparer.Ordinal))
+                    throw new NightlyRefusal("repository-invariant-failed:" + id.Suite + "/" + id.Chunk);
                 finished.Add(id);
             }
             catch (Exception ex)

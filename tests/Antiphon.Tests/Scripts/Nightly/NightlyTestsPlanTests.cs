@@ -37,8 +37,8 @@ public sealed class NightlyTestsPlanTests
                 exclusions = [new PlainObject(("Class", "SharedGuardTests"), ("Methods", new object[] { "Paid" }))];
             }
             var b = new[] { Case("Beta", "SharedGuardTests", "Check", "beta-argument-1", true) };
-            var alpha = NightlyTestsPlan.SuiteChunks(a.ToArray(), AllChunk(), exclusions, true, true, "antiphon", Policy().Object, Costs());
-            var beta = NightlyTestsPlan.SuiteChunks(b, AllChunk(), [], true, true, "messaging", Policy().Object, Costs());
+            var alpha = NightlyTestsPlan.SuiteChunks(a.ToArray(), AllChunk(), exclusions, true, true, "antiphon", Policy().Object, Costs(), requiresInvariantPrefix: true);
+            var beta = NightlyTestsPlan.SuiteChunks(b, AllChunk(), Array.Empty<object>(), true, true, "messaging", Policy().Object, Costs(), requiresInvariantPrefix: true);
             string[] Uids(IEnumerable<object> chunks) => chunks.SelectMany(c =>
                 PsValue.AsArray(PsValue.Prop(c, "plannedInvariantUids") ?? Array.Empty<object>()).Select(PsValue.Str)).ToArray();
             Uids(alpha).ShouldBe(["alpha-argument-1", "alpha-argument-2"], ignoreOrder: true);
@@ -51,7 +51,7 @@ public sealed class NightlyTestsPlanTests
                 ["messaging"] = new PlainObject(("id", "messaging"), ("chunks", beta)),
             };
             foreach (var order in new[] { "fresh", "history", "previous" })
-            foreach (var stop in new[] { "", "antiphon", "messaging", "interrupted" })
+            foreach (var stop in new[] { "", "antiphon", "messaging", "interrupted", "missing-receipt", "missing-argument" })
             {
                 using var fixture = NightlyFixture.Create("c2082-prefix");
                 var state = new NightlyRunState
@@ -75,6 +75,15 @@ public sealed class NightlyTestsPlanTests
                         started.Add((id, Str(chunk, "id"), invariant));
                         if (invariant && id == stop) throw new InvalidOperationException("fixture failure " + id);
                         if (invariant && id == "messaging" && stop == "interrupted") throw new OperationCanceledException("fixture interrupted");
+                        if (invariant && !(id == "antiphon" && stop == "missing-receipt"))
+                        {
+                            var expected = id == "antiphon"
+                                ? new[] { "alpha-argument-1", "alpha-argument-2" }
+                                : new[] { "beta-argument-1" };
+                            if (id == "antiphon" && stop == "missing-argument") expected = ["alpha-argument-1"];
+                            state.SuiteResults.Add(new PlainObject(("id", id), ("chunk", Str(chunk, "id")),
+                                ("result", "pass"), ("coverageComplete", true), ("observedInvariantUids", expected)));
+                        }
                     },
                     Complete = suite => completed.Add(Str(suite, "id")),
                 };
@@ -90,16 +99,24 @@ public sealed class NightlyTestsPlanTests
                 var schedule = evidence.RootElement;
                 if (stop.Length > 0)
                 {
-                    failure.ShouldNotBeNull().Message.ShouldContain(stop == "interrupted" ? "fixture interrupted" : "fixture failure " + stop);
+                    var expectedError = stop switch
+                    {
+                        "interrupted" => "fixture interrupted",
+                        "missing-receipt" => "repository-invariant-missing-result:antiphon/",
+                        "missing-argument" => "repository-invariant-failed:antiphon/",
+                        _ => "fixture failure " + stop,
+                    };
+                    failure.ShouldNotBeNull().Message.ShouldContain(expectedError);
                     started.ShouldAllBe(start => start.Invariant);
                     var prefix = schedule.GetProperty("invariantPrefix");
                     prefix.GetProperty("complete").GetBoolean().ShouldBeFalse(stop);
                     prefix.GetProperty("outstanding").GetArrayLength().ShouldBeGreaterThan(0);
                 }
-                if (order == "previous") schedule.GetProperty("orderingReason").GetString().ShouldBe("previous-run-order");
                 else
                 {
                     failure.ShouldBeNull();
+                    schedule.GetProperty("invariantPrefix").GetProperty("complete").GetBoolean().ShouldBeTrue();
+                    if (order == "previous") schedule.GetProperty("orderingReason").GetString().ShouldBe("previous-run-order");
                     started.Select(s => s.Invariant).ShouldBe([true, true, false, false]);
                     completed.ShouldBe(["client", "antiphon", "messaging"], ignoreOrder: true);
                     schedule.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("dispatchOrdinal").GetInt32())

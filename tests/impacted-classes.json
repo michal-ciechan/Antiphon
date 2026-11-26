@@ -42,7 +42,7 @@
         "tests/Antiphon.Tests/Scripts/WindowsUnitSkipRoster.cs"
       ],
       "methods": [
-        "WindowsUnitPlatformAdmissionTests/C1210_Roster_closure_matches_source_gates"
+        "WindowsUnitPlatformAdmissionInvariantTests/C1210_Roster_closure_matches_source_gates"
       ]
     },
     {

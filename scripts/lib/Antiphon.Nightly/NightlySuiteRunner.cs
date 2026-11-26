@@ -333,7 +333,8 @@ namespace Antiphon.Nightly
                     if (!PsValue.IsTrue(PsValue.Prop(census, "Ok"))) throw new NightlyRefusal("profile-discovery-census-incomplete");
                     // Compiled (NightlyTestsPlan.SuiteChunks); the cost table read for it is kept for the phase manifest.
                     var costs = new NightlyClassCosts(s.ClassCostPath ?? "", s.ClassCostTable);
-                    chunks = NightlyTestsPlan.SuiteChunks(discoveryNodes, chunks, profileExclusions, s.ProfileAware, isNative, suiteId, policy, costs);
+                    chunks = NightlyTestsPlan.SuiteChunks(discoveryNodes, chunks, profileExclusions, s.ProfileAware, isNative, suiteId, policy, costs,
+                        requiresInvariantPrefix: s.RequiresInvariantPrefix);
                     if (costs.Loaded) s.ClassCostTable = costs.Table;
                     // S6b shadow: one discovery per suite. Carry cannot skip it. Recording grants no gate credit.
                     s.RcEvidence?.DiscoveryOnce(s.RcEvidenceRoot, s.LogRoot, suiteId, profileDiscoveryPath);

@@ -485,14 +485,6 @@ public class ProviderEndpointProjectionTests
             uri.Host.ShouldBe("proxy");
         }
 
-        const string sentence = "CARD-1827: path-embedded userinfo is accepted path text";
-        foreach (var relative in new[]
-                 {
-                     "server/Application/Services/ProviderEndpointSettings.cs",
-                     "server/Application/Services/ProviderEndpoint.cs",
-                     "docs/agent-credentials.md",
-                 })
-            RepoFile(relative).ShouldContain(sentence, Case.Sensitive, relative);
     }
 
     // CARD-1827 A-2. Review 95236406 measured 53 for the six-class Antiphon.Tests filter and 78 only

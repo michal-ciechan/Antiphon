@@ -846,6 +846,13 @@ namespace Antiphon.Nightly
                 RcChunkReceipt.Stamp(suiteRow, c.Sha, RcChunkReceipt.ContentDigest(suiteId, s.IsNative ? "native" : "command", roster),
                     new RcReceiptScope { Platform = c.Platform ?? "", Architecture = RcReceiptScope.CurrentArchitecture(), Profile = c.Profile ?? "" });
             }
+            if (NightlyTestsPlan.IsInvariantChunk(chunk))
+            {
+                var terminalNodes = PsValue.Prop(nativeVerdict, "terminalNodes");
+                suiteRow["observedInvariantUids"] = terminalNodes == null ? Array.Empty<string>()
+                    : PsValue.AsArray(terminalNodes).Select(node => PsValue.Str(PsValue.Prop(node, "Uid"))).ToArray();
+                suiteRow["coverageComplete"] = chunkCoverageComplete;
+            }
             o.Row = suiteRow;
         }
 

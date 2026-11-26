@@ -122,7 +122,7 @@ public sealed class RcProjectSelectionTests
                 return row;
             }, "windows");
             failed.AllGreen.ShouldBeFalse(field);
-            failed.Refusal.ShouldContain(field == "trx" ? "case-missing:" + invariantCase : reason, field);
+            failed.Refusal.Contains(field == "trx" ? "case-missing:" + invariantCase : reason, StringComparison.Ordinal).ShouldBeTrue(field + ": " + failed.Refusal);
         }
 
         var opaque = prior[0];

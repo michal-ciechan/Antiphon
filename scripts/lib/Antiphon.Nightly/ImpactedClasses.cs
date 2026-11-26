@@ -634,8 +634,8 @@ namespace Antiphon.Nightly
             {
                 subsetRows.AddRange(FilterRows(wholeSubset, subsetMethods, "CP-merge-subset-", ImpactedClasses.FixedClasses,
                     (project, testClass) => !covered.Contains((project, testClass))));
-                windowsRows.AddRange(FilterRows(windowsWhole, windowsMethods, "CP-merge-windows-", ImpactedClasses.FixedClasses,
-                    (project, testClass) => !covered.Contains((project, testClass))));
+                // A portable run cannot discharge a diff-driven native Windows obligation.
+                windowsRows.AddRange(FilterRows(windowsWhole, windowsMethods, "CP-merge-windows-", ImpactedClasses.FixedClasses));
             }
             var top = TopFilter(subsetRows);
             var fixedOut = Sorted(ImpactedClasses.FixedClasses);
