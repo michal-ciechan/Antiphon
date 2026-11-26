@@ -11,6 +11,8 @@ Persist the explicit Linux custody seal that was withheld while its host was pre
 
 The closed selection shares one server test build for the green integrations and guards and one runner test build for native custody and adjacent controls. The native Linux witness constructs the production SessionRunnerRuntime with Linux custody qualified and uses the installed helpers in the fixture's private custody namespace. The estimates below total 28 minutes across both source groups. All affected classes are bounded. The isolated operator check uses the real list and close routes within CP-2, with the fixture's own token.
 
+CP-4 requires the CARD-2060 placement helper and stage. Use the qualified session-testing image from the CARD-2067 witness or a matched successor. Give the disposable test container its own custody namespace and controller roots.
+
 | PC | Exact witness | Deliberate mutation |
 | --- | --- | --- |
 | PC-1 | VerificationCleanupServiceTests/C2083_Late_host_exit_is_recovered_without_another_cleanup | Drop the custody-intent retry branch in reconciliation. |
@@ -24,5 +26,5 @@ The closed selection shares one server test build for the green integrations and
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-c2083-red/ | pre-fix witnesses | `/*/*/VerificationCleanupServiceTests/(C2083_Late_host_exit_is_recovered_without_another_cleanup*)\|(C2083_Live_host_keeps_one_intent_until_operator_close*)` | V-1, V-2 red | Two intended assertion failures | 2 | 8 | true |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c2083-green/ | custody and adjacent consumers | `/*/*/(VerificationCleanupServiceTests*)\|(RunnerSlotEndpointTests*)\|(PhoneHomeDeferredKillTests*)\|(C2074IncidentCapIntentTests*)\|(GhostSeatReleaseTests*)/*` | V-1, V-2, R-1, R-2 | 0 failed, 0 skipped | 20 | 9 | true |
 | CP-3 | S2 | CP-2 | guards and scheduler registration | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)\|(RunnerSlotRulesTests*)/*` | V-2 local schedule, R-1 guards | 0 failed, 0 skipped | 58 | 4 | true |
-| CP-4 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c2083-linux/ | native custody | `/*/*/LinuxRunnerCustodyLifecycleTests/*` | V-1 native Linux | 7 passed | 7 | 3 | true |
+| CP-4 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c2083-linux-qualified/ | native custody | `/*/*/LinuxRunnerCustodyLifecycleTests/*` | V-1 native Linux | 8 passed | 8 | 3 | true |
 | CP-5 | S2 | CP-4 | runner controls and impacted slot custody | `/*/*/(RunnerCustodyReleaseTests*)\|(PhoneHomeCommandDispatcherTests*)\|(C0824WorkspaceSlotCustodyTests*)/*` | R-1 runner and workspace mutation lock | 0 failed, 0 skipped | 20 | 4 | true |

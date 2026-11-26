@@ -262,7 +262,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         var recovery = fx.Store.ReadRecord<LinuxRecoveryRecord>(fx.Binding, "linux-recovery.json")
             .ShouldNotBeNull();
         recovery.ContainerId.ShouldBe(tree.ContainerId);
-        recovery.KillSucceeded.ShouldBeTrue($"recovery helper exit code {recovery.KillError}");
+        recovery.KillSucceeded.ShouldBeTrue("recovery helper exit code " + recovery.KillError);
         File.ReadAllLines(procs).ShouldBeEmpty();
         Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeFalse();
         File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
@@ -404,7 +404,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
                 {
                     if (Environment.GetEnvironmentVariable("ANTIPHON_TEST_LINUX_PLACEMENT_TIMING") == "1")
                     {
-                        var log = Path.Combine(settings.PtyHostLogDir, $"{request.SessionId:N}.log");
+                        var log = Path.Combine(settings.PtyHostLogDir, request.SessionId.ToString("N") + ".log");
                         if (File.Exists(log))
                             foreach (var line in File.ReadLines(log).Where(line => line.Contains("[INF] Linux placement outcome=")))
                                 Console.WriteLine(line);
@@ -490,7 +490,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
                     if (LinuxProcessIdentity.TryRead(pid) != identity)
                         continue;
                     process.Kill(entireProcessTree: false);
-                    process.WaitForExit(5_000).ShouldBeTrue($"fixture PtyHost {pid} must exit");
+                    process.WaitForExit(5_000).ShouldBeTrue("fixture PtyHost " + pid + " must exit");
                 }
                 catch (Exception ex) when ((ex is ArgumentException or InvalidOperationException)
                     && LinuxProcessIdentity.TryRead(pid) != identity) { /* Already gone. */ }
