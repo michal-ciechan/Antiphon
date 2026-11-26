@@ -812,6 +812,58 @@ under the restart runbook before checking `GET /api/orchestrator-instructions` s
 A Docs task reports the exact proposed configuration command/text; it never writes live settings
 or edits the generated file. The full wording stays here, outside section 8's size cap.
 
+<a id="merge-master-moves-card-2086"></a>
+### Master moves during a Merge attempt (CARD-2086)
+
+Hold lands that touch a running Merge's area until it publishes or settles. Check the
+Merge scope and touched paths before releasing each land. Unrelated lands may proceed.
+Honor pre-authorization in the Merge goal to absorb one advance of master without a
+Reply or another approval.
+
+A Merge-role Worktree task integrating into master may merge the updated
+`origin/master` into its own assigned branch once per attempt. Shared conflict
+helpers and other roles keep their existing Git rules (CARD-0227). The Merge begins
+with the master SHA it used as its integration base. Fetch and compare the observed
+master SHA before final-tree verification and again immediately before publication.
+If master has advanced, record the old and new SHAs and pin the new SHA for the merge.
+A second advance in the same attempt stops Blocked. Verification reruns and Replies
+within an attempt do not renew the allowance. Report both observed advances, the
+latest pushed task SHA and the available check receipts. Stop Blocked on a master
+rewind or an unverified ref observation as well.
+
+On the first advance, require a clean worktree and preview with
+`git merge-tree --write-tree --name-only --no-messages HEAD <new-master-sha>`. Proceed when the
+preview is clean or reports only the pin, roster, and index paths listed below.
+A conflicted preview must identify at least one path. Report any other conflict or
+preview error and stop Blocked before merging.
+
+- `tests/test-execution-policy.json` for the policy pin and its roster entries.
+- `scripts/test-live-lane-run.ps1` when the conflict is confined to the
+  `PinnedInputDigest` assignment.
+- `tests/expected-platform-skips.json`, `tests/Shared/expected-duration-roster.json`,
+  and existing project `slow-tests-allowlist.txt` files under `tests/` for roster entries.
+- `tests/derived-impact-index.json` as generated output.
+
+Run `git merge --no-ff --no-commit <new-master-sha>` on the assigned branch and
+confirm the actual conflicts are within the same bounds. Abort this merge and stop
+Blocked on an unexpected conflict. Resolve the admitted inputs while preserving
+the intended changes from both sides. Recompute the derived values in this order.
+
+1. Recompute `policyHash` in `tests/test-execution-policy.json` from the resolved
+   policy with `scripts/antiphon live-lane-emit-policy-hash --policy-root .`.
+2. Recompute `PinnedInputDigest` in `scripts/test-live-lane-run.ps1` with
+   `pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest`.
+3. Regenerate `tests/derived-impact-index.json` with
+   `scripts/antiphon regenerate-derived-impact-index`.
+
+Commit the result and push the assigned branch as a fast-forward. Discard the old tip
+as a basis for publication and rerun `land-graph-audit --check` and the final-tree checks
+at the new tip. Derive the selection from the updated integration range, and bind clean
+receipts to the new commit. After verifying master still matches the pinned SHA and
+is an ancestor of the candidate, publish to master under the existing publication
+authority using a fast-forward push. If that push races another advance, apply the
+same per-attempt rule.
+
 <a id="merge-process"></a>
 ### Merge process (CARD-1783)
 
