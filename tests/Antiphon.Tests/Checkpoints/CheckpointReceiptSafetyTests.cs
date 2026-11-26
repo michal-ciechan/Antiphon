@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Antiphon.Checkpoints;
+using Antiphon.HostCleanup.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -231,7 +232,10 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             json[collection]![0]!["id"] = identity;
             File.WriteAllText(path, json.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
             var before = Directory.GetFiles(run).ToDictionary(file => file, File.ReadAllBytes);
-            var result = await Child(root, run, verb);
+            // Exercise both receipt entry points in a fresh process for each identity.
+            // The remaining combinations check the same CLI dispatch without repeated runtime startup.
+            var native = collection == "rows" && (receipt, verb) is ("state.json", "status") or ("report.json", "validate");
+            var result = native ? await Child(root, run, verb) : await RunReceiptCommandAsync(root, run, verb);
             var expected = valid && verb != "clean" ? 0 : 2;
             if (result.Exit != expected)
                 failures.Add($"{receipt}/{collection}/{verb}: expected={expected} exit={result.Exit} {result.Output}");
@@ -352,6 +356,20 @@ public sealed class CheckpointReceiptSafetyTests : CheckpointTestBase
             ? new[] { "report" }.Concat(verb.Contains("json", StringComparison.Ordinal) ? new[] { "--json" } : [])
                 .Concat(verb.Contains("merge", StringComparison.Ordinal) ? new[] { "--merge" } : [])
             : new[] { verb }).Concat(new[] { "--repo-root", root, "--run", run, "--results-root", root }).ToArray();
+
+    private static async Task<(int Exit, string Output)> RunReceiptCommandAsync(string root, string run, string verb)
+    {
+        using var output = new StringWriter();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        var defaults = CheckpointCleanupDefaults.Context;
+        var exit = await Antiphon.Checkpoints.Program.RunAsync(Args(root, run, verb), new CheckpointApp.Runtime
+        {
+            CleanupContext = new(defaults.Io, defaults.Git),
+            CancellationToken = deadline.Token,
+            Output = output,
+        });
+        return (exit, output.ToString());
+    }
 
     private async Task<(int Exit, string Output)> Child(string root, string run, string verb)
     {
