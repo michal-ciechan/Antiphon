@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 365,
+      "classes": 367,
       "reason": "allowlist"
     },
     {
@@ -170,6 +170,15 @@
         "AgentTaskDispatchFailureTests",
         "AgentTaskEffectiveModelChipTests",
         "AgentTaskInputFallbackTests"
+      ]
+    },
+    {
+      "path": "docker-compose.server2-runner.yml",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -2174,18 +2183,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 57,
+      "classes": 59,
       "reason": "cap",
-      "owed": 32,
+      "owed": 34,
       "first": [
+        "CodexGpt62LadderTests",
         "GrokRunnerImageContractTests",
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
         "OsWitnessCheckTests",
         "PackageVersionPinContractTests",
         "PostgresSnapshotJobTests",
-        "QualificationCheckoutSourceTests",
-        "SessionRunnerGrokLineEndingContractTests"
+        "QualificationCheckoutSourceTests"
       ]
     },
     {
@@ -2964,6 +2973,8 @@
         "DevAspireTests",
         "DevStackTests",
         "DockerStackContractTests",
+        "Server2PostgresComposeTests",
+        "Server2PostgresDeployTests",
         "Server2ProductionServerContractTests"
       ]
     },
@@ -2980,6 +2991,20 @@
       "path": "docker-compose.server2-land-credential.yml",
       "classes": [
         "ServerImagePushCredentialTests"
+      ]
+    },
+    {
+      "path": "docker-compose.server2-postgres-drill.yml",
+      "classes": [
+        "Server2PostgresComposeTests",
+        "Server2PostgresDeployTests"
+      ]
+    },
+    {
+      "path": "docker-compose.server2-postgres.yml",
+      "classes": [
+        "Server2PostgresComposeTests",
+        "Server2PostgresDeployTests"
       ]
     },
     {
@@ -3001,6 +3026,7 @@
         "RollingProductionMountTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
+        "Server2PostgresComposeTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementReceiptTests",
@@ -3029,12 +3055,12 @@
         "RollingProductionMountTests",
         "RollingVolumeRecycleCensusChurnTests",
         "RollingVolumeRecycleScriptTests",
+        "Server2PostgresComposeTests",
         "Server2StagingServerContractTests",
         "VerifyDindRunnerScriptTests",
         "VolumeRetirementApplyGateTests",
         "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
@@ -3336,6 +3362,7 @@
         "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
         "RunnerPushCredentialDocsTests",
+        "Server2PostgresComposeTests",
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests",
         "Server2StagingServerContractTests",
@@ -3624,6 +3651,7 @@
         "RcInputOwnersMapTests",
         "ReviewTestQualityChecklistWitnessTests",
         "RunnerPushCredentialDocsTests",
+        "Server2PostgresComposeTests",
         "Server2StagingServerContractTests",
         "StableBuildOutputDocumentationTests"
       ]
@@ -4356,6 +4384,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/Server2PostgresDeploy.cs",
+      "classes": [
+        "Server2PostgresComposeTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/ServerRepositoryMirrors.cs",
       "classes": [
         "ImpactedClassesSelectorTests",
@@ -4515,7 +4549,8 @@
     {
       "path": "scripts/lib/Antiphon.Scripts/DeployCommands.cs",
       "classes": [
-        "DeployAmServiceTests"
+        "DeployAmServiceTests",
+        "Server2PostgresComposeTests"
       ]
     },
     {
@@ -25551,7 +25586,6 @@
         "C1744G1DesktopWinComposeTests",
         "CheckpointToolProjectContractTests",
         "ClaudeTokenRefreshOptInTests",
-        "CodexGpt62LadderTests",
         "CodexRootExecContractTests",
         "CodexRunnerImageContractTests",
         "CustodyHelperContractTests",
@@ -25568,6 +25602,7 @@
         "RegisterPostgresSnapshotTests",
         "RemoteScriptContractTests",
         "RunnerPushCredentialDocsTests",
+        "Server2PostgresComposeTests",
         "Server2ProductionServerContractTests",
         "Server2SidecarStandingAgentsTests",
         "Server2StagingServerContractTests",
@@ -26689,6 +26724,25 @@
       "classes": [
         "ComplexityChainScriptTests",
         "MigrateStagePinsScriptTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2PostgresComposeTests.cs",
+      "classes": [
+        "Server2PostgresComposeTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2PostgresDeployTests.cs",
+      "classes": [
+        "Server2PostgresComposeTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2PostgresDeployWorld.cs",
+      "classes": [
+        "Server2PostgresComposeTests",
+        "Server2PostgresDeployTests"
       ]
     },
     {
