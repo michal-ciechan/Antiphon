@@ -10,8 +10,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 /// <summary>
-/// The reader scripts/lib/checkpoint-file-reader.ps1 embeds (kept: scripts/lib/checkpoint-process-runner.ps1 loads it for
-/// the gated callers), compiled from that file's source by <see cref="EmbeddedCheckpointReader"/> and driven in process.
+/// The reader scripts/lib/checkpoint-file-reader.ps1 embeds (its last loader, scripts/lib/checkpoint-process-runner.ps1,
+/// went in unit 62 with the C487 harness that loaded it), compiled from that file's source by <see cref="EmbeddedCheckpointReader"/> and driven in process.
 /// Unit 20 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md moved these cases here from the deleted pwsh
 /// drivers: CARD-1532's digest bounds, stalls and end-of-file checks (test-checkpoint-large-stamp.ps1 -Mode reader),
 /// CARD-1363's re-armed stall window, overall deadline and Windows open (test-checkpoint-reader-deadline.ps1), CARD-1573's
