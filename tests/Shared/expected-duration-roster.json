@@ -1,7 +1,7 @@
 {
   "format": "antiphon-expected-duration-roster-v1",
   "platform": "windows",
-  "costFile": "/work/worktrees/ws-11/scripts/lib/nightly-class-costs.json",
+  "costFile": "scripts/lib/nightly-class-costs.json",
   "export": "scripts/antiphon export-expected-duration-roster",
   "classes": {
     "Antiphon.E2E.AgentE2ETests": {

@@ -84,7 +84,7 @@ namespace Antiphon.LiveLane
         /// The deliberate pin. Never this commit's own blobs: a clean checkout always matches its own commit, so a change
         /// to an input is caught only against this value.
         /// </summary>
-        public const string Pinned = "f6d19136c2fc1de984052efb8506a370a0d8bf4f2c4b86ea741f3941be7130df";
+        public const string Pinned = "16566e36f68e36ba3fb801195d3682c68683f7788cd418e4b8b44a4289e3e414";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";
