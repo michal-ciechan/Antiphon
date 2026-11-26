@@ -188,8 +188,8 @@ internal sealed partial class RunnerSeatReleaseFixture
         await GitAsync(repository, "commit", "-m", "retained baseline");
         await GitAsync(repository, "remote", "add", "origin", origin);
         // A pre-published owned branch is already on origin at the baseline (published with master, one push), so
-        // a park's publication confirms it with ls-remote instead of pushing it (a push to a local path is ~5 git
-        // processes per world).
+        // a park's first publication is an up-to-date push: no pack is built, sent or indexed (a push of new objects
+        // to a local path is ~5 git processes per world).
         await GitAsync(repository, prePublished ? ["push", "origin", "master", "HEAD:refs/heads/" + branch] : ["push", "origin", "master"]);
         var sha = await GitAsync(repository, "rev-parse", "HEAD");
         await GitAsync(repository, "worktree", "add", "-b", branch, Path.Combine(root, "task"), sha);

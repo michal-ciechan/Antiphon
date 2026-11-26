@@ -186,6 +186,8 @@ public sealed class RunnerWorkspaceParkService
                 var push = await GitAsync(path, pushBudget.Token, "push", "--porcelain", "--no-follow-tags",
                     "--recurse-submodules=no", "--", endpoint.Url!, tip + ":" + request.Binding.FullRef);
                 pushing = false;
+                // A failed push is never publication, even if the remote is found at the tip (G-23): an up-to-date
+                // push with write access succeeds without updating anything, so only a transient failure lands here.
                 if (push.ExitCode != 0) return await PushRefusalAsync(path, endpoint.Url!, request.Binding.FullRef, tip, ct);
                 remoteBefore = await PushedFromAsync(path, push.Stdout, request.Binding.FullRef, tip, ct);
                 await AtBoundaryAsync(WorkspaceParkBoundary.AfterPush, ct);
@@ -293,8 +295,9 @@ public sealed class RunnerWorkspaceParkService
             .Any(name => Directory.Exists(Path.Combine(directory, name)) || File.Exists(Path.Combine(directory, name)));
 
     /// <summary>
-    /// Why a park push was refused, read only after the refusal: a remote branch that is not an ancestor of the tip
-    /// is <c>park_remote_not_ancestor</c>, an unreadable remote or ancestry is unknown, anything else
+    /// Why a park push failed, read only after the failure: a remote branch that is not an ancestor of the tip
+    /// (including one whose commit this repository does not have, as a foreign writer's would be) is
+    /// <c>park_remote_not_ancestor</c>, an unreadable remote or ancestry is unknown, anything else
     /// <c>park_push_rejected</c>.
     /// </summary>
     private async Task<WorkspaceParkResult> PushRefusalAsync(string path, string endpoint, string fullRef, string tip, CancellationToken ct)
@@ -303,6 +306,9 @@ public sealed class RunnerWorkspaceParkService
         if (remote.Failure is { } readFailure) return readFailure;
         if (remote.Sha is { } sha && sha != tip)
         {
+            var present = await GitAsync(path, ct, "cat-file", "-e", sha);
+            if (present.ExitCode == 1) return Held("park_remote_not_ancestor");
+            if (present.ExitCode != 0) return Unknown();
             var forward = await GitAsync(path, ct, "merge-base", "--is-ancestor", sha, tip);
             if (AncestryDecision(forward.ExitCode, "park_remote_not_ancestor") is { } remoteFailure) return remoteFailure;
         }

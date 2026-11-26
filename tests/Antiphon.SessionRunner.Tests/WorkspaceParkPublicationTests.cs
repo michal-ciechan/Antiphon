@@ -252,6 +252,22 @@ public sealed class WorkspaceParkPublicationTests
             world.Commands.Single(x => x[0] == "push").ShouldNotContain(x => x.StartsWith("--force") || x.StartsWith('+'));
         }
 
+        using (var world = await World.CreateAsync())
+        {
+            await world.CommitAsync("runner.txt", "runner branch");
+            string? foreign = null;
+            var result = await world.Publisher(async (boundary, _) =>
+            {
+                if (boundary != WorkspaceParkBoundary.BeforePush) return;
+                // A foreign writer's commit exists only on the remote: this repository cannot run ancestry on it.
+                foreign = (await world.GitAsync(world.Origin, "-c", "user.name=foreign", "-c", "user.email=foreign@localhost", "commit-tree", world.BaseSha + "^{tree}", "-p", world.BaseSha,
+                    "-m", "foreign remote writer")).Trim();
+                await world.GitAsync(world.Origin, "update-ref", World.FullRef, foreign);
+            }).PrepareAsync(world.Request, CancellationToken.None);
+            AssertHeld(result, "park_remote_not_ancestor", "G-21 foreign commit");
+            (await world.RemoteShaAsync()).ShouldBe(foreign, "G-21 foreign writer preserved");
+        }
+
         foreach (var fault in new[] { "head", "status", "ancestry", "remote", "start" })
         {
             using var world = await World.CreateAsync();

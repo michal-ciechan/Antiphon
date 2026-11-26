@@ -94,12 +94,17 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
                     budget.CancelAfter(TimeSpan.FromSeconds(60));
                     var push = await git.RunAsync(path, ["push", "--no-follow-tags", "--recurse-submodules=no",
                         "--", endpoint, sha + ":" + b.FullRef], budget.Token);
+                    // A failed push is never publication, even if the remote is found at the tip. A remote commit
+                    // this repository lacks (a foreign writer's) cannot be an ancestor of the tip.
                     if (!push.Succeeded)
                     {
                         var observed = await RemoteAsync(path, endpoint, b.FullRef, ct);
                         if (!observed.Known) return Unknown();
                         if (observed.Sha is { } old && old != sha)
                         {
+                            var present = await git.RunAsync(path, ["cat-file", "-e", old], ct);
+                            if (present.ExitCode == 1) return Held("park_remote_not_ancestor");
+                            if (!present.Succeeded) return Unknown();
                             var ff = await git.RunAsync(path, ["merge-base", "--is-ancestor", old, sha], ct);
                             if (ff.ExitCode == 1) return Held("park_remote_not_ancestor");
                             if (!ff.Succeeded) return Unknown();
