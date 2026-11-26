@@ -95,6 +95,15 @@ namespace Antiphon.Nightly
         /// <summary>The task token (ANTIPHON_TASK_TOKEN); empty: no token header.</summary>
         public string TaskToken { get; init; } = "";
 
+        /// <summary>The status verb: each API read's deadline.</summary>
+        public TimeSpan SourceTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+        /// <summary>The status verb: the deadline of a known slow read (the attention feed).</summary>
+        public TimeSpan SlowSourceTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
+        /// <summary>The status verb: the whole observation's bound; reads not answered by then are reported unverified.</summary>
+        public TimeSpan StatusBudget { get; set; } = TimeSpan.FromSeconds(30);
+
         /// <summary>The arguments after the command name; the API, the token and the default repository come from the CLI.</summary>
         public static StatusSnapshotOptions Parse(IReadOnlyList<string> arguments, string api, string taskToken, string defaultRepository)
         {
