@@ -32,17 +32,8 @@ namespace Antiphon.Nightly
         internal static void Read(JsonObject report, IFileSystem files, string logDir, JsonObject schedule, DateTimeOffset now,
             DateTimeOffset? started, DateTimeOffset? completed, bool comparable, Func<string> previousRun, List<string> errors)
         {
-            var failures = new JsonArray();
-            report["failures"] = failures;
-            var eta = new JsonObject
-            {
-                ["previousRunLogDir"] = null,
-                ["ratio"] = null,
-                ["projectedRemainingSeconds"] = null,
-                ["projectedFinishUtc"] = null,
-                ["startupOverheadNote"] = "Sequential test time only. Build and startup overhead are outside the projection.",
-                ["biggestRemaining"] = new JsonArray(),
-            };
+            // The report carries every OperatorStatusShape key already (D-3); failures stay null until the directory is read.
+            var eta = report["eta"] as JsonObject ?? OperatorStatusShape.RcSkeleton()["eta"].AsObject();
             report["eta"] = eta;
             IFileInfo[] current;
             try
@@ -55,6 +46,8 @@ namespace Antiphon.Nightly
                 return;
             }
 
+            var failures = new JsonArray();
+            report["failures"] = failures;
             report["trxCount"] = current.Length;
             var live = new Dictionary<string, ChunkTime>(ChunkNames);
             var duplicate = new HashSet<string>(ChunkNames);
@@ -72,7 +65,7 @@ namespace Antiphon.Nightly
                     foreach (var failure in failed)
                         failures.Add(new JsonObject { ["chunk"] = name, ["testName"] = failure, ["fixes"] = null });
                 }
-                catch (Exception error) when (OperatorRcStatus.ReadError(error) || error is XmlException)
+                catch (Exception error) when (OperatorRcStatus.ReadError(error) || error is XmlException || error is InvalidDataException)
                 {
                     errors.Add("rc live TRX " + file.Name + " unreadable or incomplete; its failures and duration are unverified.");
                 }
@@ -139,7 +132,9 @@ namespace Antiphon.Nightly
             var known = remaining.Where(chunk => previous.GetValueOrDefault(chunk) != null)
                 .Select(chunk => (Chunk: chunk, Seconds: previous[chunk].Seconds))
                 .OrderByDescending(chunk => chunk.Seconds).ThenBy(chunk => chunk.Chunk, ChunkNames).ToArray();
-            eta["unknownRemaining"] = remaining.Length - known.Length;
+            var unknown = remaining.Where(chunk => previous.GetValueOrDefault(chunk) == null).ToArray();
+            eta["unknownRemaining"] = unknown.Length;
+            eta["unknownRemainingChunks"] = new JsonArray(unknown.Select(chunk => (JsonNode)chunk).ToArray());
             eta["knownRemaining"] = known.Length;
             eta["finishedWithoutBaseline"] = live.Keys.Count(chunk => previous.GetValueOrDefault(chunk) == null);
             eta["biggestRemaining"] = new JsonArray(known.Take(BiggestChunkCount).Select(chunk => (JsonNode)new JsonObject
@@ -159,6 +154,7 @@ namespace Antiphon.Nightly
             var remainingSeconds = known.Sum(chunk => chunk.Seconds);
             eta["ratio"] = ratio;
             eta["baselineRemainingSeconds"] = remainingSeconds;
+            eta["lowerBound"] = unknown.Length > 0;
             if (known.Length == 0 && remaining.Length != 0)
             {
                 errors.Add("rc ETA has no previous timings for the remaining chunks.");
@@ -172,6 +168,27 @@ namespace Antiphon.Nightly
             }
             eta["projectedRemainingSeconds"] = projected;
             eta["projectedFinishUtc"] = now.AddSeconds(projected).ToString("O", CultureInfo.InvariantCulture);
+            // D-2: remaining chunks without a previous timing make the projection a lower bound, never a silent ETA.
+            if (unknown.Length > 0)
+                errors.Add("rc ETA is a lower bound: no previous timing for " + unknown.Length + " remaining chunk(s): "
+                    + string.Join(", ", unknown.Take(BiggestChunkCount)) + (unknown.Length > BiggestChunkCount ? " and " + (unknown.Length - BiggestChunkCount) + " more" : "") + ".");
+        }
+
+        /// <summary>
+        /// D-2: a historical run is a baseline only when its TRX files cover its own dispatch-schedule.json (a stopped or
+        /// partial attempt does not). Null: complete; otherwise the reason.
+        /// </summary>
+        internal static string Incomplete(IFileSystem files, string directory)
+        {
+            var read = RcQualificationRecords.Read(files, files.Path.Combine(directory, "dispatch-schedule.json"));
+            if (!read.Ok) return "its dispatch-schedule.json is unavailable (" + read.Reason + ")";
+            var schedule = JsonNode.Parse(read.Record.Value.GetRawText());
+            var planned = (schedule?["entries"] as JsonArray)?.Select(ScheduleKey).ToArray();
+            if (planned == null || planned.Length == 0 || planned.Any(string.IsNullOrEmpty) || schedule["preparationComplete"]?.ToJsonString() == "false")
+                return "its dispatch schedule is incomplete or invalid";
+            var timed = new HashSet<string>(TrxFiles(files, directory).Select(file => files.Path.GetFileNameWithoutExtension(file.Name)), ChunkNames);
+            var missing = planned.Count(chunk => !timed.Contains(chunk));
+            return missing == 0 ? null : missing + " of its " + planned.Length + " scheduled chunks have no TRX";
         }
 
         private static string ScheduleKey(JsonNode entry)

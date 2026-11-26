@@ -34,6 +34,27 @@ unverified. If the host cannot read the Windows paths, obtain the owner's
 observation or preserve the rc caveat. Require a completion record before
 declaring the run complete. Follow [antiphon-rc-qualification](../antiphon-rc-qualification/SKILL.md).
 
+The call is bounded: API reads run concurrently, each with its own deadline (the
+attention feed a shorter one), inside one overall budget; a read that misses it is an
+`UNVERIFIED` line, never a stall. Unknown remaining chunks make the ETA a lower
+bound (`lowerBound`, an `UNVERIFIED` line naming them). The previous run is the
+newest earlier attempt whose TRX files cover its own `dispatch-schedule.json`.
+
+`--json` always carries every key below, `null` when the fact is unknown:
+- top level: `observedAtUtc`, `projectId`, `runner`, `counts`, `pipeline`,
+  `orchestratorInstructions`, `master` (`tip`, `cachedOriginMasterLog`,
+  `historyIsCached`), `rcRefs`, `rc`, `taskScope`, `tasks`, `mergeInFlight`,
+  `fleetHosts`, `fleetConcurrencyScopes`, `runnerDefaults`, `landQueue`,
+  `runnerCatalogue`, `runnerSlots`, `cardsAtRisk`, `errors`;
+- `rc`: `candidateId`, `pin`, `runId`, `phase`, `elapsedSeconds`, `lastRun`,
+  `runLogDir`, `stateDir`, `activeChunk`, `heartbeat`, `heartbeatAgeSeconds`,
+  `trxCount`, `finishedChunks`, `scheduledEntries`, `failures`, `eta`;
+- `rc.eta`: `status`, `previousRunLogDir`, `ratio`, `matchedFinished`,
+  `knownRemaining`, `unknownRemaining`, `unknownRemainingChunks`,
+  `finishedWithoutBaseline`, `baselineRemainingSeconds`,
+  `projectedRemainingSeconds`, `projectedFinishUtc`, `lowerBound`,
+  `observedStartupSeconds`, `startupOverheadNote`, `biggestRemaining`.
+
 Use a task's parsed next-stage and handoff fields. A task absent from the
 snapshot can still matter to an earlier update. Consult its status if needed.
 Confirm transcript progress before calling a task healthy or stalled. Use

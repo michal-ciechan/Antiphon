@@ -20,7 +20,7 @@ namespace Antiphon.Nightly
             var stateDir = options.RcStateDir;
             var heartbeatPath = options.RcHeartbeatPath;
             var releaseRoot = options.RcReleaseRoot;
-            var report = new JsonObject();
+            var report = OperatorStatusShape.RcSkeleton();
             JsonObject state = null;
             JsonObject schedule = null;
 
@@ -118,7 +118,7 @@ namespace Antiphon.Nightly
                     var comparable = (scope == null || scope == "Full") &&
                         (platform == null || platform.Equals("windows", StringComparison.OrdinalIgnoreCase));
                     OperatorTrxStatus.Read(report, files, logDir, schedule, now, started, completed, comparable,
-                        () => PreviousRun(files, logDir, options.RcPreviousRunLogDir), errors);
+                        () => PreviousRun(files, logDir, options.RcPreviousRunLogDir, errors), errors);
                 }
                 else
                 {
@@ -204,12 +204,15 @@ namespace Antiphon.Nightly
                 errors.Add("rc supervisor-heartbeat.json observation time is ahead of this host's clock.");
         }
 
-        private static string PreviousRun(IFileSystem files, string live, string previous)
+        private static string PreviousRun(IFileSystem files, string live, string previous, List<string> errors)
         {
             if (!string.IsNullOrEmpty(previous))
             {
                 var selected = files.Path.GetFullPath(previous);
-                return SamePath(files, live, selected) ? null : selected;
+                if (SamePath(files, live, selected)) return null;
+                if (OperatorTrxStatus.Incomplete(files, selected) is string reason)
+                    errors.Add("Supplied previous rc run is not a complete baseline: " + reason + ".");
+                return selected;
             }
             var root = FindReleaseRoot(files, live);
             var liveStamp = RunStamp(files, live);
@@ -220,10 +223,11 @@ namespace Antiphon.Nightly
                 .Select(dir => (Dir: dir, Start: RunStamp(files, dir)))
                 .Where(item => item.Start < liveStamp)
                 .OrderByDescending(item => item.Start);
+            // D-2: the newest earlier attempt whose TRX files cover its own schedule; stopped partial attempts are skipped.
             foreach (var group in candidates.GroupBy(item => item.Start))
             {
-                var withTrx = group.Where(item => OperatorTrxStatus.TrxFiles(files, item.Dir).Any()).ToArray();
-                if (withTrx.Length > 0) return withTrx.Length == 1 ? withTrx[0].Dir : null;
+                var complete = group.Where(item => OperatorTrxStatus.Incomplete(files, item.Dir) == null).ToArray();
+                if (complete.Length > 0) return complete.Length == 1 ? complete[0].Dir : null;
             }
             return null;
         }

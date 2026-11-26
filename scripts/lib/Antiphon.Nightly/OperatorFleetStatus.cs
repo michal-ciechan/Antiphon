@@ -12,6 +12,49 @@ namespace Antiphon.Nightly
 {
     internal static class OperatorFleetStatus
     {
+        internal const string LandsPath = "/api/agent-tasks?landPending=true";
+        internal const string AttentionPath = "/api/attention";
+
+        private static string DetailPath(Guid id) => "/api/agent-tasks/" + id;
+
+        private static string SlotsPath(string runner) => "/api/session-runners/" + Uri.EscapeDataString(runner) + "/slots";
+
+        private static string RecentPath(string start) => "/api/agent-tasks?since=" + Uri.EscapeDataString(start);
+
+        /// <summary>The detail and runner census reads Read will make, so they can be requested at once (D-5).</summary>
+        internal static IEnumerable<string> Prefetch(JsonNode fleet, JsonNode scoped, JsonNode lands, string runner)
+        {
+            var ids = new List<string>();
+            var stages = Field(fleet, "stages") as JsonArray ?? Field(scoped, "stages") as JsonArray;
+            foreach (var stage in Rows(stages))
+            {
+                foreach (var bucket in new[] { "inFlight", "queued", "blocked" })
+                    ids.AddRange(Rows(Field(stage, bucket)).Select(row => Text(row, "taskId")));
+                ids.AddRange(Rows(Field(stage, "ready")).Select(row => Text(row, "sourcePlanTaskId")));
+            }
+            ids.AddRange(Rows(Field(lands, "items")).Select(row => Text(row, "id")));
+            var paths = ids.Select(id => Guid.TryParse(id, out var key) ? DetailPath(key) : null).Where(path => path != null).ToList();
+            var runners = string.IsNullOrEmpty(runner) ? Rows(Field(fleet ?? scoped, "runners")).Select(row => Text(row, "runnerId")) : new[] { runner };
+            paths.AddRange(runners.Where(id => id != null).Select(SlotsPath));
+            return paths.Distinct(StringComparer.Ordinal).ToArray();
+        }
+
+        /// <summary>The repair-candidate detail reads for the rc failures (waits for the recent-task list).</summary>
+        internal static IEnumerable<string> RepairPrefetch(JsonNode rc, OperatorStatusReads reads)
+        {
+            var start = Text(Field(rc, "lastRun"), "startedAt");
+            if (Field(rc, "failures") is not JsonArray failures || failures.Count == 0 || Text(rc, "runId") == null || Time(start) == null)
+                return Array.Empty<string>();
+            var recent = reads.Take(RecentPath(start), null);
+            return RepairRows(Field(recent, "items") as JsonArray).Select(row => DetailPath(Guid.Parse(row.Id))).ToArray();
+        }
+
+        private static IEnumerable<(JsonNode Row, string Id)> RepairRows(JsonArray recent) =>
+            Rows(recent).Where(row => Text(row, "role") is "Debug" or "Custom"
+                    && Text(row, "title")?.StartsWith("rc failure:", StringComparison.OrdinalIgnoreCase) == true)
+                .Select(row => (Row: row, Id: Text(row, "id")))
+                .Where(row => Guid.TryParse(row.Id, out _));
+
         internal static void Read(JsonObject snapshot, JsonNode fleet, JsonNode scoped, string runner,
             Func<string, JsonNode> get, List<string> errors)
         {
@@ -20,7 +63,7 @@ namespace Antiphon.Nightly
             {
                 if (!Guid.TryParse(id, out var key)) return null;
                 if (!details.TryGetValue(id, out var detail))
-                    details[id] = detail = get("/api/agent-tasks/" + key);
+                    details[id] = detail = get(DetailPath(key));
                 return detail;
             }
 
@@ -69,8 +112,7 @@ namespace Antiphon.Nightly
             snapshot["fleetConcurrencyScopes"] = Field(fleet, "concurrencyScopes")?.DeepClone();
             snapshot["runnerDefaults"] = Field(fleet ?? scoped, "runnerDefaults")?.DeepClone();
 
-            const string landsPath = "/api/agent-tasks?landPending=true";
-            var lands = List(get, landsPath, errors);
+            var lands = List(get, LandsPath, errors);
             if (lands != null)
             {
                 var queue = new JsonArray();
@@ -102,13 +144,13 @@ namespace Antiphon.Nightly
             var ids = string.IsNullOrEmpty(runner) ? Rows(catalogue).Select(row => Text(row, "runnerId")) : new[] { runner };
             foreach (var id in ids.Where(id => id != null).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(id => id, StringComparer.Ordinal))
             {
-                var fact = get("/api/session-runners/" + Uri.EscapeDataString(id) + "/slots");
+                var fact = get(SlotsPath(id));
                 slots[id] = fact;
                 if (fact != null && (Field(fact, "occupied") == null || Field(fact, "slots") is not JsonArray))
                     errors.Add("Runner " + id + " slot census unavailable (invalid shape).");
             }
 
-            var attention = List(get, "/api/attention", errors);
+            var attention = List(get, AttentionPath, errors);
             if (attention != null)
             {
                 var risks = attention.Where(row => Field(row, "cardId") != null)
@@ -137,12 +179,9 @@ namespace Antiphon.Nightly
                 errors.Add("rc repair positions unavailable without a bound run id and start time.");
                 return;
             }
-            var recent = List(get, "/api/agent-tasks?since=" + Uri.EscapeDataString(start), errors);
+            var recent = List(get, RecentPath(start), errors);
             if (recent == null) return;
-            var candidates = recent.Where(row => Text(row, "role") is "Debug" or "Custom"
-                    && Text(row, "title")?.StartsWith("rc failure:", StringComparison.OrdinalIgnoreCase) == true)
-                .Select(row => (Row: row, Id: Text(row, "id")))
-                .Where(row => Guid.TryParse(row.Id, out _))
+            var candidates = RepairRows(recent)
                 .Select(row => (row.Row, row.Id, Detail: detail(row.Id)))
                 .Where(row => ContainsToken(Text(row.Detail, "goal"), run)).ToArray();
             var unresolved = 0;
@@ -234,7 +273,8 @@ namespace Antiphon.Nightly
             var eta = Field(rc, "eta");
             if (eta != null)
             {
-                output.WriteLine("rc ETA " + (Text(eta, "status") ?? Show(eta, "projectedFinishUtc"))
+                var bound = Field(eta, "lowerBound")?.ToJsonString() == "true" ? "at least " : "";
+                output.WriteLine("rc ETA " + (Text(eta, "status") ?? bound + Show(eta, "projectedFinishUtc"))
                     + " remaining=" + Duration(Field(eta, "projectedRemainingSeconds")) + " ratio=" + Show(eta, "ratio")
                     + " unknownRemaining=" + Show(eta, "unknownRemaining") + " finishedWithoutBaseline=" + Show(eta, "finishedWithoutBaseline")
                     + " previous=" + Show(eta, "previousRunLogDir"));
