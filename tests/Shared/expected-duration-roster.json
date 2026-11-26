@@ -4701,7 +4701,7 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Infrastructure.OrchestratorInstructionsMigrationShapeTests": {
+    "Antiphon.Tests.Invariants.OrchestratorInstructionsMigrationShapeTests": {
       "seconds": 6,
       "basis": "measured",
       "hostId": null,

@@ -751,9 +751,10 @@ Patterns below are ordinal and case-sensitive. The first match wins for a path. 
 <a id="merge-verification-is-short-2026-11-18"></a>
 #### Merge verification is short (2026-11-18)
 
-A Merge verifies only: one build, each subject's own narrow witness rows (each under 10
-minutes), `land-graph -Check`, the pins recompute, the derived-index regeneration once, and
-`scripts/antiphon evidence-diff`. The one build is the subject's own test project, except when the batch
+A Merge verifies the subject's narrow witness rows (each under 10 minutes), the complete
+project-scoped repository invariant selection, `land-graph -Check`, the pins recompute, the
+derived-index regeneration once, and `scripts/antiphon evidence-diff`. Use one build for each
+selected invariant project and share it across that project's rows. The subject build is its own test project, except when the batch
 touches `tests/Antiphon.Tests/TestHelpers/**` or any csproj that Compile-includes a file under
 `tests/Antiphon.Tests` (CARD-1996). Then the one build is `dotnet build Antiphon.sln` once,
 leased through `scripts/build-slot.ps1`, in the worktree's native default output, with
@@ -768,20 +769,12 @@ projects once is the same obligation when a full solution build is the wrong sco
 `TestHelpers` glob is not safe: each mirror links a different subset, and a glob pulls helpers
 that do not compile there. The native output directory is the warm cache; this rule adds no
 second one. The narrow witness for the link census is `/*/*/LinkedTestHelperClosureTests/*`.
-The guard union (the classification, lane-category, fixture cleanup and
-Linux-policy guards covering `tests/Shared/TestClassificationGuardTests.cs`,
-`tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs`,
-`tests/Antiphon.Tests/Infrastructure/TestFixtureCleanupGuardTests.cs`,
-`tests/Shared/NativeLinuxPolicyWitness.cs` and
-`tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs`, and the policy-hash
-inputs under [release-gates.md](release-gates.md)) runs only when a subject touches a
-classification, selector, pin or policy area: `tests/Antiphon.Tests/slow-tests-allowlist.txt`,
-`tests/linux-test-roster.json`, the files named above, or a path under
-`docs/release-gates.md`'s policy/profile scope. Run no whole slow class, no repeat or stress
-block, and never re-run a row that already hit its deadline with zero failures: record that
-row instead of repeating it. Stress evidence, a whole-class run and the guard union by default
-belong to the rc/nightly lane, not Merge. Poll the load gate every 30 seconds, and check it once
-per repeat block rather than once per row inside that block.
+The repository invariant rows include the classification, lane-category, fixture cleanup
+and Linux-policy invariants on every diff. The selector adds affected ordinary witnesses,
+including behavior coverage for classification, selector, pin and policy changes. Keep the
+subject rows narrow and preserve a row's deadline outcome if it expires with zero failures.
+Stress, repetition and broad ordinary execution belong to the rc and nightly lanes.
+Poll the load gate every 30 seconds and check it once per repeat block.
 
 #### Merge brief template (helper closure, CARD-1996)
 

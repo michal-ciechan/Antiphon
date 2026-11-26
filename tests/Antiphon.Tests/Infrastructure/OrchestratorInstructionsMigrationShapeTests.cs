@@ -4,10 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Infrastructure;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>CARD-0822 R-8. The state table, the session column, and a closed model snapshot.</summary>
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class OrchestratorInstructionsMigrationShapeTests
 {
     [Test]
