@@ -208,10 +208,9 @@ public sealed class NightlyScriptsTests
                      // W2-nightly S27: lib/nightly-coverage.ps1 is deleted.
                      // W2-nightly S20: the nightly-run command (nightly-run-impl.ps1 and test-nightly-run.ps1 are deleted).
                      Path.Combine("lib", "Antiphon.Scripts", "NightlyRunCommand.cs"),
-                     // W2-nightly S17: the nightly tests run (nightly-tests.ps1 and nightly-tests-impl.ps1 are deleted) and the
-                     // C487 harness's in-process run.
+                     // W2-nightly S17: the nightly tests run (nightly-tests.ps1 and nightly-tests-impl.ps1 are deleted; unit 62
+                     // deleted the C487 harness's in-process run, lib/c487-nightly-tests.ps1).
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyTests.cs"),
-                     Path.Combine("lib", "c487-nightly-tests.ps1"),
                      // W2-nightly S05: the readiness evaluator's C# and the launcher it runs through.
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyHealth.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyHealthWindmill.cs"),

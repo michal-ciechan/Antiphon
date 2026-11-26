@@ -1,9 +1,10 @@
-// W2-nightly S12: host parts for a caller that is still PowerShell (plan 2026-11-21-w2-nightly-port-slices.md, section 2).
-// The C487 harness (scripts/lib/c487-nightly-tests.ps1, W2-nightly S17; nightly-tests-impl.ps1 Get-NightlyRunHost before)
-// builds the NightlyHost of a nightly tests run from its seams: the UtcNow seam as a clock (DelegateTimeProvider), the
-// TracePath seam as the trace (AppendingTraceWriter), the StartProcess, WaitCleanup and NativeActiveCount seams as a
-// launcher (DelegateLauncher), and the HostPlatform, DockerInfo, DiskFree and ToolchainVersions seams as the probe
-// (DelegateHostProbe). Plain C#: the delegates are the caller's; no PowerShell types. ASCII only.
+// W2-nightly S12: host parts built from delegates (plan 2026-11-21-w2-nightly-port-slices.md, section 2). The C487 harness
+// (scripts/lib/c487-nightly-tests.ps1, W2-nightly S17; nightly-tests-impl.ps1 Get-NightlyRunHost before) built the NightlyHost
+// of a nightly tests run from its seams with them; unit 62 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md
+// deleted that harness, and the test seams (SeamedNightlyRun, NightlyTestsWorld) build them from C# delegates: the trace file
+// (AppendingTraceWriter), a launcher (DelegateLauncher, whose log writer the live-lane discovery shares) and the probe
+// (DelegateHostProbe). The clock of the UtcNow seam (DelegateTimeProvider) went with its last caller. Plain C#: the delegates
+// are the caller's; no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.IO;
@@ -11,27 +12,6 @@ using System.Text;
 
 namespace Antiphon.Nightly
 {
-    /// <summary>A clock read from a delegate (Get-NightlyUtcNow over the UtcNow seam). Timestamps stay the system's.</summary>
-    public sealed class DelegateTimeProvider : TimeProvider
-    {
-        private readonly Func<DateTime> _now;
-
-        /// <summary>now answers the current time; a local time is converted, any other kind is taken as UTC.</summary>
-        public DelegateTimeProvider(Func<DateTime> now)
-        {
-            _now = now ?? throw new ArgumentNullException(nameof(now));
-        }
-
-        /// <inheritdoc />
-        public override DateTimeOffset GetUtcNow()
-        {
-            var now = _now();
-            return now.Kind == DateTimeKind.Local
-                ? new DateTimeOffset(now).ToUniversalTime()
-                : new DateTimeOffset(DateTime.SpecifyKind(now, DateTimeKind.Utc));
-        }
-    }
-
     /// <summary>
     /// The trace file of the TracePath seam (Write-NightlyTrace): each line appended as ASCII with the platform newline,
     /// the file opened for that line only, so PowerShell writers of the same file interleave.
