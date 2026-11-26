@@ -4,9 +4,10 @@ using Antiphon.Tests.Application;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Scripts;
+namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class SeedSmokeTargetingPackContractTests
 {
     [Test]

@@ -1,14 +1,16 @@
 using Antiphon.Server.Application.Settings;
+using Antiphon.Tests.Application;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Application;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>
 /// CARD-1749: a missing <c>IOptions&lt;GitSettings&gt;</c> must use the same inspection
 /// deadline as <see cref="GitSettings.WorktreeBaseInspectionTimeoutSeconds"/>, not a second literal.
 /// </summary>
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class SiblingInspectionDeadlineWitnessTests
 {
     [Test]

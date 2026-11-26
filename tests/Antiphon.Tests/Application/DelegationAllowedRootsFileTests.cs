@@ -1,11 +1,13 @@
 using System.Text.Json;
+using Antiphon.Tests.Application;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Application;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>CARD-0398 D12: tracked appsettings must not grow AllowedRoots.</summary>
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public class DelegationAllowedRootsFileTests
 {
     [Test]

@@ -4041,7 +4041,7 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-67; 4 nodes; 3 serial test-seconds; completed 4 of 4 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-90904-9a653634b3074b5d8a8da95fa038ff45.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
     },
-    "Antiphon.Tests.Infrastructure.OrchestratorInstructionsMigrationShapeTests": {
+    "Antiphon.Tests.Invariants.OrchestratorInstructionsMigrationShapeTests": {
       "nodes": 1,
       "seconds": 6,
       "basis": "measured",

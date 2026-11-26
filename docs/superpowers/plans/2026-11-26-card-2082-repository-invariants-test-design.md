@@ -117,6 +117,8 @@ The second Code host consolidates five methods into one build/discovery. At the 
 
 The [JSON roster](2026-11-26-card-2082-candidate-roster.json) covers all 513 previously undecided declarations and all eight newly signalled declarations. The 352 earlier guard/split decisions remain in the first two tables of the [inventory](2026-11-26-card-2082-invariant-inventory.md). Treat both sources as inputs to V-1. The unique identity in this appendix is the project assembly, fully qualified declaring type and source method. A method MOVE moves that method and all its admitted arguments. A method SPLIT extracts the named checkout assertion and leaves the behavioral case running. A fixture is SPLIT if it contains a mixed method or both retained and moved methods.
 
+The roster's `earlierMixed` section adds method decisions for 246 of the 271 original mixed inventory rows. The 25 already mapped rows retain their inventory keys. The section's `source` pins the original declarations and numbered assertion sites. Pass a detector JSONL from that pin as the third argument to the [roster checker](2026-11-26-card-2082-check-roster.cjs), after the inventory-pin and integrated-pin JSONL files. The check verifies source coverage and assertion locations. Use compiled discovery and the migration diff to verify which decisions are applied.
+
 | Source census | Original candidates | Additional candidates | Whole fixtures | Split fixtures | Stay fixtures |
 |---|---:|---:|---:|---:|---:|
 | Integrated `77ba2e55239dcbbf9e14e9b25e8d1b754e2ee994` | 513 / 5,612 methods | 8 / 150 methods | 2 | 26 | 493 |

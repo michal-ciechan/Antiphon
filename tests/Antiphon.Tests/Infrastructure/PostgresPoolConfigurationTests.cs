@@ -1,11 +1,13 @@
+using Antiphon.Tests.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests.Infrastructure;
+namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class PostgresPoolConfigurationTests
 {
     [Test]
