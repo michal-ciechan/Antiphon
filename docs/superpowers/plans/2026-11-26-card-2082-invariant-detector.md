@@ -92,8 +92,7 @@ public static class InvariantCensus {
                     foreach(var inv in nodes.OfType<InvocationExpressionSyntax>()) {
                         var expr=inv.Expression.ToString();
                         if(expr.EndsWith("Directory.EnumerateFiles") || expr.EndsWith("Directory.GetFiles")) row.Signals.Add("directory walk");
-                        if(expr.EndsWith("PlanTableImporter.ImportFile") || expr.EndsWith("PlanTableImporter.Import")
-                            || expr.EndsWith("PlanTableImporter.Parse")) row.Signals.Add("plan importer");
+                        if(expr.EndsWith("PlanTableImporter.ImportFile") || expr.EndsWith("PlanTableImporter.ImportMarkdown")) row.Signals.Add("plan importer");
                         if(expr.EndsWith("DockerStackDocuments.Read")) row.Signals.Add("DockerStackDocuments.Read");
                     }
                     // File names in bare assertion messages and synthetic source literals alone are insufficient.
@@ -152,3 +151,56 @@ $tracked = @(git -c core.quotepath=false ls-files)
 if ($LASTEXITCODE -ne 0 -or -not ($tracked -contains 'Antiphon.sln')) { throw 'Run at the repository root.' }
 [InvariantCensus]::Scan((Get-Location).ProviderPath, $tracked)
 ```
+
+## Extract the observed native case durations
+
+This companion reads the TRX files named by one copied qualification summary. It writes identities, durations and outcomes only. It accepts the native or receiving path. Supply each run's published source SHA from the plan. For a partial capture, retain missing-group records. A run without its final summary still needs its group manifests and original timing sidecars. Compare these observations with required discovery and exclusions before granting a whole-class pass.
+
+<!-- receipt reader -->
+```powershell
+param([Parameter(Mandatory)][string]$RunDirectory,
+      [Parameter(Mandatory)][string]$RunPrefix,
+      [Parameter(Mandatory)][string]$SourceSha)
+$ErrorActionPreference = 'Stop'
+$summary = Get-Content -Raw -LiteralPath (Join-Path $RunDirectory 'summary.json') | ConvertFrom-Json
+if ($RunPrefix -notmatch '^[0-9a-fA-F]{8}$' -or $SourceSha -notmatch '^[0-9a-fA-F]{40}$' -or
+    -not ([string]$summary.runId).StartsWith($RunPrefix, [StringComparison]::OrdinalIgnoreCase) -or $summary.sha -ne $SourceSha) {
+    throw 'Run or source mismatch.'
+}
+$seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($group in $summary.suites) {
+    if (-not $group.chunk) { continue }
+    $context = [ordered]@{ run = $summary.runId; sha = $summary.sha; suite = $group.id; chunk = $group.chunk }
+    $leaf = if ($group.trx) { ([string]$group.trx -split '[/\\]')[-1] } else { '' }
+    if (-not $leaf -or -not [IO.File]::Exists((Join-Path $RunDirectory $leaf))) {
+        $context.kind = 'missing-trx'
+        [pscustomobject]$context | ConvertTo-Json -Compress
+        continue
+    }
+    if (-not $seen.Add($leaf)) { throw "Two summary groups refer to the same TRX: $leaf" }
+    $xml = [xml]::new()
+    $xml.XmlResolver = $null
+    $settings = [Xml.XmlReaderSettings]::new()
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $reader = [Xml.XmlReader]::Create((Join-Path $RunDirectory $leaf), $settings)
+    try { $xml.Load($reader) } finally { $reader.Dispose() }
+    $definitions = @{}
+    foreach ($unit in $xml.TestRun.TestDefinitions.UnitTest) {
+        if (-not $unit.id -or $definitions.ContainsKey([string]$unit.id)) { throw "Ambiguous TRX definition in $leaf" }
+        $definitions[[string]$unit.id] = $unit.TestMethod
+    }
+    foreach ($row in $xml.TestRun.Results.UnitTestResult) {
+        $method = $definitions[[string]$row.testId]
+        if (-not $method.className -or -not $method.codeBase -or -not $method.name) { throw "Unbound TRX result in $leaf" }
+        $seconds = if ($row.duration) { [TimeSpan]::Parse($row.duration, [Globalization.CultureInfo]::InvariantCulture).TotalSeconds } else { $null }
+        [pscustomobject]([ordered]@{} + $context + [ordered]@{
+            kind = 'case'; trx = $leaf; executionId = $row.executionId; testId = $row.testId
+            assembly = (([string]$method.codeBase -split '[/\\]')[-1] -replace '\.dll$', '')
+            class = $method.className; method = $method.name; case = $row.testName
+            outcome = $row.outcome; seconds = $seconds
+        }) | ConvertTo-Json -Compress
+    }
+}
+```
+
+Use the Markdown reader shown at the top of this document, substituting `<!-- receipt reader -->` for `<!-- census -->`. Invoke its extracted script block with `-RunDirectory <copied-log-directory> -RunPrefix <eight-hex> -SourceSha <40-hex>`. Group emitted cases by run, suite and assembly-qualified class to obtain observed counts and serial time. Keep the case rows for mixed-class allocation. The sidecars supply wall and phase time.
