@@ -3,7 +3,9 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Antiphon.Nightly;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using P2 = Antiphon.Nightly.ReleaseImpactAdmission;
 
@@ -11,6 +13,8 @@ namespace Antiphon.Tests.Scripts;
 
 public sealed partial class ReleaseImpactEnvelopeTests
 {
+    private enum ContractChange { None, Selector, Policy, Catalog, Runtime }
+
     private sealed class P2World : IAsyncDisposable
     {
         internal const string HotProject = "tests/Hot/Hot.csproj";
@@ -34,10 +38,21 @@ public sealed partial class ReleaseImpactEnvelopeTests
         internal P2.Installation Tool { get; private set; } = null!;
         internal P2.Request Request { get; private set; } = null!;
         internal string OriginBase { get; private set; } = "";
+        internal string OriginParent { get; private set; } = "";
         internal P2.Chunk[] Chunks { get; private set; } = [];
         internal string Root => _repo.Root;
         internal string Sibling => _repo.Git("commit-tree", _repo.Git("rev-parse", Request.BaselineSha + "^{tree}"),
             "-m", "the same tree outside the baseline history");
+
+        internal string RewriteOriginRef()
+        {
+            const string originRef = "refs/heads/original-execution";
+            _repo.Git("update-ref", originRef, OriginParent);
+            var rewritten = _repo.Git("commit-tree", _repo.Git("rev-parse", originRef + "^{tree}"),
+                "-p", OriginBase, "-m", "force-rewritten execution with the same tree");
+            _repo.Git("update-ref", originRef, rewritten, OriginParent);
+            return _repo.Git("rev-parse", originRef);
+        }
         private static string Hash(string text) => IndependentDigest(Encoding.UTF8.GetBytes(text));
         internal P2.Target Target { get; } = new(RcReceiptScope.CurrentPlatform(), "x64", "rc", "net9.0",
             OperatingSystem.IsWindows() ? "win-x64" : "linux-x64", "Release", OperatingSystem.IsWindows(),
@@ -46,13 +61,14 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         internal static async Task<P2World> Create(bool trust = false, bool candidateOnlyTrust = false,
             bool directHit = false, string? historicalSide = null, bool brokenIndex = false, bool staleCatalog = false,
-            bool duplicateSimpleName = false, bool bypass = false, bool changeSelector = false)
+            bool duplicateSimpleName = false, bool bypass = false, ContractChange contractChange = ContractChange.None)
         {
+            using var setup = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "p2-fixture-setup");
             var world = new P2World();
             try
             {
                 await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog,
-                    duplicateSimpleName, bypass, changeSelector);
+                    duplicateSimpleName, bypass, contractChange);
                 return world;
             }
             catch
@@ -63,7 +79,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
         }
 
         private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide,
-            bool brokenIndex, bool staleCatalog, bool duplicateSimpleName, bool bypass, bool changeSelector)
+            bool brokenIndex, bool staleCatalog, bool duplicateSimpleName, bool bypass, ContractChange contractChange)
         {
             _repo.Init();
             _repo.Git("config", "core.autocrlf", "false");
@@ -81,10 +97,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 _repo.Put(path, RcInputFixtureRepository.ReadSource(path));
             if (staleCatalog)
             {
-                var catalog = TestSelectionCatalog.Parse(RcInputFixtureRepository.ReadSource(TestSelection.CatalogPath));
-                ((IDictionary)((object[])catalog["sets"]!)[0])["reason"] = "independently changed compatibility rationale";
-                catalog["catalogHash"] = TestSelectionCatalog.Hash(catalog);
-                _repo.Put(TestSelection.CatalogPath, TestSelectionJson.Canonical(catalog));
+                WriteChangedCatalog();
             }
             _repo.Put(HotProject, trust
                 ? "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Producer/Producer.csproj\" /></ItemGroup></Project>"
@@ -127,20 +140,24 @@ public sealed partial class ReleaseImpactEnvelopeTests
             if (trust) declarations = directHit
                 ? [new { path = ProducerInput, classes = new[] { "QuietTests" } }]
                 : [];
-            if (changeSelector)
-                declarations = [new { path = SelectorSource, classes = new[] { "HotTests" } }];
+            var contractPaths = contractChange switch
+            {
+                ContractChange.Selector => new[] { SelectorSource },
+                ContractChange.Policy => [TestSelection.PolicyPath],
+                ContractChange.Catalog => [TestSelection.CatalogPath, TestSelection.PolicyPath],
+                ContractChange.Runtime => ["global.json"],
+                _ => Array.Empty<string>(),
+            };
+            if (contractPaths.Length > 0)
+                declarations = contractPaths.Select(path => new { path, classes = new[] { "HotTests" } }).ToArray();
             var readers = JsonSerializer.Serialize(declarations);
             _repo.Put(Readers, readers);
             _repo.Put(RcChunkSelection.IndexPath, brokenIndex ? BuildIndex("[]") : BuildIndex(readers));
             if (historicalSide == "B") _repo.Put(OldReader, "old reader\n");
             OriginBase = _repo.Commit();
+            OriginParent = _repo.Commit(allowEmpty: true);
             var comparison = _repo.Commit(allowEmpty: true);
-            if (changeSelector)
-            {
-                var source = RcInputFixtureRepository.ReadSource(SelectorSource);
-                source.ShouldContain("MaxDepth = 1024");
-                _repo.Put(SelectorSource, source.Replace("MaxDepth = 1024", "MaxDepth = 512", StringComparison.Ordinal));
-            }
+            if (contractChange != ContractChange.None) ChangeContract(contractChange);
             else if (historicalSide == "B") _repo.Remove(OldReader);
             else if (historicalSide == "A") _repo.Put(NewReader, "new reader\n");
             else _repo.Put(trust ? ProducerInput : HotInput, "candidate\n");
@@ -160,6 +177,43 @@ public sealed partial class ReleaseImpactEnvelopeTests
             var installationRoot = _toolRepo.Root;
             Tool = new P2.Installation(installationRoot, toolSha, "p2-fixture-evaluator", "p2-fixture-extractor", toolFiles,
                 IndependentDigest(File.ReadAllBytes(typeof(P2).Assembly.Location)), path => File.OpenRead(Path.Combine(installationRoot, path)));
+        }
+
+        private string WriteChangedCatalog()
+        {
+            var catalog = TestSelectionCatalog.Parse(RcInputFixtureRepository.ReadSource(TestSelection.CatalogPath));
+            ((IDictionary)((object[])catalog["sets"]!)[0])["reason"] = "independently changed compatibility rationale";
+            var hash = TestSelectionCatalog.Hash(catalog);
+            catalog["catalogHash"] = hash;
+            _repo.Put(TestSelection.CatalogPath, TestSelectionJson.Canonical(catalog));
+            return hash;
+        }
+
+        private void ChangeContract(ContractChange change)
+        {
+            switch (change)
+            {
+                case ContractChange.Selector:
+                    var source = RcInputFixtureRepository.ReadSource(SelectorSource);
+                    source.ShouldContain("MaxDepth = 1024");
+                    _repo.Put(SelectorSource, source.Replace("MaxDepth = 1024", "MaxDepth = 512", StringComparison.Ordinal));
+                    break;
+                case ContractChange.Policy:
+                case ContractChange.Catalog:
+                    var policy = JsonNode.Parse(RcInputFixtureRepository.ReadSource(TestSelection.PolicyPath))!;
+                    if (change == ContractChange.Catalog)
+                        policy["selectionCatalog"]!["hash"] = WriteChangedCatalog();
+                    else
+                        policy["profiles"]!["nightly"]!["description"] = "changed qualification profile rationale";
+                    policy["policyHash"] = NightlyPolicy.HashText(policy.ToJsonString());
+                    _repo.Put(TestSelection.PolicyPath, policy.ToJsonString());
+                    break;
+                case ContractChange.Runtime:
+                    var runtime = JsonNode.Parse(RcInputFixtureRepository.ReadSource("global.json"))!;
+                    runtime["sdk"]!["version"] = "10.0.101";
+                    _repo.Put("global.json", runtime.ToJsonString());
+                    break;
+            }
         }
 
         private static string BuildIndex(string readers)
@@ -333,6 +387,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         public async ValueTask DisposeAsync()
         {
+            using var teardown = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "p2-fixture-teardown");
             var watch = Stopwatch.StartNew();
             if (_toolRepo is not null) await _toolRepo.DisposeAsync();
             _repo.Dispose();
