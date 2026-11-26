@@ -50,6 +50,9 @@ bin-*/
 # TUnit's isolated build/test runs can leave disposable per-project temp output directories.
 **/.tmp/
 
+# Staging files from interrupted derived impact index writes.
+/tests/derived-impact-index.json.*.tmp
+
 # Agent briefs and retained reports. Do not scratch-clean .antiphon/reports/ while
 # task rows reference it; canonical reports survive delegate worktree cleanup.
 .antiphon/
