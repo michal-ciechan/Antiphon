@@ -45,7 +45,8 @@ namespace Antiphon.Scripts
         }
 
         /// <summary>
-        /// Set-AntiphonBuildDriverEnvironment (scripts/lib/build-driver-environment.ps1) for an owned child: on Windows the
+        /// The build-driver policy for an owned child (Set-AntiphonBuildDriverEnvironment of scripts/lib/build-driver-environment.ps1,
+        /// deleted in unit 62 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): on Windows the
         /// build-driver policy's variables (BuildDriverEnvironment, CARD-1506); elsewhere only when the child's environment
         /// opts in with ANTIPHON_LINUX_COMPILER_POLICY=1.
         /// </summary>
