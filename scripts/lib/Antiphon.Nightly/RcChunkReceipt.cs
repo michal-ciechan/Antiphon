@@ -269,21 +269,31 @@ namespace Antiphon.Nightly
         public static RcTrxCase[] ReadTrx(string path)
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            using var stream = File.OpenRead(path);
+            return ReadTrx(stream);
+        }
+
+        internal static RcTrxCase[] ReadTrx(Stream stream, bool strict = false)
+        {
             try
             {
                 var doc = new XmlDocument { XmlResolver = null };
-                using (var reader = XmlReader.Create(path, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null })) doc.Load(reader);
+                using (var reader = XmlReader.Create(stream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null })) doc.Load(reader);
                 var methods = new Dictionary<string, (string Class, string Method)>(StringComparer.Ordinal);
                 foreach (XmlElement test in doc.GetElementsByTagName("UnitTest"))
                 {
                     var method = test.GetElementsByTagName("TestMethod").OfType<XmlElement>().FirstOrDefault();
-                    methods[test.GetAttribute("id")] = (method?.GetAttribute("className") ?? "", method?.GetAttribute("name") ?? "");
+                    var id = test.GetAttribute("id");
+                    var identity = (method?.GetAttribute("className") ?? "", method?.GetAttribute("name") ?? "");
+                    if (strict && (id.Length == 0 || identity.Item1.Length == 0 || identity.Item2.Length == 0 || methods.ContainsKey(id)))
+                        return null;
+                    methods[id] = identity;
                 }
                 var cases = new List<RcTrxCase>();
                 foreach (XmlElement result in doc.GetElementsByTagName("UnitTestResult"))
                 {
                     var id = result.GetAttribute("testId");
-                    methods.TryGetValue(id, out var m);
+                    if (!methods.TryGetValue(id, out var m) && strict) return null;
                     cases.Add(new RcTrxCase { CaseKey = id, Class = m.Class ?? "", Method = m.Method ?? "", Outcome = result.GetAttribute("outcome") });
                 }
                 return cases.ToArray();
@@ -370,7 +380,12 @@ namespace Antiphon.Nightly
             byte[] bytes;
             try { bytes = File.ReadAllBytes(path); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return new RcReceiptInventory { Refusal = "inventory-unreadable" }; }
-            var digest = Hex(SHA256.HashData(bytes));
+            return ReadBytes(bytes, expectedDigest);
+        }
+
+        internal static RcReceiptInventory ReadBytes(ReadOnlyMemory<byte> bytes, string expectedDigest = null)
+        {
+            var digest = Hex(SHA256.HashData(bytes.Span));
             if (!string.IsNullOrEmpty(expectedDigest) && !string.Equals(expectedDigest, digest, StringComparison.Ordinal))
                 return new RcReceiptInventory { Refusal = "inventory-digest-mismatch", Digest = digest };
             JsonElement root;
