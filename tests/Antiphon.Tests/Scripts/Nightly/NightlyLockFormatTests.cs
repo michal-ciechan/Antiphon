@@ -11,8 +11,8 @@ namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
 /// W2-nightly S18: the lock records the compiled locks write (NightlyRunLock.cs, ReleaseGateNativeLock.cs) are read
-/// unchanged by every reader: Read-NightlyLockRecord (nightly-common.ps1, still PowerShell; live-lane-run.ps1 reads the
-/// native lock through it), and the C# readers of the qualification set, RcQualificationRecords.Read and
+/// unchanged by every reader: Read-NightlyLockRecord (nightly-common.ps1, still PowerShell; the live lane's run, C# since W2 slice S21,
+/// reads the native lock through NightlyLockRecord), and the C# readers of the qualification set, RcQualificationRecords.Read and
 /// RcQualificationStatus (unit 7 of 2026-11-22-remaining-ps1-to-csharp.md; they replaced lib/rc-qualification-status.ps1).
 /// Each test writes the records here with the production process table and clock and keeps the owner's handle open as a
 /// run does; the C# readers read them in this process, Read-NightlyLockRecord in a pwsh child (and Windows PowerShell 5.1

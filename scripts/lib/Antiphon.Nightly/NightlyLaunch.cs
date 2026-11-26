@@ -262,7 +262,7 @@ namespace Antiphon.Nightly
 
     /// <summary>
     /// The production launcher for Owned custody: Invoke-NightlyOwnedProcess (nightly-tests-impl.ps1) over
-    /// Start-NightlyNativeOwner and New-NightlyChildStartInfo (nightly-owned-process.ps1), without their seams. The child
+    /// Start-NightlyNativeOwner and New-NightlyChildStartInfo (nightly-owned-process.ps1, deleted in W2 slice S21), without their seams. The child
     /// runs under NativeProcessOwner: created suspended, assigned to a private kill-on-close job that forbids breakaway, then
     /// resumed; its stdout and stderr drain into LogPath; the call returns once the root and every descendant have exited
     /// (or the timeout or the completion grace killed the job) and the output has drained. Windows only.
