@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class WindowsUnitPlatformAdmissionTests
 {
     private static readonly XNamespace Trx = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
-    internal const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)/*";
+    internal const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(JqRunnerImageContractInvariantTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(CodexRootExecContractInvariantTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)/*";
 
     [Test]
     public void C1210_Guard_matches_native_platform()
@@ -46,6 +46,31 @@ public sealed class WindowsUnitPlatformAdmissionTests
                 observed.Message.ShouldBe(entry.Reason, "c1210-exact-reason");
             }
         }
+    }
+
+    internal static string[] WindowsShapedHostObservations()
+    {
+        var selected = new HashSet<string>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(ChildFilter, @"\(([A-Za-z0-9_]+)\*\)"))
+            selected.Add(match.Groups[1].Value);
+        var observed = new List<string>();
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        foreach (var type in typeof(WindowsUnitPlatformAdmissionTests).Assembly.GetTypes())
+        {
+            if (!selected.Contains(type.Name)) continue;
+            var classSkip = type.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;
+            foreach (var method in type.GetMethods(flags))
+            {
+                if (method.GetCustomAttributes(typeof(TestAttribute), inherit: false).Length == 0) continue;
+                var methodSkip = method.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;
+                if (!classSkip && !methodSkip) continue;
+                var cases = method.GetCustomAttributes(inherit: false).Count(attribute => attribute.GetType().Name == "ArgumentsAttribute");
+                if (cases == 0) cases = 1;
+                var identity = type.Namespace + "." + type.Name + "." + method.Name;
+                for (var index = 0; index < cases; index++) observed.Add(identity);
+            }
+        }
+        return observed.Order(StringComparer.Ordinal).ToArray();
     }
 
     private sealed record Observation(string Identity, string Outcome, string Reason);
@@ -141,7 +166,7 @@ public sealed class WindowsUnitPlatformAdmissionTests
         WindowsUnitSkipRoster.Conditional.ShouldBe(capabilities, "c1210-conditional-roster: frozen identities and reasons");
         WindowsUnitSkipRoster.StoragePortable.ShouldBe(storagePortable, "c1210-portable-roster: frozen storage identities");
         FileLink.PrivilegeReason.ShouldBe(capabilities[0].Reason, "c1210-filelink-exact-reason");
-        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)/*",
+        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(JqRunnerImageContractInvariantTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(CodexRootExecContractInvariantTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)/*",
             "c1210-child-storage-selection");
         foreach (var (conditional, skipped) in new[] { (Array.Empty<Entry>(), false), (capabilities, false), (capabilities, true) })
         {

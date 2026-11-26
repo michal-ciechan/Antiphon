@@ -157,7 +157,7 @@ public class ProcessSpawnLimitTests
         ("Infrastructure/LandingSourceBoundaryControlTests.cs", "LandingSourceBoundaryControlTests"),
         ("Application/C0824RefOnlySnapshotMigrationTests.cs", "C0824RefOnlySnapshotMigrationTests"),
         // W2-nightly S11: the launch-budget cases plan in-process (NightlyTestsPlan); no pwsh harness child.
-        ("Scripts/C1514LandingSplitBudgetTests.cs", "C1514LandingSplitBudgetTests"),
+        ("Invariants/C1514LandingSplitBudgetTests.cs", "C1514LandingSplitBudgetTests"),
         // W2 slice S21: the live lane's run and outcome cases run in process (Antiphon.LiveLane); no pwsh harness child.
         ("Scripts/LiveLaneRunnerTests.cs", "LiveLaneRunnerTests"),
         ("Scripts/LiveLaneOutcomeTests.cs", "LiveLaneOutcomeTests"),

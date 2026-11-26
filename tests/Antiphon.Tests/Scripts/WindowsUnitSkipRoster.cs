@@ -74,10 +74,10 @@ internal static class WindowsUnitSkipRoster
     ];
     internal static readonly Entry[] Portable =
     [
-        new("Antiphon.Tests.Infrastructure", "JqRunnerImageContractTests", "Pinned_download_is_verified_before_root_owned_install_in_every_runner_target", 1, ""),
+        new("Antiphon.Tests.Invariants", "JqRunnerImageContractInvariantTests", "Pinned_download_is_verified_before_root_owned_install_in_every_runner_target", 1, ""),
         new("Antiphon.Tests.Infrastructure", "JqRunnerImageContractTests", "Qualification_grades_the_jq_row_for_both_targets", 1, ""),
-        new("Antiphon.Tests.Infrastructure", "CodexRootExecContractTests", "Entrypoint_heals_only_the_codex_tmp_directory", 1, ""),
-        new("Antiphon.Tests.Infrastructure", "CodexRootExecContractTests", "Provider_exec_into_the_runner_names_uid_1654", 1, ""),
+        new("Antiphon.Tests.Invariants", "CodexRootExecContractInvariantTests", "Entrypoint_heals_only_the_codex_tmp_directory", 1, ""),
+        new("Antiphon.Tests.Invariants", "CodexRootExecContractInvariantTests", "Provider_exec_into_the_runner_names_uid_1654", 1, ""),
     ];
     internal static readonly Entry[] Conditional =
     [

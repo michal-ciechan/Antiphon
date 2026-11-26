@@ -33,6 +33,6 @@ stays off this Linux selection; a Windows skip is not a pass.
 | CP-4 | longpaths | n/a | lp-c545 | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C545_ResultLine` | W-4 | exit 0 | n/a | 12 | true | n/a |
 | CP-5 | longpaths | n/a | lp-c1698 | `pwsh -NoProfile -File scripts/test-nightly-run.ps1 -Case C1698_RunPrintsToolchainWarning` | W-4 | exit 0 | n/a | 12 | true | n/a |
 | CP-6 | longpaths | CP-2 | lp-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | W-5 | 0 failed, executed at least 81 | 81 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-7 | longpaths | CP-2 | lp-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | W-6 | 0 failed, executed at least 27 | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-7 | longpaths | CP-2 | lp-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | W-6 | 0 failed, executed at least 27 | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-8 | longpaths | n/a | lp-land | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | W-7 | exit 0 | n/a | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-9 | longpaths | n/a | lp-pins | `pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest` | W-8 | exit 0 | n/a | 5 | true | n/a |

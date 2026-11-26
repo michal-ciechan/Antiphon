@@ -50,4 +50,4 @@ The driver for DerivedImpactIndexTests is built before CP-3 because the Antiphon
 |---|---|---|---|---|---|---|---|---|---|
 | CP-1 | followup | `tests/Antiphon.Tests -> bin-c1836-s8bf/` | shadow-followup | `/*/*/RcIncrementalShadowTests/*` | V-11, A-1, A-2, A-3, A-4, D-1, D-2, B-1, B-2, F-1, E-1, K-1 | all 12 methods, 0 failed/skipped | 12 | 15 | true |
 | CP-2 | followup | `CP-1` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy, mechanical contract, platform guidance, layering | all listed, 0 failed/skipped | 78 | 6 | true |
-| CP-3 | followup | `CP-1` | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | derived impact index | all listed, 0 failed/skipped | 27 | 12 | true |
+| CP-3 | followup | `CP-1` | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | derived impact index | all listed, 0 failed/skipped | 27 | 12 | true |

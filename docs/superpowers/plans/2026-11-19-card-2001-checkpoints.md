@@ -43,4 +43,4 @@ Run through the checkpoint tool with `--expected-source-sha` set to committed HE
 | CP-2 | all | CP-1 | recovery-c488 | `/*/*/AgentTaskLandNotificationRecoveryTests/C488_*` | V-4 | all listed, 0 failed/skipped | 4 | 8 | true |
 | CP-3 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1 | 0 failed/skipped | 81 | 10 | true |
 | CP-4 | all | CP-1 | windows-admission | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | R-3 | 6 pass; 1 rostered Linux skip | 6 | 6 | true |
-| CP-5 | all | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed/skipped | 27 | 8 | true |
+| CP-5 | all | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed/skipped | 27 | 8 | true |

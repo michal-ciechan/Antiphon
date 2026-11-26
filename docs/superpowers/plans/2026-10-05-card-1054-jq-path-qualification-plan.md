@@ -231,7 +231,7 @@ build or whole-Unit selection is added. S2 has no build/test row.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1054-jq/` | linux-jq-path | `/*/*/JqRunnerImageContractTests/(C1054_Jq_row_rejects_home_shadow*)\|(C1054_Jq_row_accepts_canonical_file_and_alias*)\|(C1054_Jq_row_rejects_canonical_leaf_symlink*)\|(C1054_Jq_row_records_found_and_resolved_paths*)` | V-1, V-2, V-3, V-4, R-1, R-2, R-3, R-4 | exactly the four proposed methods, 4 passed, 0 failed/skipped, no extra methods | 4 | 6 | true |
-| CP-2 | S1 | CP-1 | linux-jq-pin-regression | `/*/*/JqRunnerImageContractTests/(Version_row_accepts_only_exact_successful_pin_without_stderr*)\|(Pinned_download_is_verified_before_root_owned_install_in_every_runner_target*)\|(Qualification_grades_the_jq_row_for_both_targets*)` | V-5, R-5 | exactly 12 argument-expanded version results and 2 source-contract results, 14 passed, 0 failed/skipped, no extra methods | 14 | 3 | true |
+| CP-2 | S1 | CP-1 | linux-jq-pin-regression | `/*/*/(JqRunnerImageContractTests*)\|(JqRunnerImageContractInvariantTests*)/(Version_row_accepts_only_exact_successful_pin_without_stderr*)\|(Pinned_download_is_verified_before_root_owned_install_in_every_runner_target*)\|(Qualification_grades_the_jq_row_for_both_targets*)` | V-5, R-5 | exactly 12 argument-expanded version results and 2 source-contract results, 14 passed, 0 failed/skipped, no extra methods | 14 | 3 | true |
 
 ## Completion and caller obligations
 
@@ -572,7 +572,7 @@ of this TestDesign or Code run.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1054-jq/` | linux-jq-path | `/*/*/JqRunnerImageContractTests/(C1054_Jq_row_rejects_home_shadow*)\|(C1054_Jq_row_accepts_canonical_file_and_alias*)\|(C1054_Jq_row_rejects_canonical_leaf_symlink*)\|(C1054_Jq_row_records_found_and_resolved_paths*)` | V-1, V-2, V-3, V-4, R-1, R-2, R-3, R-4 | exactly the four literal C1054 methods listed above, 4 passed, 0 failed/skipped, no extra methods | 4 | 6 | true |
-| CP-2 | S1 | CP-1 | linux-jq-pin-regression | `/*/*/JqRunnerImageContractTests/(Version_row_accepts_only_exact_successful_pin_without_stderr*)\|(Pinned_download_is_verified_before_root_owned_install_in_every_runner_target*)\|(Qualification_grades_the_jq_row_for_both_targets*)` | V-5, R-5 | exactly 12 argument-expanded version results and the 2 literal source-contract methods, 14 passed, 0 failed/skipped, no extra methods | 14 | 3 | true |
+| CP-2 | S1 | CP-1 | linux-jq-pin-regression | `/*/*/(JqRunnerImageContractTests*)\|(JqRunnerImageContractInvariantTests*)/(Version_row_accepts_only_exact_successful_pin_without_stderr*)\|(Pinned_download_is_verified_before_root_owned_install_in_every_runner_target*)\|(Qualification_grades_the_jq_row_for_both_targets*)` | V-5, R-5 | exactly 12 argument-expanded version results and the 2 literal source-contract methods, 14 passed, 0 failed/skipped, no extra methods | 14 | 3 | true |
 
 The union is the complete ordinary executable scope: seven unique methods,
 eighteen TUnit executions, **one isolated build** reused only within committed S1.

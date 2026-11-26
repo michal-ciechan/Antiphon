@@ -23,7 +23,7 @@ public sealed class ProcessSpawnTimeoutPolicyTests
         ("Scripts/RollingVolumeRecycleScriptTests.cs", "RollingVolumeRecycleScriptTests"),
         ("Scripts/C1008PlatformContractTests.cs", "C1008PlatformContractTests"),
         ("Scripts/WindowsUnitPlatformAdmissionTests.cs", "WindowsUnitPlatformAdmissionTests"),
-        ("Infrastructure/ShellFixtureLineEndingContractTests.cs", "ShellFixtureLineEndingContractTests"),
+        ("Invariants/ShellFixtureLineEndingContractTests.cs", "ShellFixtureLineEndingContractTests"),
         ("Application/ChannelOutboundStorageTests.cs", "ChannelOutboundStorageTests"),
         ("Scripts/RemoteScriptContractTests.cs", "RemoteScriptContractTests")
     ];

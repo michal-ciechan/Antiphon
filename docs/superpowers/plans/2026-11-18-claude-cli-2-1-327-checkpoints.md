@@ -24,7 +24,7 @@ The image is not built, deployed, or restarted here.
 | CP-4 | all | CP-1 | pin-dind | `/*/*/DindRunnerContractTests/*` | V-4, R-1 | all listed, 0 failed | 25 | 4 | false | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-5 | all | CP-1 | pin-harness | `/*/*/VerifyDindRunnerScriptTests/*` | V-3, R-1 | all listed, 0 failed | 8 | 3 | false | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-6 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | R-2, R-3 | all listed, 0 failed | 71 | 10 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
-| CP-7 | all | CP-1 | derived-impact | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed | 27 | 12 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-7 | all | CP-1 | derived-impact | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed | 27 | 12 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-8 | all | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-4 | exit 0 | n/a | 3 | true | n/a |
 
 ## Rollout canary

@@ -28,7 +28,7 @@ The preparation builds the derived index driver and checkpoint launcher in their
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | index | tests/Antiphon.Tests -> bin-858f6ed9/ | project-contract | `/*/Antiphon.Tests.Invariants/CheckpointToolProjectContractTests/*` | V-1 | 0 failed, 0 skipped | 7 | 7 | true |
-| CP-2 | index | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-2 | 0 failed, 0 skipped | 27 | 3 | true |
+| CP-2 | index | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | V-2 | 0 failed, 0 skipped | 27 | 3 | true |
 | CP-3 | index | CP-1 | selector | `/*/Antiphon.Tests.Scripts/ImpactedClassesSelectorTests/*` | V-3 | 0 failed, 0 skipped | 50 | 5 | true |
 | CP-4 | index | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-4 | 0 failed, 0 skipped | 84 | 2 | true |
 | CP-5 | audit | n/a | land-graph | `pwsh -NoProfile -Command 'if ($env:ANTIPHON_REPLAY_LOAD_GUARD) { $env:PATH = $env:ANTIPHON_REPLAY_LOAD_GUARD + [IO.Path]::PathSeparator + $env:PATH }; & ./scripts/audit-land-verification-graph.ps1 -Check; exit $LASTEXITCODE'` | R-1 | exit 0 | n/a | 2 | true |

@@ -2098,7 +2098,7 @@
     },
     {
       "project": "Antiphon.Tests",
-      "namespace": "Antiphon.Tests.Application",
+      "namespace": "Antiphon.Tests.Invariants",
       "class": "ProviderEndpointDocumentationTests",
       "method": "C0167_agent_kinds_doc_points_the_production_redirect_at_the_setting",
       "arguments": [],
