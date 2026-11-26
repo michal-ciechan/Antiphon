@@ -239,6 +239,36 @@ public sealed partial class PipelineSpeedIntegrationTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Task_worlds_seed_their_owners_at_the_selected_migration(bool reversibleTip)
+    {
+        await using var world = await C544World.CreateAsync(reversibleTip: reversibleTip);
+        await using var worldDb = world.CreateContext();
+        await AssertSeededOwnerAsync(worldDb, world.Owner.Id, world.Owner.WorktreeBranch, reversibleTip);
+
+        await using var landing = new LandingSafetyHarness();
+        await landing.InitializeAsync(reversibleTip: reversibleTip);
+        await using var landingDb = landing.CreateContext();
+        await AssertSeededOwnerAsync(landingDb, landing.Fixture.TaskId, landing.Fixture.SourceRef[11..], reversibleTip);
+    }
+
+    private static async Task AssertSeededOwnerAsync(AppDbContext db, Guid ownerId, string? branch, bool reversibleTip)
+    {
+        var applied = await db.Database.GetAppliedMigrationsAsync();
+        applied.Last().ShouldBe(reversibleTip
+            ? MigrationTestDatabase.LastReversibleMigration
+            : db.Database.GetMigrations().Last());
+        // These columns are available at both baselines, even when the current model has later fields.
+        var owner = await db.AgentTasks.Where(t => t.Id == ownerId)
+            .Select(t => new { t.RootTaskId, t.Role, t.Status, t.WorktreeBranch }).SingleAsync();
+        owner.RootTaskId.ShouldBe(ownerId);
+        owner.Role.ShouldBe(AgentTaskRole.Code);
+        owner.Status.ShouldBe(AgentTaskStatus.Succeeded);
+        owner.WorktreeBranch.ShouldBe(branch);
+    }
+
+    [Test]
     public async Task C1281_B1Schema()
     {
         await using var w = await C544World.CreateAsync(reversibleTip: true);
