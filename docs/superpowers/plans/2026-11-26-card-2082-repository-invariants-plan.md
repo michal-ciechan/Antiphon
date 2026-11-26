@@ -128,7 +128,3 @@ Join that JSON to the inventory by run, assembly and fully qualified class. Pres
 4. Roll back with reviewed forward commits. Restore the previous schedulers/selectors and enable the previous complete Full qualification path; refuse incremental credit for an attempt with missing invariant observations. Retain a separately executed full category guard at the candidate SHA while repairing ordering, so recently discovered omissions do not disappear. If identity changes must also be reverted, restore selectors, rosters and mappings together, recompute policy hash, live digest and derived index in the same order and rebind plans. Keep original and failed attempt evidence for diagnosis. No rc push, release promotion or live host changes are part of this card's Plan.
 
 The next stage is **TestDesign**, followed by Code. TestDesign owns the two open items above after the plan lands.
-
-## TestDesign handoff to Code
-
-The [verification design](2026-11-26-card-2082-repository-invariants-test-design.md) supplies the executable checkpoint table, the method-level roster and the measured Windows first-phase and Merge costs. Use its [per-class timing matrix](2026-11-26-card-2082-class-timing.md) in place of the preliminary performance estimates above. It preserves the incomplete groups in both Windows exports and identifies the Linux receipt for each same-case comparison.
