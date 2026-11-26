@@ -165,13 +165,12 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
     [Test]
     public void historical_plans_bind_without_suppression()
     {
-        foreach (var (name, targets) in new[]
+        foreach (var (path, targets) in new[]
         {
-            ("2026-10-04-card-1035-checkpoint-child-cwd-plan.md", new[] { "child-cwd-matches-certified-root" }),
-            ("2026-10-04-card-1037-remote-follow-up-launch-guard-plan.md", new[] { "remote-pool-refused-before-insert", "local-pool-follow-up-admitted", "remote-standing-follow-up-admitted" }),
+            ("docs/superpowers/plans/2026-10-04-card-1035-checkpoint-child-cwd-plan.md", new[] { "child-cwd-matches-certified-root" }),
+            ("docs/superpowers/plans/2026-10-04-card-1037-remote-follow-up-launch-guard-plan.md", new[] { "remote-pool-refused-before-insert", "local-pool-follow-up-admitted", "remote-standing-follow-up-admitted" }),
         })
         {
-            var path = "docs/superpowers/plans/" + name;
             var first = new StringWriter(); var second = new StringWriter();
             var command = new CoverageCommand();
             var firstExit = command.Run(CheckpointFixtures.RepoRoot, path, format: "json", output: first);
@@ -214,11 +213,12 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
         const string retired = "warns_when_estimate_exceeds_row_timeout";
         const string current = "warns_when_estimate_exceeds_advisory_threshold";
         const string qualified = "CheckpointImportTests." + current;
+        const string censusPlan = "docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md";
         var root = CheckpointFixtures.RepoRoot;
         foreach (var relative in new[]
         {
             "docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md",
-            "docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md",
+            censusPlan,
             "docs/superpowers/plans/2026-09-25-card-0723-checkpoint-runner-plan.md",
             "docs/superpowers/plans/2026-09-26-checkpoint-tool-hardening-plan.md",
         })
@@ -233,8 +233,8 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
         rename.ShouldContain(current, Case.Sensitive, "c1055-rename-record");
 
         var command = new CoverageCommand();
-        Bind("docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md", null, "R-1", 72, "c1055-0891");
-        Bind("docs/superpowers/plans/2026-10-03-card-1005-opt-in-class-census-plan.md",
+        Bind(root, "docs/superpowers/plans/2026-10-01-card-0891-plan-to-test-coverage-check-plan.md", null, "R-1", 72, "c1055-0891");
+        string[] censusSources =
         [
             "tests/Antiphon.Tests/Checkpoints/PlanCoverageCensusTests.cs",
             "tests/Antiphon.Tests/Checkpoints/PlanCoverageParserTests.cs",
@@ -249,14 +249,28 @@ public sealed class PlanCoverageBindingTests : CheckpointTestBase
             "tests/Antiphon.Tests/Checkpoints/CheckpointTempUsageTests.cs",
             "tests/Antiphon.Tests/TestHelpers/TestLaneCategoryGuardTests.cs",
             "tests/Shared/TestClassificationGuardTests.cs",
-        ], "R-4", 177, "c1055-1005");
+        ];
 
-        void Bind(string plan, string[]? tests, string id, int obligations, string label)
+        // CARD-1005 also binds a control against the retired PowerShell namespace census.
+        // Use its original source for that control and current source for the live obligations.
+        var censusRoot = TempDir();
+        foreach (var relative in censusSources.Prepend(censusPlan))
+        {
+            var destination = Path.Combine(censusRoot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(Path.Combine(root, relative), destination);
+        }
+        File.Copy(
+            Path.Combine(root, "tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/CheckpointNamespaceCensusUsageTests.cs.txt"),
+            Path.Combine(censusRoot, "tests/Antiphon.Tests/Checkpoints/CheckpointNamespaceCensusUsageTests.cs"));
+        Bind(censusRoot, censusPlan, censusSources, "R-4", 177, "c1055-1005");
+
+        void Bind(string sourceRoot, string plan, string[]? tests, string id, int obligations, string label)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var output = new StringWriter();
-            var exit = command.Run(root, plan, tests, "json", output: output);
-            CheckpointNativeDiagnostics.Coverage(exit, root, output).ShouldBe(0, label);
+            var exit = command.Run(sourceRoot, plan, tests, "json", output: output);
+            CheckpointNativeDiagnostics.Coverage(exit, sourceRoot, output).ShouldBe(0, label);
             using var document = JsonDocument.Parse(output.ToString());
             var report = document.RootElement;
             report.GetProperty("invalid").GetBoolean().ShouldBeFalse(label);

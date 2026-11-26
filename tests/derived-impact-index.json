@@ -3554,6 +3554,18 @@
       ]
     },
     {
+      "path": "docs/superpowers/plans/2026-10-04-card-1035-checkpoint-child-cwd-plan.md",
+      "classes": [
+        "PlanCoverageBindingTests"
+      ]
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-04-card-1037-remote-follow-up-launch-guard-plan.md",
+      "classes": [
+        "PlanCoverageBindingTests"
+      ]
+    },
+    {
       "path": "docs/superpowers/plans/2026-10-04-card-1041-row-timeout-advisory-plan.md",
       "classes": [
         "PlanCoverageBindingTests"
@@ -25466,6 +25478,12 @@
       "classes": [
         "CheckpointConfinementLedgerTests",
         "OutputCleanupTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/Fixtures/PlanCoverage/CheckpointNamespaceCensusUsageTests.cs.txt",
+      "classes": [
+        "PlanCoverageBindingTests"
       ]
     },
     {
