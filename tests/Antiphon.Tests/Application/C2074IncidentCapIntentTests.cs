@@ -194,6 +194,62 @@ public sealed class C2074IncidentCapIntentTests
         (await db.AgentIncidents.AnyAsync(i => i.Id == id, ct)).ShouldBeFalse();
     }
 
+    [Test]
+    [Arguments("pending:server2-temp")]
+    [Arguments("pending:orphan:server2-temp")]
+    [Arguments("pending:kill-generation:server2-temp:638997408000000000")]
+    [Timeout(120_000)]
+    public async Task C2078_Operator_can_find_and_close_each_kind_of_aged_intent(string marker, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var now = DateTime.UtcNow;
+        var sessionId = Guid.NewGuid();
+        var id = Intent(db, sessionId, marker, now.AddMinutes(-6));
+        var young = Intent(db, sessionId, marker, now.AddMinutes(-1));
+        Intent(db, sessionId, marker.Replace("server2-temp", "server2-temp2"), now.AddMinutes(-1));
+        Intent(db, sessionId, "reconciled", now.AddMinutes(-10));
+        await db.SaveChangesAsync(ct);
+
+        const string path = "/api/session-runners/slots/release-intents";
+        var closePath = $"{path}/{id:D}/close";
+        var attention = AttentionServiceTests.BuildService(host.Local, db: db);
+        var stuck = (await attention.GetAsync(ct)).Items.Where(i => i.SessionId == sessionId).ShouldHaveSingleItem();
+        stuck.Evidence.ShouldContain(marker);
+        stuck.Evidence.ShouldContain(closePath);
+        stuck.Evidence.ShouldNotContain(young.ToString("D"));
+
+        var listPath = $"{path}?runnerId=server2-temp&limit=1";
+        using var unauthorized = await host.Http.GetAsync(listPath, ct);
+        unauthorized.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        var token = OperatorTokenFile.ReadOrCreate(host.OperatorTokenPath);
+        var first = await ReadPageAsync(listPath);
+        var firstId = first.GetProperty("intents").EnumerateArray().Single().GetProperty("intentId").GetGuid();
+        var cursor = first.GetProperty("nextAfter").GetGuid();
+        cursor.ShouldBe(firstId);
+        var second = await ReadPageAsync($"{listPath}&after={cursor:D}");
+        var secondId = second.GetProperty("intents").EnumerateArray().Single().GetProperty("intentId").GetGuid();
+        new[] { firstId, secondId }.ShouldBe([id, young], ignoreOrder: true);
+
+        using var closed = await host.PostOperatorAsync(closePath,
+            new { Requester = "on-call operator", Evidence = "Retirement record confirms this runner was decommissioned." },
+            token);
+        closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await attention.GetAsync(ct)).Items.ShouldNotContain(i => i.SessionId == sessionId);
+        var remaining = await ReadPageAsync($"{path}?runnerId=server2-temp&sessionId={sessionId:D}");
+        remaining.GetProperty("intents").EnumerateArray().Single().GetProperty("intentId").GetGuid().ShouldBe(young);
+
+        async Task<JsonElement> ReadPageAsync(string url)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add(OperatorTokenFile.Header, token);
+            using var response = await host.Http.SendAsync(request, ct);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+        }
+    }
+
     private static async Task<int> PruneAsync(string connectionString, SupervisionSettings settings, CancellationToken ct)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), $"c2074-prune-{Guid.NewGuid():N}");
