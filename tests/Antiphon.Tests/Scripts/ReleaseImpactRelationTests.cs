@@ -247,43 +247,44 @@ public sealed class ReleaseImpactRelationTests
     }
 
     [Test, Timeout(10_000)]
-    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds(CancellationToken cancellationToken)
+    [Arguments("delegate", "public delegate T Tag<T>();", "Tag<int>")]
+    [Arguments("interface", "public interface Tag {}", "Tag")]
+    [Arguments("struct", "public struct Tag {}", "Tag")]
+    [Arguments("enum", "public enum Tag { One }", "Tag")]
+    [Arguments("nested-delegate", "public class Outer<T> { public delegate U Hook<U>(T t); }", "Outer<int>.Hook<string>")]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds(string kind, string declaration,
+        string reference, CancellationToken cancellationToken)
     {
         const string north = "tests/T/A.cs";
         const string south = "tests/T/B.cs";
         const string use = "tests/T/Use.cs";
         using var fixture = new ReleaseImpactTypeProofFixture();
 
-        foreach (var (kind, declaration, reference) in new[]
-        {
-            ("delegate", "public delegate T Tag<T>();", "Tag<int>"),
-            ("interface", "public interface Tag {}", "Tag"),
-            ("struct", "public struct Tag {}", "Tag"),
-            ("enum", "public enum Tag { One }", "Tag"),
-            ("nested-delegate", "public class Outer<T> { public delegate U Hook<U>(T t); }", "Outer<int>.Hook<string>"),
-        })
-        {
-            var forms = World("using North;", "_ = typeof(" + reference + ");");
-            forms[north] = "namespace North; " + declaration + "\n";
-            forms[south] = "namespace South; " + declaration + "\n";
-            Check("OT." + kind, forms, [north]);
-            forms[use] = ConsumerSource("using North; using South;", "_ = typeof(" + reference + ");");
-            Check("OT.ambiguous " + kind, forms, [north, south], refusal: "compiler-diagnostics");
-        }
+        var body = "_ = typeof(" + reference + ");";
+        var forms = World("using North;", body);
+        forms[north] = "namespace North; " + declaration + "\n";
+        forms[south] = "namespace South; " + declaration + "\n";
+        CheckTypeProof(fixture, cancellationToken, "OT." + kind, forms, [north]);
+        forms[use] = ConsumerSource("using North; using South;", body);
+        CheckTypeProof(fixture, cancellationToken, "OT.ambiguous " + kind, forms, [north, south], refusal: "compiler-diagnostics");
+    }
+
+    [Test, Timeout(10_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossAttributeSpellings(CancellationToken cancellationToken)
+    {
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
+
         var attributes = World("", "");
         attributes[north] = "namespace North; public class MarkAttribute : System.Attribute {}\n";
         attributes[south] = "namespace South; public class Mark : System.Attribute {}\n";
         attributes[use] = "using North; namespace Cases; public partial class SpecTests { [Mark] public void Check() {} }\n";
-        Check("OT.winner", attributes, [north]).Sites.Single(site => site.Origin.Name == "Mark").Winners.ShouldBe([north]);
+        CheckTypeProof(fixture, cancellationToken, "OT.winner", attributes, [north])
+            .Sites.Single(site => site.Origin.Name == "Mark").Winners.ShouldBe([north]);
         attributes[use] = "using North; using South; namespace Cases; public partial class SpecTests { [Mark] public void Check() {} }\n";
-        Check("OT.attribute", attributes, [north, south], refusal: "compiler-diagnostics");
-
-        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
-            string[]? before = null, Dictionary<string, string>? generated = null,
-            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
-            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
-            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
-                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+        CheckTypeProof(fixture, cancellationToken, "OT.attribute", attributes, [north, south], refusal: "compiler-diagnostics");
     }
 
     [Test, Timeout(12_000)]

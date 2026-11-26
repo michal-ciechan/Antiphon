@@ -203,7 +203,7 @@ Portable managed lane for every row, with target-specific compilations/Windows-p
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2076-inputs/` | portable-compiler-inputs | `/*/*/ReleaseImpactEvaluationTests/ProofRequiresBoundCompilerInputs` | D-1/2, complete and tampered compiler inputs | 1 passed, 0 failed or skipped | 1 | 12 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions*` | D-2, paired matrix and overlapping reasons | 6 passed, 0 failed or skipped | 6 | 12 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions*` | D-2, paired matrix and overlapping reasons | 11 passed, 0 failed or skipped | 11 | 12 | true |
 | CP-3 | S3 | `tests/Antiphon.Tests -> bin-c2076-compose/` | portable-chunk-selection | `/*/*/RcProjectSelectionTests/BothEndpointProofsPreserveIndependentlyOwedChunks` | D-3, two trees, chunk and receipt joins | 1 passed, 0 failed or skipped | 1 | 12 | true |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c2076-replay/` | portable-miss-replay | `/*/*/IncrementalSelectionSoundnessTests/ProvenSubtractionReplay*` | D-4, blind score, nonvacuity and miss records | 5 passed, 0 failed or skipped | 5 | 12 | true |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c2076-cut/` | portable-cut-withdrawal | `/*/*/ReleaseCutTests/WithdrawnTypeProofRequiresFullOnResume` | Default off, approval, miss withdrawal and repaired version | 1 passed, 0 failed or skipped | 1 | 12 | true |
