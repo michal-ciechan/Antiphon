@@ -116,7 +116,7 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
         var unresolvedPending = new List<CardSiblingInventory.Pending>();
         string? metadata = null;
         var baseRef = task.WorktreeBaseRequestedRef ?? task.MergeTargetRef;
-        var immutableStart = IsCommitId(task.WorktreeBaseRequestedRef);
+        var immutableStart = false;
         var identifier = "the card";
         UnlandedSibling Describe(AgentTask row, string? sha, LandRequestState? state = null) =>
             new(row.Id, row.WorktreeBranch!, baseRef!, identifier, sha is null ? "unknown" : sha[..8],
@@ -142,6 +142,13 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
             pendingKnown = true;
             identifier = await inspection.ReadAsync(token => db.Cards.AsNoTracking()
                 .Where(c => c.Id == task.CardId).Select(c => c.Identifier).FirstOrDefaultAsync(token)) ?? identifier;
+            if (unresolvedPending.Count > 0 && GitObjectId.TryNormalize(task.WorktreeBaseRequestedRef, out var startSha))
+            {
+                // The other object format's ID length can be a mutable ref name in this repository.
+                var format = await inspection.RunAsync(task.RepoPath, "rev-parse", "--show-object-format");
+                immutableStart = format.Succeeded
+                    && (startSha.Length, format.Output.Trim()) is (40, "sha1") or (64, "sha256");
+            }
             if (inventory.Overflow || inventory.PendingOverflow)
             {
                 omitted = Math.Max(1, raw - inspection.MaxCandidates);
@@ -296,9 +303,6 @@ public sealed class CardSiblingInspectionService(AppDbContext db, ILandingGit gi
                 ? Describe(pending.Task, null, pending.Request.State) : null, "git_inspection_error");
         }
     }
-
-    private static bool IsCommitId(string? value) =>
-        GitObjectId.TryNormalize(value, out _);
 
     private static bool SameRepo(AgentTask task, AgentTask sibling) =>
         DelegationWorktreeService.SharesRepo(task.RepoPath, sibling.RepoPath)
