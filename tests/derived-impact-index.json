@@ -2238,9 +2238,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyPlanCases.cs",
-      "classes": 60,
+      "classes": 61,
       "reason": "cap",
-      "owed": 35,
+      "owed": 36,
       "first": [
         "QualificationStopTests",
         "RcFailedFirstPlannerTests",
@@ -23146,7 +23146,8 @@
     {
       "path": "tests/Antiphon.Tests/Agents/SessionRunnerRuntimeTests.cs",
       "classes": [
-        "ProcessSpawnLimitTests"
+        "ProcessSpawnLimitTests",
+        "WindowsUnitPlatformAdmissionTests"
       ]
     },
     {
@@ -26725,6 +26726,7 @@
         "ProcessSpawnLimitTests",
         "RcBridgeProbePlatformTests",
         "RunCheckpointSourceScriptTests",
+        "SessionRunnerRuntimeTests",
         "TestSelectionExecutionTests",
         "WindowsUnitPlatformAdmissionTests",
         "ZombieCensusPlatformTests"
@@ -28890,6 +28892,8 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestMigrationFingerprint.cs",
       "classes": [
+        "C0824RefOnlySnapshotMigrationTests",
+        "C1514HostLoadMigrationTests",
         "TestMigrationFingerprintTests"
       ]
     },
