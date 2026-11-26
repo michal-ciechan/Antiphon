@@ -47,7 +47,8 @@ public static class ReceiptQualification
     /// whose git answers the skip roster at expectedSha.
     /// </summary>
     public static string? Validate(string raw, string expectedSha, IReadOnlyList<string> rows, int expectedRepeat,
-        string repository, CancellationToken cancellationToken = default, bool requireWindowsHost = false)
+        string repository, CancellationToken cancellationToken = default, bool requireWindowsHost = false,
+        string? requiredInvariantCases = null)
     {
         if (!FullObjectId.IsMatch(expectedSha)) return "expected_sha_invalid";
         if (expectedRepeat < 1) return "expected_repeat_invalid";
@@ -62,10 +63,11 @@ public static class ReceiptQualification
             if (requireWindowsHost && !WindowsHost.IsMatch(report.Model.Host?.Os ?? ""))
                 return "receipt_host_not_windows";
             return ReportValidator.Validate(report.Model, expectedSha, rows, expectedRepeat,
-                row => PlacementSkips(report.Model, row, expectedSha, expectedRepeat, repository, cancellationToken));
+                row => PlacementSkips(report.Model, row, expectedSha, expectedRepeat, repository, cancellationToken))
+                ?? MergeInvariantCases.Validate(report.Model, expectedSha, rows, expectedRepeat, requiredInvariantCases);
         }
         if (requireWindowsHost) return "receipt_host_not_windows";
-        return Envelope(root, expectedSha, expectedRepeat);
+        return requiredInvariantCases is null ? Envelope(root, expectedSha, expectedRepeat) : "invariant_case_rows_missing";
     }
 
     // A report.json as any tool version wrote it. The tool's own receipt reader (ReceiptJson.Parse) requires every
