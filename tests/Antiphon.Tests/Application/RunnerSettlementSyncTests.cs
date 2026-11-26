@@ -1276,7 +1276,10 @@ public sealed class RunnerSettlementSyncTests
                 // The same remote branch as "git push origin <branch>", pushed in process (LibGit2Sharp's local transport)
                 // instead of git, sh and receive-pack; as DesktopLegacyWorld pushes its setup branches.
                 using var desktop = new LibGit2Sharp.Repository(world.Desktop);
-                desktop.Network.Push(desktop.Network.Remotes["origin"], world.FullRef + ":" + world.FullRef);
+                desktop.Network.Push(desktop.Network.Remotes["origin"], world.FullRef + ":" + world.FullRef, new LibGit2Sharp.PushOptions
+                {
+                    OnPushStatusError = e => throw new InvalidOperationException("setup push refused: " + e.Reference + ": " + e.Message),
+                });
             }
             world.Git.Clear();
             return world;
@@ -1441,7 +1444,8 @@ public sealed class RunnerSettlementSyncTests
                 template.CloneTo(Root, new Dictionary<string, string> { ["task"] = TaskId.ToString("N")[..8] });
                 return true;
             }
-            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or NotSupportedException or UnauthorizedAccessException
+                or LibGit2Sharp.LibGit2SharpException or System.Text.Json.JsonException)
             {
                 Console.Error.WriteLine($"sync world template not used: {ex.GetType().Name}: {ex.Message}");
                 foreach (var entry in Directory.EnumerateFileSystemEntries(Root))
