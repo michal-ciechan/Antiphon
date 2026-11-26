@@ -51,7 +51,7 @@ public sealed class NightlyTestsPlanTests
                 ["messaging"] = new PlainObject(("id", "messaging"), ("chunks", beta)),
             };
             foreach (var order in new[] { "fresh", "history", "previous" })
-            foreach (var stop in new[] { "", "antiphon", "messaging", "interrupted", "missing-receipt", "missing-argument" })
+            foreach (var stop in new[] { "", "antiphon", "messaging", "interrupted", "missing-receipt", "missing-argument", "preparation-missing", "preparation-interrupted" })
             {
                 using var fixture = NightlyFixture.Create("c2082-prefix");
                 var state = new NightlyRunState
@@ -66,6 +66,8 @@ public sealed class NightlyTestsPlanTests
                     Prepare = (id, needsDiscovery) =>
                     {
                         needsDiscovery.ShouldBeTrue(id);
+                        if (id == "messaging" && stop == "preparation-missing") return null!;
+                        if (id == "messaging" && stop == "preparation-interrupted") throw new OperationCanceledException("fixture preparation interrupted");
                         return suites[id];
                     },
                     RunChunk = (suite, chunk) =>
@@ -94,7 +96,9 @@ public sealed class NightlyTestsPlanTests
                     ("suites", new object[] { new PlainObject(("id", "client"), ("chunk", "all"), ("result", "FAIL"), ("exitCode", 1)) })) : null;
                 var failure = NightlyDispatch.CoordinateOrFailure(state, steps, suites.Keys.Cast<object>().ToArray(), priority, [],
                     "", null!, previous!, "");
-                started[0].Invariant.ShouldBeTrue("first runtime start must be a repository invariant");
+                var preparationFailed = stop.StartsWith("preparation-", StringComparison.Ordinal);
+                if (preparationFailed && order != "fresh") started.ShouldBeEmpty();
+                else started[0].Invariant.ShouldBeTrue("first runtime start must be a repository invariant");
                 using var evidence = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(fixture.Root, "dispatch-schedule.json")));
                 var schedule = evidence.RootElement;
                 if (stop.Length > 0)
@@ -104,6 +108,8 @@ public sealed class NightlyTestsPlanTests
                         "interrupted" => "fixture interrupted",
                         "missing-receipt" => "repository-invariant-missing-result:antiphon/",
                         "missing-argument" => "repository-invariant-failed:antiphon/",
+                        "preparation-missing" => "dispatch-preparation-incomplete:messaging",
+                        "preparation-interrupted" => "fixture preparation interrupted",
                         _ => "fixture failure " + stop,
                     };
                     failure.ShouldNotBeNull().Message.ShouldContain(expectedError);
@@ -111,6 +117,14 @@ public sealed class NightlyTestsPlanTests
                     var prefix = schedule.GetProperty("invariantPrefix");
                     prefix.GetProperty("complete").GetBoolean().ShouldBeFalse(stop);
                     prefix.GetProperty("outstanding").GetArrayLength().ShouldBeGreaterThan(0);
+                    if (preparationFailed)
+                    {
+                        schedule.GetProperty("preparationComplete").GetBoolean().ShouldBeFalse();
+                        prefix.GetProperty("suite").GetString().ShouldBe("messaging");
+                        prefix.GetProperty("outstanding").EnumerateArray().ShouldContain(entry =>
+                            entry.GetProperty("suite").GetString() == "messaging"
+                            && entry.GetProperty("chunk").GetString() == "discovery-pending");
+                    }
                 }
                 else
                 {
