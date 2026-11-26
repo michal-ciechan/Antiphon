@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -701,6 +702,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             refusal.ShouldBeNull();
             stream.ShouldNotBeNull();
             io.ExclusivePathProbes.ShouldBe(0, "Windows denies a second open while the creator holds FileShare.None");
+            write.WasCreated(path).ShouldBeTrue();
             context.Registry.Identity(path).ShouldNotBeNull();
         }
 
@@ -708,16 +710,93 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     }
 
     [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public void gate_and_append_record_identity_without_reopening(bool gate)
+    {
+        var root = TempDir();
+        var path = Path.Combine(root, gate ? "publication.lock" : "usage.jsonl");
+        File.WriteAllBytes(path, [1]);
+        var io = new ExclusiveCreateIo(path);
+        var context = new CheckpointCleanupContext(io, CheckpointCleanupDefaults.Context.Git);
+        var write = new CheckpointWrite(context);
+        var expected = FilesystemIdentityReader.Read(io, path);
+        expected.IsBound.ShouldBeTrue();
+
+        var refusal = gate
+            ? write.OpenGate(path, write.Under(root), out var stream)
+            : write.OpenAppend(path, write.Under(root), out stream, FileShare.None);
+        using (stream)
+        {
+            refusal.ShouldBeNull();
+            var file = stream.ShouldBeOfType<FileStream>();
+            io.ExclusivePathProbes.ShouldBe(0, "identity must come from the retained handle");
+            write.WasCreated(path).ShouldBeTrue();
+            context.Registry.Identity(path).ShouldBe(expected);
+            if (OperatingSystem.IsWindows())
+            {
+                var conflict = Should.Throw<IOException>(() =>
+                {
+                    using var contender = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                });
+                (conflict.HResult & 0xffff).ShouldBe(32);
+            }
+            if (!gate)
+                file.WriteByte(2);
+        }
+
+        File.ReadAllBytes(path).ShouldBe(gate ? new byte[] { 1 } : new byte[] { 1, 2 });
+    }
+
+    [Test]
+    public void open_create_disposes_the_stream_when_recording_identity_throws()
+    {
+        var root = TempDir();
+        var path = Path.Combine(root, "staged.seal");
+        var io = new ThrowingHandleIo(path);
+        var context = new CheckpointCleanupContext(io, CheckpointCleanupDefaults.Context.Git);
+        var write = new CheckpointWrite(context);
+        Stream? returned = null;
+        try
+        {
+            var fault = Should.Throw<IOException>(() => write.OpenCreate(path, write.Under(root), out returned));
+            fault.ShouldBeSameAs(io.Fault);
+            io.Opened.ShouldNotBeNull().Handle.IsClosed.ShouldBeTrue("the failed handoff must release the exclusive handle");
+            returned.ShouldBeNull();
+            write.WasCreated(path).ShouldBeFalse();
+            using var reopened = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None);
+        }
+        finally
+        {
+            io.Opened?.Dispose();
+        }
+    }
+
+    [Test]
     public async Task overlapping_build_keeps_first_rows_partition()
     {
-        var fixture = NewSealFixture();
-        fixture.Seed();
+        var clock = Stopwatch.StartNew();
+        var phases = new ConcurrentQueue<string>();
+        void Mark(string phase) => phases.Enqueue(FormattableString.Invariant($"{phase}={clock.Elapsed.TotalMilliseconds:F1}ms"));
+        string Timeline() => "overlap phases " + string.Join(", ", phases);
+
+        SealFixture fixture;
+        using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "warm-overlap-seed"))
+        {
+            fixture = NewSealFixture();
+            fixture.Seed();
+        }
+        Mark("seeded");
         var rowEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondBuildEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var slots = new SealSlots(async (label, token) =>
         {
             if (label == "build:bin-second")
+            {
+                Mark("second-slot-wait-start");
                 await rowEntered.Task.WaitAsync(token);
+                Mark("second-slot-wait-end");
+            }
             return SealSlots.Grant();
         });
         var driver = new SealDriver(fixture)
@@ -726,30 +805,44 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             {
                 if (SealFixture.HasOutput(request, "bin-proof"))
                 {
+                    Mark("first-row-entered");
                     rowEntered.TrySetResult();
                     await secondBuildEntered.Task.WaitAsync(token);
+                    Mark("first-row-released");
                 }
             },
             OnBuild = (request, _) =>
             {
-                if (request.Arguments.Contains("--property:OutputPath=bin-second/"))
+                if (!request.Arguments.Contains("--property:OutputPath=bin-second/"))
+                    Mark("first-build-entered");
+                else
                 {
+                    Mark("gate-contention-start");
+                    using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "warm-overlap-contender");
                     using var contender = CheckpointIntermediateCache.TryOpen(fixture.Root, fixture.Source, fixture.Source.Commit);
-                    contender.ShouldBeNull("the first test host still owns borrowed intermediates");
+                    Mark("gate-contention-end");
+                    contender.ShouldBeNull("the first test host still owns borrowed intermediates. " + Timeline());
                     secondBuildEntered.TrySetResult();
                 }
                 return Task.FromResult(new DriverResult(0, "", ""));
             },
         };
+        Mark("watchdog-start");
         using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using (var cache = fixture.Open())
         {
+            Mark("gate-opened");
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "warm-overlap-scheduler");
             var result = await fixture.RunAsync(cache, driver, slots: slots, cancellationToken: watchdog.Token, second: true);
-            result.ExitCode.ShouldBe(ExitCodes.Green, Describe(result));
+            Mark("scheduler-returned");
+            var diagnostic = $"{Timeline()}; watchdog canceled={watchdog.IsCancellationRequested}; {Describe(result)}";
+            Console.WriteLine(diagnostic);
+            result.ExitCode.ShouldBe(ExitCodes.Green, diagnostic);
             result.Rows.Count.ShouldBe(2);
             fixture.AssertGreen(result, driver, "bin-proof", warm: true);
             fixture.AssertGreen(result, driver, "bin-second", warm: false);
         }
+        Mark("gate-released");
 
         rowEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
         secondBuildEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
@@ -757,6 +850,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         using var reopened = fixture.Open();
         fixture.Prepare(reopened).ShouldNotBeNull().Path.ShouldBe(fixture.Partition);
         File.ReadAllBytes(fixture.Seal).ShouldBe(fixture.ExpectedDigest());
+        Mark("seal-verified");
+        Console.WriteLine(Timeline());
     }
 
     [Test]
@@ -1010,6 +1105,22 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             ExclusivePathProbes++;
             return new CheckpointStat("unknown", 0, 0, 0, 0, 0);
         }
+    }
+
+    private sealed class ThrowingHandleIo(string path) : ForwardingNativeIo
+    {
+        internal IOException Fault { get; } = new("injected handle inspection failure");
+        internal ThrowingHandleFile? Opened { get; private set; }
+
+        public override Stream Open(string target, FileMode mode, FileAccess access, FileShare share) =>
+            target == path ? Opened = new ThrowingHandleFile(target, mode, access, share, Fault) : base.Open(target, mode, access, share);
+    }
+
+    private sealed class ThrowingHandleFile(string path, FileMode mode, FileAccess access, FileShare share, IOException fault)
+        : FileStream(path, mode, access, share)
+    {
+        internal SafeFileHandle Handle => base.SafeFileHandle;
+        public override SafeFileHandle SafeFileHandle => throw fault;
     }
 
     private sealed class DigestSealIo(CheckpointCleanupContext context) : CheckpointIntermediateCache.SealIo
