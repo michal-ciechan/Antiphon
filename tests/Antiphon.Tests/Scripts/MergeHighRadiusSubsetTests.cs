@@ -90,6 +90,64 @@ public sealed class MergeHighRadiusSubsetTests
         missing.Output.ShouldContain("selected_rows_missing");
     }
 
+    [Test]
+    public async Task C2082_Merge_rejects_a_passing_row_missing_one_argument()
+    {
+        const string rowId = "CP-invariants-antiphon";
+        const string project = "tests/Antiphon.Tests";
+        const string filter = "/*/*/*/*[Category=RepositoryInvariant]";
+        const string className = "Fixture.Invariants.TwoArguments";
+        const string firstUid = className + ".1.1.Case(System.Int32).1.1.0";
+        const string secondUid = className + ".1.1.Case(System.Int32).2.1.0";
+        // Golden MTP 2.2.2 TRX GUIDs for the two TUnit UIDs, from the adapter's GuidFromString.
+        const string firstId = "69e49713-3c05-967d-85f7-19bf5384ebb3";
+        const string secondId = "7e6e5ade-880f-511c-5a77-6930d2625edf";
+
+        using var fixture = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("c2082-merge-case-receipt");
+        var receipt = Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests.CountReport();
+        var row = receipt.Rows.Single();
+        row.Id = rowId;
+        row.Filter = filter;
+        row.Build = "build-1";
+        row.Trx = Path.Combine(fixture.Root, "run.trx");
+        receipt.Builds = [new ReportBuild { Id = row.Build, Project = project }];
+        var reportPath = Path.Combine(fixture.Root, "report.json");
+        var requiredPath = Path.Combine(fixture.Root, "required.json");
+        await File.WriteAllTextAsync(requiredPath, JsonSerializer.Serialize(new
+        {
+            sourceSha = receipt.Commit,
+            rows = new[] { new { id = rowId, project, filter, uids = new[] { firstUid, secondUid } } },
+        }));
+
+        async Task<(int Exit, string Output)> Validate(params string[] testIds)
+        {
+            row.Executed = row.Passed = testIds.Length;
+            row.Line = $"CHECKPOINT {rowId} commit={receipt.Commit} build=ok executed={testIds.Length} passed={testIds.Length} failed=0 skipped=0 dirty=0 source={receipt.Commit} sourceState=clean buildSource=verified trx={row.Trx} slot=granted";
+            var definitions = string.Concat(testIds.Select(testId => $"<UnitTest id=\"{testId}\"><TestMethod className=\"{className}\" name=\"Case\" /></UnitTest>"));
+            var results = string.Concat(testIds.Select((testId, index) => $"<UnitTestResult testId=\"{testId}\" executionId=\"{index}\" outcome=\"Passed\" />"));
+            await File.WriteAllTextAsync(row.Trx, $"""
+                <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+                  <Results>{results}</Results>
+                  <TestDefinitions>{definitions}</TestDefinitions>
+                  <ResultSummary><Counters total="{testIds.Length}" executed="{testIds.Length}" passed="{testIds.Length}" failed="0" notExecuted="0" /></ResultSummary>
+                </TestRun>
+                """);
+            await File.WriteAllTextAsync(reportPath, ReportWriter.JsonText(receipt));
+            using var output = new StringWriter();
+            var exit = await Antiphon.Checkpoints.Program.RunAsync(
+                ["validate", "--evidence", reportPath, "--expected-source-sha", receipt.Commit, "--rows", rowId,
+                    "--required-invariant-cases", requiredPath],
+                new CheckpointApp.Runtime { RepoRoot = fixture.Root, Output = output });
+            return (exit, output.ToString());
+        }
+
+        var complete = await Validate(firstId, secondId);
+        complete.Exit.ShouldBe(0, complete.Output);
+        var partial = await Validate(firstId);
+        partial.Exit.ShouldBe(2, partial.Output);
+        partial.Output.ShouldContain(project + "/" + secondUid);
+    }
+
     private const string MigrationRange =
         "ff7cceaf4f65bed039f5b7f11dd726d27e762607^..ff7cceaf4f65bed039f5b7f11dd726d27e762607";
 
