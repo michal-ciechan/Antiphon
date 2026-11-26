@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 368,
+      "classes": 369,
       "reason": "allowlist"
     },
     {
@@ -132,12 +132,12 @@
     },
     {
       "path": "Directory.Build.props",
-      "classes": 27,
+      "classes": 28,
       "reason": "allowlist"
     },
     {
       "path": "Directory.Build.targets",
-      "classes": 14,
+      "classes": 15,
       "reason": "allowlist"
     },
     {
@@ -2120,9 +2120,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 146,
+      "classes": 147,
       "reason": "cap",
-      "owed": 121,
+      "owed": 122,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2232,9 +2232,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 64,
+      "classes": 65,
       "reason": "cap",
-      "owed": 39,
+      "owed": 40,
       "first": [
         "NightlyRunTests",
         "RcFailureHistoryTests",
@@ -2649,6 +2649,7 @@
     {
       "path": ".editorconfig",
       "classes": [
+        "CliLauncherTests",
         "IncrementalSelectionSoundnessTests",
         "LandVerificationFailureTests",
         "LiveLaneProjectIsolationTests",
@@ -2813,6 +2814,7 @@
       "path": "Directory.Build.rsp",
       "classes": [
         "CheckpointManifestDocumentationTests",
+        "CliLauncherTests",
         "DirectoryBuildRspTests",
         "LandNonCodeSkipTests",
         "LiveLaneProjectIsolationTests"
@@ -4090,6 +4092,24 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.CliLauncher/Antiphon.CliLauncher.csproj",
+      "classes": [
+        "CliLauncherTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.CliLauncher/CliGate.cs",
+      "classes": [
+        "CliLauncherTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.LiveLane/Antiphon.LiveLane.csproj",
+      "classes": [
+        "CliLauncherTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/AmServiceDeploy.cs",
       "classes": [
         "DeployAmServiceTests"
@@ -4098,6 +4118,7 @@
     {
       "path": "scripts/lib/Antiphon.Nightly/Antiphon.Nightly.csproj",
       "classes": [
+        "CliLauncherTests",
         "LiveLaneProjectIsolationTests"
       ]
     },
@@ -4560,6 +4581,7 @@
     {
       "path": "scripts/lib/Antiphon.Scripts/Antiphon.Scripts.csproj",
       "classes": [
+        "CliLauncherTests",
         "LiveLaneProjectIsolationTests"
       ]
     },
@@ -4586,6 +4608,7 @@
     {
       "path": "scripts/lib/Antiphon.Scripts/Program.cs",
       "classes": [
+        "CliLauncherTests",
         "ReleaseImpactScriptTests"
       ]
     },
@@ -4610,19 +4633,22 @@
     {
       "path": "scripts/lib/BuildDriverEnvironment.cs",
       "classes": [
-        "CheckpointToolCommandTests"
+        "CheckpointToolCommandTests",
+        "CliLauncherTests"
       ]
     },
     {
       "path": "scripts/lib/CheckpointProcessRunner.cs",
       "classes": [
-        "CheckpointToolCommandTests"
+        "CheckpointToolCommandTests",
+        "CliLauncherTests"
       ]
     },
     {
       "path": "scripts/lib/LeaseTempDirectory.cs",
       "classes": [
-        "CheckpointToolCommandTests"
+        "CheckpointToolCommandTests",
+        "CliLauncherTests"
       ]
     },
     {
@@ -18529,6 +18555,12 @@
       ]
     },
     {
+      "path": "src/Antiphon.IO.WriteBehind/Antiphon.IO.WriteBehind.csproj",
+      "classes": [
+        "CliLauncherTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.IO.WriteBehind/AtomicRename.cs",
       "classes": [
         "WriteBehindFileSystemTests"
@@ -29176,6 +29208,7 @@
     {
       "path": "tests/Shared/CheckpointRepeat.targets",
       "classes": [
+        "CliLauncherTests",
         "LandNonCodeSkipTests",
         "LiveLaneProjectIsolationTests"
       ]
