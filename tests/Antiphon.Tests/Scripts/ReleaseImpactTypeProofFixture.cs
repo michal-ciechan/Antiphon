@@ -72,7 +72,29 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         }
         var commit = _repository.ObjectDatabase.CreateCommit(Author, Author, "fixture", _repository.ObjectDatabase.CreateTree(definition),
             [], false);
-        var manifest = new ReleaseCompilerManifest("antiphon-release-compiler-inputs-v1", commit.Sha, _sdk, _compiler, _roslyn,
+        var (manifestPath, expected) = WriteManifest(commit.Sha, files, generated, contexts, blobs, proposal);
+        if (unavailableGenerated is null) return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected);
+        var source = Encoding.UTF8.GetBytes(generated[unavailableGenerated]);
+        var payload = Path.Combine(_workspace.Path, Hash(source));
+        File.Delete(payload);
+        try { return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected); }
+        finally { Store(source); }
+    }
+
+    internal (string Path, string Digest) PinEndpoint(string repositoryRoot, string sha, IReadOnlyDictionary<string, string> files,
+        Context[] contexts)
+    {
+        using var repository = new Repository(repositoryRoot);
+        var tree = repository.Lookup<Commit>(sha).Tree;
+        var blobs = files.Keys.ToDictionary(path => path, path => tree[path].Target.Id.Sha, StringComparer.Ordinal);
+        return WriteManifest(sha, files, new Dictionary<string, string>(), contexts, blobs, null);
+    }
+
+    private (string Path, string Digest) WriteManifest(string sha, IReadOnlyDictionary<string, string> files,
+        IReadOnlyDictionary<string, string> generated, Context[] contexts, IReadOnlyDictionary<string, string> blobs,
+        Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal)
+    {
+        var manifest = new ReleaseCompilerManifest("antiphon-release-compiler-inputs-v1", sha, _sdk, _compiler, _roslyn,
             contexts.Select(context => new ReleaseCompilerContext(context.Project, context.Assembly, "windows", "x64", context.Framework,
                 "win-x64", "Release", "AnyCPU", "12", context.Defines, "disable", false, false, "release", "library",
                 context.SourcePaths.Select(path => new ReleaseCompilerSource(path,
@@ -82,12 +104,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         var expected = Hash(JsonSerializer.SerializeToUtf8Bytes(manifest, options));
         var manifestPath = Path.Combine(_workspace.Path, "manifest.json");
         File.WriteAllBytes(manifestPath, JsonSerializer.SerializeToUtf8Bytes(proposal?.Invoke(manifest) ?? manifest, options));
-        if (unavailableGenerated is null) return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected);
-        var source = Encoding.UTF8.GetBytes(generated[unavailableGenerated]);
-        var payload = Path.Combine(_workspace.Path, Hash(source));
-        File.Delete(payload);
-        try { return ReleaseCompilerInputs.Bind(commit.Sha, blobs, manifestPath, expected); }
-        finally { Store(source); }
+        return (manifestPath, expected);
     }
 
     private string Store(byte[] data)

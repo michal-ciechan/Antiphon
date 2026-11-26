@@ -5,6 +5,7 @@ using System.Text.Json;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
+using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
@@ -19,6 +20,121 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcProjectSelectionTests
 {
+
+    [Test, Timeout(30_000)]
+    public async Task BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken)
+    {
+        const string leftProject = "tests/L/L.csproj";
+        const string rightProject = "tests/R/R.csproj";
+        const string north = "tests/L/A.cs";
+        const string south = "tests/R/B.cs";
+        const string leftSource = "tests/L/Use.cs";
+        const string rightSource = "tests/R/Use.cs";
+        const string index = "tests/derived-impact-index.json";
+        using var repo = new Repo();
+        using var pack = new ReleaseImpactTypeProofFixture();
+        var tunit = pack.Emit("TUnit.Core", """
+            namespace TUnit.Core;
+            public sealed class TestAttribute : System.Attribute {}
+            public sealed class ArgumentsAttribute : System.Attribute
+            {
+                public ArgumentsAttribute(params object[] arguments) {}
+            }
+            """, []);
+        var files = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [".gitignore"] = ".antiphon/selector-replay/\n",
+            [leftProject] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+            [rightProject] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+            [north] = "namespace North; public class Probe {}\n",
+            [south] = "namespace South; public class Probe {}\n",
+            [leftSource] = "namespace L; public class LeftTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"l1\")] public void M(string key) { _ = typeof(North.Probe); } }\n",
+            [rightSource] = "namespace R; public class RightTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"r1\")] public void M(string key) { _ = typeof(South.Probe); } }\n",
+            [index] = JsonSerializer.Serialize(new
+            {
+                schema = 1, cap = 25, byteLimit = 2000000, allowlist = Array.Empty<string>(),
+                windowsOnly = Array.Empty<string>(), linuxOnly = Array.Empty<string>(), cappedPaths = Array.Empty<object>(),
+                edges = new[] { north, south }.Select(path => new { path, classes = new[] { "LeftTests", "RightTests" } }),
+            }),
+        };
+        repo.Catalog(new OrderedDictionary { [leftProject] = new[] { "other" }, [rightProject] = new[] { "other" } }, leftProject, rightProject);
+        foreach (var (path, text) in files) repo.Put(path, text);
+        var baseline = repo.Commit();
+        ReleaseImpactTypeProofFixture.Context[] contexts =
+        [
+            new(leftProject, "L", [north, leftSource], [], [pack.Core, tunit]),
+            new(rightProject, "R", [south, rightSource], [], [pack.Core, tunit]),
+        ];
+        var baselineArtifact = await ProduceAsync(baseline, "baseline");
+        files[south] = "namespace South; public class Probe { public int Value; }\n";
+        repo.Put(south, files[south]);
+        var candidate = repo.Commit();
+        var candidateArtifact = await ProduceAsync(candidate, "candidate");
+
+        var chunks = new[]
+        {
+            Chunk("left", leftProject, "L.LeftTests"),
+            Chunk("right", rightProject, "R.RightTests"),
+        };
+        chunks[0].Cases = ["l1"];
+        chunks[1].Cases = ["r1"];
+        chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "l1")];
+        chunks[1].CaseRoster = [new("R", "R.RightTests", "M", "r1")];
+        foreach (var chunk in chunks)
+            repo.Put(".antiphon/selector-replay/" + chunk.Id + ".trx",
+                $"""<TestRun><TestDefinitions><UnitTest id="{chunk.Cases.Single()}"><TestMethod className="{chunk.Classes.Single()}" name="M" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="{chunk.Cases.Single()}" outcome="Passed" /></Results></TestRun>""");
+
+        var scope = new RcReceiptScope { Platform = "windows", Architecture = "x64", Profile = "rc" };
+        var receipts = chunks.Select(chunk => (IDictionary)new OrderedDictionary
+        {
+            ["id"] = "antiphon", ["chunk"] = chunk.Id, ["result"] = "pass", ["exitCode"] = 0, ["sha"] = baseline,
+            ["contentDigest"] = chunk.ContentDigest, ["disposition"] = "executed", ["platform"] = "windows",
+            ["architecture"] = "x64", ["profile"] = "rc",
+        }).ToArray();
+
+        RcReuse Admit(IDictionary row)
+        {
+            var chunk = chunks.Single(item => item.Id == PsValue.Str(row["chunk"]));
+            var trx = RcChunkReceipt.ReadTrx(repo.PathOf(".antiphon", "selector-replay", chunk.Id + ".trx"));
+            trx.Single().Class.ShouldBe(chunk.Classes.Single());
+            trx.Single().Method.ShouldBe("M");
+            return RcChunkReceipt.Reusable(row, trx, chunk.Cases, scope);
+        }
+
+        var off = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit);
+        off.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.off");
+        var proof = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
+            candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
+        var on = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof);
+        on.Decisions.Select(decision => decision.Decision).ShouldBe(["carry", "execute"], "C.delta");
+        Text(on.Of("left").Origin, "sha").ShouldBe(baseline, "C.origin");
+        on.Of("right").Reasons.ShouldContain("project-closure:A:" + south, "C.right");
+        var reader = new RcReaderCensusEntry { Reader = "L.LeftTests", Globs = [south] };
+        var owed = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [reader], Admit, proof);
+        owed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed");
+        owed.Of("left").Reasons.ShouldContain("runtime-reader:" + south, "C.owed");
+
+        async Task<(string Path, string Digest)> ProduceAsync(string sha, string label)
+        {
+            var (manifest, pin) = pack.PinEndpoint(repo.Root, sha, files, contexts);
+            var driver = Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll");
+            var output = repo.PathOf(".antiphon", "selector-replay", label + ".json");
+            var start = new System.Diagnostics.ProcessStartInfo("dotnet", [driver, "--release-graph", repo.Root, sha, output,
+                "--proven-subtraction", "--compiler-manifest", manifest, "--expected-compiler-manifest-sha256", pin])
+            {
+                WorkingDirectory = repo.Root,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            var run = await C1514Support.RunProcess(start, cancellationToken);
+            run.ExitCode.ShouldBe(0, label + " producer " + run.Text);
+            return (output, Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(output))));
+        }
+
+        static string Digest(string value) => Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+    }
     private static readonly OrderedDictionary Projects = new()
     {
         ["src/Messaging/Messaging.csproj"] = new[] { "messaging" },

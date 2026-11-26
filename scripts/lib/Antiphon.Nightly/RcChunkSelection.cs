@@ -25,6 +25,8 @@ namespace Antiphon.Nightly
         public string ContentDigest { get; set; } = "";
         /// <summary>The stable case keys of its expanded roster (the admission predicate requires each passed).</summary>
         public string[] Cases { get; set; } = Array.Empty<string>();
+        [System.Text.Json.Serialization.JsonIgnore]
+        public RcCaseIdentity[] CaseRoster { get; set; } = Array.Empty<RcCaseIdentity>();
     }
 
     /// <summary>A declared runtime reader (directory listing, fixture, assembled file name): its class and the path globs it reads.</summary>
@@ -76,6 +78,11 @@ namespace Antiphon.Nightly
         /// </summary>
         public static RcChunkSelectionResult Select(string root, string baselineSha, string candidateSha, IReadOnlyList<RcPlannedChunk> chunks,
             IReadOnlyList<IDictionary> priorReceipts, IReadOnlyList<RcReaderCensusEntry> census, Func<IDictionary, RcReuse> admit)
+            => Select(root, baselineSha, candidateSha, chunks, priorReceipts, census, admit, null);
+
+        public static RcChunkSelectionResult Select(string root, string baselineSha, string candidateSha, IReadOnlyList<RcPlannedChunk> chunks,
+            IReadOnlyList<IDictionary> priorReceipts, IReadOnlyList<RcReaderCensusEntry> census, Func<IDictionary, RcReuse> admit,
+            RcTypeProofComparison proof)
         {
             var result = new RcChunkSelectionResult { BaselineSha = baselineSha ?? "", CandidateSha = candidateSha ?? "" };
             var fallback = new List<string>();
