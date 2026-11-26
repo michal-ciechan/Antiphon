@@ -345,7 +345,7 @@ internal static class ReleaseImpactTypeResolver
         }
 
         static MetadataReader? Reader(PortableExecutableReference reference) =>
-            reference.GetMetadata() is AssemblyMetadata assembly && assembly.GetModules().Length == 1
+            reference.GetMetadata() is Microsoft.CodeAnalysis.AssemblyMetadata assembly && assembly.GetModules().Length == 1
                 ? assembly.GetModules()[0].GetMetadataReader() : null;
 
         static TypeDefinition[] Definitions(MetadataReader reader, INamedTypeSymbol symbol) => reader.TypeDefinitions
