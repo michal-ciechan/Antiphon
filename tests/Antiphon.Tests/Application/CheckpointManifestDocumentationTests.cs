@@ -226,7 +226,7 @@ public sealed class CheckpointManifestDocumentationTests
 
         var bundle = ReadRepoFile("server", "Bundles", "stage-test-design.md");
         bundle.ShouldContain(sampleHeader, Case.Sensitive, "server/Bundles/stage-test-design.md");
-        bundle.ShouldContain("Min=-MinExecuted. EstimatedMinutes target 2x p95.", Case.Sensitive, "server/Bundles/stage-test-design.md");
+        bundle.ShouldContain("Min=--min-executed. EstimatedMinutes target 2x p95.", Case.Sensitive, "server/Bundles/stage-test-design.md");
 
         ReadCollapsed("docs", "orchestration-loop.md").ShouldContain(
             "`EstimatedMinutes` column (a time budget, not the `Min` execution counts)",

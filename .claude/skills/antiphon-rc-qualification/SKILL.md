@@ -152,10 +152,10 @@ These directions override the cited standing rules in
    Run the **real** graph evaluator under the build-slot gate on the final tree:
 
    ```powershell
-   pwsh -NoProfile -File scripts/build-slot.ps1 -Label rc-merge-graph -- scripts\antiphon.cmd land-graph-audit --check
+   scripts/antiphon build-slot --label rc-merge-graph -- scripts/antiphon land-graph-audit --check
    ```
 
-   (On sh: `scripts/antiphon build-slot --label rc-merge-graph -- scripts/antiphon land-graph-audit --check`.)
+   (The same line from sh; in PowerShell `scripts/antiphon` is the generated `scripts\antiphon.exe`, unit 63.)
    Supply the documented built audit tool (`--tool-path`) when needed; its build also takes a slot and uses an isolated
    OutputPath. When `--check` fails solely because this batch changed a build-definition
    record, the selected digest or count, or a target pin, run

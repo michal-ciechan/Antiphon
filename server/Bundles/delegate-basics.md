@@ -58,13 +58,12 @@ work itself.
   as `UseAppHost=false`) on the build and the run. Checkpoint runs and land verification keep their
   own cold outputs; a custom output that is still required ends with a FORWARD slash.
 
-- BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. `scripts/run-checkpoint.ps1` (run unchanged) takes a
-  slot itself; run any other build or test driver as
-  `scripts/antiphon build-slot --label <what> -- <command>` (bash/sh) or
-  `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>` (PowerShell; quote `-x:y`).
+- BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. A checkpoint row (`scripts/antiphon checkpoints
+  row ...`, or a plan's `run-checkpoint.ps1` line) takes a slot itself; run any other build or test
+  driver as `scripts/antiphon build-slot --label <what> -- <command>` (PowerShell: quote `-x:y`).
   The gate waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver
   outside it is an unlisted run Review flags. Exit 4 is a slot timeout: report the row as not run or
-  end `blocked`, never to retry unleased or with `-NoSlot` (CARD-0589). ONE LEASE PER BUILD: a loop
+  end `blocked`, never to retry unleased or with `--no-slot` (CARD-0589). ONE LEASE PER BUILD: a loop
   of builds re-leases per build, never one lease around the loop; a wrapped non-dotnet command is
   not capped (CARD-1627).
 

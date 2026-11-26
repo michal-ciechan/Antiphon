@@ -992,7 +992,9 @@ public class InstructionBundleTests
     {
         var basics = InstructionBundles.TextOf(InstructionBundles.DelegateBasics);
         basics.ShouldContain("BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE");
-        basics.ShouldContain("scripts/build-slot.ps1 -Label");
+        basics.ShouldContain("scripts/antiphon build-slot --label");
+        basics.ShouldContain("scripts/antiphon checkpoints");
+        basics.ShouldNotContain("pwsh -NoProfile -File scripts/build-slot.ps1", customMessage: "unit 63: PowerShell runs scripts/antiphon.exe");
         basics.ShouldContain("BUILD SLOT");
         basics.ShouldContain("exit 4");
         basics.ShouldContain("never to retry unleased");

@@ -89,8 +89,7 @@ output, the project's own `bin/` and `obj/`, never a custom or new output per bu
 owner: Build slots in `docs/testing-and-build.md`). Paste this sentence:
 
 > BUILD-SLOT RULE: ONE build-slot lease PER BUILD (scripts/antiphon build-slot --label <what> -- dotnet ... from
-> bash or sh; pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- dotnet ... from PowerShell, where
-> scripts/antiphon is cmd.exe and breaks `|`); build in your worktree's NATIVE default output (no -o, --output or OutputPath), one build at a time
+> bash, sh or PowerShell; in PowerShell quote each -x:y token after --); build in your worktree's NATIVE default output (no -o, --output or OutputPath), one build at a time
 > per worktree, with the same properties on the build and its --no-build run; explicit generous
 > --total-timeout WITH UNITS, UseAppHost=false, TEMP=/tmp. Checkpoint runs and land verification keep
 > their own cold outputs. A mutant loop re-leases PER MUTANT BUILD, never one lease around a loop

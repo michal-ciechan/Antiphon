@@ -23,7 +23,7 @@ List all safety-critical guards, incl. untested. Map 1:1 to distinct PC-n. Justi
 For migrations, public DTOs/routes, operation labels, remote script functions and statement budgets. Name classes (CARD-1782) or none.
 ### Checkpoints
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
-One isolated build + exact filter per row; union=whole ordinary scope. Min=-MinExecuted. EstimatedMinutes target 2x p95. total=max(30,2*sum+10) else totalTimeoutOverrideReason. Unit shards share a build; per-row TRX. Schema: docs/testing-and-build.md.
+One isolated build + exact filter per row; union=whole ordinary scope. Min=--min-executed. EstimatedMinutes target 2x p95. total=max(30,2*sum+10) else totalTimeoutOverrideReason. Unit shards share a build; per-row TRX. Schema: docs/testing-and-build.md.
 ### Cost
 - Ordinary V/R floor (Code)=sum EstimatedMinutes; PC floor (Mutation). Name filters/minutes. Total=build/setup+V/R+PC red/restore/green; label estimated/measured; quantify savings or justify zero.
 
