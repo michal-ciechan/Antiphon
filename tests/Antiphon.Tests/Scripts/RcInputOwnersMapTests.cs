@@ -990,9 +990,9 @@ public sealed class RcInputOwnersMapTests : IDisposable
     public void CanaryEditSelectsPtySuite()
     {
         var baseline = seeded;
-        // A body edit of the canary file selects the Pty suite that reads it. The owning Antiphon.Tests project
-        // still defers.
-        const string canary = "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs";
+        // A body edit of the canary file (in the live Claude project since unit 60) selects the Pty suite that reads it.
+        // Antiphon.Tests, which owns every test source for the derived-impact scan, still defers.
+        const string canary = "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.cs";
         repo.Put(canary, "class ClaudeDialogWatchdogCanaryTests { void Body() { int x = 1; } }");
         baseline = repo.Commit();
         repo.Put(canary, "class ClaudeDialogWatchdogCanaryTests { void Body() { int x = 2; } }");

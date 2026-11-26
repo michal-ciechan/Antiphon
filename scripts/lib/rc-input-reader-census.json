@@ -142,18 +142,18 @@
     },
     {
       "group": "scan-07",
-      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"],
-      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+      "paths": ["tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj", "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
     },
     {
       "group": "scan-08",
-      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs"],
-      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+      "paths": ["tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlMenuCanaryTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj", "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
     },
     {
       "group": "scan-09",
-      "paths": ["tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs"],
-      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+      "paths": ["tests/Antiphon.LiveClaude.Tests/ClaudeSubmitContractLiveTests.cs"],
+      "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj", "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
     },
     {
       "group": "scan-10",
@@ -232,7 +232,7 @@
     },
     {
       "group": "scan-25",
-      "paths": ["tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs"],
+      "paths": ["tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.cs"],
       "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
     },
     {
@@ -264,6 +264,11 @@
       "group": "scan-31",
       "paths": ["tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj"],
       "suites": ["tests/Antiphon.Tests/Antiphon.Tests.csproj"]
+    },
+    {
+      "group": "scan-32",
+      "paths": ["tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.Launch.cs", "tests/Antiphon.LiveClaude.Tests/ClaudeDialogCanaryDiagnostics.cs"],
+      "suites": ["tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj"]
     }
   ]
 }

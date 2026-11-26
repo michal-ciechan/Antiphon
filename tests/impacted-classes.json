@@ -593,6 +593,42 @@
       ]
     },
     {
+      "id": "live-lane-fingerprint-adapter",
+      "globs": [
+        "scripts/lib/Antiphon.Scripts/LiveLaneNightlySources.cs",
+        "scripts/lib/Antiphon.Nightly/RcProjectSelection.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionGit.cs",
+        "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs"
+      ],
+      "classes": [
+        "LiveLaneParityTests",
+        "LiveLaneFingerprintTests",
+        "LiveLaneStatusTests"
+      ]
+    },
+    {
+      "id": "live-claude-project",
+      "globs": [
+        "tests/Antiphon.LiveClaude.Tests/**",
+        "tests/live-lanes.json",
+        "tests/live-lane-inputs.json"
+      ],
+      "classes": [
+        "LiveLaneInventoryTests",
+        "LiveLaneProjectIsolationTests",
+        "LiveLaneFingerprintTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests",
+        "LiveLaneEvidenceTests",
+        "LiveClaudeInventoryTests",
+        "LiveClaudeIsolationWiringTests",
+        "LiveClaudeStartupWiringTests",
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveClaudeDeliveryWiringTests"
+      ]
+    },
+    {
       "id": "nightly-live-lane",
       "globs": [
         "scripts/lib/nightly-*.ps1",
