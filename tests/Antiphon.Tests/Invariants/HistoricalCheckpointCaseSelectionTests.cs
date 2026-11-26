@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Antiphon.Checkpoints;
 using Antiphon.Nightly;
+using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Testing.Platform.Extensions.Messages;
 using Microsoft.Testing.Platform.Requests;
@@ -80,6 +81,7 @@ internal static class HistoricalCheckpointCaseAudit
                     failures.Add(key + ": missing case obligation or project binding");
                     continue;
                 }
+#pragma warning disable TPEXP // Match with the pinned MTP parser rather than approximating its selection semantics.
                 var filter = (TreeNodeFilter)(Activator.CreateInstance(typeof(TreeNodeFilter),
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, binder: null, [row.Filter], culture: null)
                     ?? throw new InvalidOperationException("Pinned MTP treenode matcher is unavailable."));
@@ -87,6 +89,7 @@ internal static class HistoricalCheckpointCaseAudit
                     ? expect.Project : expect.Project + ".csproj");
                 var selected = cases.Where(test => test.Project == project && filter.MatchesFilter(test.Path, test.Properties))
                     .Select(test => test.Uid).ToHashSet(StringComparer.Ordinal);
+#pragma warning restore TPEXP
                 var missing = expect.Uids.Where(uid => !selected.Contains(uid)).ToArray();
                 if (missing.Length > 0)
                     failures.Add($"{key}: missing {missing.Length}/{expect.Uids.Length} UIDs ({string.Join(", ", missing.Take(5))})");
