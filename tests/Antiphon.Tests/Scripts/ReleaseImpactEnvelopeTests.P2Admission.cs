@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using P2 = Antiphon.Nightly.ReleaseImpactAdmission;
 
@@ -11,6 +12,14 @@ namespace Antiphon.Tests.Scripts;
 
 public sealed partial class ReleaseImpactEnvelopeTests
 {
+    private static string[] Ids(IEnumerable<P2.Row> chunks) => chunks.Select(chunk => chunk.Chunk).ToArray();
+
+    private static bool Full(P2.Decision result, IReadOnlyList<P2.Chunk> expected, string why) =>
+        result.EffectiveMode == "Full" && result.VerifiedHandle is null && !result.CarryCandidates.Any() &&
+        result.CreditedCount == 0 && Ids(result.Owed).SequenceEqual(expected.Select(row => row.Id)) &&
+        result.Owed.Zip(expected).All(pair => pair.First.Cases.SequenceEqual(pair.Second.Cases)) &&
+        result.Reason.StartsWith(why, StringComparison.Ordinal);
+
     private static async Task CheckAdmission(CancellationToken cancellationToken)
     {
         var watch = Stopwatch.StartNew();
@@ -35,13 +44,6 @@ public sealed partial class ReleaseImpactEnvelopeTests
             IReadOnlyList<P2.Chunk>? discovery = null, int limit = ReleaseImpactIntegrity.EnvelopeLimit) =>
             P2.AdmitPrepared(request ?? world.Request, discovery ?? world.Chunks, () => new MemoryStream(bytes, writable: false),
                 evidence ?? prep, limit);
-        static string[] Ids(IEnumerable<P2.Row> chunks) => chunks.Select(chunk => chunk.Chunk).ToArray();
-        static bool Full(P2.Decision result, IReadOnlyList<P2.Chunk> expected, string why) =>
-            result.EffectiveMode == "Full" && result.VerifiedHandle is null && !result.CarryCandidates.Any() &&
-            result.CreditedCount == 0 && Ids(result.Owed).SequenceEqual(expected.Select(row => row.Id)) &&
-            result.Owed.SelectMany(row => row.Cases).SequenceEqual(expected.SelectMany(row => row.Cases)) &&
-            result.Reason.StartsWith(why, StringComparison.Ordinal);
-
         void CheckFull(string id, P2.Decision result, string why, IReadOnlyList<P2.Chunk>? expected = null) =>
             Case(id, Full(result, expected ?? world.Chunks, why), result.Reason);
 
@@ -63,6 +65,16 @@ public sealed partial class ReleaseImpactEnvelopeTests
         var refreshedQuiet = quietChunk with { Cases = [.. quietChunk.Cases, quietChunk.Cases[0] with { CaseUid = "q3" }] };
         P2.Chunk[] refreshed = [world.Chunks[0], refreshedQuiet];
         CheckFull("T.discovery.changedAtAdmit", Admit(proposal, discovery: refreshed), "p2-selection:roster", refreshed);
+        foreach (var (name, cases) in new (string, P2.Case[])[]
+        {
+            ("renamedAtAdmit", [quietChunk.Cases[0] with { Method = "Renamed" }, quietChunk.Cases[1]]),
+            ("swappedAtAdmit", [quietChunk.Cases[0], quietChunk.Cases[1] with { CaseUid = "q3", Method = "AnotherCheck" }]),
+            ("reorderedAtAdmit", [quietChunk.Cases[1], quietChunk.Cases[0]]),
+        })
+        {
+            P2.Chunk[] changed = [world.Chunks[0], quietChunk with { Cases = cases }];
+            CheckFull("T.discovery." + name, Admit(proposal, discovery: changed), "p2-selection:roster", changed);
+        }
 
         if (good.Rows.Count > 1 && good.Rows is System.Collections.Generic.IList<P2.Row> writable)
         {
@@ -286,18 +298,6 @@ public sealed partial class ReleaseImpactEnvelopeTests
         var incomplete = P2.Prepare(world.Request, world.Chunks, world.Authority(unresolved: true));
         var honestlyIncomplete = incomplete.Evidence!.WriteProposal();
         CheckFull("T.incomplete.agreedFalse.mode", Admit(honestlyIncomplete, incomplete), "p2-incomplete:");
-        await using (var selectorChanged = await P2World.Create(changeSelector: true))
-        {
-            var changed = P2.Prepare(selectorChanged.Request, selectorChanged.Chunks, selectorChanged.Authority());
-            changed.Evidence.ShouldNotBeNull(changed.Reason);
-            var changedProposal = changed.Evidence!.WriteProposal();
-            var compatibility = JsonNode.Parse(changedProposal)!["projections"]!["compatibility"]!;
-            compatibility["globalReasons"]!.AsArray().Select(reason => reason!.GetValue<string>())
-                .ShouldBe(["contract-changed:selectorHash"]);
-            var result = Admit(changedProposal, changed, selectorChanged.Request, selectorChanged.Chunks);
-            Case("T.incomplete.globalContract", Full(result, selectorChanged.Chunks, "p2-incomplete:selection"),
-                $"mode={result.EffectiveMode} carry=[{string.Join(",", Ids(result.CarryCandidates))}] reason={result.Reason}");
-        }
         var revision = world.Request with { Revision = world.Request.Revision + 1 };
         var lateAuthority = authority with
         {
@@ -398,10 +398,16 @@ public sealed partial class ReleaseImpactEnvelopeTests
         Case("T.snapshot.artifactOpenCount", world.QuietOpens == 1, $"opens={world.QuietOpens}");
         var openDecision = Admit(oneOpen.Evidence!.WriteProposal(), oneOpen);
         Case("T.snapshot.originalEligible", Ids(openDecision.CarryCandidates).SequenceEqual(["Q"]));
-        var retained = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: world.OriginBase));
+        var retained = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: world.OriginParent));
         var retainedDecision = Admit(retained.Evidence!.WriteProposal(), retained);
         Case("T.receipts.originChain.validOrigin", retainedDecision.CarryCandidates.SingleOrDefault()?.Origin is
-            { RunId: "run-b0", Attempt: 1 } origin && origin.Sha == world.OriginBase);
+            { RunId: "run-b0", Attempt: 1 } origin && origin.Sha == world.OriginParent);
+
+        var older = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: world.OriginBase));
+        var olderDecision = Admit(older.Evidence?.WriteProposal() ?? proposal, older);
+        Case("T.receipts.originChain.nonParentAncestor", olderDecision.VerifiedHandle is not null &&
+            olderDecision.CarryCandidates.SingleOrDefault()?.Origin is { RunId: "run-b0", Attempt: 1 } olderOrigin &&
+            olderOrigin.Sha == world.OriginBase && olderDecision.CreditedCount == 0, olderDecision.Reason);
 
         var dirtyOrigin = P2.Prepare(world.Request, world.Chunks,
             world.Authority(carriedFrom: world.OriginBase, dirtyOriginQuiet: true));
@@ -415,9 +421,17 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 reason.Chain.SequenceEqual(["origin-inputs-changed"])),
             $"mode={dirtyOriginResult.EffectiveMode} carry=[{string.Join(",", Ids(dirtyOriginResult.CarryCandidates))}]");
 
-        var siblingOrigin = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: world.Sibling));
-        CheckFull("T.receipts.originChain.nonAncestor", Admit(siblingOrigin.Evidence?.WriteProposal() ?? proposal, siblingOrigin),
-            "p2-receipt:origin-ancestry");
+        foreach (var (name, sha) in new[]
+        {
+            ("nonAncestor", world.Sibling),
+            ("descendant", world.Request.CandidateSha),
+            ("rewrittenSameTree", world.RewriteOriginRef()),
+        })
+        {
+            var originProof = P2.Prepare(world.Request, world.Chunks, world.Authority(carriedFrom: sha));
+            CheckFull("T.receipts.originChain." + name, Admit(originProof.Evidence?.WriteProposal() ?? proposal, originProof),
+                "p2-receipt:origin-ancestry");
+        }
 
         var stamped = JsonNode.Parse(retained.Evidence.WriteProposal())!.AsObject();
         var carried = stamped["projections"]!.AsObject();
@@ -446,13 +460,66 @@ public sealed partial class ReleaseImpactEnvelopeTests
         proposal[0] = (byte)'!';
         CheckFull("T.snapshot.editedCallerBuffer", Admit(proposal), "p2-format:");
         Case("T.snapshot.originalDigest", good.VerifiedHandle?.RootDigest == digestBeforeEdit && digestBeforeEdit is not null);
-        await CheckGraphAndTrust(Case, schema);
         Case("T.snapshot.originalUnchanged", Ids(good.CarryCandidates).SequenceEqual(["Q"]) && good.CreditedCount == 0);
-        Console.WriteLine($"C2069 phase=admission elapsedMs={watch.ElapsedMilliseconds} cases={roster.Count}");
-        var declared = File.ReadAllLines(Path.Combine(P2Fixtures, "admission-case-ids.txt"));
+        CheckAdmissionRoster("admission", rows, roster, watch);
+    }
+
+    private static void CheckAdmissionRoster(string matrix, NightlyCaseRows rows, List<string> roster, Stopwatch watch)
+    {
+        Console.WriteLine($"C2069 phase={matrix} elapsedMs={watch.ElapsedMilliseconds} cases={roster.Count}");
+        var declared = File.ReadAllLines(Path.Combine(P2Fixtures, matrix + "-case-ids.txt"));
         rows.ShouldAllPass(declared.Length, declared);
         roster.OrderBy(id => id, StringComparer.Ordinal).SequenceEqual(declared)
             .ShouldBeTrue("explicit P2 admission case roster");
+    }
+
+    [Test]
+    [Timeout(30_000)]
+    public async Task GlobalContractChangesRefuse(CancellationToken cancellationToken)
+    {
+        var watch = Stopwatch.StartNew();
+        var rows = new NightlyCaseRows();
+        var roster = new List<string>();
+        foreach (var (change, id, hashes) in new (ContractChange, string, string[])[]
+        {
+            (ContractChange.Selector, "T.incomplete.globalContract", ["selectorHash"]),
+            (ContractChange.Policy, "T.incomplete.globalPolicyContract", ["policyHash"]),
+            (ContractChange.Catalog, "T.incomplete.globalCatalogContract", ["catalogHash", "policyHash"]),
+            (ContractChange.Runtime, "T.incomplete.globalRuntimeContract", ["runtimeHash"]),
+        })
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await using var world = await P2World.Create(contractChange: change);
+            using var body = TestTiming.BeginPhase(TestPhaseKind.OurCode, "p2-contract-admission");
+            var request = world.Request;
+            var b = TestSelection.Contract(world.Root, request.BaselineSha, world.Target.Profile);
+            var a = TestSelection.Contract(world.Root, request.CandidateSha, world.Target.Profile);
+            var actualChanges = new[] { "catalogHash", "policyHash", "runtimeHash", "selectorHash" }
+                .Where(hash => !Equals(b[hash], a[hash])).ToArray();
+            actualChanges.ShouldBe(hashes, id + " fixture changed the committed contract");
+
+            // Prove the same fixture and evaluation can authorize carry when the two contract pins agree.
+            var same = request with { CandidateSha = request.BaselineSha };
+            var unchanged = P2.Prepare(same, world.Chunks, world.Authority(same));
+            var twin = P2.AdmitPrepared(same, world.Chunks, () => new MemoryStream(unchanged.Evidence!.WriteProposal()), unchanged);
+            Ids(twin.CarryCandidates).ShouldBe(["H", "Q"], id + " unchanged contract: " + twin.Reason);
+
+            var proof = P2.Prepare(request, world.Chunks, world.Authority());
+            var bytes = proof.Evidence?.WriteProposal();
+            var result = P2.AdmitPrepared(request, world.Chunks, () =>
+                new MemoryStream(bytes ?? throw new InvalidOperationException("admission rejected the inputs before opening a proposal")), proof);
+            var reason = change == ContractChange.Runtime ? "p2-incomplete:trust-global" : "p2-incomplete:selection";
+            roster.Add(id);
+            rows.Check(Full(result, world.Chunks, reason), id,
+                $"mode={result.EffectiveMode} carry=[{string.Join(",", Ids(result.CarryCandidates))}] reason={result.Reason}");
+            if (change == ContractChange.Runtime) continue;
+            var reasons = bytes is null ? [] : JsonNode.Parse(bytes)!["projections"]!["compatibility"]!["globalReasons"]!
+                .AsArray().Select(value => value!.GetValue<string>()).ToArray();
+            var expectedReasons = hashes.Select(hash => "contract-changed:" + hash);
+            roster.Add(id + ".reasons");
+            rows.Check(reasons.SequenceEqual(expectedReasons), id + ".reasons", $"compatibility=[{string.Join(",", reasons)}]");
+        }
+        CheckAdmissionRoster("contract", rows, roster, watch);
     }
 
     private sealed class FailingStream(byte[] prefix) : MemoryStream(prefix, writable: false)
@@ -488,8 +555,21 @@ public sealed partial class ReleaseImpactEnvelopeTests
         public override int Read(Span<byte> buffer) => throw new InvalidOperationException("a declared oversize body was read");
     }
 
-    private static async Task CheckGraphAndTrust(Action<string, bool, string> check, JsonNode schema)
+    [Test]
+    [Timeout(30_000)]
+    public async Task GraphAndTrustBindingsRefuse(CancellationToken cancellationToken)
     {
+        var watch = Stopwatch.StartNew();
+        var rows = new NightlyCaseRows();
+        var roster = new List<string>();
+        var schema = P2Json("schema");
+        void check(string id, bool ok, string detail)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            roster.Add(id);
+            rows.Check(ok, id, detail);
+        }
+
         static P2.Decision Inspect(P2World world, P2.Preparation proof, byte[]? bytes = null) =>
             P2.AdmitPrepared(world.Request, world.Chunks,
                 () => new MemoryStream(bytes ?? proof.Evidence!.WriteProposal(), writable: false), proof);
@@ -560,6 +640,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         await using (var bypass = await P2World.Create(trust: true, bypass: true))
             TrustRefusal(bypass, P2.Prepare(bypass.Request, bypass.Chunks, bypass.Authority(ownExecuted: true)), "bypass");
+
+        CheckAdmissionRoster("graph-and-trust", rows, roster, watch);
 
         void TrustRefusal(P2World world, P2.Preparation proof, string id)
         {
