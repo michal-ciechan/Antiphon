@@ -315,6 +315,10 @@ namespace Antiphon.Scripts
             // The am-service gateway deploy answers every input itself (unit 50): exit 0 REMOTE DEPLOY VERDICT: ok (the preflight, and
             // with --deploy the approved deploy), 1 failed or refused (the target check before any I/O). Usage is 2.
             [DeployCommands.DeployAmServiceName] = DeployCommands.RunDeployAmService,
+            // The CARD-1406 server2 host Postgres deploy answers every input itself (unit 54): exit 0 the plan (the default, --what-if,
+            // and --restore-drill's commands) or ok (--execute on the server2 host daemon), 2 refused (one SERVER2-POSTGRES line), 3
+            // ambiguous-mode, 1 an I/O failure. Usage is 2.
+            [DeployCommands.DeployServer2PostgresName] = DeployCommands.RunDeployServer2Postgres,
             // The CARD-1776 repository mirrors answer every input themselves (unit 52): exit 0 the plan (the default, --what-if) or the
             // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
             // Usage is 2.

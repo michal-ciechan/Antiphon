@@ -1,7 +1,7 @@
 // The CARD-1405 Postgres snapshot commands (unit 53 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, W8 slice D),
 // with the scripts' parameters in kebab case:
 // - postgres-snapshot: the snapshot and the restore drill (Antiphon.Nightly's PostgresSnapshot). scripts/postgres-snapshot.ps1 is its
-//   launcher: the Windmill job's runner resolves it by path and the cutover runbooks and deploy-server2-postgres.ps1 name it.
+//   launcher: the Windmill job's runner resolves it by path and the cutover runbooks and the deploy-server2-postgres drill plan name it.
 // - postgres-snapshot-job and postgres-snapshot-stale: the Windmill jobs u/lndcobra/antiphon_postgres_snapshot and _stale
 //   (PostgresSnapshotJob), started by the runner copies of scripts/windmill/invoke-postgres-snapshot.ps1 and
 //   invoke-postgres-snapshot-stale.ps1.

@@ -1,6 +1,6 @@
 // CARD-1405 daily Postgres snapshot and scratch restore drill (unit 53 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md,
 // W8 slice D; it replaced the body of scripts/postgres-snapshot.ps1, which stays as a thin launcher because the Windmill job's
-// runner copy, the cutover runbooks and deploy-server2-postgres.ps1 name it). The CLI runs it as
+// runner copy, the cutover runbooks and the deploy-server2-postgres drill plan name it). The CLI runs it as
 //
 //   antiphon-scripts postgres-snapshot [--what-if | --execute] [--plain] [--one-drive-copy] [--one-drive-retain 7] [--restore-drill]
 //       [--container antiphon-postgres] [--database antiphon] [--staging-path <dir>] [--destination <dir>] [--sync-root <dir>]

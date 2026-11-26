@@ -1275,7 +1275,7 @@ public sealed class AntiphonCliLauncherTests
     }
 
     // ---- unit 53: scripts/postgres-snapshot.ps1 (the snapshot job's runner resolves it by path; the cutover runbooks and
-    // deploy-server2-postgres.ps1 name it) and scripts/windmill/invoke-postgres-snapshot.ps1 and invoke-postgres-snapshot-stale.ps1
+    // the deploy-server2-postgres drill plan name it) and scripts/windmill/invoke-postgres-snapshot.ps1 and invoke-postgres-snapshot-stale.ps1
     // (Windmill's u/lndcobra/antiphon_postgres_snapshot and _stale start their runner copies by path) ----
 
     /// <summary>A temporary checkout root holding the three snapshot launchers beside scripts/lib/antiphon-cli.ps1.</summary>
