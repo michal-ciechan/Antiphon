@@ -5,13 +5,14 @@ using Antiphon.Server.Infrastructure.Data;
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
 /// <summary>
-/// CARD-0653 Hangfire entry point: finish pending slot-release intents by auditing only. Triggered
+/// CARD-0653 Hangfire entry point for pending slot-release intents. Triggered
 /// once at startup and then on <c>PhoneHomeRunner:SlotReconcileCron</c>, so an intent whose
 /// in-request reconcile also failed is not left pending until the next failed release.
 /// </summary>
 public sealed class RunnerSlotReconcileJob
 {
     public const string RecurringJobId = "antiphon:runner-slot-reconcile";
+    public const string LocalCustodyJobId = "antiphon:local-custody-release-reconcile";
 
     private readonly PhoneHomeRunnerDirectory _directory;
     private readonly AppDbContext _db;
@@ -48,4 +49,9 @@ public sealed class RunnerSlotReconcileJob
         }
         return finished.Count + released;
     }
+
+    [AutomaticRetry(Attempts = 0)]
+    public async Task<int> ExecuteLocalCustodyAsync(CancellationToken cancellationToken) =>
+        (await RunnerSlotService.ReconcilePendingReleasesAsync(_directory, _db, cancellationToken,
+            localCustodyOnly: true)).Count;
 }

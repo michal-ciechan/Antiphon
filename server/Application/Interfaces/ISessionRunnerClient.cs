@@ -25,6 +25,10 @@ public interface ISessionRunnerClient
         => Task.FromResult(new VerificationCustodyStatus(binding, VerificationCustodyState.UnsupportedBackend,
             "verification_custody_unsupported_backend"));
 
+    Task<VerificationCustodyStatus> RecoverDeadVerificationCustodyAsync(VerificationExecutionBinding binding, CancellationToken ct)
+        => Task.FromResult(new VerificationCustodyStatus(binding, VerificationCustodyState.UnsupportedBackend,
+            PhoneHomeProblemTypes.UnsupportedOperation));
+
     /// <summary>
     /// What the runner's pty-hosts are actually served by — the evidence <c>PtyDeliveryProfile</c>
     /// needs before it will use the raised (paste-path) delivery ceilings.

@@ -99,7 +99,8 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
         var custody = _runtime.VerificationCustodyBackend == VerificationCustodyBackends.LinuxCgroup
             ? VerificationCustodyBackends.LinuxCgroup : null;
         if (custody is not null)
-            features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
+            features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1,
+                RunnerCapabilityFeatures.VerificationDeadHostRecoveryV1];
         features = [.. features, RunnerCapabilityFeatures.RequiredPlatformV1];
         // CARD-0824 S2: every runner can delete its own refs for a landed delegate branch (portable git).
         features = [.. features, RunnerCapabilityFeatures.WorkspaceBranchRefsV1];
@@ -147,6 +148,9 @@ public sealed class PhoneHomeRuntimeAdapter : IPhoneHomeRuntimeSurface
     public Task<VerificationCustodyStatus> ReadCustodyAsync(
         VerificationExecutionBinding binding, bool seal, CancellationToken ct) =>
         _runtime.ReadCustodyAsync(binding, seal, ct);
+
+    public Task<VerificationCustodyStatus> RecoverDeadCustodyAsync(VerificationExecutionBinding binding, CancellationToken ct) =>
+        _runtime.RecoverDeadCustodyAsync(binding, ct);
 
     public string Health() => "Healthy";
     public IReadOnlyList<RunnerSessionDto> List() => _runtime.List();

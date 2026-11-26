@@ -166,9 +166,19 @@ internal static class HangfireConfiguration
         IRecurringJobManager manager, PhoneHomeRunnerSettings settings)
     {
         if (settings.Enabled)
+        {
+            manager.RemoveIfExists(RunnerSlotReconcileJob.LocalCustodyJobId);
             AddOrUpdateRunnerSlotReconcileJob(manager, settings);
-        else
-            manager.RemoveIfExists(RunnerSlotReconcileJob.RecurringJobId);
+            return;
+        }
+
+        manager.RemoveIfExists(RunnerSlotReconcileJob.RecurringJobId);
+        manager.AddOrUpdate<RunnerSlotReconcileJob>(
+            RunnerSlotReconcileJob.LocalCustodyJobId,
+            job => job.ExecuteLocalCustodyAsync(CancellationToken.None),
+            PhoneHomeRunnerSettings.DefaultSlotReconcileCron,
+            new RecurringJobOptions());
+        manager.Trigger(RunnerSlotReconcileJob.LocalCustodyJobId);
     }
 
     public static void RegisterRunnerRetireJob(IRecurringJobManager manager, PhoneHomeRunnerSettings settings)

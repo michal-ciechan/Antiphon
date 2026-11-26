@@ -163,8 +163,10 @@ public sealed class PhoneHomeRunnerSettings
     /// </summary>
     public string OperatorTokenPath { get; set; } = "";
 
-    /// <summary>CARD-0653: how often pending slot-release intents are finished (audit only).</summary>
-    public string SlotReconcileCron { get; set; } = "*/2 * * * *";
+    public const string DefaultSlotReconcileCron = "*/2 * * * *";
+
+    /// <summary>CARD-0653: how often pending slot-release intents are reconciled.</summary>
+    public string SlotReconcileCron { get; set; } = DefaultSlotReconcileCron;
 
     public string RunnerRetireCron { get; set; } = "* * * * *";
     public int RetireMinDrainSeconds { get; set; } = 60;

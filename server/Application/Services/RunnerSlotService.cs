@@ -15,7 +15,7 @@ namespace Antiphon.Server.Application.Services;
 /// Release kills the process tree, drops the runner's durable manifest, and stamps the desktop
 /// session so reconciliation does not treat it as still live.
 /// </summary>
-public static class RunnerSlotService
+public static partial class RunnerSlotService
 {
     public static bool OccupiesCapacity(string? status) =>
         !string.IsNullOrEmpty(status)
@@ -91,21 +91,31 @@ public static class RunnerSlotService
 
     /// <summary>
     /// Finish desktop audits whose runner release may have happened and whose save did not. This
-    /// never kills: an intent is finished by auditing only, and only once the runner no longer
+    /// audits ordinary releases only once the runner no longer
     /// lists the session. A seat the runner still holds stays pending, so a refused or stale
     /// release is never retried here. An intent from an orphan sweep is re-checked first: a
     /// seat a task claimed since the sweep is marked failed and its desktop row is left alone.
     /// Each intent is isolated, so one that throws (an unreachable runner, a failed save) does
     /// not block the rest; it stays pending for the next pass. Runs at startup, on the
     /// <c>RunnerSlotReconcileJob</c> schedule, and after a failed force-release request.
-    /// The one exception is a <c>pending:kill-generation:</c> intent (CARD-0679 D-7): the kill was
+    /// For a <c>pending:kill-generation:</c> intent (CARD-0679 D-7) the kill was
     /// already decided by a failed launch, so it is sent, conditional on the recorded generation,
-    /// once the runner resolves. The recovery pump also enqueues this job right after a reconnect.
+    /// once the runner resolves. A withheld Linux custody release retries dead-host recovery for
+    /// the exact sealed binding and retains its original runner-side host and namespace fences.
     /// </summary>
     public static async Task<IReadOnlyList<Guid>> ReconcilePendingReleasesAsync(
-        PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct)
+        PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct,
+        TimeProvider? clock = null, bool localCustodyOnly = false)
     {
-        var pending = await PendingIntents(db)
+        clock ??= TimeProvider.System;
+        var query = PendingIntents(db);
+        if (localCustodyOnly)
+        {
+            const string local = PendingCustodyReleasePrefix + PhoneHomeRunnerDirectory.LocalRunnerId + ":";
+            query = query.Where(incident => incident.FailureReason!.StartsWith(local)
+                && !incident.FailureReason.Substring(local.Length).Contains(":"));
+        }
+        var pending = await query
             .OrderBy(incident => incident.CreatedAt)
             .Select(incident => new { incident.Id, incident.SessionId, incident.FailureReason, incident.Message })
             .ToListAsync(ct);
@@ -123,6 +133,15 @@ public static class RunnerSlotService
                 if (TryParseKillGeneration(intent.FailureReason!, out var killRunnerId, out var generation))
                 {
                     if (await KillGenerationAsync(directory, db, intent.Id, killRunnerId, sessionId, generation, intent.Message, ct))
+                        finished.Add(sessionId);
+                    continue;
+                }
+
+                if (intent.FailureReason!.StartsWith(PendingCustodyReleasePrefix, StringComparison.Ordinal))
+                {
+                    if (CustodyReleaseRetry.Parse(intent.FailureReason) is { } retry
+                        && retry.NotBefore <= clock.GetUtcNow().UtcDateTime
+                        && await RetryCustodyReleaseAsync(directory, db, intent.Id, sessionId, clock, ct))
                         finished.Add(sessionId);
                     continue;
                 }
@@ -172,7 +191,9 @@ public static class RunnerSlotService
         return rows.Select(row => new RunnerSlotIntentOutcomeDto(
             row.Id,
             row.SessionId ?? Guid.Empty,
-            row.FailureReason == ReconciledMarker ? "released"
+            row.FailureReason == ReconciledMarker
+                || row.FailureReason?.StartsWith(ReconciledMarker + ":" + CustodyReleaseMarker, StringComparison.Ordinal) == true
+                ? "released"
                 : row.FailureReason?.StartsWith(FailedPrefix, StringComparison.Ordinal) == true ? "failed"
                 : row.FailureReason?.StartsWith(ClosedPrefix, StringComparison.Ordinal) == true ? "closed"
                 : "pending")).ToArray();
@@ -200,8 +221,11 @@ public static class RunnerSlotService
             var direct = PendingPrefix + runnerId;
             var orphan = PendingPrefix + OrphanMarker + runnerId;
             var kill = PendingKillGenerationPrefix + runnerId + ":";
+            var custodyRunner = RunnerRequestIntent.CanonicalRunnerId(runnerId) ?? PhoneHomeRunnerDirectory.LocalRunnerId;
+            var custody = PendingCustodyReleasePrefix + custodyRunner + ":";
             query = query.Where(i => i.FailureReason == direct || i.FailureReason == orphan
-                || (i.FailureReason!.StartsWith(kill) && !i.FailureReason.Substring(kill.Length).Contains(":")));
+                || (i.FailureReason!.StartsWith(kill) && !i.FailureReason.Substring(kill.Length).Contains(":"))
+                || (i.FailureReason.StartsWith(custody) && !i.FailureReason.Substring(custody.Length).Contains(":")));
         }
         if (sessionId is Guid session)
             query = query.Where(i => i.SessionId == session);
@@ -222,7 +246,9 @@ public static class RunnerSlotService
         var intent = await GetIntentAsync(db, intentId, ct);
         if (intent.FailureReason?.StartsWith(PendingPrefix, StringComparison.Ordinal) == true)
         {
-            var outcome = $"{ClosedPrefix}{clock.GetUtcNow():O} by {requester}: {evidence}";
+            var custody = CustodyReleaseRetry.Parse(intent.FailureReason);
+            var prefix = custody is null ? ClosedPrefix : ClosedPrefix + custody.Identity + " ";
+            var outcome = $"{prefix}{clock.GetUtcNow():O} by {requester}: {evidence}";
             var originalState = $" (was {intent.FailureReason})";
             if (outcome.Length + originalState.Length <= AgentIncident.FailureReasonMaxLength)
                 outcome += originalState;
@@ -280,10 +306,7 @@ public static class RunnerSlotService
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         // The scan may have read this intent before an operator closed it. Lock and reread
         // before dispatch, and hold the lock through the bounded runner call and terminal write.
-        var current = await db.AgentIncidents
-            .FromSqlInterpolated($"SELECT * FROM \"AgentIncidents\" WHERE \"Id\" = {intentId} FOR UPDATE SKIP LOCKED")
-            .AsNoTracking()
-            .SingleOrDefaultAsync(ct);
+        var current = await LockIntentAsync(db, intentId, ct);
         if (current is null || current.Kind != AgentIncidentKind.RunnerSlotReleaseIntent
             || current.FailureReason?.StartsWith(PendingPrefix, StringComparison.Ordinal) != true)
             return false;
@@ -404,17 +427,30 @@ public static class RunnerSlotService
                 && incident.FailureReason.StartsWith(PendingPrefix))
             .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, failureReason), ct);
 
-    private static async Task<Guid> RecordPendingOnceAsync(AppDbContext db, AgentIncident intent, CancellationToken ct)
+    private static Task<AgentIncident?> LockIntentAsync(AppDbContext db, Guid intentId, CancellationToken ct) =>
+        db.AgentIncidents
+            .FromSqlInterpolated($"SELECT * FROM \"AgentIncidents\" WHERE \"Id\" = {intentId} FOR UPDATE SKIP LOCKED")
+            .AsNoTracking()
+            .SingleOrDefaultAsync(ct);
+
+    private static async Task<Guid> RecordPendingOnceAsync(AppDbContext db, AgentIncident intent, CancellationToken ct,
+        string? custodyIdentity = null)
     {
         // Serialize producers of this obligation across sweeps and server instances. Keep the
         // original creation time for attention, and release the lock before any runner call.
         await using var transaction = db.Database.CurrentTransaction is null
             ? await db.Database.BeginTransactionAsync(ct) : null;
-        var lockKey = $"runner-slot-release:{intent.SessionId:D}:{intent.FailureReason}";
+        var lockKey = $"runner-slot-release:{intent.SessionId:D}:{custodyIdentity ?? intent.FailureReason}";
         await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))", ct);
-        var existing = await db.AgentIncidents.AsNoTracking()
-            .Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent && i.SessionId == intent.SessionId
-                && i.FailureReason == intent.FailureReason)
+        var candidates = db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent && i.SessionId == intent.SessionId);
+        var matches = custodyIdentity is null
+            ? candidates.Where(i => i.FailureReason == intent.FailureReason)
+            : candidates.Where(i => i.FailureReason != null
+                && (i.FailureReason.StartsWith(PendingPrefix + custodyIdentity)
+                    || i.FailureReason.StartsWith(ReconciledMarker + ":" + custodyIdentity)
+                    || i.FailureReason.StartsWith(ClosedPrefix + custodyIdentity)));
+        var existing = await matches
             .OrderBy(i => i.CreatedAt).ThenBy(i => i.Id).Select(i => (Guid?)i.Id).FirstOrDefaultAsync(ct);
         if (existing is null)
             db.AgentIncidents.Add(intent);
