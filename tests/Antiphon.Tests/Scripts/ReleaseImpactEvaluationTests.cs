@@ -82,7 +82,8 @@ public sealed class ReleaseImpactEvaluationTests
         control.GetDiagnostics(cancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error).ShouldBeEmpty("I.fixture");
 
         using var graph = await GraphAsync("on", manifestPath, expected);
-        graph.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeTrue("I.bound");
+        graph.RootElement.GetProperty("proofEligible").GetBoolean()
+            .ShouldBeTrue("I.bound: " + graph.RootElement.GetProperty("reason").GetString());
         graph.RootElement.GetProperty("manifestDigest").GetString().ShouldBe(expected, "I.bound manifest");
         var binding = ReleaseCompilerInputs.Bind(sha, gitBlobs, manifestPath, expected);
         var compiled = binding.Contexts.Single().Compilation;
@@ -174,7 +175,7 @@ public sealed class ReleaseImpactEvaluationTests
         await File.WriteAllTextAsync(marker, "candidate\n", cancellationToken);
         LibGit2Sharp.Commands.Stage(repository, "endpoint.txt");
         var who = new LibGit2Sharp.Signature("fixture", "fixture@antiphon.test", DateTimeOffset.UnixEpoch);
-        var candidate = repository.Commit("candidate", who, who).Sha;
+        var candidate = repository.Commit("candidate", who, who, new LibGit2Sharp.CommitOptions()).Sha;
         Write(manifest).ShouldBe(expected);
         Denied(candidate, expected, "compiler-source-mismatch", "I.context wrong A");
         var candidateDigest = Write(validButDifferent with { SourceSha = candidate });
