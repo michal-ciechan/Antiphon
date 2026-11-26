@@ -11,6 +11,7 @@ T.graph.newOnly.disputedMode
 T.graph.oldOnly.disputedMode
 T.graph.qualifiedExpansion
 T.incomplete.agreedFalse.mode
+T.incomplete.globalContract
 T.incomplete.globalReason
 T.incomplete.missingObservation
 T.incomplete.unavailableEvaluator

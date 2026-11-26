@@ -24,6 +24,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
         internal const string ProducerInput = "src/Producer/input.txt";
         internal const string OldReader = "shared/deleted-reader.txt";
         internal const string NewReader = "shared/added-reader.txt";
+        internal const string SelectorSource = "scripts/lib/Antiphon.Nightly/TestSelectionJson.cs";
         private const string EmptyTrust = """{"format":"antiphon-rc-trusted-projects-v1","schema":1,"entries":[]}""";
         private static readonly string[] RequiredTargetRoles = ["sdk", "runtime", "package", "lock", "launcher", "build", "discovery"];
         internal static readonly DateTimeOffset Clock = new(2026, 11, 26, 8, 0, 0, TimeSpan.Zero);
@@ -45,12 +46,13 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         internal static async Task<P2World> Create(bool trust = false, bool candidateOnlyTrust = false,
             bool directHit = false, string? historicalSide = null, bool brokenIndex = false, bool staleCatalog = false,
-            bool duplicateSimpleName = false, bool bypass = false)
+            bool duplicateSimpleName = false, bool bypass = false, bool changeSelector = false)
         {
             var world = new P2World();
             try
             {
-                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog, duplicateSimpleName, bypass);
+                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog,
+                    duplicateSimpleName, bypass, changeSelector);
                 return world;
             }
             catch
@@ -60,7 +62,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
             }
         }
 
-        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide, bool brokenIndex, bool staleCatalog, bool duplicateSimpleName, bool bypass)
+        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide,
+            bool brokenIndex, bool staleCatalog, bool duplicateSimpleName, bool bypass, bool changeSelector)
         {
             _repo.Init();
             _repo.Git("config", "core.autocrlf", "false");
@@ -124,13 +127,21 @@ public sealed partial class ReleaseImpactEnvelopeTests
             if (trust) declarations = directHit
                 ? [new { path = ProducerInput, classes = new[] { "QuietTests" } }]
                 : [];
+            if (changeSelector)
+                declarations = [new { path = SelectorSource, classes = new[] { "HotTests" } }];
             var readers = JsonSerializer.Serialize(declarations);
             _repo.Put(Readers, readers);
             _repo.Put(RcChunkSelection.IndexPath, brokenIndex ? BuildIndex("[]") : BuildIndex(readers));
             if (historicalSide == "B") _repo.Put(OldReader, "old reader\n");
             OriginBase = _repo.Commit();
             var comparison = _repo.Commit(allowEmpty: true);
-            if (historicalSide == "B") _repo.Remove(OldReader);
+            if (changeSelector)
+            {
+                var source = RcInputFixtureRepository.ReadSource(SelectorSource);
+                source.ShouldContain("MaxDepth = 1024");
+                _repo.Put(SelectorSource, source.Replace("MaxDepth = 1024", "MaxDepth = 512", StringComparison.Ordinal));
+            }
+            else if (historicalSide == "B") _repo.Remove(OldReader);
             else if (historicalSide == "A") _repo.Put(NewReader, "new reader\n");
             else _repo.Put(trust ? ProducerInput : HotInput, "candidate\n");
             if (candidateOnlyTrust) _repo.Put(RcTrustedProjectGate.PolicyPath, trusted);
