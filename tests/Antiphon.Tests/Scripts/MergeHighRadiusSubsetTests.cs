@@ -75,22 +75,21 @@ public sealed class MergeHighRadiusSubsetTests
     // The CARD-1783 classes and ReceiptScanDestinationIntegrationTests. CARD-1801 D-1: the eight
     // land classes leave this row, four at a time in ordinal order, so no row warns at import.
     private const string TestsFilter =
-        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        "/*/*/(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
 
     // dcb973d8 edits the policy file and Antiphon.Tests sources, selecting the nightly lane,
     // the lane-category guard, and the fixture cleanup guard.
     private const string QuietTestsFilter =
-        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        "/*/*/(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
         + "|(LiveLaneRunnerTests*)|(NightlyCoreGoldenTests*)|(ReceiptScanDestinationIntegrationTests*)"
-        + "|(TestFixtureCleanupGuardTests*)|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+        + "|(TestTimingOperationLabelTests*)/*";
 
     // a54a6d4f edits Antiphon.Tests sources, selecting the lane-category and fixture cleanup guards.
     // Its c346 Compose fixture also selects timing-labels; the fixed subset already runs that class.
     private const string RemoteTestsFilter =
-        "/*/*/(AppDbContextModelTests*)|(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
-        + "|(ReceiptScanDestinationIntegrationTests*)|(TestFixtureCleanupGuardTests*)"
-        + "|(TestLaneCategoryGuardTests*)|(TestTimingOperationLabelTests*)/*";
+        "/*/*/(CheckpointReceiptSafetyTests*)|(HostCleanupCheckpointReceiptTests*)"
+        + "|(ReceiptScanDestinationIntegrationTests*)|(TestTimingOperationLabelTests*)/*";
 
     private const string LandFilter1 =
         "/*/*/(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandNotificationParkFollowUpTests*)"
@@ -126,7 +125,7 @@ public sealed class MergeHighRadiusSubsetTests
 
     // The fixed Antiphon.Tests class rows executed on server2 Linux (CARD-1801 D-1 counting runs,
     // one leased run each): 44 in 2m02s, 34 in 1m18s and 104 in 4m06s, the 182 of the unsplit row.
-    private const int MeasuredTestsMin = 44;
+    private const int MeasuredTestsMin = 44 - 3; // The three AppDbContextModelTests run in the invariant rows.
     private const int MeasuredLand1Min = 34;
     private const int MeasuredLand2Min = 104;
 
@@ -328,7 +327,7 @@ public sealed class MergeHighRadiusSubsetTests
     {
         var lines = stdout.Replace("\r\n", "\n").Split('\n');
         var filters = root.GetProperty("filters").EnumerateArray().ToList();
-        filters.Count.ShouldBe(7);
+        Ids(root, "filters").Count.ShouldBe(7);
         foreach (var row in filters)
             lines.ShouldContain("filter=" + row.GetProperty("project").GetString() + " " + row.GetProperty("treenodeFilter").GetString());
         foreach (var row in root.GetProperty("windowsFilters").EnumerateArray())
@@ -384,7 +383,7 @@ public sealed class MergeHighRadiusSubsetTests
         Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
         Filter(root, "CP-merge-subset-e2e").ShouldBe(E2EFilter);
         Project(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe("tests/Antiphon.Tests");
-        root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
+        Ids(root, "windowsFilters").ShouldBeEmpty();
     }
 
     private static void AssertQuiet(JsonElement root)
@@ -417,7 +416,7 @@ public sealed class MergeHighRadiusSubsetTests
         Filter(root, "CP-merge-subset-tests-land-2").ShouldBe(LandFilter2);
         Filter(root, "CP-merge-subset-ReleaseGatePlatformTests").ShouldBe(CensusPairFilter);
         Filter(root, "CP-merge-subset-e2e").ShouldBe(E2EFilter);
-        root.GetProperty("windowsFilters").GetArrayLength().ShouldBe(0);
+        Ids(root, "windowsFilters").ShouldBeEmpty();
     }
 
     private static void AssertDowngrade(JsonElement root)
@@ -502,6 +501,7 @@ public sealed class MergeHighRadiusSubsetTests
     private static List<string> Ids(JsonElement root, string property) =>
         root.GetProperty(property).EnumerateArray()
             .Select(row => row.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "")
+            .Where(id => !id.StartsWith("CP-invariants-", StringComparison.Ordinal))
             .ToList();
 
     private static List<string> Names(JsonElement root, string property) =>
