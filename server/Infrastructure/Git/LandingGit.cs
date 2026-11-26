@@ -290,9 +290,9 @@ public class LandingGit : ILandingGit
     }
 
     /// <summary>
-    /// Whether a clean status, an empty ls-files --others/--unmerged and ls-files -v may be answered by
-    /// libgit2 (<see cref="InProcessGitStatus"/>; a dirty tree runs git unless the caller asked for a
-    /// <see cref="GitTreeVerdict"/>). A test that must exercise
+    /// Whether a status (clean or dirty, in git's porcelain layout), ls-files --others, an empty ls-files --unmerged
+    /// and ls-files -v may be answered by libgit2 (<see cref="InProcessGitStatus"/>; a caller that needs git's
+    /// standard error marks its status with <see cref="GitTreeVerdict"/>). A test that must exercise
     /// git's own working-tree reads turns it off.
     /// </summary>
     protected virtual bool AnswerWorkingTreeReadsInProcess => true;

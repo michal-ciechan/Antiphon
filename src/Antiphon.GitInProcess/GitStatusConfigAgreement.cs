@@ -26,6 +26,9 @@ internal static class GitStatusConfigAgreement
         "core.symlinks", "core.trustctime", "core.checkstat", "core.precomposeunicode", "core.fsmonitor",
         "core.splitindex", "core.sparsecheckout", "core.sparsecheckoutcone", "core.worktree",
         "core.bare", "core.protectntfs", "index.sparse", "index.version", "extensions.worktreeconfig",
+        // Not read by libgit2's status, but they change git's listing (copy pairs) or attribute source, so the
+        // in-process reader refuses them: libgit2's merged value must be the child's for that refusal to be sound.
+        "status.renames", "diff.renames", "attr.tree",
     ];
 
     private static readonly HashSet<string> BoolKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -183,15 +186,17 @@ internal static class GitStatusConfigAgreement
                 start.Environment["GIT_CONFIG_VALUE_" + i] = env("GIT_CONFIG_VALUE_" + i);
             }
         start.Environment["GIT_CEILING_DIRECTORIES"] = Path.GetDirectoryName(probeDirectory);
-        foreach (var arg in new[] { "config", "--show-origin", "--show-scope", "-z", "--get-regexp", "^(core|index|extensions)\\." })
+        foreach (var arg in new[] { "config", "--show-origin", "--show-scope", "-z", "--get-regexp", "^((core|index|extensions)\\.|status\\.renames$|diff\\.renames$|attr\\.tree$)" })
             start.ArgumentList.Add(arg);
         if (Run(start) is not ({ } output, 0 or 1)) return null;
-        // The system attributes file (git 2.42+). An older git names none: then only the Linux default is known.
+        // The system attributes file (git 2.42+). A probe that did not run (start failure, timeout) is not cached;
+        // an older git that names none leaves the file unknown, on every platform, since its prefix decides it.
         start.ArgumentList.Clear();
         foreach (var arg in new[] { "var", "GIT_ATTR_SYSTEM" }) start.ArgumentList.Add(arg);
-        var (systemAttributes, systemKnown) = Run(start) is ({ } named, 0) && named.Trim() is { Length: > 0 } trimmed
+        if (Run(start) is not ({ } named, var exit)) return null;
+        var (systemAttributes, systemKnown) = exit == 0 && named.Trim() is { Length: > 0 } trimmed
             ? (Path.GetFullPath(trimmed), true)
-            : OperatingSystem.IsWindows() ? (null, false) : ("/etc/gitattributes", true);
+            : ((string?)null, false);
 
         var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var command = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

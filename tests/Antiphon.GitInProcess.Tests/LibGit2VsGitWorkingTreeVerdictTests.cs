@@ -204,6 +204,32 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             await r.GitAsync("config", "filter.lfs.required", "true");
             await r.WriteAsync("a.txt", "changed\n");
         }),
+        // Attribute sources libgit2 cannot follow the way the git child does: every status is git's.
+        new("attr-tree-set", r => r.GitAsync("config", "attr.tree", "HEAD"), Fallback: Falls.Conversion),
+        new("relative-attributes-file", async r =>
+        {
+            // Resolved from the git child's working directory, not from this process's.
+            await r.WriteAsync(".attrs-local", "*.up filter=upper\n");
+            await r.GitAsync("config", "core.attributesFile", ".attrs-local");
+        }, Fallback: Falls.Conversion),
+        // Copy detection: git pairs the added path with its modified source ("C  copy.txt\0a.txt\0"), libgit2 lists
+        // "A  copy.txt" and "M  a.txt". Every status is git's (clean ones too: the refusal is read before the tree).
+        new("copy-detection", async r =>
+        {
+            await r.GitAsync("config", "diff.renames", "copies");
+            await r.WriteAsync("a.txt", "a\nmore\n");
+            File.Copy(r.Full("a.txt"), r.Full("copy.txt"));
+            await r.GitAsync("add", "a.txt", "copy.txt");
+        }, Fallback: Falls.Conversion),
+        // A path removed from the index that is still on disk and now ignored: git prints "D  secret.env" and, with
+        // --ignored, "!! secret.env"; libgit2 has one entry for both, so that form is git's.
+        new("ignored-removed-from-index", async r =>
+        {
+            await r.WriteAsync("secret.env", "s\n");
+            await r.CommitAllAsync();
+            await r.WriteAsync(".git/info/exclude", "secret.env\n");
+            await r.GitAsync("rm", "-q", "--cached", "secret.env");
+        }),
         new("working-tree-encoding-touched", async r =>
         {
             // UTF-16 on disk, UTF-8 in the blob: git converts, libgit2 has no working-tree-encoding support.
@@ -408,6 +434,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 var status = args.Contains("status");
                 var falls = scenario.Fallback is Falls.All or Falls.WorkTree || (status && scenario.Fallback == Falls.Conversion)
                     || (status && ListingFallbacks.Contains(name))
+                    || (status && args.Contains("--ignored") && IgnoredListingFallbacks.Contains(name))
                     || (status && !args.Contains("-z") && args.Contains("--untracked-files=all") && UnquotedFallbacks.Contains(name));
                 await SameBytesAsync(mismatches, checkout, args, mine, falls);
             }
@@ -468,6 +495,9 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         "staged-rename",    // git pairs the added and deleted paths: R  new\0old
         "unmerged-conflict", // git's two-letter unmerged code
     };
+
+    /// <summary>Scenarios with one libgit2 entry git lists as a changed row and a <c>!!</c> row: git answers --ignored.</summary>
+    private static readonly HashSet<string> IgnoredListingFallbacks = new(StringComparer.Ordinal) { "ignored-removed-from-index" };
 
     /// <summary>Scenarios with a path git C-quotes without -z: git answers those forms.</summary>
     private static readonly HashSet<string> UnquotedFallbacks = new(StringComparer.Ordinal) { "untracked-unicode-and-spaces" };

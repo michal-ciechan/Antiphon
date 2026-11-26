@@ -126,7 +126,7 @@ internal static partial class InProcessGitReads
     /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
     /// <c>symbolic-ref -q</c> (or <c>--quiet</c>), <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>. Null runs git.
-    /// <c>remote get-url &lt;name&gt;</c> only with <paramref name="childEnvironment"/>, the git child's whole environment:
+    /// <c>remote get-url [--push] [--all] &lt;name&gt;</c> only with <paramref name="childEnvironment"/>, the git child's whole environment:
     /// its answer reads config, so it is judged against what that child would read (<see cref="TryAnswerRemoteUrl"/>).
     /// </summary>
     internal static (int ExitCode, string Output)? TryAnswerSilently(string repository, IReadOnlyList<string> arguments,

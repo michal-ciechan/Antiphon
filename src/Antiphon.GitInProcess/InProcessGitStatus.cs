@@ -113,6 +113,9 @@ internal static class InProcessGitStatus
         foreach (var (path, state) in entries)
         {
             if (!GitOrdered(path) || (!nul && !PlainUnquoted(path))) return null;
+            // An ignored path in another state too (removed from the index, still on disk and ignored) is two git
+            // rows, "D  path" and "!! path": git's to list.
+            if (state.HasFlag(FileStatus.Ignored) && state != FileStatus.Ignored) return null;
             // A path deleted from the index and present in the work tree is one libgit2 entry and two git rows:
             // "D  path" with the changes, "?? path" with the untracked files.
             var tracked = state;
@@ -130,6 +133,15 @@ internal static class InProcessGitStatus
             output.Append(row.Code).Append(' ').Append(row.Path).Append(nul ? '\0' : '\n');
         return output.ToString();
     }
+
+    /// <summary>
+    /// Whether git's status detects copies (status.renames, else diff.renames, is copies/copy): git then pairs an added
+    /// path with a modified source as <c>C</c>, which libgit2's listing cannot show. Both are agreement keys, so
+    /// libgit2's merged value is the child's.
+    /// </summary>
+    private static bool CopyDetection(Configuration config) =>
+        (config.Get<string>("status.renames")?.Value ?? config.Get<string>("diff.renames")?.Value)?.Trim().ToLowerInvariant()
+            is "copies" or "copy";
 
     /// <summary>Whether ordinal UTF-16 order is git's byte (UTF-8) order for this path: no surrogate or U+E000-U+FFFF char.</summary>
     private static bool GitOrdered(string path) => !path.Any(c => c >= '\uD800');
@@ -396,6 +408,7 @@ internal static class InProcessGitStatus
                 if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;
                 if (agrees is not null && !agrees(view.Config)) return null;
                 if (workTreeContent && WorkTreeConversion.GitOnly(repo, view.Config, childEnvironment) is not null) return null;
+                if (workTreeContent && CopyDetection(view.Config)) return null;
                 return answer(repo);
             }
             finally
