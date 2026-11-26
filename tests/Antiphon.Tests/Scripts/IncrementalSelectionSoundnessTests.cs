@@ -63,7 +63,7 @@ public sealed class IncrementalSelectionSoundnessTests
             changes[0].GetProperty("oldPath").GetString().ShouldBe(ProvenReplayWorld.Changed);
             changes[0].GetProperty("newPath").GetString().ShouldBe(ProvenReplayWorld.Changed);
         }
-        identities.Order(StringComparer.Ordinal).ShouldBe(["l1", "l2"], "P.records");
+        identities.Order(StringComparer.Ordinal).SequenceEqual(["l1", "l2"], StringComparer.Ordinal).ShouldBeTrue("P.records");
         records.Select(record => record.GetProperty("missId").GetString()).Distinct().Count().ShouldBe(2);
 
         var clean = world.Output("clean");
@@ -97,7 +97,9 @@ public sealed class IncrementalSelectionSoundnessTests
                 "--as-of", ProvenReplayWorld.AsOf, "--repository-root", world.Repository];
             using var stdout = new StringWriter();
             using var stderr = new StringWriter();
-            return RcSelectionReplay.Run(enabled ? [..arguments, "--proven-subtraction"] : arguments, stdout, stderr);
+            var exit = RcSelectionReplay.Run(enabled ? [..arguments, "--proven-subtraction"] : arguments, stdout, stderr);
+            if (exit == 2) Console.WriteLine(stderr.ToString());
+            return exit;
         }
 
         static JsonDocument Read(string root, string name) => JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, name)));
