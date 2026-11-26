@@ -198,9 +198,11 @@ public sealed class RcProjectSelectionTests
         var changed = RcChunkSelection.Select(repo.Root, baseline, indexCandidate, chunks, receipts, [], Admit, indexProof);
         changed.Of("left").Reasons.ShouldContain("index-edge-changed:LeftTests", "C.index independent change");
         changed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.index owed set");
-        repo.Git("checkout", "-q", "--detach", candidate);
+        repo.Git("checkout", "-q", "--detach", baseline);
         files[index] = originalIndex;
 
+        var unlinkedProject = files[leftProject];
+        var currentSouth = files[south];
         files[south] = "namespace South; public class Probe {}\n";
         files[leftProject] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><Compile Include=\"../R/B.cs\" Link=\"B.cs\" /></ItemGroup></Project>\n";
         repo.Put(leftProject, files[leftProject]);
@@ -208,9 +210,15 @@ public sealed class RcProjectSelectionTests
         var linkedBaseline = repo.Commit();
         contexts[0] = contexts[0] with { SourcePaths = [north, leftSource, south] };
         var linkedArtifact = await ProduceAsync(linkedBaseline, "baseline-linked");
+        repo.Put(leftProject, files[leftProject] = unlinkedProject);
+        repo.Put(south, files[south] = currentSouth);
+        var unlinkedCandidate = repo.Commit();
+        contexts[0] = contexts[0] with { SourcePaths = [north, leftSource] };
+        var unlinkedArtifact = await ProduceAsync(unlinkedCandidate, "candidate-link-removed");
         var linkProof = RcTypeProofComparison.Read(linkedArtifact.Path, linkedArtifact.Digest, linkedBaseline,
-            candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
-        var linked = RcChunkSelection.Select(repo.Root, linkedBaseline, candidate, chunks, receipts, [], Admit, linkProof);
+            unlinkedArtifact.Path, unlinkedArtifact.Digest, unlinkedCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
+        var linked = RcChunkSelection.Select(repo.Root, linkedBaseline, unlinkedCandidate, chunks, receipts, [], Admit, linkProof);
+        linked.Mode.ShouldBe("Scoped", "C.sides " + string.Join(", ", linked.FallbackReasons));
         linked.Of("left").Reasons.ShouldContain("project-closure:B:" + south, "C.sides B-only link");
         linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
         linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
