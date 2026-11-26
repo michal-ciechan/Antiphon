@@ -214,6 +214,15 @@ public sealed class ReleaseImpactRelationTests
         var chain = Check("FW.chain", forwardSources, [destinationPath, apiPath],
             contexts: ForwardContexts([fixture.Core, library, facade, destination]));
         Consumer(chain.Refined, facadePath, "Cases.SpecTests").Kinds.ShouldContain("compiler-forwarder", "FW.chain facade");
+        using (var chainProof = JsonDocument.Parse(ReleaseImpactGraphBuilder.Serialize(
+            chain.Sites.Single(site => site.Origin.Name == "Probe"))))
+        {
+            chainProof.RootElement.TryGetProperty("forwarding", out var hop).ShouldBeTrue("FW.chain PE evidence");
+            hop.GetProperty("librarySha256").GetString().ShouldBe(library.Sha256, "FW.chain Library PE");
+            hop.GetProperty("facadeSha256").GetString().ShouldBe(facade.Sha256, "FW.chain Facade PE");
+            hop.GetProperty("destinationSha256").GetString().ShouldBe(destination.Sha256, "FW.chain Destination PE");
+            hop.GetProperty("returnType").GetString().ShouldBe("M.Probe", "FW.chain Library return TypeRef");
+        }
         var brokenChain = Check("FW.missing", forwardSources, [destinationPath, apiPath, south],
             contexts: ForwardContexts([fixture.Core, library, facade]), refusal: "compiler-diagnostics");
         Consumer(brokenChain.Refined, facadePath, "Cases.SpecTests").Kinds.ShouldContain("compiler-forwarder", "FW.missing facade");
