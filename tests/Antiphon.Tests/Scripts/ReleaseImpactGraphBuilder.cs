@@ -173,6 +173,9 @@ internal sealed record ReleaseImpactGraph(string Schema, bool Complete, string F
     ReleaseImpactClass[] Universe, ReleaseImpactEdge[] Edges);
 internal sealed record ReleaseImpactTypeOrigin(ReleaseImpactIdentity Consumer, string Source, int Start, int Length, string Name, string[] Candidates);
 internal sealed record ReleaseImpactTypeSite(ReleaseImpactTypeOrigin Origin, string SourceSha256, string ContextDigest,
-    string Rule, string? Assembly, string? MetadataName, string[] Winners, string[] Retained);
+    string Rule, string? Assembly, string? MetadataName, string[] Winners, string[] Retained,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ReleaseImpactForwardingEvidence? Forwarding = null);
+internal sealed record ReleaseImpactForwardingEvidence(string LibrarySha256, string FacadeSha256, string DestinationSha256,
+    string LibraryMethod, string ReturnType, string LibraryAssembly, string FacadeAssembly, string DestinationAssembly);
 internal sealed record ReleaseImpactTypeProof(ReleaseImpactGraph Conservative, ReleaseImpactGraph Refined,
     ReleaseImpactTypeSite[] Sites, string? ManifestDigest);

@@ -1,3 +1,4 @@
+using System.Reflection.Metadata;
 using System.Security.Cryptography;
 using Antiphon.ReleaseSelection;
 using Microsoft.CodeAnalysis;
@@ -214,7 +215,11 @@ internal static class ReleaseImpactTypeResolver
             if (type is not null && lexicalTypes.TryGetValue(type.Name, out var byDefinitionName)) candidates.UnionWith(byDefinitionName);
             var winners = DeclarationPaths(evaluation, type, evaluators);
             var receiverWinners = receiver is null ? [] : DeclarationPaths(evaluation, receiver.OriginalDefinition, evaluators);
-            var forwardersBound = type is null || ForwardersBound(evaluation, type, evaluators);
+            var forwards = type is null ? [] : evaluation.Forwarders[Name(type)].ToArray();
+            var forwarding = forwards.Length == 1
+                ? ReadForwarding(evaluation, model, use, type!, evaluators, forwards[0].Facade, forwards[0].Input, forwards[0].Terminal)
+                : null;
+            var forwardersBound = forwards.Length == 0 || forwarding is not null;
             var proven = forwardersBound && winners.Length > 0 && (receiver is null || receiverWinners.Length > 0)
                 && info.CandidateReason == CandidateReason.None && info.CandidateSymbols.IsEmpty;
             if (proven)
@@ -235,7 +240,8 @@ internal static class ReleaseImpactTypeResolver
                     independent.Add((id, directivePath, "directive"));
             sites.Add(new(origin, evaluation.SourceHash[origin.Source], evaluation.Digest, rule,
                 proven ? type!.ContainingAssembly.Identity.GetDisplayName() : null,
-                proven ? Name(type!) : null, proven ? winners : [], proven ? winners : origin.Candidates));
+                proven ? Name(type!) : null, proven ? winners : [], proven ? winners : origin.Candidates,
+                proven ? forwarding : null));
         }
     }
 
@@ -271,16 +277,95 @@ internal static class ReleaseImpactTypeResolver
         }
     }
 
-    private static bool ForwardersBound(Evaluation consumer, INamedTypeSymbol type, Evaluation[] owners)
+    // Verify the Library return TypeRef and the facade's single ExportedType hop
+    // over the exact compilation references. An unsupported signature or hop
+    // retains the candidates even when Roslyn can bind the spelling directly.
+    private static ReleaseImpactForwardingEvidence? ReadForwarding(Evaluation consumer, SemanticModel model,
+        SimpleNameSyntax use, INamedTypeSymbol type, Evaluation[] owners, IAssemblySymbol facade,
+        ReleaseCompilerReference facadeInput, INamedTypeSymbol terminal)
     {
-        foreach (var (facade, input, terminal) in consumer.Forwarders[Name(type)])
+        if (!SymbolEqualityComparer.Default.Equals(type, terminal.OriginalDefinition) ||
+            facadeInput.Project is null ||
+            !owners.Any(owner => owner.Project == facadeInput.Project && owner.Compilation.Assembly.Identity.Equals(facade.Identity))
+            || use.Parent is not VariableDeclarationSyntax declaration || declaration.Variables.Count != 1 ||
+            declaration.Variables[0].Initializer?.Value is not InvocationExpressionSyntax call ||
+            model.GetSymbolInfo(call).Symbol is not IMethodSymbol method ||
+            !SymbolEqualityComparer.Default.Equals(method.ReturnType, type) || method.IsGenericMethod ||
+            method.ContainingType.ContainingType is not null || type.ContainingType is not null)
+            return null;
+
+        var libraries = consumer.References.Where(reference =>
+            SymbolEqualityComparer.Default.Equals(reference.Symbol, method.ContainingAssembly)).ToArray();
+        var facades = consumer.References.Where(reference =>
+            SymbolEqualityComparer.Default.Equals(reference.Symbol, facade)).ToArray();
+        var destinations = consumer.References.Where(reference =>
+            SymbolEqualityComparer.Default.Equals(reference.Symbol, type.ContainingAssembly)).ToArray();
+        if (libraries.Length != 1 || facades.Length != 1 || destinations.Length != 1 ||
+            libraries[0].Input.Project is not { } libraryProject || destinations[0].Input.Project is null ||
+            !owners.Any(owner => owner.Project == libraryProject && owner.Compilation.Assembly.Identity.Equals(method.ContainingAssembly.Identity)))
+            return null;
+
+        try
         {
-            if (!SymbolEqualityComparer.Default.Equals(type, terminal.OriginalDefinition)
-                || input.Project is null
-                || !owners.Any(owner => owner.Project == input.Project && owner.Compilation.Assembly.Identity.Equals(facade.Identity)))
-                return false;
+            var source = Reader(libraries[0].Metadata);
+            var bridge = Reader(facades[0].Metadata);
+            var destination = Reader(destinations[0].Metadata);
+            if (source is null || bridge is null || destination is null) return null;
+            var libraryType = Definitions(source, method.ContainingType);
+            if (libraryType.Length != 1 || Definitions(destination, type).Length != 1) return null;
+            var methods = libraryType[0].GetMethods().Select(source.GetMethodDefinition)
+                .Where(definition => source.GetString(definition.Name) == method.MetadataName).ToArray();
+            if (methods.Length != 1) return null;
+            var signature = source.GetBlobReader(methods[0].Signature);
+            if (signature.ReadSignatureHeader().IsGeneric ||
+                signature.ReadCompressedInteger() != method.Parameters.Length ||
+                signature.ReadSignatureTypeCode() != SignatureTypeCode.TypeHandle)
+                return null;
+            var handle = signature.ReadTypeHandle();
+            if (handle.Kind != HandleKind.TypeReference) return null;
+            var typeReference = source.GetTypeReference((TypeReferenceHandle)handle);
+            if (!MatchesType(source, typeReference.Namespace, typeReference.Name, type) ||
+                !MatchesAssembly(source, typeReference.ResolutionScope, facade.Identity))
+                return null;
+
+            var exports = bridge.ExportedTypes.Select(bridge.GetExportedType).Where(export =>
+                MatchesType(bridge, export.Namespace, export.Name, type)).ToArray();
+            if (exports.Length != 1 || !exports[0].IsForwarder ||
+                !MatchesAssembly(bridge, exports[0].Implementation, type.ContainingAssembly.Identity))
+                return null;
+
+            return new(libraries[0].Input.Sha256, facades[0].Input.Sha256, destinations[0].Input.Sha256,
+                Name(method.ContainingType) + "." + method.MetadataName, Name(type),
+                method.ContainingAssembly.Identity.GetDisplayName(), facade.Identity.GetDisplayName(),
+                type.ContainingAssembly.Identity.GetDisplayName());
         }
-        return true;
+        catch (Exception exception) when (exception is BadImageFormatException or InvalidOperationException or ArgumentException)
+        {
+            return null;
+        }
+
+        static MetadataReader? Reader(PortableExecutableReference reference) =>
+            reference.GetMetadata() is AssemblyMetadata assembly && assembly.GetModules().Length == 1
+                ? assembly.GetModules()[0].GetMetadataReader() : null;
+
+        static TypeDefinition[] Definitions(MetadataReader reader, INamedTypeSymbol symbol) => reader.TypeDefinitions
+            .Select(reader.GetTypeDefinition).Where(row => MatchesType(reader, row.Namespace, row.Name, symbol)).ToArray();
+
+        static bool MatchesType(MetadataReader reader, StringHandle space, StringHandle name, INamedTypeSymbol symbol) =>
+            reader.GetString(name) == symbol.MetadataName &&
+            reader.GetString(space) == (symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString());
+
+        static bool MatchesAssembly(MetadataReader reader, EntityHandle handle, AssemblyIdentity expected)
+        {
+            if (handle.Kind != HandleKind.AssemblyReference) return false;
+            var row = reader.GetAssemblyReference((AssemblyReferenceHandle)handle);
+            var publicKey = System.Reflection.AssemblyFlags.PublicKey;
+            if ((row.Flags & ~publicKey) != 0) return false;
+            var key = (row.Flags & publicKey) != 0 ? expected.PublicKey : expected.PublicKeyToken;
+            return reader.GetString(row.Name) == expected.Name && row.Version == expected.Version
+                && reader.GetString(row.Culture) == (expected.CultureName ?? "")
+                && (row.PublicKeyOrToken.IsNil ? key.IsDefaultOrEmpty : reader.GetBlobBytes(row.PublicKeyOrToken).SequenceEqual(key));
+        }
     }
 
     private static AttributeSyntax? Attribute(SimpleNameSyntax name) => name.Parent switch
@@ -336,12 +421,16 @@ internal static class ReleaseImpactTypeResolver
             Digest = Convert.ToHexStringLower(SHA256.HashData(ReleaseImpactGraphBuilder.Serialize(bound.Input with
             {
                 Sources = bound.Input.Sources.OrderBy(source => source.Path, StringComparer.Ordinal).ToArray(),
+                References = bound.Input.References.OrderBy(reference => reference.Sha256, StringComparer.Ordinal)
+                    .ThenBy(reference => reference.Project, StringComparer.Ordinal)
+                    .ThenBy(reference => string.Join('\0', reference.Aliases), StringComparer.Ordinal)
+                    .ThenBy(reference => reference.EmbedInteropTypes).ToArray(),
             })));
             Compilation = bound.Compilation;
             SourceHash = bound.Input.Sources.ToDictionary(source => source.Path, source => source.Sha256, StringComparer.Ordinal);
             Models = bound.Compilation.SyntaxTrees.ToDictionary(tree => tree, tree => bound.Compilation.GetSemanticModel(tree));
             References = bound.Compilation.References.Zip(bound.Input.References,
-                (reference, input) => (bound.Compilation.GetAssemblyOrModuleSymbol(reference), input)).ToArray();
+                (reference, input) => (bound.Compilation.GetAssemblyOrModuleSymbol(reference), input, (PortableExecutableReference)reference)).ToArray();
             Forwarders = References.Where(reference => reference.Symbol is IAssemblySymbol)
                 .SelectMany(reference =>
                 {
@@ -358,7 +447,7 @@ internal static class ReleaseImpactTypeResolver
         internal CSharpCompilation Compilation { get; }
         internal Dictionary<string, string> SourceHash { get; }
         internal Dictionary<SyntaxTree, SemanticModel> Models { get; }
-        internal (ISymbol? Symbol, ReleaseCompilerReference Input)[] References { get; }
+        internal (ISymbol? Symbol, ReleaseCompilerReference Input, PortableExecutableReference Metadata)[] References { get; }
         internal ILookup<string, (IAssemblySymbol Facade, ReleaseCompilerReference Input, INamedTypeSymbol Terminal)> Forwarders { get; }
         internal string[] GlobalImports { get; }
     }
