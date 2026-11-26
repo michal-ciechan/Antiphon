@@ -15,6 +15,95 @@ namespace Antiphon.Tests.Scripts.Nightly;
 public sealed class NightlyTestsPlanTests
 {
     [Test]
+    public void C2082_Full_prefix_precedes_ordinary_work_and_stops_on_failure()
+    {
+        static object Case(string assembly, string type, string method, string uid, bool invariant) => new PlainObject(
+            ("Assembly", assembly), ("Namespace", assembly + (invariant ? ".Invariants" : ".Product")),
+            ("Type", type), ("ClassName", assembly + (invariant ? ".Invariants." : ".Product.") + type),
+            ("Method", method), ("Uid", uid), ("Categories", invariant ? new object[] { "RepositoryInvariant" } : Array.Empty<object>()));
+
+        foreach (var packed in new[] { false, true })
+        {
+            var a = new List<object>
+            {
+                Case("Alpha", "SharedGuardTests", "Check", "alpha-argument-1", true),
+                Case("Alpha", "SharedGuardTests", "Check", "alpha-argument-2", true),
+                Case("Alpha", "OrdinaryTests", "Run", "alpha-ordinary", false),
+            };
+            var exclusions = Array.Empty<object>();
+            if (packed)
+            {
+                a.Add(Case("Alpha", "SharedGuardTests", "Paid", "alpha-paid", true));
+                exclusions = [new PlainObject(("Class", "SharedGuardTests"), ("Methods", new object[] { "Paid" }))];
+            }
+            var b = new[] { Case("Beta", "SharedGuardTests", "Check", "beta-argument-1", true) };
+            var alpha = NightlyTestsPlan.SuiteChunks(a.ToArray(), AllChunk(), exclusions, true, true, "antiphon", Policy(), Costs());
+            var beta = NightlyTestsPlan.SuiteChunks(b, AllChunk(), [], true, true, "messaging", Policy(), Costs());
+            string[] Uids(IEnumerable<object> chunks) => chunks.SelectMany(c =>
+                PsValue.AsArray(PsValue.Prop(c, "plannedInvariantUids") ?? Array.Empty<object>()).Select(PsValue.Str)).ToArray();
+            Uids(alpha).ShouldBe(["alpha-argument-1", "alpha-argument-2"], ignoreOrder: true);
+            Uids(beta).ShouldBe(["beta-argument-1"]);
+            var ordinary = new PlainObject(("id", "all"));
+            var suites = new Dictionary<string, object>()
+            {
+                ["client"] = new PlainObject(("id", "client"), ("chunks", new object[] { ordinary })),
+                ["antiphon"] = new PlainObject(("id", "antiphon"), ("chunks", alpha)),
+                ["messaging"] = new PlainObject(("id", "messaging"), ("chunks", beta)),
+            };
+            foreach (var history in new[] { false, true })
+            foreach (var stop in new[] { "", "antiphon", "messaging" })
+            {
+                using var fixture = NightlyFixture.Create("c2082-prefix");
+                var state = new NightlyRunState
+                {
+                    Platform = "windows", Profile = "rc", LogRoot = fixture.Root,
+                    Sha = new string('e', 40), InvocationId = "candidate", Attempt = "1",
+                };
+                var started = new List<(string Suite, string Chunk, bool Invariant)>();
+                var completed = new List<string>();
+                var steps = new NightlyDispatchSteps
+                {
+                    Prepare = (id, needsDiscovery) =>
+                    {
+                        needsDiscovery.ShouldBeTrue(id);
+                        return suites[id];
+                    },
+                    RunChunk = (suite, chunk) =>
+                    {
+                        var id = Str(suite, "id");
+                        var invariant = Uids([chunk]).Length > 0;
+                        started.Add((id, Str(chunk, "id"), invariant));
+                        if (invariant && id == stop) throw new InvalidOperationException("fixture failure " + id);
+                    },
+                    Complete = suite => completed.Add(Str(suite, "id")),
+                };
+                object[] priority = history ? [new PlainObject(("suite", "client"), ("chunks", new object[] { "all" }))] : [];
+                var failure = NightlyDispatch.CoordinateOrFailure(state, steps, suites.Keys.Cast<object>().ToArray(), priority, [],
+                    "", null!, null!, "");
+                started[0].Invariant.ShouldBeTrue("first runtime start must be a repository invariant");
+                using var evidence = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(fixture.Root, "dispatch-schedule.json")));
+                var schedule = evidence.RootElement;
+                if (stop.Length > 0)
+                {
+                    failure.ShouldNotBeNull().Message.ShouldContain("fixture failure " + stop);
+                    started.ShouldAllBe(start => start.Invariant);
+                    schedule.GetProperty("invariantPrefix").GetProperty("outstanding").GetArrayLength().ShouldBeGreaterThan(0);
+                }
+                else
+                {
+                    failure.ShouldBeNull();
+                    started.Select(s => s.Invariant).ShouldBe([true, true, false, false]);
+                    completed.ShouldBe(["client", "antiphon", "messaging"], ignoreOrder: true);
+                    schedule.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("dispatchOrdinal").GetInt32())
+                        .ShouldBe([0, 1, 2, 3]);
+                    schedule.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("chunk").GetString())
+                        .ShouldBe(started.Select(s => s.Chunk));
+                }
+            }
+        }
+    }
+
+    [Test]
     public void C1397_RcAntiphonLaunchGroups()
     {
         // RC antiphon discovery is one class launch per fully included class plus one exact launch per remaining method
