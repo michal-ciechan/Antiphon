@@ -20,7 +20,8 @@ First start, with nothing listening on 17202 and no launch already in flight:
 Start-ScheduledTask -TaskName 'Antiphon AppHost'
 ```
 
-The registered action is `scripts/autostart-apphost.ps1` (a thin launcher of `scripts\antiphon.cmd autostart-apphost`), which waits for Docker
+The registered action runs `scripts\antiphon.cmd autostart-apphost` under the hidden PowerShell host, with no repository
+`.ps1` (unit 61; a task registered before then starts the launcher `scripts/autostart-apphost.ps1`). The command waits for Docker
 and Postgres, then runs `dev-aspire --no-browser` in its own process. Task Scheduler starts it
 outside the shell that requested the start. If the task is missing, register it
 with `scripts\antiphon.cmd install-autostart --apphost-only` under an account
@@ -138,8 +139,9 @@ re-read `C:\Antiphon\runner\phone-home.json`. The file write, the `--hard`
 restart, and the rollback order are the
 [G1-G3 runbook amendment](superpowers/plans/2026-11-18-card-1744-runbook-g1-g3-amendment.md).
 S4 (`e1b42f895`, in serving rc `bd34a7ff6da9`) makes
-`scripts/autostart-session-runner.ps1` (since unit 36 the launcher of
-`scripts\antiphon.cmd autostart-session-runner`) check that path at supervisor startup.
+the `autostart-session-runner` command (the logon task's action since unit 61; tasks
+registered earlier and the phase-1 clone start its launcher `scripts/autostart-session-runner.ps1`) check that path at
+supervisor startup.
 If present, it reads and validates the config for phone-home on 17204. If
 absent, the default launch is direct on 17204. An unreadable or invalid config
 is refused. The explicit `-PhoneHomeConfigPath` selects the phase-1 file on
@@ -298,15 +300,21 @@ rolled back.
 
 - `scripts\antiphon.cmd install-autostart` deletes and re-registers tasks and terminates a running
   instance. Use `--apphost-only` to refresh AppHost-side tasks without killing a
-  healthy runner supervisor.
+  healthy runner supervisor. A task that was disabled is re-registered disabled
+  (unit 61), so a refresh never re-enables the maintenance end state below.
+- Each task's action runs its command through the hidden host:
+  `<pwsh> -NoProfile -NonInteractive -WindowStyle Hidden -Command "& '<checkout>\scripts\antiphon.cmd' <command> ...; if ($null -eq $LASTEXITCODE) { exit 9 }; exit $LASTEXITCODE"`:
+  the command's exit code is the task's, 9 when the entry is missing. Tasks registered before unit 61 still start the kept
+  launchers by path; the re-registration runbook is in the N3 row of
+  `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`.
 - Prefer `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe` for task actions;
   version-pinned MSIX paths disappear on PowerShell updates. Keep daemon and
   auto-start scripts ASCII-only for Windows PowerShell 5.1 fallback.
 - **Antiphon AppHost Watchdog** runs every two minutes, delayed 15 minutes after
-  logon. Each fire starts `scripts/watchdog-apphost.ps1` (a thin launcher of the `watchdog-apphost` command, which runs `restart-apphost` in its own process) from the checkout that
-  registered the task and reads its current scripts. Script-only changes take
-  effect on the next fire; an AppHost restart does not reload the watchdog, and
-  task re-registration is unnecessary for those changes. It probes API `/health`
+  logon. Each fire runs the `watchdog-apphost` command (`scripts\antiphon.cmd watchdog-apphost`, which runs `restart-apphost` in its own process; a task registered before unit 61 starts the launcher `scripts/watchdog-apphost.ps1`) from the checkout that
+  registered the task, whose cached CLI rebuilds when its sources changed. Code
+  changes take effect on the next fire; an AppHost restart does not reload the
+  watchdog, and task re-registration is unnecessary for those changes. It probes API `/health`
   and the client root before recovery guards, normally skips recovery behind
   fresh launch/restart locks (subject to the dead-launch exception below), and
   does not count exit 3 as a restart.
