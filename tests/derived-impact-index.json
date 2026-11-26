@@ -1683,9 +1683,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 621,
+      "classes": 622,
       "reason": "cap",
-      "owed": 596,
+      "owed": 597,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1699,9 +1699,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 621,
+      "classes": 622,
       "reason": "cap",
-      "owed": 596,
+      "owed": 597,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -1715,9 +1715,9 @@
     },
     {
       "path": "server/Infrastructure/Data/ReviewEngineModel.cs",
-      "classes": 621,
+      "classes": 622,
       "reason": "cap",
-      "owed": 596,
+      "owed": 597,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PostLandMutationDeliveryTests",
@@ -2440,9 +2440,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MigrationTestDatabase.cs",
-      "classes": 41,
+      "classes": 42,
       "reason": "cap",
-      "owed": 16,
+      "owed": 17,
       "first": [
         "AgentTaskLandNotificationPersistenceTests",
         "AgentTuiPersistenceTests",
@@ -2520,9 +2520,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 532,
+      "classes": 533,
       "reason": "cap",
-      "owed": 507,
+      "owed": 508,
       "first": [
         "ChannelOutboundRecoveryTests",
         "PhoneHomeStrandedQueueTests",
