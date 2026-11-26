@@ -335,6 +335,7 @@ internal static class WindowsUnitSkipRoster
     // Review 5bfb258d: CP-10 selects GrokRulesLaunchRefusalTests; its Herdr and PtyHost refusal rows skip
     // on Linux (master-inherited), so the receipt can only qualify them when they are listed here.
     internal const string GrokRawArgvRefusalCmdReason = "CARD-0882: the Windows Grok raw-argv refusal policy fixture launches cmd.exe from the Windows system directory; Linux has no cmd.exe.";
+    internal const string SessionRunnerCmdReason = "CARD-2068: the session runner launcher fixture uses cmd.exe from the Windows system directory.";
     internal static readonly Entry[] WindowsOnly =
     [
         new("Antiphon.Tests.Checkpoints", "CheckpointOutputConfinementTests", "windows_confined_build_leaves_use_app_host_unset", 1, "CARD-1310: the confined build resolves dotnet.exe through the Windows CreateProcess PATH and leaves UseAppHost unset."),
@@ -376,6 +377,9 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Application", "AgentSessionServiceIntegrationTests", "AgentSessionService_start_to_first_text_delta_with_real_worktree_and_raw_pty", 1, "Raw PTY integration uses Windows ConPTY in this test."),
         new("Antiphon.Tests.Application", "AgentStartRecoveryTests", "Interactive_start_failure_marks_agent_failed_not_working", 1, AgentStartRecoveryCmdReason),
         new("Antiphon.Tests.Application", "AgentStartRecoveryTests", "Observed_exit_closes_session_and_resets_agent", 2, AgentStartRecoveryCmdReason),
+        new("Antiphon.Tests.Agents", "SessionRunnerRuntimeTests", "Session_id_can_be_relaunched_after_exit_but_not_while_running", 1, SessionRunnerCmdReason),
+        new("Antiphon.Tests.Agents", "SessionRunnerRuntimeTests", "Session_runner_starts_shell_accepts_input_and_keeps_buffer", 1, SessionRunnerCmdReason),
+        new("Antiphon.Tests.Agents", "SessionRunnerRuntimeTests", "StartAsync_that_fails_after_the_host_exists_leaves_no_pty_host", 1, "CARD-2068: the cleanup witness requires Windows PTY launch to reject a missing executable before StartAsync returns."),
         new("Antiphon.Tests.Application", "GrokRulesLaunchRefusalTests", "Named_grok_herdr_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists", 1, GrokRawArgvRefusalCmdReason),
         new("Antiphon.Tests.Application", "GrokRulesLaunchRefusalTests", "Named_grok_pty_host_agent_with_unsafe_raw_rules_is_refused_before_any_session_exists", 1, GrokRawArgvRefusalCmdReason),
         new("Antiphon.Tests.Application", "HerdrAlwaysOnChannelParityTests", "AlwaysOn_channel_bound_survives_child_death_and_replies", 2, "CARD-0865: the two ClaudeCode rows skip on Linux until standing/always-on channel parity has native recovery fixes; the Grok row runs."),
