@@ -91,8 +91,8 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
 
     [Test]
     [Timeout(120_000)]
-    public Task shape_compiler_collision(CancellationToken cancellationToken) =>
-        AssertShapeAsync("compiler-collision", cancellationToken);
+    public Task shape_existing_output_file(CancellationToken cancellationToken) =>
+        AssertShapeAsync("existing-output-file", cancellationToken);
 
     [Test]
     [Timeout(120_000)]
@@ -104,10 +104,10 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
     public Task shape_existing_output_symlink(CancellationToken cancellationToken) =>
         AssertShapeAsync("existing-output-symlink", cancellationToken);
 
-    // Shared SDK count for the mutation factories. clean-build is the one SDK project.
+    // The sampled mutation fixtures omit the SDK import. The clean-build fixture includes it.
     [Test]
     [Timeout(120_000)]
-    public void shape_fixture_sdk_build_count()
+    public void shape_fixture_sdk_project_text_count()
     {
         var modified = File.ReadAllText(Path.Combine(BeginRepo("modified-tracked"), "App", "App.csproj"));
         var deleted = File.ReadAllText(Path.Combine(BeginRepo("deleted-tracked"), "App", "App.csproj"));
@@ -245,13 +245,13 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                     return "move-source-still-present";
                 return WithMutationMarker(root, FinishConflict(ConflictFile(result, Path.Combine(root, "tracked.txt"), "USER-MOVED", "tracked.txt", output), receipt));
             case "existing-stamp":
-            case "compiler-collision":
+            case "existing-output-file":
             case "existing-output-directory":
             case "existing-output-symlink":
             {
                 var file = shape == "existing-stamp" ? "checkpoint-build-source.json" : "App.dll";
                 if (shape != "existing-output-directory" && (!File.Exists(Path.Combine(root, "App", "bin-probe", file)) || File.ReadAllText(Path.Combine(root, "App", "bin-probe", file)) != "USER-OUTPUT"))
-                    return "pre-existing-user-output-lost";
+                    return "pre-existing-output-missing-or-changed";
                 if (File.ReadAllText(Path.Combine(root, "tracked.txt")) != TrackedBytes) return "build-changed-source-on-collision";
                 var reason = shape == "existing-stamp" ? "pre-existing-build-source" : shape == "existing-output-symlink" ? "reparse-point" : "pre-existing-output";
                 var namedRefusal = output.Contains("refused: " + reason, StringComparison.Ordinal)
@@ -421,7 +421,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
                 "regular-user-move" => "mv -f -- user-move.txt tracked.txt",
                 "deleted-untracked" => "rm -f -- user-move.txt && printf %s MUTATED > tracked.txt",
                 "changed-untracked" => "printf %s CHANGED-USER > user-move.txt && printf %s MUTATED > tracked.txt",
-                "existing-stamp" or "compiler-collision" or "existing-output-directory" or "existing-output-symlink" => "printf %s MUTATED > tracked.txt",
+                "existing-stamp" or "existing-output-file" or "existing-output-directory" or "existing-output-symlink" => "printf %s MUTATED > tracked.txt",
                 _ => throw new InvalidOperationException(shape),
             };
             WriteProject(root, command);
@@ -464,7 +464,7 @@ public sealed class CheckpointShapeConflictTests : CheckpointTestBase
             case "existing-stamp":
                 Write(root, "App/bin-probe/checkpoint-build-source.json", "USER-OUTPUT");
                 break;
-            case "compiler-collision":
+            case "existing-output-file":
                 Write(root, "App/bin-probe/App.dll", "USER-OUTPUT");
                 break;
             case "existing-output-directory":

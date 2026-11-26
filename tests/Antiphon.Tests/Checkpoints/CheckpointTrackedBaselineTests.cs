@@ -292,10 +292,10 @@ public sealed class CheckpointTrackedBaselineTests : CheckpointTestBase
         await AssertStagedUserFileSurvivesAsync(root, "indexed", "fresh-user.txt", bytes, cancellationToken);
     }
 
-    // Shared SDK count for the staged-user factory.
+    // The sampled staged-user fixture project texts omit the SDK import.
     [Test]
     [Timeout(120_000)]
-    public void baseline_staged_fixture_sdk_build_count()
+    public void baseline_staged_fixture_sdk_project_text_count()
     {
         var untracked = BeginRepo();
         WriteStageProject(untracked, "git --git-dir=.git --work-tree=. add -- user-keep.txt");
