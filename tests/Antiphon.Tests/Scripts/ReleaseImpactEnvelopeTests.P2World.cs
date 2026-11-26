@@ -200,18 +200,21 @@ public sealed partial class ReleaseImpactEnvelopeTests
         };
 
         internal P2.ObservedInput[] Observe(P2.Request request, bool dirtyQuiet = false) =>
-            new[] { ("B", request.BaselineSha), ("A", request.CandidateSha) }.SelectMany(pin =>
-                RequiredTargetRoles.Select(role => Input(pin.Item1, pin.Item2, null, role, dirtyQuiet)).Concat(Chunks.SelectMany(chunk =>
-                    RcChunkDigest.RequiredReceipts.Select(role => Input(pin.Item1, pin.Item2, chunk.Id, role, dirtyQuiet))))).ToArray();
+            new[] { (Side: "B", Sha: request.BaselineSha), (Side: "A", Sha: request.CandidateSha) }.SelectMany(pin =>
+                RequiredTargetRoles.Select(role => Input(pin.Side, pin.Sha, null, role, false)).Concat(Chunks.SelectMany(chunk =>
+                    ObserveChunk(chunk, pin.Side, pin.Sha, pin.Side == "A" && dirtyQuiet)))).ToArray();
+
+        private static IEnumerable<P2.ObservedInput> ObserveChunk(P2.Chunk chunk, string side, string sha, bool dirtyQuiet) =>
+            RcChunkDigest.RequiredReceipts.Select(role => Input(side, sha, chunk.Id, role, dirtyQuiet));
 
         private static P2.ObservedInput Input(string side, string sha, string? chunk, string kind, bool dirtyQuiet)
         {
             var identity = chunk + "/" + kind;
-            if (dirtyQuiet && side == "A" && chunk == "Q" && kind == "generated-fixture-recipes-and-outputs") identity += "/edited";
+            if (dirtyQuiet && chunk == "Q" && kind == "generated-fixture-recipes-and-outputs") identity += "/edited";
             return new P2.ObservedInput(side, chunk, kind, Hash(identity), Hash("recorded-" + side + "-" + identity), sha);
         }
 
-        private string InputDigest(string sha, P2.Chunk chunk, string side, P2.ObservedInput[] observations)
+        private string InputDigest(string sha, P2.Chunk chunk, string side, IEnumerable<P2.ObservedInput> observations)
         {
             var records = _repo.Git("ls-tree", "-r", sha).Split('\n').Select(line =>
             {
@@ -236,13 +239,14 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         internal P2.Authority Authority(P2.Request? pins = null, bool dirtyQuiet = false, bool omitQuietRow = false,
             bool removeQuietPin = false, bool duplicateQuietPass = false, bool failQuietExit = false,
-            bool flipQuietRead = false, bool carryOrigin = false, bool? ownExecuted = null, bool contractDrift = false,
-            bool unresolved = false, bool foreignQuietAssembly = false, bool negativeQuietExit = false)
+            bool flipQuietRead = false, string? carriedFrom = null, bool? ownExecuted = null, bool contractDrift = false,
+            bool unresolved = false, bool foreignQuietAssembly = false, bool negativeQuietExit = false, bool dirtyOriginQuiet = false)
         {
             var request = pins ?? Request;
             var observations = Observe(request, dirtyQuiet);
             var b = request.BaselineSha;
-            var originSha = carryOrigin ? OriginBase : b;
+            var carryOrigin = carriedFrom is not null;
+            var originSha = carriedFrom ?? b;
             var originAttempt = carryOrigin ? 1u : 2u;
             var run = carryOrigin ? "run-b0" : "run-b";
             var selected = Chunks.Where(chunk => chunk.Id != "Q" || !omitQuietRow).ToArray();
@@ -261,8 +265,9 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 {
                     Open = () => new MemoryStream(++QuietOpens == 1 ? trx : Trx(chunk, false, "Failed"), writable: false),
                 };
+                var originObservations = carryOrigin ? ObserveChunk(chunk, "B", originSha, dirtyOriginQuiet) : observations;
                 return new P2.ExecutionPin(chunk.Id, originSha, run, originAttempt, original.Artifact.Digest,
-                    InputDigest(b, chunk, "B", observations), identity, carryOrigin ? original : null);
+                    InputDigest(originSha, chunk, "B", originObservations), identity, carryOrigin ? original : null);
             }).ToArray();
 
             P2.OwnExecution[]? own = null;

@@ -4,6 +4,7 @@ T.algorithm.actualInstall.mode
 T.compatibility.B.staleCatalogPin.mode
 T.context.equalHeads
 T.context.nonAncestor.mode
+T.discovery.changedAtAdmit
 T.discovery.outstanding
 T.graph.A.honest
 T.graph.B.honest
@@ -40,6 +41,8 @@ T.read.returnedFull
 T.receipts.copyOnly.disputedMode
 T.receipts.copyOnly.honest
 T.receipts.copyOnly.resealDistinct
+T.receipts.custody.rawInventorySha
+T.receipts.custody.rawTrxSha
 T.receipts.duplicatePass.disputedMode
 T.receipts.duplicatePass.honest
 T.receipts.duplicatePass.resealDistinct
@@ -50,7 +53,9 @@ T.receipts.foreignAssembly.disputedMode
 T.receipts.foreignAssembly.honest
 T.receipts.foreignAssembly.resealDistinct
 T.receipts.negativeExit.honest
+T.receipts.originChain.changedInputs
 T.receipts.originChain.falseOrigin
+T.receipts.originChain.nonAncestor
 T.receipts.originChain.validOrigin
 T.reseal.algorithm.evaluator
 T.reseal.algorithm.extractor
