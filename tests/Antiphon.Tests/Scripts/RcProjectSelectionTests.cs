@@ -260,7 +260,8 @@ public sealed class RcProjectSelectionTests
             var ownedCap = RcChunkSelection.Select(repo.Root, capBaseline, capCandidate, chunks, receipts, [], Admit, capPair);
             ownedCap.Mode.ShouldBe("Scoped", "C.cap owned");
             ownedCap.Of("left").Reasons.ShouldContain("index-edge:B:" + south, "C.cap cannot discharge the capped hit");
-            ownedCap.Of("right").Reasons.ShouldContain("index-capped-closure:B:" + south, "C.cap owning closure");
+            ownedCap.Of("right").Reasons.ShouldContain("index-capped-closure:" + south + ":B", "C.cap baseline owning closure");
+            ownedCap.Of("right").Reasons.ShouldContain("index-capped-closure:" + south + ":A", "C.cap candidate owning closure");
             ownedCap.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.cap owned set");
             ownedCap.Proof.Removed.ShouldBeEmpty("C.cap no subtraction from the capped path");
 
