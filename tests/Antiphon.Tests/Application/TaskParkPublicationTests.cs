@@ -482,6 +482,7 @@ public sealed class TaskParkPublicationTests
             await GitTextAsync(root, "init", "--bare", "-b", "master", origin);
             await GitTextAsync(root, "init", "-b", "master", repository);
             await ConfigureAsync(repository);
+            await PinStatusConfigAsync(root, repository);
             await File.WriteAllTextAsync(System.IO.Path.Combine(repository, "base.txt"), "base source");
             await GitTextAsync(repository, "add", "base.txt");
             await GitTextAsync(repository, "commit", "-m", "base");
@@ -495,10 +496,27 @@ public sealed class TaskParkPublicationTests
                 var runnerRepo = System.IO.Path.Combine(root, "runner-repo");
                 await GitTextAsync(root, "clone", origin, runnerRepo);
                 await ConfigureAsync(runnerRepo);
+                await PinStatusConfigAsync(root, runnerRepo);
                 await GitTextAsync(runnerRepo, "worktree", "add", "-b", branch,
                     System.IO.Path.Combine(root, "remote", "worktrees", "task-" + token), baseline);
             }
             return baseline;
+        }
+
+        /// <summary>
+        /// The runner's git children get ParkGit's isolated environment (RunnerWorkspaceService.GitEnvironmentForTest),
+        /// but its in-process status answer is judged against this test process's environment, which reads Git for
+        /// Windows' system core.autocrlf=true while libgit2 here is isolated from it. Pinned locally, every reader sees
+        /// the same status config and the runner's clean-status reads are answered in process as in production (as
+        /// BlockedTaskParkReleaseFixture's source does). Worktrees share it; it is set once per template.
+        /// </summary>
+        private async Task PinStatusConfigAsync(string root, string repository)
+        {
+            var empty = System.IO.Path.Combine(root, "status-config-empty").Replace('\\', '/');
+            if (!File.Exists(empty)) await File.WriteAllTextAsync(empty, "");
+            await GitTextAsync(repository, "config", "core.autocrlf", "false");
+            await GitTextAsync(repository, "config", "core.excludesFile", empty);
+            await GitTextAsync(repository, "config", "core.attributesFile", empty);
         }
 
         private async Task ConfigureAsync(string path)
