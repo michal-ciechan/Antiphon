@@ -24,6 +24,7 @@ public sealed class C1514HostLoadMigrationTests
     private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
     private const string ReviewEngine = "20261122173647_AddReviewEngine";
     private const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
+    private const string FutureMigration = "29991231235959_C2074FutureMigration";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -61,7 +62,15 @@ public sealed class C1514HostLoadMigrationTests
     public void C2074_Chain_pin_accepts_a_newer_migration()
     {
         using var db = Metadata();
-        AssertChain([.. db.Database.GetMigrations(), "29991231235959_C2074FutureMigration"]);
+        AssertChain([.. db.Database.GetMigrations(), FutureMigration]);
+    }
+
+    [Test, Arguments(FutureMigration), Arguments("29991231235958_C2078EarlierFutureMigration")]
+    public void C2078_Chain_pin_rejects_invalid_later_migrations(string second)
+    {
+        string[] temporaryChain = [.. TestMigrationFingerprint.Default.MigrationIds, FutureMigration, second];
+        var error = Should.Throw<ShouldAssertException>(() => AssertChain(temporaryChain));
+        error.Message.ShouldContain("later-migrations-are-linear");
     }
 
     private static void AssertChain(string[] chain)

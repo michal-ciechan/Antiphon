@@ -35,6 +35,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
     private const string ReviewEngine = "20261122173647_AddReviewEngine";
     private const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
+    private const string FutureMigration = "29991231235959_C2074FutureMigration";
     private IsolatedTestSchema? _historical;
 
     [Before(Class)]
@@ -45,7 +46,8 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     {
         var name = TestContext.Current!.Metadata.TestDetails.TestName;
         if (name is nameof(Migration_chain_is_linear_and_snapshot_matches_the_final_model)
-            or nameof(C2074_Chain_pin_accepts_a_newer_migration)) return;
+            or nameof(C2074_Chain_pin_accepts_a_newer_migration)
+            or nameof(C2078_Chain_pin_rejects_invalid_later_migrations)) return;
         // These round trips exercise the historical migrations. Starting from
         // the current template would first hit the later telemetry Down guard.
         // Completes when the baseline migration is applied. The budget is only the backstop.
@@ -78,7 +80,15 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     {
         using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql("Host=localhost;Database=metadata_only").Options);
-        AssertChain([.. db.Database.GetMigrations(), "29991231235959_C2074FutureMigration"]);
+        AssertChain([.. db.Database.GetMigrations(), FutureMigration]);
+    }
+
+    [Test, Arguments(FutureMigration), Arguments("29991231235958_C2078EarlierFutureMigration")]
+    public void C2078_Chain_pin_rejects_invalid_later_migrations(string second)
+    {
+        string[] temporaryChain = [.. TestMigrationFingerprint.Default.MigrationIds, FutureMigration, second];
+        var error = Should.Throw<ShouldAssertException>(() => AssertChain(temporaryChain));
+        error.Message.ShouldContain("later-migrations-are-linear");
     }
 
     private static void AssertChain(string[] chain)

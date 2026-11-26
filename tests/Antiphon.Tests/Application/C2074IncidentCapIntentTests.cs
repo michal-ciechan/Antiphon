@@ -47,6 +47,7 @@ public sealed class C2074IncidentCapIntentTests
                     Kind = i % 2 == 0 ? AgentIncidentKind.HostBudgetChanged : AgentIncidentKind.TaskProgressStalled,
                     Severity = AlertSeverity.Info,
                     Message = $"c2074 null-agent noise {i}",
+                    FailureReason = i == 0 ? "pending:unrelated-fleet-notice" : null,
                     CreatedAt = now.AddMinutes(-60 + i),
                 };
                 db.AgentIncidents.Add(row);
@@ -84,7 +85,7 @@ public sealed class C2074IncidentCapIntentTests
             remaining.ShouldContain(kill, "a pending deferred kill is owed until the runner resolves");
             remaining.ShouldContain(direct, "a pending release audit is owed until the runner stops listing the seat");
             remaining.ShouldNotContain(finished, "a reconciled intent is ordinary history and is capped");
-            remaining.ShouldNotContain(noise[0]);
+            remaining.ShouldNotContain(noise[0], "a pending prefix only exempts runner slot release intents");
             remaining.ShouldNotContain(noise[1]);
             remaining.ShouldBe([kill, direct, noise[2], noise[3], noise[4]], ignoreOrder: true,
                 "cap 3 keeps the three newest null rows plus the pending intents");
