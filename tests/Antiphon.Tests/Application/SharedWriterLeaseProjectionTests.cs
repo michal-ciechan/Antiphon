@@ -82,6 +82,25 @@ public class SharedWriterLeaseProjectionTests
     }
 
     [Test]
+    [Arguments(@"C:\Work\Repo", "c:/work/repo/", true)]
+    [Arguments(@"\\FileHost\Share\Repo", @"\/filehost/share/repo", true)]
+    [Arguments("/srv/Team/repo", "/srv/team/repo", false)]
+    public void repository_identity_agrees_for_scope_checks_and_live_holds(
+        string runningKey, string queuedKey, bool sameRepo)
+    {
+        const string scope = "server/**";
+        var holder = Holder("writer", WorkspaceMode.Shared, scope, runningKey);
+        var queuedScope = ScopeResolver.Resolve(scope, AreaMap.Empty);
+
+        var decision = SharedWriterLeaseProjection.Decide(
+            [holder], queuedKey, WorkspaceMode.Shared, queuedScope, serialiseSharedWriters: true);
+
+        decision.IsSerialised.ShouldBe(sameRepo, "live shared-writer lease");
+        AgentTaskDispatcher.ScopesIntersect((runningKey, scope), (queuedKey, scope))
+            .ShouldBe(sameRepo, "dispatcher scope comparison");
+    }
+
+    [Test]
     public void an_empty_holder_snapshot_is_not_a_live_hold()
     {
         // A released historical Held event is not an input. The helper only sees current writers.
