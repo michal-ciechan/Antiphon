@@ -157,7 +157,7 @@ internal static class ReleaseCompilerInputs
                 return bytes;
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or JsonException
             or ArgumentException or BadImageFormatException)
         {
             return new(reason, digest, []);
