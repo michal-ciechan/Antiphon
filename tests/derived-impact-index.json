@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 366,
+      "classes": 365,
       "reason": "allowlist"
     },
     {
@@ -2110,9 +2110,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 146,
+      "classes": 145,
       "reason": "cap",
-      "owed": 121,
+      "owed": 120,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2185,7 +2185,7 @@
         "PackageVersionPinContractTests",
         "PostgresSnapshotJobTests",
         "QualificationCheckoutSourceTests",
-        "RefreshGithubTokenScriptTests"
+        "SessionRunnerGrokLineEndingContractTests"
       ]
     },
     {
@@ -2356,9 +2356,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 140,
+      "classes": 141,
       "reason": "cap",
-      "owed": 115,
+      "owed": 116,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -4493,6 +4493,7 @@
       "classes": [
         "C1744G3PhoneHomeSupervisionTests",
         "HerdrPaneDisposalGuardedLiveTests",
+        "ImpactedClassesSelectorTests",
         "PhoneHomeBackpressureTests",
         "PlanCatalogServiceTests",
         "ZombieCensusServiceTests"
@@ -4653,18 +4654,6 @@
       ]
     },
     {
-      "path": "scripts/lib/windows-phone-home-env.ps1",
-      "classes": [
-        "AntiphonCliLauncherTests",
-        "C1744G3PhoneHomeSupervisionTests",
-        "HerdrPaneDisposalGuardedLiveTests",
-        "ImpactedClassesSelectorTests",
-        "PhoneHomeBackpressureTests",
-        "PlanCatalogServiceTests",
-        "ZombieCensusServiceTests"
-      ]
-    },
-    {
       "path": "scripts/nightly-run.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4678,12 +4667,6 @@
         "ReleaseGateRunTests",
         "ReleaseSelectionHopSeedTests",
         "TestSelectionTests"
-      ]
-    },
-    {
-      "path": "scripts/refresh-server2-github-token.ps1",
-      "classes": [
-        "RefreshGithubTokenScriptTests"
       ]
     },
     {
@@ -26306,6 +26289,16 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/OperatorToolWorld.cs",
+      "classes": [
+        "DesktopSlotProvisionGitTests",
+        "DesktopSlotProvisionTests",
+        "DesktopWinAclOsTests",
+        "DesktopWinPhase1SecretsTests",
+        "RefreshGithubTokenScriptTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/OuterRowBuildStamp.cs",
       "classes": [
         "C1008PlatformContractTests",
@@ -28061,7 +28054,6 @@
         "JqRunnerImageContractTests",
         "NightlyProbeSupervisorTests",
         "PosixHarnessToolTests",
-        "RefreshGithubTokenRemoteCommandTests",
         "RetiredTempContainerDockerTests",
         "RollingVolumeRecycleDockerTests",
         "VolumeRetirementContentTests",
