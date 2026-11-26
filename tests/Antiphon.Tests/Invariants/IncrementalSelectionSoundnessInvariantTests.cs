@@ -13,6 +13,7 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
 [Category("RepositoryInvariant")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class IncrementalSelectionSoundnessInvariantTests
 {
     // In-process: the HistoricalSelectionSoundness case (RcInputOwnersMapTests) replays the corpus through the committed

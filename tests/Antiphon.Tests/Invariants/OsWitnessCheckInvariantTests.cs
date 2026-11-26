@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class OsWitnessCheckInvariantTests
 {
     [Test]

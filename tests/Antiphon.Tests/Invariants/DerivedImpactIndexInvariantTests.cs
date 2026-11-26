@@ -12,6 +12,8 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
 [Category("RepositoryInvariant")]
+[ParallelLimiter<ProcessSpawnLimit>]
+[Timeout(600_000)]
 public sealed class DerivedImpactIndexInvariantTests
 {
     [Test]

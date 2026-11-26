@@ -11,6 +11,7 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RepositoryMutationLeaseInvariantTests
 {
     // Every journal reader shares Delete, so the owner's replace is never refused by the share mode.

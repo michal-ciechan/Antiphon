@@ -21,7 +21,7 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     // 2x loaded db-migrate p95 of the longer baseline (Additive, 34.3s, n=6) on server2,
     // 2026-11-10, four sha256sum /dev/zero workers, load 26-43. Park's own p95 was 17.1s (n=12).
     // Bodies on that run were about 5s, so this is also the body backstop.
-    private const int HistoricalBaselineBudgetMilliseconds = 70_000;
+    internal const int HistoricalBaselineBudgetMilliseconds = 70_000;
     internal const string Previous = "20261105121558_Card0824RefOnlyDesktopCleanup";
     internal const string Debt = "20261106005946_AddRefOnlySettlementDebtWorkspaceSnapshot";
     internal const string Park = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";

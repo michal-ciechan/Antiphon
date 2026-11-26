@@ -8,6 +8,7 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
 [Category("RepositoryInvariant")]
+[Timeout(600_000)]
 public sealed class CodexRootExecContractInvariantTests
 {
     private static readonly string[] ProviderCommands = ["codex", "claude", "grok"];

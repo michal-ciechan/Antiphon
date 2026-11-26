@@ -14,6 +14,8 @@ namespace Antiphon.Tests.Invariants;
 [Category("Integration")]
 [Category("Slow")]
 [Category("RepositoryInvariant")]
+[NotInParallel(nameof(C0824RefOnlySnapshotMigrationTests))]
+[Timeout(C0824RefOnlySnapshotMigrationTests.HistoricalBaselineBudgetMilliseconds)]
 public sealed class C0824RefOnlySnapshotMigrationInvariantTests
 {
     [Test]
