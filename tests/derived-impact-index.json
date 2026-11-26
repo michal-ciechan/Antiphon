@@ -2222,9 +2222,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 64,
+      "classes": 65,
       "reason": "cap",
-      "owed": 39,
+      "owed": 40,
       "first": [
         "NightlyRunTests",
         "RcFailureHistoryTests",
@@ -29493,7 +29493,8 @@
         "LandGeneratedArtifactTests",
         "PostLandEarlyWarningTests",
         "RcInputManifestTests",
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "RcProjectSelectionTests"
       ]
     },
     {
