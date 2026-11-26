@@ -17679,6 +17679,7 @@
         "LinuxCgroupContainmentTests",
         "LinuxCgroupCustodyTests",
         "LinuxCustodyReleaseHostTests",
+        "LinuxRunnerCustodyLifecycleTests",
         "UnixPtyArgvTests"
       ]
     },
@@ -20387,7 +20388,8 @@
       "classes": [
         "Card1619LinuxStopIntentTests",
         "HerdrAdoptionSweepTests",
-        "HerdrPaneChildKillTests"
+        "HerdrPaneChildKillTests",
+        "LinuxRunnerCustodyLifecycleTests"
       ]
     },
     {
