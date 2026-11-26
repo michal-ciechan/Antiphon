@@ -1150,10 +1150,11 @@ public class InstructionBundleTests
     [
         ("contract-assigned-branch", "- Use only the assigned branch (feat/card-<n>-<stage>-<8hex> or legacy feat/card-task-<8hex>); never create, rename or switch branches."),
         ("contract-commit-push", "- Commit each slice with its real outcome; push after every commit with `git push origin HEAD:refs/heads/<branch>`. Report full 40-hex SHAs."),
-        ("contract-no-rewrite", "- Never merge the target into the task branch. Never rebase, amend, reset or force-push a pushed commit; landing rebases."),
+        ("contract-no-target-merge", "- Never merge the target into the task branch outside the CARD-2086 exception. Only a Merge-role Worktree task integrating into master may absorb one master advance per attempt on its own assigned branch."),
+        ("contract-no-rewrite", "- Never rebase, amend, reset or force-push a pushed commit; landing rebases."),
         ("contract-test-first", "- Commit the failing test before its fix, and commit before any long test run, even as WIP."),
         ("contract-review-freeze", "- A branch under Review is frozen for everyone, its author included, until Review settles; Review never checks out, rebases, commits to or pushes its subject branch."),
-        ("contract-merge-tree", "- Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts; report it, never merge to resolve."),
+        ("contract-merge-tree", "- Landable needs `git fetch origin master`, then `git merge-tree --write-tree origin/master HEAD` with no conflicts. Report the final result."),
         ("contract-push-retry", "- On a push `error in commit_refs`: wait, `git fetch`, check the tip with `git ls-remote`, retry at most three times; never force."),
         ("contract-evidence-custody", "- No secrets in commits, logs or reports. Generated evidence stays gitignored. Code and Review run scripts/antiphon evidence-diff --base <base>."),
     ];
@@ -1210,6 +1211,7 @@ public class InstructionBundleTests
         var compositions = new (string Label, string Text)[]
         {
             ("code", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Code)).Text),
+            ("debug", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Debug)).Text),
             ("review", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Review)).Text),
             ("mutation", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Worker, AgentTaskRole.Mutation)).Text),
             ("orchestrator", InstructionBundleComposer.Compose(InstructionBundles.ForDelegate(AgentTaskKind.Orchestrator, AgentTaskRole.Plan)).Text),

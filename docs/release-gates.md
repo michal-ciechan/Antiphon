@@ -56,6 +56,9 @@ at the rc tip `df6b422c71b0`, merged the reviewed smoke-pin branch `feat/card-ta
 the explicit exception to rebase-only landing named above; an ordinary `land` rebases and
 cannot produce it.
 
+For a move on master during verification or publication, follow the
+[one-advance rule for Merge attempts](orchestration-loop.md#merge-master-moves-card-2086).
+
 ## Two lanes, two kinds of credit
 
 Master remains the integration branch for features, and its scheduled readiness
