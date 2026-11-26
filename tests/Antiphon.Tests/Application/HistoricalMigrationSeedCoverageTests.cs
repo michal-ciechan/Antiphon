@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -12,23 +13,9 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class HistoricalMigrationSeedCoverageTests
 {
-    // AppDbContext tables written by the historical fixtures in the group 89 investigation.
-    private static readonly HashSet<string> SeededTables = new(StringComparer.Ordinal)
-    {
-        "AgentIncidents", "Agents", "AgentSessions", "AgentSupervisionStates", "AgentTaskEvents",
-        "AgentTaskLandNotifications", "AgentTaskLandRequests", "AgentTaskParks", "AgentTasks", "AgentTaskSyncDebts",
-        "BoardColumns", "Boards", "CardRevisions", "Cards", "CardWorkflowRuns", "CardWorkflowStages",
-        "CardWorktreeCleanupEndpoints", "CardWorktreeCleanups", "CardWorktreeCleanupTargets",
-        "ChannelOutboundDeliveries", "ChatChannels", "HostBudgets", "HostLoadSamples",
-        "ModelAvailabilityHolds", "OutputDistillations", "PipelineDefinitionRevisions", "PipelineDefinitions",
-        "Projects", "ReviewComments", "ReviewThreads", "ReviewWorkflowRevisions", "RoutingPins", "RunnerRoutingSettings",
-        "SessionQueuedMessages", "SessionRuntimeActions", "SessionTranscriptSummaries", "SessionTranscriptSummaryMaintenance",
-        "StageOutcomes", "TaskWorktreeMirrorBindings", "TranscriptEntries", "WorkflowTemplates", "Worktrees",
-        "WorktreeResidueCandidateCursors", "WorktreeResidueRunCandidates", "WorktreeResidueRuns",
-    };
-
-    // These nullable fields are excluded by the bound AgentTask context or by explicit SQL.
-    // The HostLoadSamples old-writer test verifies that its required field is filled by PostgreSQL.
+    // Existing-table changes already checked against their predecessor writers. The host
+    // load membership migration supplies a default, and the land-verification fields are
+    // added before any fixture writes through the current AgentTaskLandings model.
     private static readonly HashSet<(string Migration, SeedColumn Column)> ReviewedAdditions =
     [
         ("20261107034430_HostLoadTelemetryS1", new("AgentTaskEvents", "LoadAttempt", true, false)),
@@ -37,7 +24,11 @@ public sealed class HistoricalMigrationSeedCoverageTests
         ("20261107034430_HostLoadTelemetryS1", new("AgentTaskEvents", "LoadRunnerId", true, false)),
         ("20261107034430_HostLoadTelemetryS1", new("AgentTaskEvents", "LoadSessionId", true, false)),
         ("20261107034430_HostLoadTelemetryS1", new("AgentTaskEvents", "LoadStatus", true, false)),
+        ("20261107040142_HostLoadSnapshotMembership", new("HostLoadHourlyRollups", "CreatedTransactionId", false, true)),
         ("20261107040142_HostLoadSnapshotMembership", new("HostLoadSamples", "CreatedTransactionId", false, true)),
+        ("20261119045705_AddLandVerificationFailure", new("AgentTaskLandings", "VerificationFailingProjects", true, false)),
+        ("20261119045705_AddLandVerificationFailure", new("AgentTaskLandings", "VerificationFailureOutput", true, false)),
+        ("20261119045705_AddLandVerificationFailure", new("AgentTaskLandings", "VerificationFailureStep", true, false)),
         ("20261120091515_AddRequestedModelAlias", new("AgentTasks", "RequestedModelAlias", true, false)),
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportCompletedAt", true, false)),
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportPromptSequence", true, false)),
@@ -63,7 +54,11 @@ public sealed class HistoricalMigrationSeedCoverageTests
             before = after;
         }
 
-        unreviewed.ShouldBeEmpty("Check the historical writers for each listed column and cover their seed compatibility.");
+        var candidates = DiscoverHistoricalMigrationTests();
+        TestContext.Current!.OutputWriter.WriteLine(
+            $"Historical migration candidates ({candidates.Length} methods):{Environment.NewLine}"
+            + string.Join(Environment.NewLine, candidates));
+        unreviewed.ShouldBeEmpty("Check the discovered historical migration candidates for writers of each listed column.");
 
         // Simulate a later handwritten Up against the same disposable PostgreSQL database.
         await db.Database.ExecuteSqlRawAsync("""
@@ -73,7 +68,8 @@ public sealed class HistoricalMigrationSeedCoverageTests
         UnreviewedAdditions("synthetic migration", before, await ReadColumnsAsync(db, ct))
             .ShouldBe(["synthetic migration: OutputDistillations.HistoricalSeedRequiredProbe (required)"]);
 
-        var candidates = DiscoverHistoricalMigrationTests();
+        candidates.ShouldContain(
+            $"{typeof(PipelineSpeedIntegrationTests).FullName}.{nameof(PipelineSpeedIntegrationTests.Task_worlds_seed_their_owners_at_the_selected_migration)}");
         var capacityRecovery = typeof(CapacityRecoveryCompatibilityTests).FullName;
         var group90 = new[]
         {
@@ -86,13 +82,61 @@ public sealed class HistoricalMigrationSeedCoverageTests
             $"{capacityRecovery}.{nameof(CapacityRecoveryCompatibilityTests.Card0412_V23_legacy_available_for_stranded_current_session)}");
     }
 
-    private static string[] DiscoverHistoricalMigrationTests() => typeof(HistoricalMigrationSeedCoverageTests).Assembly
-        .GetTypes()
-        .Where(type => type.Name.EndsWith("MigrationTests", StringComparison.Ordinal))
-        .SelectMany(type => type.GetMethods().Where(method => method.IsDefined(typeof(TestAttribute)))
-            .Select(method => $"{type.FullName}.{method.Name}"))
-        .Order(StringComparer.Ordinal)
-        .ToArray();
+    private const BindingFlags DeclaredMethods = BindingFlags.Public | BindingFlags.NonPublic
+        | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+    private static string[] DiscoverHistoricalMigrationTests()
+    {
+        var witness = typeof(HistoricalMigrationSeedCoverageTests);
+        return witness.Assembly.GetTypes()
+            .Where(type => type != witness)
+            .SelectMany(type => type.GetMethods(DeclaredMethods))
+            .Where(method => method.IsDefined(typeof(TestAttribute)) && UsesHistoricalMigration(method))
+            .Select(method => $"{method.DeclaringType!.FullName}.{method.Name}")
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool UsesHistoricalMigration(MethodInfo test)
+    {
+        var pending = new Stack<MethodBase>();
+        var seen = new HashSet<int>();
+        pending.Push(test);
+        while (pending.TryPop(out var method))
+        {
+            if (!seen.Add(method.MetadataToken))
+                continue;
+
+            if (method.GetCustomAttribute<StateMachineAttribute>() is { } stateMachine)
+                foreach (var stateMethod in stateMachine.StateMachineType.GetMethods(DeclaredMethods))
+                    pending.Push(stateMethod);
+
+            if (method.GetMethodBody() is not { } body)
+                continue;
+
+            foreach (var called in ProcessSpawnLimitTests.ReferencedMembers(method, body).OfType<MethodBase>())
+            {
+                if (IsHistoricalMigrationCall(called))
+                    return true;
+                if (called.Module == test.Module)
+                    pending.Push(called);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsHistoricalMigrationCall(MethodBase method)
+    {
+        // The historical database helper also exposes a metadata-only migration-name query.
+        if (method.DeclaringType == typeof(MigrationTestDatabase))
+            return method.Name != nameof(MigrationTestDatabase.Names);
+
+        return (method.DeclaringType == typeof(IMigrator)
+                || method.DeclaringType == typeof(RelationalDatabaseFacadeExtensions))
+            && method.Name is nameof(IMigrator.Migrate) or nameof(IMigrator.MigrateAsync)
+            && method.GetParameters().Any(parameter => parameter.ParameterType == typeof(string));
+    }
 
     private static IEnumerable<string> UnreviewedAdditions(string migration, List<SeedColumn> before, List<SeedColumn> after)
     {
@@ -104,16 +148,13 @@ public sealed class HistoricalMigrationSeedCoverageTests
             .Select(column => $"{migration}: {column.TableName}.{column.ColumnName} ({(column.IsNullable ? "nullable" : "required")})");
     }
 
-    private static async Task<List<SeedColumn>> ReadColumnsAsync(AppDbContext db, CancellationToken ct)
-    {
-        var columns = await db.Database.SqlQueryRaw<SeedColumn>("""
+    private static Task<List<SeedColumn>> ReadColumnsAsync(AppDbContext db, CancellationToken ct) =>
+        db.Database.SqlQueryRaw<SeedColumn>("""
             SELECT table_name AS "TableName", column_name AS "ColumnName",
                    is_nullable = 'YES' AS "IsNullable", column_default IS NOT NULL AS "HasDefault"
             FROM information_schema.columns WHERE table_schema = current_schema()
             ORDER BY table_name, column_name
             """).ToListAsync(ct);
-        return columns.Where(column => SeededTables.Contains(column.TableName)).ToList();
-    }
 
     private sealed record SeedColumn(string TableName, string ColumnName, bool IsNullable, bool HasDefault);
 }
