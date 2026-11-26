@@ -257,13 +257,11 @@ namespace Antiphon.Nightly
         /// ReleaseGateJournal.cs and ReleaseGateTags.cs) and unit 14 publish-release.ps1 and promote-release.ps1 (now
         /// ReleasePublish.cs, ReleasePromote.cs and ReleaseGateHost.cs, run as antiphon-scripts publish-release and
         /// promote-release). Their C# is in lib/Antiphon.Nightly, pinned by that tree's SourceTrees digest. Unit 62 deleted
-        /// lib/nightly-common.ps1, which no script loaded any more. An older record that still binds a deleted script
-        /// verifies, because Pinned checks only the keys listed here and SourceTrees.
+        /// the last two, lib/nightly-common.ps1 and lib/nightly-core.ps1, which no script loaded any more: no script is pinned,
+        /// and the authority binds the source trees alone. An older record that still binds a deleted script verifies,
+        /// because Pinned checks only the keys listed here and SourceTrees.
         /// </summary>
-        public static readonly string[] Scripts =
-        {
-            "lib/nightly-core.ps1",
-        };
+        public static readonly string[] Scripts = { };
 
         /// <summary>
         /// The compiled sources these scripts call (this class, the policy rules and the other core helpers), one digest per

@@ -1,4 +1,5 @@
-// Compiled per-test work for the nightly scripts; loaded by nightly-core.ps1 (PowerShell 7, Add-Type).
+// Compiled per-test work for the nightly scripts; the CLI and the tests call it in process (nightly-core.ps1 loaded it
+// into PowerShell 7 with Add-Type until unit 62 of the 2026-11-22 remaining-ps1 plan deleted that loader).
 //
 // Each type here is a port of a PowerShell function that ran once per discovered test (about 19,000 in the
 // main suite) or once per JSON value, and returns exactly what that function returned. The PowerShell

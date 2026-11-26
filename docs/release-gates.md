@@ -631,10 +631,10 @@ The pre-release sequence, each transition journalled **before** the next begins:
 revalidates the pinned authority, Full ledger, script and source-tree hashes and release-card
 readback on every attempt, including an already-matching final. Its explicit
 `--repository` and `--antiphon-api-url` inputs follow the publisher's defaults.
-The authority binds one script (`lib/nightly-core.ps1`; unit 62 deleted `lib/nightly-common.ps1`) and two
-source trees (`lib/Antiphon.Nightly`, `../src/Antiphon.IO.WriteBehind`); the publisher and the
+The authority binds no script (unit 62 deleted `lib/nightly-common.ps1` and `lib/nightly-core.ps1`, the last two)
+and two source trees (`lib/Antiphon.Nightly`, `../src/Antiphon.IO.WriteBehind`); the publisher and the
 promoter are C# in the first tree, so its digest pins them. A record frozen earlier that also binds
-deleted scripts (`publish-release.ps1`, `promote-release.ps1`, `lib/nightly-common.ps1`) is checked on these three keys only.
+deleted scripts (`publish-release.ps1`, `promote-release.ps1` and the two nightly libraries) is checked on these two keys only.
 Do not insert a new digest into old evidence. Promotion
 refuses when the final tag already exists at another SHA, when the pre-release tag is
 missing, or when the peel is not a full 40-hex SHA. It does not delete the pre-release

@@ -426,7 +426,8 @@ public sealed partial class ImpactedClassesSelectorTests
         ("tests/Antiphon.Tests/TestHelpers/C1514HostLoadFixture.cs", "task-load-window", "C1514TaskLoadWindowTests", false),
         ("tests/Antiphon.Tests/Application/C0824SlotTransportWorld.cs", "workspace-slot-role-gate", "C0824WorkspaceSlotRoleGateTests", true),
         ("tests/Antiphon.Tests/Application/LandGraphLandRefreshTests.cs", "land-graph-land-refresh", "LandGraphLandRefreshTests", true),
-        ("scripts/lib/nightly-core.ps1", "test-selection", "TestSelectionTests", false),
+        // The note named scripts/lib/nightly-core.ps1; unit 62 of the remaining-ps1 plan deleted it, so the row's path is the class's own file.
+        ("tests/Antiphon.Tests/Scripts/TestSelectionTests.cs", "test-selection", "TestSelectionTests", false),
         ("tests/Antiphon.Tests/Checkpoints/PhaseJournalKillDiagnosticTests.cs", "spawn-limit-rosters", "ProcessSpawnLimitTests", false),
     ];
 

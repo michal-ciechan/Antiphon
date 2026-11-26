@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    The nightly scripts' compiled implementation. nightly-core.ps1 builds this project once per source
-    version into a cache under the user's temp directory and loads it into the PowerShell session; the
-    tests reference it directly and call the parts that use plain C# types in-process.
+    The nightly scripts' compiled implementation, behind the antiphon-scripts CLI (Antiphon.Scripts references
+    it); the tests reference it directly and call the parts that use plain C# types in-process. Until unit 62
+    of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, nightly-core.ps1 also built it into a
+    per-user cache and loaded it into PowerShell sessions.
     PowerShell's own System.Management.Automation is used at run time: the reference is compile-only.
   -->
   <PropertyGroup>

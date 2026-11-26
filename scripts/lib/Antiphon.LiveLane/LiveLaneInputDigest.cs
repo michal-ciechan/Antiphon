@@ -83,10 +83,11 @@ namespace Antiphon.LiveLane
         /// <summary>
         /// The deliberate pin. Never this commit's own blobs: a clean checkout always matches its own commit, so a change
         /// to an input is caught only against this value. Unit 62 of the 2026-11-22 remaining-ps1 plan (owner's approval of
-        /// re-keying, 2026-11-26) moved it from f6d19136 when tests/test-execution-policy.json re-pinned the selection catalog
-        /// (its imported-helper edge moved from the deleted lib/nightly-common.ps1 to lib/antiphon-cli.ps1).
+        /// re-keying, 2026-11-26) moved it twice: f6d19136 to 214add01 when tests/test-execution-policy.json re-pinned the
+        /// selection catalog (its imported-helper edge moved from the deleted lib/nightly-common.ps1 to lib/antiphon-cli.ps1),
+        /// then to 4798d5a0 when NightlyCore.cs's provenance comment stopped naming the deleted nightly-core.ps1 loader.
         /// </summary>
-        public const string Pinned = "214add0160e46ad80d322b2ad49d15809fb7f41cd8cce3678957c42523bd5df4";
+        public const string Pinned = "4798d5a0c148cdcb4ee1f4bf198b264fd483d1f9b11def565a73848a2bbb4b45";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";

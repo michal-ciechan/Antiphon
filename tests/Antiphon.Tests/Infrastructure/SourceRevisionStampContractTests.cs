@@ -146,7 +146,8 @@ public sealed class SourceRevisionStampContractTests
     {
         var builders = new (string Path, string Token)[]
         {
-            ("scripts/lib/nightly-core.ps1", "dotnet build"),
+            // Unit 62: the CLI's PowerShell entry builds the launcher unstamped (scripts/lib/nightly-core.ps1, the builder until then, is deleted).
+            ("scripts/lib/antiphon-cli.ps1", "@('build', $project"),
             // W2-nightly S17: the nightly tests run (nightly-tests-impl.ps1 is deleted) builds Antiphon.sln unstamped.
             ("scripts/lib/Antiphon.Nightly/NightlyTests.cs", "\"build\", \"Antiphon.sln\""),
             // Unit 11 of 2026-11-22-remaining-ps1-to-csharp.md: the land-graph tool's rebuild (scripts/lib/land-audit-tool.ps1 is deleted).

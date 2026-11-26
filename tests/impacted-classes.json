@@ -361,8 +361,7 @@
     {
       "id": "test-selection",
       "globs": [
-        "tests/Antiphon.Tests/Scripts/TestSelectionTests.cs",
-        "scripts/lib/nightly-core.ps1"
+        "tests/Antiphon.Tests/Scripts/TestSelectionTests.cs"
       ],
       "classes": [
         "TestSelectionTests"

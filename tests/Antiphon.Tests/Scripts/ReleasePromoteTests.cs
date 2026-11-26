@@ -230,12 +230,13 @@ public sealed class ReleasePromoteTests
             "exit=" + promoted.ExitCode + " refusal=" + promoted.Refusal + " final=" + finalName + "/" + finalPeeled + " recorded=" + finalRecorded + " pre=" + preStill);
 
         // Unit 14: the publisher and promoter are C# in lib/Antiphon.Nightly, so the authority binds the pinned scripts and two
-        // source trees (publish-release.ps1 and promote-release.ps1 are deleted; unit 62 deleted lib/nightly-common.ps1: three keys).
+        // source trees (publish-release.ps1 and promote-release.ps1 are deleted; unit 62 deleted lib/nightly-common.ps1 and
+        // lib/nightly-core.ps1, the last pinned scripts: two keys).
         var want = ReleaseAuthority.Scripts.Concat(ReleaseAuthority.SourceTrees).ToArray();
         var hashes = authDoc?["scriptHashes"]?.AsObject();
         var have = hashes?.Select(p => p.Key).ToArray() ?? [];
         var fresh = ReleaseAuthority.ScriptHashes(ReleaseGateFixture.ScriptsRoot);
-        var same = want.Length == 3 && have.Length == want.Length && have.All(want.Contains);
+        var same = want.Length == 2 && have.Length == want.Length && have.All(want.Contains);
         var omitsTip = true;
         foreach (var rel in want)
         {

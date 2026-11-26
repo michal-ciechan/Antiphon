@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    The scripts' command-line implementation (antiphon-scripts <command>). nightly-core.ps1 builds it once
-    per source version into a cache under the user's temp directory and the PowerShell scripts run the
-    built executable. Each command handles only what it can answer exactly as the PowerShell it replaces;
+    The scripts' command-line implementation (antiphon-scripts <command>). The cached launcher
+    (scripts/lib/Antiphon.CliLauncher, behind scripts/antiphon, scripts\antiphon.cmd and lib/antiphon-cli.ps1)
+    builds and publishes it (nightly-core.ps1 built it until unit 62 of the 2026-11-22 remaining-ps1 plan).
+    Each command handles only what it can answer exactly as the PowerShell it replaces;
     anything else exits NotHandled and the caller keeps its PowerShell path. Pure .NET: no PowerShell.
   -->
   <PropertyGroup>
