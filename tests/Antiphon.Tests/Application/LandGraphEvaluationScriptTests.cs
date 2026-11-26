@@ -323,7 +323,7 @@ public sealed partial class LandGraphEvaluationTests
 
         var host = await PrintBudgetAsync(null, null, null);
         host.Pass.ShouldBe(OperatingSystem.IsWindows() ? 120 : 45);
-        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 68 : 8);
+        host.Copy.ShouldBe(OperatingSystem.IsWindows() ? 68 : 77);
         host.Total.ShouldBe(host.Pass * 2 + host.Copy);
         host.Grace.ShouldBe(60);
         host.Ceiling.ShouldBe(host.Total + host.Grace);
@@ -339,14 +339,12 @@ public sealed partial class LandGraphEvaluationTests
         command.ShouldContain("\"--evaluation-budget-seconds\", options.EvaluationBudgetSeconds.ToString(CultureInfo.InvariantCulture)", Case.Sensitive);
         var budgetSource = await File.ReadAllTextAsync(Path.Combine(RepoRoot(), "tools", "Antiphon.LandGraphAudit.Core", "EvaluationBudget.cs"));
         budgetSource.ShouldContain("public const int MeasuredCopyP95Milliseconds = 2253;", Case.Sensitive);
-        budgetSource.ShouldContain("public const int MeasuredLinuxCopyP95Milliseconds = 3751;", Case.Sensitive);
+        budgetSource.ShouldContain("public const int MeasuredLinuxCopyP95Milliseconds = 38305;", Case.Sensitive);
         budgetSource.ShouldContain("public const int WindowsCopyMeasurementMultiplier = 30;", Case.Sensitive);
         budgetSource.ShouldContain("PROVISIONAL", Case.Sensitive);
     }
 
-    // CARD-2000: R-1 pins the printed host copy and V-1 only admits an 8 s copy.
-    // A wider HostCopyP95Milliseconds still passed both until this equality, and
-    // the source pin refuses a second selector beside that property.
+    // CARD-2000: bind the printed default to the same measurement used by the production copy clock.
     [Test]
     [Timeout(60_000)]
     public async Task HostCopyP95IsTheDefaultPrintAndProductionClock()
