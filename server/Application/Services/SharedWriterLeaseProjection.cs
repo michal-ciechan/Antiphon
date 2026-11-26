@@ -161,8 +161,5 @@ public static class SharedWriterLeaseProjection
     }
 
     internal static bool SameRepo(string a, string b) =>
-        string.Equals(
-            DelegationWorkspaceResolver.NormalizeSeparators(a),
-            DelegationWorkspaceResolver.NormalizeSeparators(b),
-            StringComparison.OrdinalIgnoreCase);
+        WorkingDirectoryIdentity.Same(a, b, preserveWindowsOrdinalCase: true);
 }

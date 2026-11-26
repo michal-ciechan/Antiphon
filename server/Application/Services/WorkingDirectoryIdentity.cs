@@ -75,10 +75,16 @@ public static class WorkingDirectoryIdentity
     /// </summary>
     public static string Key(string path)
     {
+        var key = CasePreservingKey(path);
+        return IsWindowsPath(path) ? key.ToLowerInvariant() : key;
+    }
+
+    internal static string CasePreservingKey(string path)
+    {
         ArgumentNullException.ThrowIfNull(path);
         if (IsWindowsPath(path))
         {
-            var windows = path.Replace('/', '\\').ToLowerInvariant();
+            var windows = path.Replace('/', '\\');
             var root = windows[1] == ':'
                 ? (windows.Length >= 3 && windows[2] == '\\' ? 3 : 2)
                 : 2;
@@ -89,10 +95,18 @@ public static class WorkingDirectoryIdentity
     }
 
     /// <summary>True when both paths are present and name the same directory under the rule above.</summary>
-    public static bool Same(string? left, string? right)
+    public static bool Same(string? left, string? right) => Same(left, right, preserveWindowsOrdinalCase: false);
+
+    /// <summary>
+    /// Dispatch uses the historical ordinal case rule for Windows paths, including Unicode
+    /// aliases such as sigma and final sigma. The spelling still selects Windows or POSIX.
+    /// </summary>
+    internal static bool Same(string? left, string? right, bool preserveWindowsOrdinalCase)
     {
         if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
             return false;
+        if (preserveWindowsOrdinalCase && IsWindowsPath(left) && IsWindowsPath(right))
+            return string.Equals(CasePreservingKey(left), CasePreservingKey(right), StringComparison.OrdinalIgnoreCase);
         return string.Equals(Key(left), Key(right), StringComparison.Ordinal);
     }
 
