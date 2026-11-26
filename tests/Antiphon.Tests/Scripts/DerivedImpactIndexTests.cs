@@ -238,8 +238,8 @@ public sealed class DerivedImpactIndexTests
         Should.Throw<ShouldAssertException>(() => AssertRegenDocs(blinded, guide));
 
         var guardBlind = guide.Replace(
-            "A Merge brief adds DerivedImpactIndexTests and C1584_E2EExpandedBudget to that standing guard union",
-            "A Merge brief keeps the standing guard union",
+            "Resolve repository invariant checkpoint rows with",
+            "Omit the invariant selection",
             StringComparison.Ordinal);
         guardBlind.ShouldNotBe(guide);
         Should.Throw<ShouldAssertException>(() => AssertRegenDocs(loop, guardBlind));
@@ -300,7 +300,7 @@ public sealed class DerivedImpactIndexTests
             Case.Sensitive);
         section.ShouldContain("so a Merge that skips the command still fails", Case.Sensitive);
 
-        const string guard = "A Merge brief adds DerivedImpactIndexTests and C1584_E2EExpandedBudget to that standing guard union";
+        const string guard = "Resolve repository invariant checkpoint rows with";
         guide.ShouldContain(guard, Case.Sensitive);
         guide.ShouldContain("/*/*/C1514LandingSplitBudgetTests/C1584_E2EExpandedBudget*", Case.Sensitive);
         guide.ShouldContain("(DerivedImpactIndexTests*)", Case.Sensitive);
