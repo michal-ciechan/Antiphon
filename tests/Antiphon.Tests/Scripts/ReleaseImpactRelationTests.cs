@@ -246,7 +246,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(10_000)]
+    [Test, Timeout(9_500)]
     [Arguments("delegate", "public delegate T Tag<T>();", "Tag<int>")]
     [Arguments("interface", "public interface Tag {}", "Tag")]
     [Arguments("struct", "public struct Tag {}", "Tag")]

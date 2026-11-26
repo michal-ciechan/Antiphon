@@ -191,6 +191,49 @@ ceiling (1.59× its observed p95).
 | `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners` | 0.773, 1.111, 5.043, 1.999, 0.692 | 1.111 | 5.043 | 8 |
 | `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossExternAliases` | 2.485, 3.354, 4.658, 3.905, 1.876 | 3.354 | 4.658 | 10 |
 
+### Round 3 regression evidence
+
+Review `6c753207` observed the combined type-kind method at 3.957, 4.476,
+4.591, 6.314 and 9.054 s. The final observation left 0.946 s at the original
+10 s limit. The five declaration kinds now have separate case deadlines. The
+attribute winner and ambiguous spelling share their own method. Every case
+still checks both capture orders and the positive and ambiguous worlds.
+
+Round 3 run `20261126-212133-bd50` built
+`5410a2eb6db67fa176665d853872d19ee26a9ad2` on Debian 12 Linux x64 with 24
+visible CPUs and SDK 10.0.404. Its five fresh type-kind and attribute hosts ran
+30/30 cases green. The first three hosts observed one-minute loads in
+26.39–30.53, 23.31–30.30 and 25.75–35.99 respectively. The last two added two
+low-priority CPU workers during execution and observed 29.33–33.90 and
+20.73–24.92. All test and build slots were granted with zero wait. The table
+uses the slowest case per host for the parameterized method and provisional
+nearest-rank p95. The attribute limit stays at the original 10 s ceiling,
+1.82× the observed maximum.
+
+| Method | Samples 1–5 (s) | p50 (s) | p95/max (s) | Timeout (s) |
+|---|---|---:|---:|---:|
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds` | 3.074, 2.995, 4.672, 3.760, 2.175 | 3.074 | 4.672 | 9.5 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossAttributeSpellings` | 5.483, 1.381, 1.327, 1.129, 1.027 | 1.327 | 5.483 | 10 |
+
+The same run recorded 2/5 passes for the cohort test. Three cold hosts
+canceled at 9.085, 9.335 and 9.226 s in fixture setup, before the roster
+assertions. The cohort test now reuses one real graph from one commit for six
+distinct attempts and uses clean fixture outcomes. The other replay tests
+still build their distinct endpoints and observe their failed cases. The
+cohort deadline stays at 9 s.
+
+The official land-graph refresh advanced the topic digest from `2D9312A5…`
+to `49BA60B0…` at count 80. The target pin blob remained
+`5c6bebb9830976468ea54c20c640127ab452931d`. Review's original ten-case results
+remain in its retained evidence. [Round 2 base red](/work/review-evidence/task-6c753207/base/.antiphon/checkpoints/20261126-200816-4a0e/report.md) · [Round 2 topic red](/work/review-evidence/task-6c753207/tip-impacts/.antiphon/checkpoints/20261126-203714-ca7f/report.md) · [Refetched master green](/work/review-evidence/task-6c753207/master-final/.antiphon/checkpoints/20261126-210209-747a/report.md)
+
+`P.roster` reseals run three with one duplicated content digest in place of
+the other required digest. The roster count and the planned chunk files stay
+the same. `ProvenSubtractionReplayRejectsInvalidArtifactsAndCohorts` requires
+`proof-cohort-roster-mismatch:r3000000`. The count-only control and the M2,
+preview and evaluation-target controls remain pending method-scoped Mutation.
+[Candidate methods and expected failures](../mutations/2026-11-26-card-2076-candidates.md)
+
 The replay's proof-dependent carry counter can include a carry caused by a
 difference between the planned class list and member roster. Inspect the
 matched roster and recorded removed contributions before treating a counted
