@@ -70,6 +70,8 @@ namespace Antiphon.Nightly
 
         public bool ProfileAware { get; set; }
 
+        internal bool RequiresInvariantPrefix => Profile == "rc" && Platform == "windows";
+
         /// <summary>$requiredSuites: the profile's required suite ids (a manual suite in it still runs).</summary>
         public object[] RequiredSuites { get; set; } = new object[0];
 

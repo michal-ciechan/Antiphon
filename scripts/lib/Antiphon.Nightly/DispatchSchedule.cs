@@ -18,6 +18,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Collections.Specialized;
 using System.Globalization;
 using System.Runtime.CompilerServices;
@@ -120,6 +121,11 @@ namespace Antiphon.Nightly
                         for (var i = 0; i < entries.Count; i++) SetProp(entries[i], "dispatchOrdinal", i);
                         order = PsValue.Record(("reason", digestReason), ("lanes", new object[0]));
                     }
+                }
+                if (entries.Any(entry => NightlyTestsPlan.IsInvariantChunk(PsValue.Prop(entry, "ChunkRef"))))
+                {
+                    entries = entries.OrderByDescending(entry => NightlyTestsPlan.IsInvariantChunk(PsValue.Prop(entry, "ChunkRef"))).ToList();
+                    for (var i = 0; i < entries.Count; i++) SetProp(entries[i], "dispatchOrdinal", i);
                 }
                 var schedule = PsValue.Record(("PreparedSuites", PsValue.AsArray(preparedSuites)), ("format", "antiphon-nightly-dispatch-v1"), ("runId", runId ?? ""),
                     ("attempt", attempt ?? ""), ("historyDigest", historyDigest ?? ""), ("canonicalPlanDigest", digest), ("preparationComplete", preparationComplete),
