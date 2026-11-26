@@ -74,6 +74,8 @@ public sealed class RcProjectSelectionTests
         chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "l1")];
         chunks[1].CaseRoster = [new("R", "R.RightTests", "M", "r1")];
         foreach (var chunk in chunks)
+            chunk.ContentDigest = RcChunkReceipt.ContentDigest("antiphon", "native", chunk.CaseRoster);
+        foreach (var chunk in chunks)
             repo.Put(".antiphon/selector-replay/" + chunk.Id + ".trx",
                 $"""<TestRun><TestDefinitions><UnitTest id="{chunk.Cases.Single()}"><TestMethod className="{chunk.Classes.Single()}" name="M" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="{chunk.Cases.Single()}" outcome="Passed" /></Results></TestRun>""");
 
@@ -122,6 +124,10 @@ public sealed class RcProjectSelectionTests
         chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "wrong-case")];
         RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof)
             .Mode.ShouldBe("Full", "C.roster case");
+        chunks[0].CaseRoster = [new("L", "L.LeftTests", "ChangedMethod", "l1")];
+        var staleMethod = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof);
+        staleMethod.Of("left").Decision.ShouldBe("execute", "C.roster unbound method");
+        staleMethod.Mode.ShouldBe("Full", "C.roster digest must bind the method");
         chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "l1")];
         RcChunkSelection.Select(repo.Root, baseline, baseline, chunks, receipts, [], Admit, proof)
             .Mode.ShouldBe("Full", "C.stale endpoint");
