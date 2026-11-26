@@ -16,18 +16,18 @@ The locations below are candidate source anchors. The binding needs the reviewed
 | PC-8 | (a), (b) | CP-2 | T / `P.parts`, `P.unbound` | `DeclarationPaths` retains every declaration. `Bind` identifies an unavailable generated input. |
 | PC-9 | (a), (b) | CP-2 | T / `GU.ambiguous`, `GU.owners` | `Resolve` evaluates each owner and unions occurrence results. |
 | PC-10 | (a), (b) | `/*/*/ReleaseImpactRelationTests/SdkGeneratedUsingsRetainOnlyPinnedBindings` | T / `IU.ambiguous`, `IU.missing` | `Bind` and `Resolve` use actual SDK-emitted, frozen global usings and preserve candidates on refusal. |
-| PC-11 | Single | CP-2 | T / `N.ambiguous` | `ResolveSite` binds the nested type and keeps the declaring metadata name. |
-| PC-12 | (a), (b) | CP-2 | T / `AR.ambiguous`, `AR.argument` | `ResolveSite` uses the original definition and treats argument and constraint occurrences independently. |
-| PC-13 | (a), (b), (c) | CP-2 | T / `EXT.ambiguous`, `EXT.dynamic`, `EXT.receiver` | `ResolveSite` requires the reduced extension provider and resolved receiver. The unsupported path retains candidates. |
+| PC-11 | Single | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `N.ambiguous` | `ResolveSite` binds the nested type and keeps the declaring metadata name. |
+| PC-12 | (a), (b) | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `AR.ambiguous`, `AR.argument` | `ResolveSite` uses the original definition and treats argument and constraint occurrences independently. |
+| PC-13 | (a), (b), (c) | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `EXT.ambiguous`, `EXT.dynamic`, `EXT.receiver` | `ResolveSite` requires the reduced extension provider and resolved receiver. The unsupported path retains candidates. |
 | PC-14 | (a), (b) | CP-2 | T / `FW.missing`, `FW.chain` | `ReadForwarding` checks the pinned Library return TypeRef, Facade export, and Destination definition. `Resolve` retains the facade file independently. |
-| PC-15 | Single | CP-2 | T / `SH.unsupported` | `ResolveSite` accepts a supported named type and retains candidates for shadowing symbols. |
-| PC-16 | (a), (b) | CP-2 | T / `CC.missing`, `CC.union` | `Bind` verifies the frozen configuration inventory. `Resolve` unions every reported evaluation. |
-| PC-17 | (a), (b) | CP-2 | T / `ER.compilation`, `ER.lookup` | `Bind` refuses a compilation with errors. `Resolve` retains the lexical origins without a model. |
+| PC-15 | Single | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `SH.unsupported` | `ResolveSite` accepts a supported named type and retains candidates for shadowing symbols. |
+| PC-16 | (a), (b) | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `CC.missing`, `CC.union` | `Bind` verifies the frozen configuration inventory. `Resolve` unions every reported evaluation. |
+| PC-17 | (a), (b) | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `ER.compilation`, `ER.lookup` | `Bind` refuses a compilation with errors. `Resolve` retains the lexical origins without a model. |
 | PC-18 | (a), (b) | CP-2 | T / `OT.ambiguous`, `OT.attribute` | `ReadDeclarations` and `Candidates` collect the declaration kinds and attribute spellings. |
 | PC-19 | Single | CP-2 | T / `OT.winner` | `ResolveSite` adds winner paths before considering alternative removal. |
 | PC-20 | (a), (b) | CP-2 | T / `Q.mixed`, `P.consumer`, `Q.kinds` | `Resolve` unions surviving sites and preserves independent graph kinds. |
 | PC-21 | (a), (b) | CP-2 | T / `ER.bounded`, `Q.limit` | `ResolveSite` retains the full candidate bucket at the limit. The bounded downstream widening witness remains outstanding. |
-| PC-22 | Single | CP-2 | T / `ER.unbounded` | The release relation keeps the Full fallback. The affected-universe witness remains outstanding. |
+| PC-22 | Single | `/*/*/ReleaseImpactRelationTests/ScopedBindingsPreserveEveryAmbiguousCandidate` | T / `ER.unbounded` | The release relation keeps the Full fallback. The affected-universe witness remains outstanding. |
 | PC-23 | (a), (b) | CP-3 | C / `C.sides` | `RcChunkSelection.Select` visits B and A for index hits and retains the side-qualified project reasons. |
 | PC-24 | (a), (b) | CP-3 | C / `C.legacy`, `C.roster` | `RcTypeProofComparison.DropIndexHit` checks the legacy name. `RosterBound` checks full case membership and recomputes the method-bound content digest. |
 | PC-25 | Single | CP-3 | C / `C.owed` | `RcTypeProofComparison.Independent` and `RcChunkSelection.Select` retain reader, hand, closure and graph obligations. |

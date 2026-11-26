@@ -22,9 +22,7 @@ public sealed class ReleaseImpactRelationTests
         const string use = "tests/T/Use.cs";
         const string generatedPath = "tests/T/G.g.cs";
         const string part = "tests/T/Part.cs";
-        const string args = "tests/T/Arg.cs";
         const string decoy = "tests/T/D.cs";
-        const string receiver = "tests/T/R.cs";
         using var fixture = new ReleaseImpactTypeProofFixture();
 
         var q = Check("Q.unique", World("using North;", "_ = typeof(Probe);"), [north], [north, south]);
@@ -126,55 +124,6 @@ public sealed class ReleaseImpactRelationTests
         externs[use] = ConsumerSource("extern alias R;", "_ = typeof(R::Ident.Probe);");
         Check("EX.right", externs, [twoSource], contexts: ExternContexts(refOne));
 
-        var nested = World("using static North.Box;", "_ = typeof(Inner);");
-        nested[north] = "namespace North; public class Box { public class Inner {} } public class Derived : Box {}\n";
-        nested[south] = "namespace South; public class Box { public class Inner {} }\n";
-        Check("N.static", nested, [north]);
-        nested[use] = ConsumerSource("", "_ = typeof(North.Derived.Inner);");
-        Check("N.inherited", nested, [north]).Sites.Single(site => site.Origin.Name == "Inner").MetadataName.ShouldBe("North.Box+Inner");
-        nested[use] = ConsumerSource("using static North.Box; using static South.Box;", "_ = typeof(Inner);");
-        Check("N.ambiguous", nested, [north, south], refusal: "compiler-diagnostics");
-        nested[north] = nested[north].Replace("Derived : Box", "Derived : MissingBase", StringComparison.Ordinal);
-        nested[use] = ConsumerSource("", "_ = typeof(North.Derived.Inner);");
-        Check("N.unbound-base", nested, [north, south], refusal: "compiler-diagnostics");
-
-        var generics = World("using North;", "_ = typeof(G<Arg>);");
-        generics[north] = "namespace North; public class G {}\n";
-        generics[south] = "namespace North; public class G<T> {}\n";
-        generics[decoy] = "namespace South; public class G<T> {}\n";
-        generics[args] = "namespace North; public class Arg {}\n";
-        Check("AR.argument", generics, [args, south]).Sites.Single(site => site.Origin.Name == "G").MetadataName.ShouldBe("North.G\u00601");
-        generics[use] = ConsumerSource("using North; using South;", "_ = typeof(G<Arg>);");
-        Check("AR.ambiguous", generics, [north, args, south, decoy], refusal: "compiler-diagnostics");
-        generics[use] = ConsumerSource("using North;", "_ = typeof(G);");
-        Check("AR.zero", generics, [north]);
-        generics[use] = ConsumerSource("using North;", "_ = typeof(G<MissingArg>);");
-        Check("AR.failed-argument", generics, [north, south, decoy], refusal: "compiler-diagnostics");
-        generics[use] = ConsumerSource("using North;", "_ = typeof(G<MissingArg>);").TrimEnd()[..^1]
-            + " public void Constraint<X>() where X : North.Arg {} }\n";
-        Check("AR.constraint", generics, [north, args, south, decoy], refusal: "compiler-diagnostics");
-
-        var extension = World("using North;", "_ = new Model.R().Pick();");
-        extension[north] = "namespace North; public static class Ext { public static int Pick(this Model.R r) => 1; }\n";
-        extension[south] = "namespace South; public static class Ext { public static int Pick(this Model.R r) => 2; }\n";
-        extension[receiver] = "namespace Model; public class R {}\n";
-        Check("EXT.receiver", extension, [north, receiver]).Sites.Single(site => site.Origin.Name == "Pick").Retained.ShouldBe([north, receiver]);
-        extension[use] = ConsumerSource("using North;", "_ = new Model.R().Pick(); _ = typeof(North.Ext);");
-        Check("EXT.overlap", extension, [north, receiver]).Sites
-            .Single(site => site.Origin.Name == "Ext").Retained.ShouldBe([north]);
-        extension[use] = ConsumerSource("using North; using South;", "_ = new Model.R().Pick();");
-        Check("EXT.ambiguous", extension, [north, south, receiver], refusal: "compiler-diagnostics");
-        extension[use] = ConsumerSource("using North;", "_ = new Model.R().Pick();");
-        extension[receiver] = "namespace Model; public class R { public int Pick() => 3; }\n";
-        Check("EXT.instance", extension, [north, south, receiver]);
-        extension[receiver] = "namespace Model; public class R {}\n";
-        extension[use] = ConsumerSource("using North;", "dynamic r = new Model.R(); _ = r.Pick();");
-        var runtimeBinder = fixture.PinAssembly(typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly);
-        Check("EXT.dynamic", extension, [north, south, receiver], contexts:
-        [
-            new(project, "T", [north, south, receiver, use], [], [fixture.Core, runtimeBinder]),
-        ]);
-
         const string facadeProject = "src/Facade/Facade.csproj";
         const string facadePath = "src/Facade/F.cs";
         const string libraryProject = "src/Library/Library.csproj";
@@ -249,6 +198,99 @@ public sealed class ReleaseImpactRelationTests
             contexts: ForwardContexts([fixture.Core, library, facade with { Project = libraryProject }, destination]));
         unmapped.Sites.Single(site => site.Origin.Name == "Probe").Rule.ShouldBe("compiler-forwarder-unbound", "FW.owner");
 
+        foreach (var (kind, declaration, reference) in new[]
+        {
+            ("delegate", "public delegate T Tag<T>();", "Tag<int>"),
+            ("interface", "public interface Tag {}", "Tag"),
+            ("struct", "public struct Tag {}", "Tag"),
+            ("enum", "public enum Tag { One }", "Tag"),
+            ("nested-delegate", "public class Outer<T> { public delegate U Hook<U>(T t); }", "Outer<int>.Hook<string>"),
+        })
+        {
+            var forms = World("using North;", "_ = typeof(" + reference + ");");
+            forms[north] = "namespace North; " + declaration + "\n";
+            forms[south] = "namespace South; " + declaration + "\n";
+            Check("OT." + kind, forms, [north]);
+            forms[use] = ConsumerSource("using North; using South;", "_ = typeof(" + reference + ");");
+            Check("OT.ambiguous " + kind, forms, [north, south], refusal: "compiler-diagnostics");
+        }
+        var attributes = World("", "");
+        attributes[north] = "namespace North; public class MarkAttribute : System.Attribute {}\n";
+        attributes[south] = "namespace South; public class Mark : System.Attribute {}\n";
+        attributes[use] = "using North; namespace Cases; public partial class SpecTests { [Mark] public void Check() {} }\n";
+        Check("OT.winner", attributes, [north]).Sites.Single(site => site.Origin.Name == "Mark").Winners.ShouldBe([north]);
+        attributes[use] = "using North; using South; namespace Cases; public partial class SpecTests { [Mark] public void Check() {} }\n";
+        Check("OT.attribute", attributes, [north, south], refusal: "compiler-diagnostics");
+
+        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
+            string[]? before = null, Dictionary<string, string>? generated = null,
+            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
+            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
+            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
+                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+    }
+
+    [Test, Timeout(30_000)]
+    public void ScopedBindingsPreserveEveryAmbiguousCandidate(CancellationToken cancellationToken)
+    {
+        const string project = "tests/T/T.csproj";
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        const string args = "tests/T/Arg.cs";
+        const string decoy = "tests/T/D.cs";
+        const string receiver = "tests/T/R.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
+
+        var nested = World("using static North.Box;", "_ = typeof(Inner);");
+        nested[north] = "namespace North; public class Box { public class Inner {} } public class Derived : Box {}\n";
+        nested[south] = "namespace South; public class Box { public class Inner {} }\n";
+        Check("N.static", nested, [north]);
+        nested[use] = ConsumerSource("", "_ = typeof(North.Derived.Inner);");
+        Check("N.inherited", nested, [north]).Sites.Single(site => site.Origin.Name == "Inner").MetadataName.ShouldBe("North.Box+Inner");
+        nested[use] = ConsumerSource("using static North.Box; using static South.Box;", "_ = typeof(Inner);");
+        Check("N.ambiguous", nested, [north, south], refusal: "compiler-diagnostics");
+        nested[north] = nested[north].Replace("Derived : Box", "Derived : MissingBase", StringComparison.Ordinal);
+        nested[use] = ConsumerSource("", "_ = typeof(North.Derived.Inner);");
+        Check("N.unbound-base", nested, [north, south], refusal: "compiler-diagnostics");
+
+        var generics = World("using North;", "_ = typeof(G<Arg>);");
+        generics[north] = "namespace North; public class G {}\n";
+        generics[south] = "namespace North; public class G<T> {}\n";
+        generics[decoy] = "namespace South; public class G<T> {}\n";
+        generics[args] = "namespace North; public class Arg {}\n";
+        Check("AR.argument", generics, [args, south]).Sites.Single(site => site.Origin.Name == "G").MetadataName.ShouldBe("North.G\u00601");
+        generics[use] = ConsumerSource("using North; using South;", "_ = typeof(G<Arg>);");
+        Check("AR.ambiguous", generics, [north, args, south, decoy], refusal: "compiler-diagnostics");
+        generics[use] = ConsumerSource("using North;", "_ = typeof(G);");
+        Check("AR.zero", generics, [north]);
+        generics[use] = ConsumerSource("using North;", "_ = typeof(G<MissingArg>);");
+        Check("AR.failed-argument", generics, [north, south, decoy], refusal: "compiler-diagnostics");
+        generics[use] = ConsumerSource("using North;", "_ = typeof(G<MissingArg>);").TrimEnd()[..^1]
+            + " public void Constraint<X>() where X : North.Arg {} }\n";
+        Check("AR.constraint", generics, [north, args, south, decoy], refusal: "compiler-diagnostics");
+
+        var extension = World("using North;", "_ = new Model.R().Pick();");
+        extension[north] = "namespace North; public static class Ext { public static int Pick(this Model.R r) => 1; }\n";
+        extension[south] = "namespace South; public static class Ext { public static int Pick(this Model.R r) => 2; }\n";
+        extension[receiver] = "namespace Model; public class R {}\n";
+        Check("EXT.receiver", extension, [north, receiver]).Sites.Single(site => site.Origin.Name == "Pick").Retained.ShouldBe([north, receiver]);
+        extension[use] = ConsumerSource("using North;", "_ = new Model.R().Pick(); _ = typeof(North.Ext);");
+        Check("EXT.overlap", extension, [north, receiver]).Sites
+            .Single(site => site.Origin.Name == "Ext").Retained.ShouldBe([north]);
+        extension[use] = ConsumerSource("using North; using South;", "_ = new Model.R().Pick();");
+        Check("EXT.ambiguous", extension, [north, south, receiver], refusal: "compiler-diagnostics");
+        extension[use] = ConsumerSource("using North;", "_ = new Model.R().Pick();");
+        extension[receiver] = "namespace Model; public class R { public int Pick() => 3; }\n";
+        Check("EXT.instance", extension, [north, south, receiver]);
+        extension[receiver] = "namespace Model; public class R {}\n";
+        extension[use] = ConsumerSource("using North;", "dynamic r = new Model.R(); _ = r.Pick();");
+        var runtimeBinder = fixture.PinAssembly(typeof(Microsoft.CSharp.RuntimeBinder.Binder).Assembly);
+        Check("EXT.dynamic", extension, [north, south, receiver], contexts:
+        [
+            new(project, "T", [north, south, receiver, use], [], [fixture.Core, runtimeBinder]),
+        ]);
+
         var shadowMembers = new[]
         {
             "public void S() { int Probe = 1; _ = Probe; }",
@@ -290,30 +332,6 @@ public sealed class ReleaseImpactRelationTests
         Check("ER.parse", World("using North;", "_ = typeof(Probe ;"), [north, south], refusal: "compiler-diagnostics");
         Check("ER.unbounded", World("", "_ = typeof(Missing.NoSuchName);"), [], refusal: "compiler-diagnostics")
             .Refined.Fallback.ShouldBe("Full");
-
-        foreach (var (kind, declaration, reference) in new[]
-        {
-            ("delegate", "public delegate T Tag<T>();", "Tag<int>"),
-            ("interface", "public interface Tag {}", "Tag"),
-            ("struct", "public struct Tag {}", "Tag"),
-            ("enum", "public enum Tag { One }", "Tag"),
-            ("nested-delegate", "public class Outer<T> { public delegate U Hook<U>(T t); }", "Outer<int>.Hook<string>"),
-        })
-        {
-            var forms = World("using North;", "_ = typeof(" + reference + ");");
-            forms[north] = "namespace North; " + declaration + "\n";
-            forms[south] = "namespace South; " + declaration + "\n";
-            Check("OT." + kind, forms, [north]);
-            forms[use] = ConsumerSource("using North; using South;", "_ = typeof(" + reference + ");");
-            Check("OT.ambiguous " + kind, forms, [north, south], refusal: "compiler-diagnostics");
-        }
-        var attributes = World("", "");
-        attributes[north] = "namespace North; public class MarkAttribute : System.Attribute {}\n";
-        attributes[south] = "namespace South; public class Mark : System.Attribute {}\n";
-        attributes[use] = "using North; namespace Cases; public partial class SpecTests { [Mark] public void Check() {} }\n";
-        Check("OT.winner", attributes, [north]).Sites.Single(site => site.Origin.Name == "Mark").Winners.ShouldBe([north]);
-        attributes[use] = "using North; using South; namespace Cases; public partial class SpecTests { [Mark] public void Check() {} }\n";
-        Check("OT.attribute", attributes, [north, south], refusal: "compiler-diagnostics");
 
         ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
             string[]? before = null, Dictionary<string, string>? generated = null,
