@@ -2167,9 +2167,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 64,
+      "classes": 63,
       "reason": "cap",
-      "owed": 39,
+      "owed": 38,
       "first": [
         "TimingJournalTests",
         "CheckpointRecoveryWindowsTests",
@@ -25288,7 +25288,6 @@
         "CheckpointWindowsAnchoredDeleteTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
-        "PosixHarnessToolTests",
         "ReportBudgetWorkspacePortabilityTests"
       ]
     },
@@ -26694,7 +26693,6 @@
         "ClaudeAdapterEffortPromptTests",
         "ClaudeEffortFixtureTraceTests",
         "NightlyLockFormatTests",
-        "PosixHarnessToolTests",
         "RunnerProbePowerShellFixtureTests",
         "RunnerProcessProbeTests",
         "ScriptHarnessLinuxOwnershipTests",
@@ -28109,7 +28107,6 @@
         "HostJqPrerequisiteScriptTests",
         "JqRunnerImageContractTests",
         "NightlyProbeSupervisorTests",
-        "PosixHarnessToolTests",
         "RetiredTempContainerDockerTests",
         "RollingVolumeRecycleDockerTests",
         "VolumeRetirementContentTests",
