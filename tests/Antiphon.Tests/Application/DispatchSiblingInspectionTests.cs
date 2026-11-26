@@ -345,6 +345,8 @@ public class DispatchSiblingInspectionTests
     [Arguments("dedup alias")]
     [Arguments("unrelated StartRef")]
     [Arguments("unresolved StartRef")]
+    [Arguments("abbreviated StartRef")]
+    [Arguments("uppercase StartRef")]
     public async Task C1349_PendingLandSurvivesLimits(string scenario)
     {
         using var repo = new ScratchGitRepo("c1349-pending");
@@ -374,23 +376,26 @@ public class DispatchSiblingInspectionTests
             }
         }
         await db.SaveChangesAsync();
+        var startRef = scenario switch
+        {
+            "unrelated StartRef" => "master",
+            "unresolved StartRef" => "missing-ref",
+            "abbreviated StartRef" => (await repo.GitReadAsync("rev-parse", "--short=12", "master")).Trim(),
+            "uppercase StartRef" => (await repo.GitReadAsync("rev-parse", "master")).Trim().ToUpperInvariant(),
+            _ => null,
+        };
         foreach (var mode in new[] { RequestedWorktreeBaseMode.Auto, RequestedWorktreeBaseMode.Task, RequestedWorktreeBaseMode.Target })
         {
             var request = NewRequest(repo, card.Id);
             request.RootTaskId = request.Id;
             request.Title = "pending boundary";
-            request.Goal = "must remain held";
+            request.Goal = "check the pending sibling land";
             request.WorkingDirectory = repo.Path;
             request.Role = AgentTaskRole.Code;
             request.CreatedAt = DateTime.UtcNow;
             request.RequestedWorktreeBaseMode = mode;
             request.RequestedWorktreeBaseTaskId = mode == RequestedWorktreeBaseMode.Task ? source.Id : null;
-            request.WorktreeBaseRequestedRef = scenario switch
-            {
-                "unrelated StartRef" => "master",
-                "unresolved StartRef" => "missing-ref",
-                _ => null,
-            };
+            request.WorktreeBaseRequestedRef = startRef;
             db.AgentTasks.Add(request);
             await db.SaveChangesAsync();
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
@@ -406,11 +411,26 @@ public class DispatchSiblingInspectionTests
             await using var scope = provider.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickInspectedAsync(default);
             await using var fresh = Context(schema);
-            var held = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.Id);
-            held.Status.ShouldBe(AgentTaskStatus.Queued, scenario + " " + mode);
-            held.WorktreePath.ShouldBeNull();
-            held.AgentSessionId.ShouldBeNull();
-            (await fresh.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == request.Id && e.Type == AgentTaskEventType.Held)).ShouldBeTrue();
+            var observed = await fresh.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == request.Id);
+            if (scenario == "uppercase StartRef")
+            {
+                observed.Status.ShouldBe(AgentTaskStatus.Dispatched, scenario + " " + mode);
+                observed.WorktreeBaseSha.ShouldBe(startRef!.ToLowerInvariant());
+                var warnings = await fresh.AgentTaskDispatchWarningIntents.AsNoTracking()
+                    .Where(i => i.TaskId == request.Id).Select(i => i.Detail).ToListAsync();
+                warnings.ShouldContain(detail => detail.Contains(sha, StringComparison.Ordinal));
+            }
+            else
+            {
+                observed.Status.ShouldBe(AgentTaskStatus.Queued, scenario + " " + mode);
+                observed.WorktreePath.ShouldBeNull();
+                observed.AgentSessionId.ShouldBeNull();
+                var holds = fresh.AgentTaskEvents.Where(e => e.AgentTaskId == request.Id && e.Type == AgentTaskEventType.Held);
+                if (scenario == "abbreviated StartRef")
+                    (await holds.AnyAsync(e => e.Detail!.Contains("is landing and is not yet in"))).ShouldBeTrue();
+                else
+                    (await holds.AnyAsync()).ShouldBeTrue();
+            }
             await fresh.AgentTasks.Where(t => t.Id == request.Id).ExecuteUpdateAsync(update => update.SetProperty(t => t.Status, AgentTaskStatus.Canceled));
         }
     }
