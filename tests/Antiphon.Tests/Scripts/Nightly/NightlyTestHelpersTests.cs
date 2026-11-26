@@ -68,7 +68,7 @@ public sealed class NightlyTestHelpersTests
         // W2-nightly S17: nightly-tests.ps1 is deleted; the nightly-tests command's sources are scripts/lib.
         File.Exists(Path.Combine(clone, "scripts", "nightly-tests.ps1")).ShouldBeFalse();
         File.Exists(Path.Combine(clone, "scripts", "lib", "Antiphon.Scripts", "NightlyTestsCommand.cs")).ShouldBeTrue();
-        File.Exists(Path.Combine(clone, "scripts", "lib", "nightly-common.ps1")).ShouldBeTrue();
+        File.Exists(Path.Combine(clone, "scripts", "lib", "antiphon-cli.ps1")).ShouldBeTrue();
         File.Exists(Path.Combine(clone, "scripts", "lib", "Antiphon.Nightly", "Antiphon.Nightly.csproj")).ShouldBeTrue();
         Directory.Exists(Path.Combine(clone, "scripts", "lib", "Antiphon.Nightly", "bin")).ShouldBeFalse();
         Directory.Exists(Path.Combine(clone, "scripts", "lib", "Antiphon.Nightly", "obj")).ShouldBeFalse();

@@ -204,8 +204,7 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "Antiphon.Nightly", "LandGraphLandRefresh.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "LandGraphAuditCommand.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "LandGraphLandRefreshCommand.cs"),
-                     Path.Combine("lib", "nightly-common.ps1"),
-                     // W2-nightly S27: lib/nightly-coverage.ps1 is deleted.
+                     // W2-nightly S27: lib/nightly-coverage.ps1 is deleted; unit 62 deleted lib/nightly-common.ps1.
                      // W2-nightly S20: the nightly-run command (nightly-run-impl.ps1 and test-nightly-run.ps1 are deleted).
                      Path.Combine("lib", "Antiphon.Scripts", "NightlyRunCommand.cs"),
                      // W2-nightly S17: the nightly tests run (nightly-tests.ps1 and nightly-tests-impl.ps1 are deleted; unit 62

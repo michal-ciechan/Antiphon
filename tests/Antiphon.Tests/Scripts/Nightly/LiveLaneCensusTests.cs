@@ -20,8 +20,9 @@ public sealed class LiveLaneCensusTests
     private static string Repo => LiveLaneInventoryTests.LiveLaneProcess.FindRepo();
 
     /// <summary>
-    /// The seed lists keep every PowerShell-era entry but scripts/lib/nightly-coverage.ps1 (deleted in W2-nightly S27); the
-    /// compiled engine source is the one addition.
+    /// The seed lists keep every PowerShell-era entry but scripts/lib/nightly-coverage.ps1 (deleted in W2-nightly S27) and
+    /// scripts/lib/nightly-common.ps1 (deleted in unit 62 of the 2026-11-22 remaining-ps1 plan); the compiled engine source
+    /// is the one addition.
     /// </summary>
     [Test]
     public void SeedListsKeepTheirEntries()
@@ -29,7 +30,6 @@ public sealed class LiveLaneCensusTests
         LiveLaneCensus.ProtectedPaths.ShouldBe(
         [
             "tests/test-execution-policy.json",
-            "scripts/lib/nightly-common.ps1",
             "scripts/lib/Antiphon.Nightly/NightlyPolicy.cs",
             "scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs",
             "scripts/lib/Antiphon.Nightly/DiscoveryIndex.cs",

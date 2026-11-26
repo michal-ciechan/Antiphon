@@ -134,12 +134,12 @@ namespace Antiphon.Nightly
         /// $script:LiveLaneProtectedPaths: the policy and its readers. Each must exist at the seed (seed-object-missing),
         /// be the pre-S1 base's blob (baseline-drift) and hash as the candidate's file (reader-input-changed).
         /// W2-nightly S27 deleted scripts/lib/nightly-coverage.ps1 (its readers are the compiled ones listed here), so it
-        /// is no longer a protected path: a candidate without it could never hash as the seed's file.
+        /// is no longer a protected path: a candidate without it could never hash as the seed's file. Unit 62 of the
+        /// 2026-11-22 remaining-ps1 plan deleted scripts/lib/nightly-common.ps1 the same way (no policy reader was left in it).
         /// </summary>
         public static IReadOnlyList<string> ProtectedPaths { get; } = new[]
         {
             "tests/test-execution-policy.json",
-            "scripts/lib/nightly-common.ps1",
             "scripts/lib/Antiphon.Nightly/NightlyPolicy.cs",
             "scripts/lib/Antiphon.Nightly/ExecutionPolicy.cs",
             "scripts/lib/Antiphon.Nightly/DiscoveryIndex.cs",

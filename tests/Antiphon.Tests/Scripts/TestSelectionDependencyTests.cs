@@ -59,7 +59,7 @@ public sealed class TestSelectionDependencyTests
         {
             ("tests/Antiphon.Messaging.Tests/FakeSlack/FakeSlackServer.cs", "linked-slack", "e2e.remainder", "linked-consumer"),
             ("tests/Antiphon.Checkpoints.FilterHost/FilterHostTests.cs", "staged-filter-host", "main.remainder", "staged-consumer"),
-            ("scripts/lib/nightly-common.ps1", "helper-nightly", "scripts", "helper-consumer"),
+            ("scripts/lib/antiphon-cli.ps1", "helper-cli", "scripts", "helper-consumer"),
             ("client/dist/index.html", "bundle-client", "e2e.browser", "bundle-consumer"),
         })
         {

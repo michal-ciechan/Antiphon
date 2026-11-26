@@ -1,8 +1,8 @@
-using System.Diagnostics;
+using System.Globalization;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using Antiphon.Nightly;
-using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -11,13 +11,13 @@ namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
 /// W2-nightly S18: the lock records the compiled locks write (NightlyRunLock.cs, ReleaseGateNativeLock.cs) are read
-/// unchanged by every reader: Read-NightlyLockRecord (nightly-common.ps1, still PowerShell; the live lane's run, C# since W2 slice S21,
-/// reads the native lock through NightlyLockRecord), and the C# readers of the qualification set, RcQualificationRecords.Read and
-/// RcQualificationStatus (unit 7 of 2026-11-22-remaining-ps1-to-csharp.md; they replaced lib/rc-qualification-status.ps1).
-/// Each test writes the records here with the production process table and clock and keeps the owner's handle open as a
-/// run does; the C# readers read them in this process, Read-NightlyLockRecord in a pwsh child (and Windows PowerShell 5.1
-/// on Windows). The bytes are also the ones "[ordered]@{...} | ConvertTo-Json -Compress" gives for the same values. These
-/// tests launch PowerShell because Read-NightlyLockRecord is production PowerShell.
+/// unchanged by every reader: NightlyLockRecord (the live lane's run, C# since W2 slice S21, reads the native lock through it)
+/// and the C# readers of the qualification set, RcQualificationRecords.Read and RcQualificationStatus (unit 7 of
+/// 2026-11-22-remaining-ps1-to-csharp.md; they replaced lib/rc-qualification-status.ps1). Each test writes the records here
+/// with the production process table and clock and keeps the owner's handle open as a run does; the readers read them in
+/// this process. The bytes are the compact JSON of the same values in field order, the ones
+/// "[ordered]@{...} | ConvertTo-Json -Compress" gave. Unit 62 deleted the PowerShell reader, Read-NightlyLockRecord
+/// (scripts/lib/nightly-common.ps1), and with it the pwsh and Windows PowerShell 5.1 children that read through it.
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -25,10 +25,11 @@ public sealed class NightlyLockFormatTests
 {
     private static readonly string[] RunFields = ["pid", "processStartedAt", "startedAt", "runId", "parentPid", "parentStartedAt", "bootId", "hostId"];
     private static readonly string[] NativeFields = ["pid", "processStartedAt", "runId", "lane", "continuationId", "acquiredAt"];
+    private static readonly JsonSerializerOptions Relaxed = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     [Test]
     [Timeout(180_000)]
-    public async Task Core_written_locks_read_back_through_the_PowerShell_readers(CancellationToken cancellationToken)
+    public void Core_written_locks_read_back_through_the_readers()
     {
         using var fixture = NightlyFixture.Create("nightly-lock-format");
         var processes = new NightlyProcessTable();
@@ -74,18 +75,6 @@ public sealed class NightlyLockFormatTests
         foreach (var (name, path) in paths)
             NightlyLockRecord.Read(path)!.RunId.ShouldBe(expected[name].RunId, name);
 
-        var values = fixture.PathOf("values.txt");
-        File.WriteAllLines(values, Values("run", fresh.Record!, RunFields).Concat(Values("native", shared.Record!, NativeFields))
-            .Concat(Values("reclaimed", reclaimed.Record!, RunFields)));
-        var input = fixture.PathOf("input.txt");
-        File.WriteAllLines(input, [
-            "run\t" + paths["run"], "native\t" + paths["native"], "reclaimed\t" + paths["reclaimed"],
-            "reclaimRecord\t" + Path.Combine(reclaimState, NightlyRunLock.ReclaimRecordName),
-            "stateRoot\t" + state, "coordinationRoot\t" + coord, "runId\t" + runId,
-        ]);
-        var script = fixture.PathOf("read-locks.ps1");
-        File.WriteAllText(script, ReadScript, new UTF8Encoding(false));
-
         // The C# readers, with the production process table: the record's pid and start are this process, matched to the tick.
         var files = new System.IO.Abstractions.FileSystem();
         foreach (var (name, record) in expected)
@@ -111,33 +100,22 @@ public sealed class NightlyLockFormatTests
         ((string)statusLocks["native"]!["record"]!["lane"]!).ShouldBe("rc", "RcQualificationStatus native lane");
         ((string)statusLocks["native"]!["record"]!["continuationId"]!).ShouldBe("continuation-1", "RcQualificationStatus native continuation");
 
-        foreach (var host in Hosts())
+        // The bytes are the compact JSON of the record's values in field order, pids as integers, as
+        // "[ordered]@{...} | ConvertTo-Json -Compress" gave them for the PowerShell readers (gone in unit 62).
+        foreach (var (name, record) in expected)
+            Encoding.ASCII.GetString(NightlyLockFixture.ReadShared(paths[name])).ShouldBe(CompactRecord(record, name == "native" ? NativeFields : RunFields),
+                "the compact JSON of the same values gives the same bytes: " + name);
+
+        // The reclaim record names the reclaim, both run ids and the dead owner's pid as an integer.
+        using (var reclaim = JsonDocument.Parse(File.ReadAllText(Path.Combine(reclaimState, NightlyRunLock.ReclaimRecordName))))
         {
-            var output = fixture.PathOf("observed-" + Path.GetFileNameWithoutExtension(host) + ".json");
-            await RunAsync(host, script, [DelegateScriptRunner.RepoRoot, input, values, output], cancellationToken);
-            using var observed = JsonDocument.Parse(File.ReadAllText(output));
-            var root = observed.RootElement;
-            var label = host + " " + root.GetProperty("psVersion").GetString();
-            var modern = !root.GetProperty("psVersion").GetString()!.StartsWith("5.", StringComparison.Ordinal);
-
-            foreach (var (name, record) in expected)
-            {
-                var read = root.GetProperty("reads").GetProperty(name);
-                var fields = name == "native" ? NativeFields : RunFields;
-                var nightly = read.GetProperty("nightly");
-                foreach (var field in fields)
-                    Text(nightly.GetProperty(field)).ShouldBe(record.Value(field), label + " Read-NightlyLockRecord " + name + "." + field);
-                if (modern)
-                    read.GetProperty("rebuilt").GetString().ShouldBe(Convert.ToBase64String(NightlyLockFixture.ReadShared(paths[name])),
-                        label + " ConvertTo-Json -Compress of the same values gives the same bytes: " + name);
-            }
-
-            var reclaim = root.GetProperty("reclaim");
-            reclaim.GetProperty("reason").GetString().ShouldBe("dead-owner-legacy", label);
-            reclaim.GetProperty("newRunId").GetString().ShouldBe(reclaimRunId, label);
-            reclaim.GetProperty("previousRunId").GetString().ShouldBe("dead-run", label);
-            reclaim.GetProperty("previousPid").GetString().ShouldBe(deadOwner.ToString(), label);
-            reclaim.GetProperty("previousPidIsInteger").GetBoolean().ShouldBeTrue(label);
+            var root = reclaim.RootElement;
+            root.GetProperty("reason").GetString().ShouldBe("dead-owner-legacy");
+            root.GetProperty("newRunId").GetString().ShouldBe(reclaimRunId);
+            root.GetProperty("previousRunId").GetString().ShouldBe("dead-run");
+            var previousPid = root.GetProperty("previousPid");
+            previousPid.ValueKind.ShouldBe(JsonValueKind.Number, "the previous pid is a JSON integer");
+            previousPid.GetInt64().ShouldBe(deadOwner);
         }
 
         runLock.Exit(state, runId);
@@ -148,12 +126,13 @@ public sealed class NightlyLockFormatTests
     }
 
     /// <summary>
-    /// CARD-1396: the owner's handle mode (FileAccess.Write, FileShare.Read) still lets the record be read, here and from a
-    /// second process through Read-NightlyLockRecord, and still refuses a FileShare.None open (the reclaim compare).
+    /// CARD-1396: the owner's handle mode (FileAccess.Write, FileShare.Read) still lets the record be read, and still refuses
+    /// a FileShare.None open (the reclaim compare). Share modes hold per handle, so this process's read is any second
+    /// reader's; the second-process read through Read-NightlyLockRecord went with that PowerShell reader (unit 62).
     /// </summary>
     [Test]
     [Timeout(120_000)]
-    public async Task C1396_WriteHeldLockReadable(CancellationToken cancellationToken)
+    public void C1396_WriteHeldLockReadable()
     {
         using var fixture = NightlyFixture.Create("nightly-lock-held");
         var lockPath = fixture.PathOf("run.lock");
@@ -172,134 +151,17 @@ public sealed class NightlyLockFormatTests
             noneRefused = true;
         }
         noneRefused.ShouldBeTrue("C1396 Write-held lock still refuses FileShare.None refused=" + noneRefused);
-
-        var script = fixture.PathOf("read-child.ps1");
-        File.WriteAllText(script, """
-            param([string]$Repo, [string]$LockPath, [string]$ResultPath)
-            $ErrorActionPreference = 'Stop'
-            . (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
-            $record = Read-NightlyLockRecord -LockPath $LockPath
-            $seen = ''
-            if ($null -ne $record) { $seen = [string]$record.runId }
-            [IO.File]::WriteAllText($ResultPath, $seen)
-            """, new UTF8Encoding(false));
-        var result = fixture.PathOf("read.txt");
-        await RunAsync(Hosts()[0], script, [DelegateScriptRunner.RepoRoot, lockPath, result], cancellationToken);
-        var childSeen = File.ReadAllText(result);
-        childSeen.ShouldBe("held-run", "C1396 Write-held lock reads from a second process seen=" + childSeen);
     }
 
-    private static IEnumerable<string> Values(string prefix, NightlyLockRecord record, string[] fields) =>
-        fields.Select(field => prefix + "." + field + "\t" + (record.Value(field) is { } value ? Convert.ToBase64String(Encoding.UTF8.GetBytes(value)) : "-"));
-
-    private static string? Text(JsonElement value) => value.ValueKind == JsonValueKind.Null ? null : value.ToString();
-
-    // pwsh, and Windows PowerShell 5.1 on Windows (nightly-common.ps1 still runs there).
-    private static string[] Hosts()
-    {
-        var hosts = new List<string> { OperatingSystem.IsWindows() ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell() : "pwsh" };
-        var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
-        if (OperatingSystem.IsWindows() && File.Exists(legacy)) hosts.Add(legacy);
-        return [.. hosts];
-    }
-
-    private static async Task RunAsync(string executable, string script, string[] arguments, CancellationToken cancellationToken)
-    {
-        var start = new ProcessStartInfo(executable)
+    // "[ordered]@{ ... } | ConvertTo-Json -Compress" of a record's values: the fields in order, the pids as integers, a
+    // missing value as null, the strings escaped only where JSON needs it.
+    private static string CompactRecord(NightlyLockRecord record, string[] fields) =>
+        "{" + string.Join(",", fields.Select(field =>
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        // The readers need no compiled core: do not build or load it in the child.
-        start.Environment["ANTIPHON_NIGHTLY_CORE"] = "off";
-        var flags = OperatingSystem.IsWindows() ? new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script } : ["-NoProfile", "-NonInteractive", "-File", script];
-        foreach (var argument in flags.Concat(arguments)) start.ArgumentList.Add(argument);
-        using var process = Process.Start(start)!;
-        try
-        {
-            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
-            var text = await stdout + await stderr;
-            process.ExitCode.ShouldBe(0, executable + ": " + text);
-        }
-        finally
-        {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            }
-        }
-    }
-
-    // Reads each lock with Read-NightlyLockRecord and rebuilds its bytes with ConvertTo-Json -Compress from the values the
-    // core wrote. Parseable by Windows PowerShell 5.1.
-    private const string ReadScript = """
-        param([string]$Repo, [string]$InputPath, [string]$ValuesPath, [string]$OutPath)
-        $ErrorActionPreference = 'Stop'
-        . (Join-Path $Repo 'scripts/lib/nightly-common.ps1')
-        function Read-FormatMap([string]$Path, [bool]$Decode) {
-            $map = @{}
-            foreach ($line in [IO.File]::ReadAllLines($Path)) {
-                $parts = $line -split "`t", 2
-                $value = $parts[1]
-                if ($Decode) {
-                    if ($value -eq '-') { $value = $null } else { $value = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($value)) }
-                }
-                $map[$parts[0]] = $value
-            }
-            return $map
-        }
-        function ConvertTo-FormatText($Value) {
-            if ($null -eq $Value) { return $null }
-            if ($Value -is [datetime]) { return $Value.ToUniversalTime().ToString('o') }
-            return [string]$Value
-        }
-        function Get-FormatFields($Record, [string[]]$Names) {
-            $map = [ordered]@{}
-            foreach ($name in $Names) {
-                $prop = $null
-                if ($null -ne $Record) { $prop = $Record.PSObject.Properties[$name] }
-                if ($null -eq $prop) { $map[$name] = '<absent>' } else { $map[$name] = ConvertTo-FormatText $prop.Value }
-            }
-            return $map
-        }
-        $in = Read-FormatMap $InputPath $false
-        $v = Read-FormatMap $ValuesPath $true
-        $runFields = @('pid', 'processStartedAt', 'startedAt', 'runId', 'parentPid', 'parentStartedAt', 'bootId', 'hostId')
-        $nativeFields = @('pid', 'processStartedAt', 'runId', 'lane', 'continuationId', 'acquiredAt')
-        $reads = [ordered]@{}
-        foreach ($name in @('run', 'native', 'reclaimed')) {
-            $fields = $runFields
-            if ($name -eq 'native') { $fields = $nativeFields }
-            $path = $in[$name]
-            if ($name -eq 'native') {
-                $rebuilt = [ordered]@{ pid = [int]$v['native.pid']; processStartedAt = $v['native.processStartedAt']; runId = $v['native.runId']
-                    lane = $v['native.lane']; continuationId = $v['native.continuationId']; acquiredAt = $v['native.acquiredAt'] }
-            } else {
-                $p = $name + '.'
-                $rebuilt = [ordered]@{ pid = [int]$v[$p + 'pid']; processStartedAt = $v[$p + 'processStartedAt']; startedAt = $v[$p + 'startedAt']
-                    runId = $v[$p + 'runId']; parentPid = [int]$v[$p + 'parentPid']; parentStartedAt = $v[$p + 'parentStartedAt']
-                    bootId = $v[$p + 'bootId']; hostId = $v[$p + 'hostId'] }
-            }
-            $reads[$name] = [ordered]@{
-                nightly = Get-FormatFields (Read-NightlyLockRecord -LockPath $path) $fields
-                rebuilt = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(($rebuilt | ConvertTo-Json -Compress)))
-            }
-        }
-        $reclaim = [IO.File]::ReadAllText($in['reclaimRecord']) | ConvertFrom-Json
-        $out = [ordered]@{
-            psVersion = $PSVersionTable.PSVersion.ToString()
-            reads = $reads
-            reclaim = [ordered]@{
-                reason = [string]$reclaim.reason
-                newRunId = [string]$reclaim.newRunId
-                previousRunId = [string]$reclaim.previousRunId
-                previousPid = [string]$reclaim.previousPid
-                previousPidIsInteger = ($reclaim.previousPid -is [int] -or $reclaim.previousPid -is [long])
-            }
-        }
-        [IO.File]::WriteAllText($OutPath, ($out | ConvertTo-Json -Depth 8))
-        """;
+            var value = record.Value(field);
+            var json = field is "pid" or "parentPid"
+                ? int.Parse(value ?? "0", CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)
+                : value is null ? "null" : JsonSerializer.Serialize(value, Relaxed);
+            return "\"" + field + "\":" + json;
+        })) + "}";
 }

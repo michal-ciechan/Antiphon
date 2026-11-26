@@ -280,8 +280,8 @@ public sealed class ReleaseGatePublicationAuthorityTests
             new Shape("exclusion class array-wrapped", "authority-exclusions-type", a => a["exclusions"]![0]!["class"] = WrappedText(a["exclusions"]![0]!["class"])),
             new Shape("exclusion row a string", "authority-exclusions-type", a => a["exclusions"] = new JsonArray(
                 new JsonNode?[] { JsonValue.Create("antiphon:ClaudeAdapterIntegrationTests") }.Concat(a["exclusions"]!.AsArray().Skip(1).Select(n => n?.DeepClone())).ToArray())),
-            new Shape("script digest array-wrapped", "script-digest-mismatch:lib/nightly-common.ps1",
-                a => a["scriptHashes"]!["lib/nightly-common.ps1"] = WrappedText(a["scriptHashes"]!["lib/nightly-common.ps1"])),
+            new Shape("script digest array-wrapped", "script-digest-mismatch:lib/Antiphon.Nightly",
+                a => a["scriptHashes"]!["lib/Antiphon.Nightly"] = WrappedText(a["scriptHashes"]!["lib/Antiphon.Nightly"])),
             new Shape("createdAt array-wrapped", "ledger-timestamps", a => a["createdAt"] = WrappedText(a["createdAt"])),
         };
         var m = new List<ReleaseGateCheck>();
@@ -1148,7 +1148,7 @@ public sealed class ReleaseGatePublicationAuthorityTests
             ForeignTokens: ["authority-suites-mismatch"]),
         new Field("exclusions", ["authority-exclusions-type", "authority-exclusions-mismatch"], "none", null, ForeignOp: "drop-first",
             ForeignTokens: ["authority-exclusions-mismatch"]),
-        new Field("scriptHashes", ["script-digest-mismatch:lib/nightly-common.ps1"], "x", null, ForeignOp: "one-changed"),
+        new Field("scriptHashes", ["script-digest-mismatch:lib/Antiphon.Nightly"], "x", null, ForeignOp: "one-changed"),
         new Field("createdAt", ["ledger-timestamps"], true, "2026-09-23T09:00:00Z"),
     };
 
@@ -1172,7 +1172,7 @@ public sealed class ReleaseGatePublicationAuthorityTests
                 authority["exclusions"] = new JsonArray(authority["exclusions"]!.AsArray().Skip(1).Select(n => n?.DeepClone()).ToArray());
                 break;
             case "foreign" when field.ForeignOp == "one-changed":
-                authority["scriptHashes"]!["lib/nightly-common.ps1"] = Zeros;
+                authority["scriptHashes"]!["lib/Antiphon.Nightly"] = Zeros;
                 break;
             case "foreign":
                 authority[field.Name] = field.Foreign!.DeepClone();

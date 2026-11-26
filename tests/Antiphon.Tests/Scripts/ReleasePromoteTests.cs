@@ -229,13 +229,13 @@ public sealed class ReleasePromoteTests
             "C1311 MovingTipAuthority promote of a moved tip refuses remote-candidate-moved",
             "exit=" + promoted.ExitCode + " refusal=" + promoted.Refusal + " final=" + finalName + "/" + finalPeeled + " recorded=" + finalRecorded + " pre=" + preStill);
 
-        // Unit 14: the publisher and promoter are C# in lib/Antiphon.Nightly, so the authority binds two scripts and two source
-        // trees (four keys; publish-release.ps1 and promote-release.ps1 are deleted).
+        // Unit 14: the publisher and promoter are C# in lib/Antiphon.Nightly, so the authority binds the pinned scripts and two
+        // source trees (publish-release.ps1 and promote-release.ps1 are deleted; unit 62 deleted lib/nightly-common.ps1: three keys).
         var want = ReleaseAuthority.Scripts.Concat(ReleaseAuthority.SourceTrees).ToArray();
         var hashes = authDoc?["scriptHashes"]?.AsObject();
         var have = hashes?.Select(p => p.Key).ToArray() ?? [];
         var fresh = ReleaseAuthority.ScriptHashes(ReleaseGateFixture.ScriptsRoot);
-        var same = want.Length == 4 && have.Length == want.Length && have.All(want.Contains);
+        var same = want.Length == 3 && have.Length == want.Length && have.All(want.Contains);
         var omitsTip = true;
         foreach (var rel in want)
         {

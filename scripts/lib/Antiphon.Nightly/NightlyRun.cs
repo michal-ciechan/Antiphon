@@ -7,7 +7,7 @@
 // completion record as the last stdout line), with the ownership and reparse helpers of nightly-common.ps1 it uses
 // (ConvertTo-NightlyResolvedPath, Resolve-NightlyReparsePath, Test-NightlyGitWorktree, Get-NightlyOriginUrl,
 // Test-NightlyPathContained, Test-NightlyRunContextOwnership); S27 removed the nightly-common.ps1 copies no PowerShell
-// calls and kept the ones the W2-rc scripts call.
+// calls and kept the ones the W2-rc scripts call; unit 62 of the 2026-11-22 remaining-ps1 plan deleted the file.
 //
 // Two rules differ from the PowerShell. The self-update hop: after a sync the run hops to the clone's
 // scripts/nightly-run.ps1 -NoSync with the same argv whenever this code's product root (the checkout the CLI was built

@@ -1,8 +1,8 @@
 // W2-nightly S15: the path helpers of nightly-common.ps1 and test-phase-paths.ps1 that the tests executor and the release
 // selection reader use (plan 2026-11-21-w2-nightly-port-slices.md, slice S15): ConvertTo-NightlyCanonicalPath,
 // Test-NightlySharedTree, Test-NightlyAncestorReparse, Get-NightlyFileSha256 and Resolve-QualificationTimingRoot. S27
-// deleted test-phase-paths.ps1 (the release cut, ReleaseCut.cs, calls TimingRoot); nightly-common.ps1 keeps its copies for the W2-rc
-// callers. Plain C#: no PowerShell types. ASCII only.
+// deleted test-phase-paths.ps1 (the release cut, ReleaseCut.cs, calls TimingRoot); unit 62 of the 2026-11-22 remaining-ps1 plan
+// deleted nightly-common.ps1 and its copies. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.IO;
