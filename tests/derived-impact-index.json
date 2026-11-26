@@ -19480,6 +19480,15 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner.Contracts/LinuxProcessIdentity.cs",
+      "classes": [
+        "Card1619LinuxStopIntentTests",
+        "HerdrAdoptionSweepTests",
+        "HerdrPaneChildKillTests",
+        "LinuxRunnerCustodyLifecycleTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
       "classes": [
         "BlockedParkWireTests",
@@ -20402,15 +20411,6 @@
       ]
     },
     {
-      "path": "src/Antiphon.SessionRunner/LinuxProcessIdentity.cs",
-      "classes": [
-        "Card1619LinuxStopIntentTests",
-        "HerdrAdoptionSweepTests",
-        "HerdrPaneChildKillTests",
-        "LinuxRunnerCustodyLifecycleTests"
-      ]
-    },
-    {
       "path": "src/Antiphon.SessionRunner/PhoneHomeAdoptionGate.cs",
       "classes": [
         "Card1619RunnerExitTests",
@@ -20686,6 +20686,7 @@
     {
       "path": "src/Antiphon.SessionRunner/RunnerCustodyLedger.cs",
       "classes": [
+        "LinuxRunnerCustodyLifecycleTests",
         "RunnerCustodyCrashTests",
         "RunnerCustodyLedgerBackendTests",
         "RunnerCustodyReleaseTests",
