@@ -90,7 +90,7 @@ internal sealed class RepositoryInvariantAudit
         return readers.Distinct().OrderBy(reader => reader.Path, StringComparer.Ordinal).ThenBy(reader => reader.Line).ToArray();
     }
 
-    private sealed record Input(string Path, string Trace, bool Read = false);
+    private sealed record Input(string Path, string Trace, bool Read = false, bool Checkout = true);
 
     private static Dictionary<string, ExpressionSyntax> Scope(MethodDeclarationSyntax method) =>
         method.DescendantNodes().OfType<VariableDeclaratorSyntax>()
@@ -130,10 +130,12 @@ internal sealed class RepositoryInvariantAudit
         var args = call.ArgumentList.Arguments.Select(argument => argument.Expression).ToArray();
         if (target == "LiveLaneProcess.FindRepo")
             return new Input("", target + "()");
+        if (target == "OwnedTempRoot.CreateOwned")
+            return new Input("", target + "()", Checkout: false);
         if (target is "LiveLaneGateScan.Matrix" or "Antiphon.Nightly.LiveLaneGateScan.Matrix"
             or "LiveLaneGateScan.Scan" or "Antiphon.Nightly.LiveLaneGateScan.Scan"
             or "LiveLaneGateScan.RcExclusions" or "Antiphon.Nightly.LiveLaneGateScan.RcExclusions")
-            return args.Length != 0 && Resolve(args[0], scope, visiting) is { Path: "" } liveRoot
+            return args.Length != 0 && Resolve(args[0], scope, visiting) is { Path: "", Checkout: true } liveRoot
                 ? new Input("tests/", $"{liveRoot.Trace} -> {target} (tracked tests and live-lane declarations)", Read: true)
                 : null;
         if (target == "Path.Combine" && args.Length > 1 && Resolve(args[0], scope, visiting) is { Read: false } root
@@ -141,11 +143,14 @@ internal sealed class RepositoryInvariantAudit
                 && !Path.IsPathRooted(literal.Token.ValueText)))
         {
             var parts = args.Skip(1).Cast<LiteralExpressionSyntax>().Select(literal => literal.Token.ValueText.Replace('\\', '/'));
-            return new Input(string.Join('/', parts.Prepend(root.Path).Where(part => part.Length != 0)),
-                root.Trace + " -> " + call);
+            return root with
+            {
+                Path = string.Join('/', parts.Prepend(root.Path).Where(part => part.Length != 0)),
+                Trace = root.Trace + " -> " + call,
+            };
         }
         if (target is "File.ReadAllText" or "File.ReadAllBytes" or "File.ReadAllLines" or "PlanTableImporter.ImportFile"
-            && args.Length != 0 && Resolve(args[0], scope, visiting) is { Read: false } path && _tracked.Contains(path.Path))
+            && args.Length != 0 && Resolve(args[0], scope, visiting) is { Read: false, Checkout: true } path && _tracked.Contains(path.Path))
             return path with { Trace = $"{path.Trace} -> {target} [{path.Path}]", Read = true };
 
         if (call.Expression is MemberAccessExpressionSyntax access && Resolve(access.Expression, scope, visiting) is { Read: true } read)

@@ -2,7 +2,7 @@ using System.Text;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Tests;
+namespace Antiphon.Tests.Invariants;
 
 /// <summary>
 /// CARD-0550 D-4: which E2E waits renew on protocol git progress and which stay plain. Source-pinned.
@@ -12,6 +12,7 @@ namespace Antiphon.Tests;
 /// wait (M6) all go red instead of surviving a name-only search.
 /// </summary>
 [Category("Unit")]
+[Category("RepositoryInvariant")]
 public sealed class LandDeliveryWaitRoutingTests
 {
     private const string LandTests = "tests/Antiphon.E2E/AgentTaskLandDeliveryE2ETests.cs";
