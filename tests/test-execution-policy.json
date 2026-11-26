@@ -1483,6 +1483,7 @@
             "HostChecksSpawnPeer",
             "MismatchedPlacedWithholdsGo",
             "LostAckRetainsLaunchedChild",
+            "SlowFirstPlacementSucceedsAndStuckPeerExpires",
             "MixedFreezerCannotAttest",
             "StageWaitsForGo",
             "FailedReleaseSendSuppressesExec",
@@ -1719,6 +1720,16 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the Unix PTY delivery envelope measures a real Linux PTY. The case remains required on Linux.",
           "owner": "CARD-1907"
+        },
+        {
+          "suite": "antiphon",
+          "class": "C2070HostIndependentPathMatchTests",
+          "methods": [
+            "Windows_git_toplevel_round_trips_to_the_stored_unc_path"
+          ],
+          "platform": "linux",
+          "reason": "Windows-only by construction: converts Git's slash-form UNC top-level using Windows Path.GetFullPath. The method remains required on Windows.",
+          "owner": "CARD-2077"
         },
         {
           "suite": "antiphon",

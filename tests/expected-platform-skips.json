@@ -3,6 +3,16 @@
   "entries": [
     {
       "platform": "linux",
+      "test": "Antiphon.Tests.Application.DispatchSiblingInspectionTests.C2034_StartRefMatchesSha256RepositoryObjectFormat",
+      "reasonPrefix": "CARD-2034: host Git does not support git init --object-format=sha256."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.Tests.Application.DispatchSiblingInspectionTests.C2034_StartRefMatchesSha256RepositoryObjectFormat",
+      "reasonPrefix": "CARD-2034: host Git does not support git init --object-format=sha256."
+    },
+    {
+      "platform": "linux",
       "test": "Antiphon.Tests.Agents.CodexBootPointerCanaryTests.Real_Codex_consumes_and_submits_the_boot_pointer",
       "reasonPrefix": "Codex CLI unavailable (ANTIPHON_CODEX_EXE or PATH); boot pointer canary skipped",
       "reasonClass": "live-context"

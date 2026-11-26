@@ -16,8 +16,15 @@ namespace Antiphon.Tests.Scripts;
 /// </summary>
 [Category("Unit")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class ReleaseImpactEnvelopeTests
+public sealed partial class ReleaseImpactEnvelopeTests
 {
+    [Test]
+    public void P2CanonicalBytes() => CheckCanonicalVectors();
+
+    [Test]
+    [Timeout(30_000)]
+    public Task TamperedBindingsRefuse(CancellationToken cancellationToken) => CheckAdmission(cancellationToken);
+
     // ImpactedClasses.SelectorFiles, as literals the derived impact index reads.
     private static readonly string[] AlgorithmFiles =
     [

@@ -1,4 +1,6 @@
 using Antiphon.Server.Application.Services;
+using Antiphon.Tests.Scripts;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -49,4 +51,19 @@ public class C2070HostIndependentPathMatchTests
     [Arguments("/work/repo", false)]
     public void Worktree_cwd_detection_follows_the_path_spelling(string workingDirectory, bool worktree) =>
         AttentionService.IsWorktreeCwd(workingDirectory).ShouldBe(worktree);
+
+    [Test]
+    public async Task Windows_git_toplevel_round_trips_to_the_stored_unc_path()
+    {
+        WindowsUnitSkipRoster.SkipOnLinux(
+            nameof(C2070HostIndependentPathMatchTests), nameof(Windows_git_toplevel_round_trips_to_the_stored_unc_path));
+        const string storedPath = @"\\FileHost\Share";
+        var git = new RecordingGitWorkspaceService { OverrideRun = _ => (0, "//filehost/share\r\n", "") };
+
+        var toplevel = await git.GetRepoToplevelAsync(storedPath, CancellationToken.None);
+
+        git.Calls.Single().ShouldBe(new[] { "rev-parse", "--show-toplevel" });
+        toplevel.ShouldNotBeNull().TrimEnd('\\').ShouldBe(@"\\filehost\share");
+        AgentService.PathsMatch(storedPath, toplevel).ShouldBeTrue();
+    }
 }

@@ -29,12 +29,39 @@ public sealed class ScratchGitRepo : IDisposable
         InitAsync(Path).GetAwaiter().GetResult();
     }
 
-    private ScratchGitRepo(string path, string worktreeRoot, string bareOrigin, string cloneRoot)
+    private ScratchGitRepo(string path, string worktreeRoot, string? bareOrigin, string? cloneRoot)
     {
         Path = path;
         WorktreeRoot = worktreeRoot;
         _bareOrigin = bareOrigin;
         _cloneRoot = cloneRoot;
+    }
+
+    public static async Task<ScratchGitRepo?> TryCreateSha256Async(string prefix)
+    {
+        var path = Directory.CreateTempSubdirectory($"{prefix}-repo").FullName;
+        var repo = new ScratchGitRepo(path, Directory.CreateTempSubdirectory($"{prefix}-trees").FullName,
+            bareOrigin: null, cloneRoot: null);
+        try
+        {
+            var init = await GitInAsync(path, new Dictionary<string, string> { ["LC_ALL"] = "C" },
+                "init", "--object-format=sha256", "-b", "master");
+            if (!init.Ok && (init.StdErr.Contains("unknown hash algorithm 'sha256'", StringComparison.Ordinal)
+                || (init.StdErr.Contains("unknown option", StringComparison.Ordinal)
+                    && init.StdErr.Contains("object-format", StringComparison.Ordinal))))
+            {
+                repo.Dispose();
+                return null;
+            }
+            init.Ok.ShouldBeTrue($"git init --object-format=sha256 must succeed: {init.StdErr}");
+            await ConfigureIdentityAsync(path);
+            return repo;
+        }
+        catch
+        {
+            repo.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -197,10 +224,15 @@ public sealed class ScratchGitRepo : IDisposable
     /// <summary>The starting repository: <c>git init -b master</c> plus the test identity.</summary>
     private static async Task InitAsync(string path)
     {
+        (await GitInAsync(path, "init", "-b", "master")).Ok.ShouldBeTrue("git init -b master must succeed");
+        await ConfigureIdentityAsync(path);
+    }
+
+    private static async Task ConfigureIdentityAsync(string path)
+    {
         foreach (var args in new[]
                  {
-                     new[] { "init", "-b", "master" },
-                     ["config", "user.email", "test@antiphon.local"],
+                     new[] { "config", "user.email", "test@antiphon.local" },
                      ["config", "user.name", "Delegation Tests"],
                  })
             (await GitInAsync(path, args)).Ok.ShouldBeTrue($"git {string.Join(' ', args)} must succeed");

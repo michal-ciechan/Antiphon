@@ -1,0 +1,666 @@
+{
+  "root": {
+    "format": "text",
+    "repositoryId": "text",
+    "line": "text",
+    "baselineSha": "git-id",
+    "baselineTree": "git-id",
+    "candidateSha": "git-id",
+    "candidateTree": "git-id",
+    "runId": "text",
+    "attempt": "u32",
+    "revision": "u32",
+    "targetDigest": "digest",
+    "algorithmSha": "git-id",
+    "algorithmDigest": "digest",
+    "baselineManifestDigest": "digest",
+    "candidateManifestDigest": "digest",
+    "compatibilityDigest": "digest",
+    "baselineIndexDigest": "digest",
+    "candidateIndexDigest": "digest",
+    "baselineGraphDigest": "digest",
+    "candidateGraphDigest": "digest",
+    "diffDigest": "digest",
+    "universeDigest": "digest",
+    "rosterDigest": "digest",
+    "inventoryDigest": "digest",
+    "receiptsDigest": "digest",
+    "obligationsDigest": "digest",
+    "trustDigest": "digest",
+    "selectionDigest": "digest"
+  },
+  "roles": {
+    "target": {
+      "os": "text",
+      "architecture": "text",
+      "profile": "text",
+      "tfm": "text",
+      "rid": "text",
+      "configuration": "text",
+      "foldedPaths": "boolean",
+      "buildProperties": [
+        "set",
+        {
+          "name": "text",
+          "value": "text"
+        },
+        [
+          "name"
+        ]
+      ],
+      "argv": [
+        "sequence",
+        "text"
+      ],
+      "observed": [
+        "set",
+        {
+          "side": "text",
+          "chunk": [
+            "optional",
+            "text"
+          ],
+          "role": "text",
+          "digest": "digest",
+          "provenanceDigest": "digest",
+          "sourceSha": "git-id"
+        },
+        [
+          "side",
+          "role",
+          "chunk"
+        ]
+      ]
+    },
+    "algorithm": {
+      "rawClosureDigest": "digest",
+      "p2Codec": "text",
+      "evaluator": "text",
+      "graph": "text",
+      "extractor": "text",
+      "replaySelector": "digest",
+      "sources": [
+        "set",
+        {
+          "path": "path",
+          "gitMode": "text",
+          "blobId": "git-id",
+          "rawByteCount": "u64",
+          "rawSha256": "digest"
+        },
+        [
+          "path"
+        ]
+      ]
+    },
+    "baselineManifest": [
+      "set",
+      {
+        "path": "path",
+        "gitMode": "text",
+        "blobId": "git-id",
+        "rawByteCount": "u64",
+        "rawSha256": "digest"
+      },
+      [
+        "path"
+      ]
+    ],
+    "candidateManifest": [
+      "set",
+      {
+        "path": "path",
+        "gitMode": "text",
+        "blobId": "git-id",
+        "rawByteCount": "u64",
+        "rawSha256": "digest"
+      },
+      [
+        "path"
+      ]
+    ],
+    "compatibility": {
+      "baseline": {
+        "catalogHash": "digest",
+        "policyHash": "digest",
+        "runtimeHash": "digest",
+        "selectorHash": "digest"
+      },
+      "candidate": {
+        "catalogHash": "digest",
+        "policyHash": "digest",
+        "runtimeHash": "digest",
+        "selectorHash": "digest"
+      },
+      "scoped": [
+        "set",
+        {
+          "name": "text",
+          "value": "text"
+        },
+        [
+          "name"
+        ]
+      ],
+      "globalReasons": [
+        "set",
+        "text",
+        []
+      ]
+    },
+    "baselineIndex": {
+      "side": "text",
+      "commit": "git-id",
+      "path": "path",
+      "blobId": "git-id",
+      "rawByteCount": "u64",
+      "rawSha256": "digest",
+      "schema": "u32",
+      "builderDigest": "digest",
+      "builderInputs": [
+        "set",
+        {
+          "path": "path",
+          "gitMode": "text",
+          "blobId": "git-id",
+          "rawByteCount": "u64",
+          "rawSha256": "digest"
+        },
+        [
+          "path"
+        ]
+      ],
+      "metadata": [
+        "set",
+        {
+          "name": "text",
+          "digest": "digest"
+        },
+        [
+          "name"
+        ]
+      ],
+      "edges": [
+        "set",
+        {
+          "path": "path",
+          "class": "text"
+        },
+        [
+          "path",
+          "class"
+        ]
+      ],
+      "cappedPaths": [
+        "set",
+        "path",
+        []
+      ]
+    },
+    "candidateIndex": {
+      "side": "text",
+      "commit": "git-id",
+      "path": "path",
+      "blobId": "git-id",
+      "rawByteCount": "u64",
+      "rawSha256": "digest",
+      "schema": "u32",
+      "builderDigest": "digest",
+      "builderInputs": [
+        "set",
+        {
+          "path": "path",
+          "gitMode": "text",
+          "blobId": "git-id",
+          "rawByteCount": "u64",
+          "rawSha256": "digest"
+        },
+        [
+          "path"
+        ]
+      ],
+      "metadata": [
+        "set",
+        {
+          "name": "text",
+          "digest": "digest"
+        },
+        [
+          "name"
+        ]
+      ],
+      "edges": [
+        "set",
+        {
+          "path": "path",
+          "class": "text"
+        },
+        [
+          "path",
+          "class"
+        ]
+      ],
+      "cappedPaths": [
+        "set",
+        "path",
+        []
+      ]
+    },
+    "baselineGraph": [
+      "set",
+      {
+        "kind": "text",
+        "source": "path",
+        "destination": "path",
+        "class": "text"
+      },
+      [
+        "kind",
+        "source",
+        "destination",
+        "class"
+      ]
+    ],
+    "candidateGraph": [
+      "set",
+      {
+        "kind": "text",
+        "source": "path",
+        "destination": "path",
+        "class": "text"
+      },
+      [
+        "kind",
+        "source",
+        "destination",
+        "class"
+      ]
+    ],
+    "diff": [
+      "set",
+      {
+        "path": "path",
+        "status": "text",
+        "side": "text"
+      },
+      [
+        "path",
+        "side"
+      ]
+    ],
+    "universe": [
+      "set",
+      {
+        "project": "path",
+        "assembly": "text",
+        "class": "text",
+        "method": "text",
+        "caseUid": "text"
+      },
+      [
+        "project",
+        "assembly",
+        "class",
+        "method",
+        "caseUid"
+      ]
+    ],
+    "roster": [
+      "sequence",
+      {
+        "chunk": "text",
+        "suite": "text",
+        "executionKind": "text",
+        "project": "path",
+        "contentDigest": "digest",
+        "baselineInputDigest": [
+          "optional",
+          "digest"
+        ],
+        "candidateInputDigest": "digest",
+        "cases": [
+          "set",
+          {
+            "project": "path",
+            "assembly": "text",
+            "class": "text",
+            "method": "text",
+            "caseUid": "text"
+          },
+          [
+            "project",
+            "assembly",
+            "class",
+            "method",
+            "caseUid"
+          ]
+        ]
+      }
+    ],
+    "inventory": {
+      "format": "text",
+      "runId": "text",
+      "attempt": "u32",
+      "revision": "u32",
+      "sha": "git-id",
+      "rawByteCount": "u64",
+      "rawSha256": "digest"
+    },
+    "receipts": [
+      "set",
+      {
+        "chunk": "text",
+        "disposition": "text",
+        "origin": [
+          "optional",
+          {
+            "sha": "git-id",
+            "runId": "text",
+            "attempt": "u32",
+            "inventorySeal": "digest",
+            "evidenceId": "path",
+            "evidenceDigest": "digest"
+          }
+        ],
+        "platform": "text",
+        "architecture": "text",
+        "profile": "text",
+        "contentDigest": [
+          "optional",
+          "digest"
+        ],
+        "inputDigest": [
+          "optional",
+          "digest"
+        ],
+        "result": "text",
+        "exitCode": [
+          "optional",
+          "u32"
+        ],
+        "skipped": "boolean",
+        "timedOut": "boolean",
+        "tolerated": "boolean",
+        "expectedCases": [
+          "set",
+          {
+            "project": "path",
+            "assembly": "text",
+            "class": "text",
+            "method": "text",
+            "caseUid": "text"
+          },
+          [
+            "project",
+            "assembly",
+            "class",
+            "method",
+            "caseUid"
+          ]
+        ],
+        "observedCount": "u32",
+        "observedCases": [
+          "sequence",
+          {
+            "caseUid": "text",
+            "class": "text",
+            "method": "text",
+            "outcome": "text"
+          }
+        ],
+        "evidenceKind": [
+          "optional",
+          "text"
+        ],
+        "reason": [
+          "optional",
+          "text"
+        ]
+      },
+      [
+        "chunk"
+      ]
+    ],
+    "obligations": {
+      "watermark": "text",
+      "observedAt": "text",
+      "approved": "boolean",
+      "withdrawn": "boolean",
+      "history": [
+        "set",
+        {
+          "ordinal": "u32",
+          "sha": "git-id",
+          "runId": "text",
+          "attempt": "u32",
+          "revision": "u32",
+          "chunk": "text",
+          "status": "text",
+          "reason": "text"
+        },
+        [
+          "ordinal"
+        ]
+      ],
+      "owed": [
+        "set",
+        {
+          "chunk": "text",
+          "reason": "text"
+        },
+        [
+          "chunk"
+        ]
+      ]
+    },
+    "trust": {
+      "format": "text",
+      "baselinePolicy": {
+        "path": "path",
+        "gitMode": "text",
+        "blobId": "git-id",
+        "rawByteCount": "u64",
+        "rawSha256": "digest"
+      },
+      "candidatePolicy": {
+        "path": "path",
+        "gitMode": "text",
+        "blobId": "git-id",
+        "rawByteCount": "u64",
+        "rawSha256": "digest"
+      },
+      "baselinePolicyDigest": "digest",
+      "candidatePolicyDigest": "digest",
+      "grants": [
+        "set",
+        {
+          "project": "path",
+          "configurations": [
+            "set",
+            "text",
+            []
+          ],
+          "downstream": [
+            "set",
+            "path",
+            []
+          ],
+          "owned": [
+            "set",
+            {
+              "chunk": "text",
+              "cases": [
+                "set",
+                "text",
+                []
+              ]
+            },
+            [
+              "chunk"
+            ]
+          ],
+          "contractProducer": "text"
+        },
+        [
+          "project"
+        ]
+      ],
+      "contracts": [
+        "set",
+        {
+          "project": "path",
+          "side": "text",
+          "sha": "git-id",
+          "extractor": "text",
+          "contractHash": "digest",
+          "evidenceDigest": "digest"
+        },
+        [
+          "project",
+          "side"
+        ]
+      ],
+      "ownExecutions": [
+        "set",
+        {
+          "chunk": "text",
+          "disposition": "text",
+          "origin": [
+            "optional",
+            {
+              "sha": "git-id",
+              "runId": "text",
+              "attempt": "u32",
+              "inventorySeal": "digest",
+              "evidenceId": "path",
+              "evidenceDigest": "digest"
+            }
+          ],
+          "platform": "text",
+          "architecture": "text",
+          "profile": "text",
+          "contentDigest": [
+            "optional",
+            "digest"
+          ],
+          "inputDigest": [
+            "optional",
+            "digest"
+          ],
+          "result": "text",
+          "exitCode": [
+            "optional",
+            "u32"
+          ],
+          "skipped": "boolean",
+          "timedOut": "boolean",
+          "tolerated": "boolean",
+          "expectedCases": [
+            "set",
+            {
+              "project": "path",
+              "assembly": "text",
+              "class": "text",
+              "method": "text",
+              "caseUid": "text"
+            },
+            [
+              "project",
+              "assembly",
+              "class",
+              "method",
+              "caseUid"
+            ]
+          ],
+          "observedCount": "u32",
+          "observedCases": [
+            "sequence",
+            {
+              "caseUid": "text",
+              "class": "text",
+              "method": "text",
+              "outcome": "text"
+            }
+          ],
+          "evidenceKind": [
+            "optional",
+            "text"
+          ],
+          "reason": [
+            "optional",
+            "text"
+          ]
+        },
+        [
+          "chunk"
+        ]
+      ],
+      "reasons": [
+        "set",
+        "text",
+        []
+      ]
+    },
+    "selection": {
+      "complete": "boolean",
+      "fallback": "text",
+      "globalReasons": [
+        "set",
+        "text",
+        []
+      ],
+      "incompleteReasons": [
+        "set",
+        "text",
+        []
+      ],
+      "classes": [
+        "set",
+        {
+          "project": "path",
+          "class": "text"
+        },
+        [
+          "project",
+          "class"
+        ]
+      ],
+      "decisions": [
+        "sequence",
+        {
+          "chunk": "text",
+          "disposition": "text",
+          "origin": [
+            "optional",
+            {
+              "sha": "git-id",
+              "runId": "text",
+              "attempt": "u32",
+              "inventorySeal": "digest",
+              "evidenceId": "path",
+              "evidenceDigest": "digest"
+            }
+          ],
+          "reasons": [
+            "sequence",
+            {
+              "kind": "text",
+              "path": [
+                "optional",
+                "path"
+              ],
+              "side": [
+                "optional",
+                "text"
+              ],
+              "chain": [
+                "sequence",
+                "text"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

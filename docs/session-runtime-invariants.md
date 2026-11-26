@@ -1257,7 +1257,8 @@ isolates each item and reports errors after processing the remaining batch.
   read still re-reads accounting (CARD-1617).
 
 - **Linux tracked placement is decided at the shim boundary (CARD-2060).** The
-  runner stamps a five-second monotonic budget on the private launch frame. The
+  runner stamps a sixteen-second monotonic budget on the private launch frame, subject
+  to the remaining request window and one-second reply reserve (CARD-2080). The
   original PtyHost binds an abstract Unix listener before spawn and authenticates
   the placed shim's kernel PID and UID. The shim proves its live generation and
   singleton membership in both v1 trees before it receives GO. The host commits
