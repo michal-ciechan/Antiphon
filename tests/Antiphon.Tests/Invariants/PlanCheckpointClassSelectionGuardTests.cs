@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Antiphon.Checkpoints;
+using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -20,6 +21,43 @@ namespace Antiphon.Tests.Invariants;
 [Category("Unit")]
 public sealed class PlanCheckpointClassSelectionGuardTests
 {
+    [Test]
+    public void Deferred_roster_entries_require_compiled_owners_in_their_assembly()
+    {
+        var root = OwnedTempRoot.CreateOwned();
+        try
+        {
+            var projects = new[] { "Antiphon.Tests", "Antiphon.Agents.Pty.Tests", "Antiphon.E2E", "Antiphon.GitInProcess.Tests",
+                "Antiphon.LiveClaude.Tests", "Antiphon.MarkdownPdf.Tests", "Antiphon.Messaging.Tests", "Antiphon.Observability.Tests",
+                "Antiphon.PtyHost.Tests", "Antiphon.Resilience.Tests", "Antiphon.Server.Git.Tests", "Antiphon.SessionRunner.Tests" };
+            var fixtures = projects.Select(project => new
+            {
+                assembly = project, type = "Fixture.Product.Tests",
+                methods = new object[][] { ["Check", 0, 0, 0, "MOVE"] },
+            }).ToArray();
+            var statuses = projects.ToDictionary(project => project + "/Fixture.Product.Tests/Check", project => new
+            {
+                status = "deferred", phase = "checkout-guards/" + project, reason = "fixture",
+                pendingOwners = new[] { "Fixture.Product.OtherTests/Check" },
+            });
+            Write(root, "docs/superpowers/plans/2026-11-26-card-2082-candidate-roster.json",
+                JsonSerializer.Serialize(new { fixtures, implementation = statuses, earlierMixed = new { fixtures = Array.Empty<object>() } }));
+            LiveLaneNode Case(string project, string type) => new()
+            {
+                Project = project, Namespace = "Fixture.Product", Type = type, Method = "Check", Uid = project + "-arg",
+                Categories = ["Unit"],
+            };
+            var nodes = projects.Select(project => Case(project, "Tests(42)")).ToArray();
+            var accepted = projects.SelectMany(project => RepositoryInvariantRosterAudit.Check(root, project, nodes)).ToArray();
+            accepted.ShouldBeEmpty(string.Join('\n', accepted));
+            var failures = projects.SelectMany(project => RepositoryInvariantRosterAudit.Check(root, project,
+                nodes.Where(node => node.Project != project).Append(Case(project, "UnrelatedTests")).ToArray())).ToArray();
+            failures.ShouldBe(projects.Select(project => project + "/Fixture.Product.Tests/Check: no compiled ordinary owner for deferred disposition"),
+                ignoreOrder: true);
+        }
+        finally { OwnedTempRoot.Release(root); }
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C2082_Repository_readers_belong_to_the_invariant_namespace()

@@ -117,6 +117,16 @@ public sealed class NightlyTestsPlanTests
                     var prefix = schedule.GetProperty("invariantPrefix");
                     prefix.GetProperty("complete").GetBoolean().ShouldBeFalse(stop);
                     prefix.GetProperty("outstanding").GetArrayLength().ShouldBeGreaterThan(0);
+                    if (stop is "interrupted" or "missing-argument")
+                    {
+                        var suite = stop == "interrupted" ? "messaging" : "antiphon";
+                        var expectedUid = stop == "interrupted" ? "Antiphon.Messaging.Tests/beta-argument-1" : "Antiphon.Tests/alpha-argument-2";
+                        var chunk = started.Single(start => start.Suite == suite).Chunk;
+                        var outstanding = prefix.GetProperty("outstanding").EnumerateArray().Single(entry =>
+                            entry.GetProperty("suite").GetString() == suite && entry.GetProperty("chunk").GetString() == chunk);
+                        outstanding.TryGetProperty("missingUids", out var missing).ShouldBeTrue("durable case obligations for " + stop);
+                        missing.EnumerateArray().Select(uid => uid.GetString()).ShouldBe([expectedUid]);
+                    }
                     if (preparationFailed)
                     {
                         schedule.GetProperty("preparationComplete").GetBoolean().ShouldBeFalse();

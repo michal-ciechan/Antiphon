@@ -24,6 +24,7 @@ public sealed class ReleaseCutTests
     public void C2082_Admitted_cut_binds_the_nightly_tests_process()
     {
         using var world = ReleaseCutWorld.Real("c2082-cut-hop");
+        NightlyFixture.WriteJson(Path.Combine(world.Checkout, ".antiphon-nightly-owned"), new { origin = world.Origin });
         var root = RcIncrementalCut.IncrementalRoot(world.Release);
         Directory.CreateDirectory(root);
         var approval = Path.Combine(root, "approval.json");
@@ -67,7 +68,8 @@ public sealed class ReleaseCutTests
             options.RunId = "c2082-cut";
         });
         cut.CoverageScope.ShouldBe("Incremental", cut.IncrementalReason);
-        var launch = launcher.Launches.Single(NightlyRunHops.IsTestsHop);
+        var launch = launcher.Launches.SingleOrDefault(NightlyRunHops.IsTestsHop)
+            .ShouldNotBeNull(string.Join('\n', world.Lines));
         var flags = NightlyArgs.Parse(launch.Arguments.Skip(3).ToArray(),
             [.. NightlyTestsOptions.Valued, "--requested-selection-mode", "--incremental-approval-digest",
                 "--incremental-baseline-sha", "--incremental-inventory-path", "--incremental-inventory-digest", "--incremental-owed-digest"],
