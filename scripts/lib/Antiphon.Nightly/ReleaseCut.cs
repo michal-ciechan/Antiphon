@@ -189,6 +189,15 @@ namespace Antiphon.Nightly
         /// <summary>The sealed selection attempt document (null until one is sealed; WhatIf seals none).</summary>
         public object Selection { get; set; }
 
+        /// <summary>CARD-1836: Incremental when an Incremental request was asked for (not part of the record).</summary>
+        public string RequestedMode { get; set; } = "";
+
+        /// <summary>CARD-1836: Incremental when admitted, otherwise Full (not part of the record).</summary>
+        public string CoverageScope { get; set; } = "Full";
+
+        /// <summary>CARD-1836: why an Incremental request was not admitted, blank otherwise (not part of the record).</summary>
+        public string IncrementalReason { get; set; } = "";
+
         /// <summary>The record in the script's key order; selection only once an attempt is sealed.</summary>
         public OrderedDictionary Record()
         {
@@ -298,6 +307,12 @@ namespace Antiphon.Nightly
             host.Files.Directory.CreateDirectory(stateRoot);
             var runId = string.IsNullOrWhiteSpace(options.RunId) ? Guid.NewGuid().ToString("N") : options.RunId;
 
+            // CARD-1836: an Incremental request is admitted or falls back to Full here; either way it stays qualification-only.
+            var requestedIncremental = string.Equals(options.SelectionMode, RcIncrementalCut.RequestedMode, StringComparison.OrdinalIgnoreCase);
+            var effectiveMode = requestedIncremental ? "Full" : options.SelectionMode ?? "";
+            RcIncrementalAdmission admission = null;
+            if (requestedIncremental) result.RequestedMode = RcIncrementalCut.RequestedMode;
+
             var timingRoot = options.TimingRoot ?? "";
             var baselineSha = options.BaselineSha ?? "";
             var attemptPath = options.SelectionAttemptPath ?? "";
@@ -325,10 +340,20 @@ namespace Antiphon.Nightly
                     // Journalling read the remote ref only: acquire its pinned object before selection, without changing the
                     // long-lived ref or repinning the journal.
                     if (host.Nightly.RunGit(checkout, "fetch", "origin", result.Sha).ExitCode != 0) throw new NightlyRefusal("selection-candidate-fetch");
+                    if (requestedIncremental)
+                    {
+                        // The trust policy is read from the candidate's own blob; the approval must name its digest.
+                        var policy = TestSelectionGit.Run(checkout, new[] { "cat-file", "blob", result.Sha + ":" + RcTrustedProjectGate.PolicyPath }, new[] { 0, 128 });
+                        admission = RcIncrementalCut.Admit(releaseRoot, result.Sha, policy.Exit == 0 ? policy.Stdout : null, host.Nightly.UtcNow, checkout);
+                        result.CoverageScope = admission.Admitted ? "Incremental" : "Full";
+                        result.IncrementalReason = admission.Reason;
+                        Say(admission.Admitted ? "incremental qualification admitted (qualification-only; Full remains the publication path)."
+                            : "incremental request runs Full (" + admission.Reason + ").");
+                    }
                     var bound = ReleaseSelectionAttempt.Create(new ReleaseSelectionRequest
                     {
                         RepositoryRoot = checkout, Repository = options.Repository ?? "", ReleaseRoot = releaseRoot, CandidateSha = result.Sha,
-                        CandidateId = result.CandidateId, CandidateRef = result.Ref, Profile = "rc", RunId = runId, SelectionMode = options.SelectionMode ?? "",
+                        CandidateId = result.CandidateId, CandidateRef = result.Ref, Profile = "rc", RunId = runId, SelectionMode = effectiveMode,
                         BaselineSha = baselineSha, BaselineReceiptPath = options.BaselineReceiptPath ?? "", QualificationPath = options.QualificationPath ?? "",
                         TimingRoot = timingRoot, TrainManifestPath = options.TrainManifestPath ?? "", ReleaseIntentPath = options.ReleaseIntentPath ?? "",
                         SelectionAttemptPath = attemptPath, SelectionAttemptDigest = attemptDigest, SelectionPath = selectionPath,
@@ -352,13 +377,20 @@ namespace Antiphon.Nightly
 
             var runOptions = new NightlyRunOptions
             {
-                RunId = runId, Repository = options.Repository ?? "", SelectionMode = options.SelectionMode ?? "", BaselineSha = baselineSha,
+                RunId = runId, Repository = options.Repository ?? "", SelectionMode = effectiveMode, BaselineSha = baselineSha,
                 BaselineReceiptPath = options.BaselineReceiptPath ?? "", QualificationPath = options.QualificationPath ?? "", TimingRoot = timingRoot,
                 TrainManifestPath = options.TrainManifestPath ?? "", ReleaseIntentPath = options.ReleaseIntentPath ?? "", SelectionAttemptPath = attemptPath,
                 SelectionAttemptDigest = attemptDigest, SelectionPath = selectionPath, SelectionDigest = selectionDigest, Attempt = options.Attempt,
                 CheckoutRoot = checkout, StateRoot = stateRoot, LogRoot = logRoot, Ref = result.Ref, RemoteUrl = options.RemoteUrl ?? "", Trigger = "rc",
                 Profile = "rc", ExpectedSha = result.Sha, CandidateId = result.CandidateId, ReleaseRoot = releaseRoot,
                 CoordinationRoot = options.CoordinationRoot ?? "", WhatIf = options.WhatIf,
+                RequestedSelectionMode = requestedIncremental ? RcIncrementalCut.RequestedMode : "",
+                IncrementalApprovalDigest = admission?.Admitted == true ? admission.ApprovalDigest : "",
+                IncrementalBaselineSha = admission?.Admitted == true ? admission.BaselineSha : "",
+                IncrementalInventoryPath = admission?.Admitted == true ? admission.InventoryPath : "",
+                IncrementalInventoryDigest = admission?.Admitted == true ? admission.InventoryDigest : "",
+                IncrementalOwed = admission?.Admitted == true ? new Dictionary<string, string>(admission.Owed, StringComparer.Ordinal) : new Dictionary<string, string>(StringComparer.Ordinal),
+                IncrementalOwedDigest = admission?.Admitted == true ? admission.OwedDigest : "",
             };
             NightlyRunResult run;
             try
@@ -378,6 +410,13 @@ namespace Antiphon.Nightly
                 result.Refusal = run.Refusal ?? "";
                 result.ExitCode = run.ExitCode;
                 Say("rc run did not complete green; publishing nothing (exit " + result.ExitCode.ToString(CultureInfo.InvariantCulture) + ").");
+                return result;
+            }
+            if (requestedIncremental)
+            {
+                // D-6: an Incremental request (admitted or fallen back to Full) never reaches the publisher.
+                Say("incremental request is qualification-only; publishing nothing (coverageScope " + result.CoverageScope + ").");
+                result.ExitCode = 0;
                 return result;
             }
             if (options.SkipPublish || options.WhatIf)

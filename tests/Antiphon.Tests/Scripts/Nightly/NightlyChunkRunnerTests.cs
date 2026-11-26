@@ -22,6 +22,234 @@ namespace Antiphon.Tests.Scripts.Nightly;
 [NotInParallel("QualificationTimingTests")]
 public sealed class NightlyChunkRunnerTests
 {
+    // CARD-1836 S1 (CP-1, V-1, R-1, G-1..G-4, G-25, G-26): sealed v2 rows separate a clean execution from unproven work.
+    [Test, Timeout(60_000)]
+    public void Sealed_rows_distinguish_clean_execution_from_unproven_work(CancellationToken cancellationToken)
+    {
+        var rows = new NightlyCaseRows();
+        var a = "a1" + new string('0', 38);
+        var b = "b2" + new string('0', 38);
+
+        // The real chunk runner, receipts on, at candidate A: chunk group-4, then the same members as group-5.
+        System.Collections.IDictionary RunChunk(string chunkId, NightlyTestNode[] nodes)
+        {
+            using var world = new NightlyChunkWorld(FakeTestHost.NativePass(nodes.Select(n => new NightlyTrxRow(n.Uid, n.Namespace + "." + n.Type, n.Method)).ToArray(), nodes));
+            var context = world.Context();
+            context.Sha = a;
+            context.ChunkReceiptVersion = 2;
+            var outcome = NightlyChunkRunner.Run(context, world.Suite(), NightlyChunkWorld.Chunk(chunkId));
+            return outcome.Row!;
+        }
+        var members = new[] { new NightlyTestNode("uid-1", "SampleClass", "SampleMethod", "Ns"), new NightlyTestNode("uid-2", "SampleClass", "Other", "Ns") };
+        var g4 = RunChunk("group-4", members);
+        var g5 = RunChunk("group-5", members);
+        var expected = ExpectedContent("antiphon", "native", members.Select(n => ("host", n.Namespace + "." + n.Type, n.Method, n.Uid)));
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var fx = NightlyFixture.Create("c1836-receipt");
+        var inventoryPath = fx.PathOf("attempt", "rc-chunk-receipts.json");
+        var sealedDigest = RcChunkReceipt.Seal(inventoryPath, a, 1, [g4]);
+        using (var sealedDoc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(inventoryPath)))
+        {
+            var root = sealedDoc.RootElement;
+            rows.Check(PsValue.Str(g4["sha"]) == a && PsValue.Str(g4["contentDigest"]) == expected && PsValue.Str(g4["disposition"]) == "executed"
+                && root.GetProperty("chunkReceiptVersion").GetInt32() == 2 && root.GetProperty("sha").GetString() == a
+                && sealedDigest == Sha256Hex(File.ReadAllBytes(inventoryPath))
+                // Review r1 D-3: the row records where it ran (the world's context is a Windows nightly).
+                && PsValue.Str(g4["platform"]) == "windows" && PsValue.Str(g4["profile"]) == "nightly"
+                && PsValue.Str(g4["architecture"]) == RcReceiptScope.CurrentArchitecture() && PsValue.Str(g4["architecture"]).Length > 0,
+                "s1-row-sha", "sha=" + PsValue.Str(g4["sha"]) + " content=" + PsValue.Str(g4["contentDigest"]) + " expected=" + expected
+                + " platform=" + PsValue.Str(g4["platform"]) + " profile=" + PsValue.Str(g4["profile"]) + " arch=" + PsValue.Str(g4["architecture"]));
+        }
+
+        // Per-case TRX evidence for data rows.
+        string Trx(string name, params (string Id, string Outcome)[] cases)
+        {
+            var path = fx.PathOf("trx", name + ".trx");
+            NightlyFixture.WriteTrx(path, cases.Select(c => new NightlyTrxRow(c.Id, "Ns.SampleClass", "M" + c.Id, c.Outcome)));
+            return path;
+        }
+        System.Collections.Specialized.OrderedDictionary Row(string chunk, string result, int exit, string sha, string content, bool tolerated = false, bool skipped = false,
+            bool timedOut = false, object[]? evidence = null, string platform = "windows") => new()
+        {
+            ["id"] = "antiphon", ["chunk"] = chunk, ["result"] = result, ["exitCode"] = exit, ["timedOut"] = timedOut, ["skipped"] = skipped,
+            ["evidenceReasons"] = evidence ?? Array.Empty<object>(), ["sha"] = sha, ["contentDigest"] = content, ["disposition"] = "executed",
+            ["processExitTolerated"] = tolerated, ["platform"] = platform, ["architecture"] = "x64", ["profile"] = "rc",
+        };
+        // The qualification this predicate admits for: a Windows x64 rc run.
+        var scope = new RcReceiptScope { Platform = "windows", Architecture = "x64", Profile = "rc" };
+        var dY = ExpectedContent("antiphon", "native", [("host", "Ns.Y", "M", "y1")]);
+        var dX = ExpectedContent("antiphon", "native", [("host", "Ns.X", "M", "x1")]);
+        var y = Row("Y", "pass", 0, a, dY);
+        var x = Row("X", "FAIL", 1, a, dX);
+        var yReuse = RcChunkReceipt.Reusable(y, RcChunkReceipt.ReadTrx(Trx("y", ("y1", "Passed"))), ["y1"], scope);
+        var xReuse = RcChunkReceipt.Reusable(x, RcChunkReceipt.ReadTrx(Trx("x", ("x1", "Failed"))), ["x1"], scope);
+        rows.Check(yReuse.Reusable && !xReuse.Reusable && xReuse.Reasons.Contains("result:FAIL"), "s1-green-sibling-of-failed", string.Join(",", yReuse.Reasons.Concat(xReuse.Reasons)));
+
+        // Group 137's shape: a pass label, exit 0, one NotExecuted case.
+        var skip = RcChunkReceipt.Reusable(Row("S", "pass", 0, a, dY), RcChunkReceipt.ReadTrx(Trx("s", ("y1", "Passed"), ("y2", "NotExecuted"))), ["y1"], scope);
+        rows.Check(!skip.Reusable && skip.Reasons.Contains("skipped-cases:1"), "s1-skip-under-pass", string.Join(",", skip.Reasons));
+
+        var tolerated = RcChunkReceipt.Reusable(Row("T", "pass", 0, a, dY, tolerated: true), RcChunkReceipt.ReadTrx(Trx("t", ("y1", "Passed"))), ["y1"], scope);
+        rows.Check(!tolerated.Reusable && tolerated.Reasons.Contains("tolerated-exit"), "s1-tolerated-exit", string.Join(",", tolerated.Reasons));
+
+        // Review r1 D-2 (M1-M3): each non-clean state alone, under a pass label with a clean TRX, is the only reason the row is owed.
+        RcReuse Alone(string name, System.Collections.IDictionary row, string[]? required = null) =>
+            RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadTrx(Trx(name, ("y1", "Passed"))), required ?? ["y1"], scope);
+        bool Only(RcReuse r, string reason) => !r.Reusable && r.Reasons.SequenceEqual([reason]);
+        var rowSkipped = Alone("rs", Row("RS", "pass", 0, a, dY, skipped: true));
+        rows.Check(Only(rowSkipped, "row-skipped"), "s1-row-skipped", string.Join(",", rowSkipped.Reasons));
+        var timedOutRow = Alone("to", Row("TO", "pass", 0, a, dY, timedOut: true));
+        rows.Check(Only(timedOutRow, "timed-out"), "s1-timed-out", string.Join(",", timedOutRow.Reasons));
+        var evidenceRow = Alone("ev", Row("EV", "pass", 0, a, dY, evidence: ["log-stale"]));
+        rows.Check(Only(evidenceRow, "evidence-reasons"), "s1-evidence-reasons", string.Join(",", evidenceRow.Reasons));
+        var nonzero = Alone("nz", Row("NZ", "pass", 3, a, dY));
+        rows.Check(Only(nonzero, "exit:3"), "s1-nonzero-exit-pass-label", string.Join(",", nonzero.Reasons));
+        var incompleteRow = Row("CI", "pass", 0, a, dY);
+        incompleteRow["coverageComplete"] = false;
+        var incomplete = Alone("ci", incompleteRow);
+        rows.Check(Only(incomplete, "coverage-incomplete"), "s1-coverage-incomplete", string.Join(",", incomplete.Reasons));
+        var detailRow = Row("FD", "pass", 0, a, dY);
+        detailRow["detail"] = "log-not-fresh";
+        var detail = Alone("fd", detailRow);
+        rows.Check(Only(detail, "detail:log-not-fresh"), "s1-freshness-detail", string.Join(",", detail.Reasons));
+        var noRoster = Alone("nr", Row("NR", "pass", 0, a, dY), []);
+        var nullRoster = RcChunkReceipt.Reusable(Row("NN", "pass", 0, a, dY), RcChunkReceipt.ReadTrx(Trx("nn", ("y1", "Passed"))), null!, scope);
+        rows.Check(Only(noRoster, "no-case-roster") && Only(nullRoster, "no-case-roster"), "s1-no-case-roster",
+            string.Join(",", noRoster.Reasons) + " | " + string.Join(",", nullRoster.Reasons));
+
+        // Review r1 D-3: a Windows qualification admits only a Windows receipt; an unstamped row or an unbound scope is never reusable.
+        var foreign = Alone("fp", Row("FP", "pass", 0, a, dY, platform: "linux"));
+        var unstamped = Row("UP", "pass", 0, a, dY);
+        unstamped.Remove("platform");
+        var unstampedReuse = Alone("up", unstamped);
+        var unbound = RcChunkReceipt.Reusable(Row("UB", "pass", 0, a, dY), RcChunkReceipt.ReadTrx(Trx("ub", ("y1", "Passed"))), ["y1"], null!);
+        rows.Check(Only(foreign, "platform:linux") && Only(unstampedReuse, "platform-absent") && Only(unbound, "scope-unbound"), "s1-foreign-platform",
+            string.Join(",", foreign.Reasons) + " | " + string.Join(",", unstampedReuse.Reasons) + " | " + string.Join(",", unbound.Reasons));
+
+        // Review r2 D-7 (N1-N3): the architecture and profile stamps bind as tightly as the platform; each alone refuses reuse.
+        RcReuse Stamped(string name, string field, string? value)
+        {
+            var stamped = Row(name.ToUpperInvariant(), "pass", 0, a, dY);
+            if (value == null) stamped.Remove(field);
+            else stamped[field] = value;
+            return Alone(name, stamped);
+        }
+        var archAbsent = Stamped("aa", "architecture", null);
+        var archEmpty = Stamped("ae", "architecture", "");
+        rows.Check(Only(archAbsent, "architecture-absent") && Only(archEmpty, "architecture-absent"), "s1-architecture-absent",
+            string.Join(",", archAbsent.Reasons) + " | " + string.Join(",", archEmpty.Reasons));
+        var archForeign = Stamped("am", "architecture", "arm64");
+        rows.Check(Only(archForeign, "architecture:arm64"), "s1-architecture-mismatch", string.Join(",", archForeign.Reasons));
+        var profileAbsent = Stamped("pa", "profile", null);
+        var profileEmpty = Stamped("pe", "profile", "");
+        rows.Check(Only(profileAbsent, "profile-absent") && Only(profileEmpty, "profile-absent"), "s1-profile-absent",
+            string.Join(",", profileAbsent.Reasons) + " | " + string.Join(",", profileEmpty.Reasons));
+        var profileForeign = Stamped("pm", "profile", "nightly");
+        rows.Check(Only(profileForeign, "profile:nightly"), "s1-profile-mismatch", string.Join(",", profileForeign.Reasons));
+
+        var missing = RcChunkReceipt.Missing("antiphon", "M", dY, a);
+        var missingReuse = RcChunkReceipt.Reusable(missing, RcChunkReceipt.ReadTrx(Trx("m", ("y1", "Passed"))), ["y1"], scope);
+        rows.Check(PsValue.Str(missing["disposition"]) == "missing" && missing["sha"] == null && !missingReuse.Reusable && missingReuse.Reasons.Contains("missing-row"),
+            "s1-missing-row", string.Join(",", missingReuse.Reasons));
+
+        RcReuse Clean(System.Collections.IDictionary r) => new() { Reusable = true };
+        var renumbered = RcChunkReceipt.Match([("group-5", PsValue.Str(g5["contentDigest"]))], [g4], Clean);
+        rows.Check(PsValue.Str(g4["contentDigest"]) == PsValue.Str(g5["contentDigest"]) && PsValue.Str(g4["chunk"]) != PsValue.Str(g5["chunk"])
+            && renumbered.Single().Decision == "carry", "s1-renumber");
+
+        var moved = ExpectedContent("antiphon", "native", [("host", "Ns.SampleClass", "SampleMethod", "uid-1")]);
+        var split = RcChunkReceipt.Match([("group-4", moved)], [g4], Clean);
+        rows.Check(moved != expected && split.Single().Decision == "execute" && split.Single().Reasons.Contains("no-receipt-for-content"), "s1-split",
+            string.Join(",", split.Single().Reasons));
+
+        var origin = Row("Y", "pass", 0, b, dY);
+        var carried = RcChunkReceipt.Carry(origin, a, "f" + new string('0', 63));
+        var carriedSeal = fx.PathOf("attempt-a", "rc-chunk-receipts.json");
+        RcChunkReceipt.Seal(carriedSeal, a, 1, [carried]);
+        var carriedBack = RcChunkReceipt.Read(carriedSeal);
+        rows.Check(PsValue.Str(carried["sha"]) == b && PsValue.Str(carried["disposition"]) == "carried" && PsValue.Str(carried["candidateSha"]) == a
+            && PsValue.Str(carried["originReceiptDigest"]) == "f" + new string('0', 63) && carriedBack.Sha == a && PsValue.Str(carriedBack.Rows.Single()["sha"]) == b,
+            "s1-carried-origin");
+
+        var legacy = new System.Collections.Specialized.OrderedDictionary { ["id"] = "antiphon", ["chunk"] = "L", ["result"] = "pass", ["exitCode"] = 0, ["timedOut"] = false, ["skipped"] = false };
+        var legacyReuse = RcChunkReceipt.Reusable(legacy, RcChunkReceipt.ReadTrx(Trx("l", ("y1", "Passed"))), ["y1"], scope);
+        var v1Path = fx.PathOf("v1", "summary.json");
+        NightlyFixture.WriteJson(v1Path, new { suites = new[] { new { id = "antiphon", chunk = "L", result = "pass", exitCode = 0 } } });
+        using (var v1 = System.Text.Json.JsonDocument.Parse(File.ReadAllText(v1Path)))
+            rows.Check(!legacyReuse.Reusable && legacyReuse.Reasons.Contains("legacy-row") && RcChunkReceipt.Read(v1Path).Refusal == "inventory-format"
+                && v1.RootElement.GetProperty("suites")[0].GetProperty("result").GetString() == "pass", "s1-legacy-unproven", string.Join(",", legacyReuse.Reasons));
+
+        var short1 = RcChunkReceipt.Reusable(Row("C", "pass", 0, a, dY), RcChunkReceipt.ReadTrx(Trx("c", ("y1", "Passed"))), ["y1", "y2"], scope);
+        rows.Check(!short1.Reusable && short1.Reasons.Contains("case-missing:y2"), "s1-case-count", string.Join(",", short1.Reasons));
+
+        var dupPath = fx.PathOf("dup", "rc-chunk-receipts.json");
+        RcChunkReceipt.Seal(dupPath, a, 1, [Row("D1", "pass", 0, a, dY), Row("D2", "pass", 0, a, dY)]);
+        var tornPath = fx.PathOf("torn", "rc-chunk-receipts.json");
+        RcChunkReceipt.Seal(tornPath, a, 1, [y]);
+        var tornBytes = File.ReadAllBytes(tornPath);
+        File.WriteAllBytes(tornPath, tornBytes[..(tornBytes.Length / 2)]);
+        var conflict = Should.Throw<NightlyRefusal>(() => RcChunkReceipt.Seal(inventoryPath, a, 1, [y]));
+        var dup = RcChunkReceipt.Read(dupPath);
+        var torn = RcChunkReceipt.Read(tornPath);
+        rows.Check(dup.Refusal == "inventory-duplicate-content" && dup.Rows.Length == 0 && torn.Refusal == "inventory-torn" && torn.Rows.Length == 0
+            && conflict.Message.Contains("inventory-conflict") && RcChunkReceipt.Read(inventoryPath, (sealedDigest[0] == '0' ? "1" : "0") + sealedDigest[1..]).Refusal == "inventory-digest-mismatch",
+            "s1-duplicate-or-torn", dup.Refusal + "/" + torn.Refusal);
+
+        // D-1 comparison baseline.
+        var t0 = new DateTimeOffset(2026, 11, 20, 0, 0, 0, TimeSpan.Zero);
+        RcComparisonInput Input(string kind, string line, string sha, string run, int hours, string digest, params System.Collections.IDictionary[] inputRows) => new()
+        {
+            Kind = kind, Line = line, Sha = sha, RunId = run, Attempt = "1", CompletedUtc = t0.AddHours(hours), ReceiptPath = "attempts/" + run + "/rc-chunk-receipts.json",
+            ReceiptDigest = digest, Sealed = true, Ancestor = true, Rows = inputRows,
+        };
+        var c1 = "c1" + new string('0', 38);
+        var c2 = "c2" + new string('0', 38);
+        var sealedRc = RcComparisonBaseline.Choose("rc/2026-11-20", [
+            Input("rc-attempt", "rc/2026-11-20", c1, "run-1", 1, "d1"), Input("rc-attempt", "rc/2026-11-20", c2, "run-2", 2, "d2"),
+            Input("rc-attempt", "rc/2026-11-19", b, "run-x", 3, "dx"),
+        ]);
+        rows.Check(sealedRc.Mode == "Incremental" && sealedRc.Kind == "rc-attempt" && sealedRc.RunId == "run-2" && sealedRc.Sha == c2 && sealedRc.ReceiptDigest == "d2"
+            && sealedRc.ReceiptPath == "attempts/run-2/rc-chunk-receipts.json", "s1-baseline-sealed-rc", sealedRc.Mode + " " + sealedRc.RunId + " " + string.Join(",", sealedRc.Reasons));
+
+        var laterFail = Row("Y", "FAIL", 1, c2, dY);
+        var partial = Input("rc-attempt", "rc/2026-11-20", c2, "run-3", 5, "d3", laterFail);
+        partial.Sealed = false;
+        var open = RcComparisonBaseline.Choose("rc/2026-11-20", [Input("release", "release", c1, "rel-1", 1, "dr", Row("Y", "pass", 0, c1, dY)), partial]);
+        rows.Check(open.Mode == "Incremental" && open.Kind == "release" && open.Owed.ContainsKey(dY) && open.Owed[dY].Contains("run-3"), "s1-later-fail-stays-open",
+            open.Kind + " owed=" + string.Join(",", open.Owed.Keys));
+
+        var movedRef = Input("rc-attempt", "rc/2026-11-20", c1, "run-1", 1, "d1");
+        movedRef.RecordedRefSha = c1;
+        movedRef.ObservedRefSha = c2;
+        var movedChoice = RcComparisonBaseline.Choose("rc/2026-11-20", [movedRef]);
+        var conflicting = RcComparisonBaseline.Choose("rc/2026-11-20", [Input("rc-attempt", "rc/2026-11-20", c1, "run-1", 1, "d1"), Input("rc-attempt", "rc/2026-11-20", c1, "run-1", 1, "d9")]);
+        rows.Check(movedChoice.Mode == "Full" && movedChoice.Reasons.Contains("moved-ref:run-1") && conflicting.Mode == "Full" && conflicting.Reasons.Contains("conflicting-receipts:run-1"),
+            "s1-moved-ref-full", string.Join(",", movedChoice.Reasons.Concat(conflicting.Reasons)));
+
+        rows.ShouldAllPass(26, "s1-row-sha", "s1-green-sibling-of-failed", "s1-skip-under-pass", "s1-tolerated-exit", "s1-missing-row", "s1-renumber", "s1-split",
+            "s1-carried-origin", "s1-legacy-unproven", "s1-case-count", "s1-duplicate-or-torn", "s1-baseline-sealed-rc", "s1-later-fail-stays-open", "s1-moved-ref-full",
+            "s1-row-skipped", "s1-timed-out", "s1-evidence-reasons", "s1-nonzero-exit-pass-label", "s1-coverage-incomplete", "s1-freshness-detail", "s1-no-case-roster",
+            "s1-foreign-platform", "s1-architecture-absent", "s1-architecture-mismatch", "s1-profile-absent", "s1-profile-mismatch");
+    }
+
+    /// <summary>Content digest v1 as the plan defines it, computed here independently: tag, suite, kind, count, then ordinal-sorted members.</summary>
+    private static string ExpectedContent(string suite, string kind, IEnumerable<(string Assembly, string Class, string Method, string Case)> members)
+    {
+        var sorted = members.OrderBy(m => m.Assembly + "\0\0" + m.Class + "\0\0" + m.Method + "\0\0" + m.Case, StringComparer.Ordinal).ToArray();
+        var encoder = new System.Text.UTF8Encoding(false, true);
+        using var buffer = new MemoryStream();
+        RcBoundary.AddString(buffer, "antiphon-rc-chunk-content-v1", encoder);
+        RcBoundary.AddString(buffer, suite, encoder);
+        RcBoundary.AddString(buffer, kind, encoder);
+        RcBoundary.AddU32(buffer, (uint)sorted.Length);
+        foreach (var m in sorted)
+            foreach (var field in new[] { m.Assembly, m.Class, m.Method, m.Case }) RcBoundary.AddString(buffer, field, encoder);
+        return Sha256Hex(buffer.ToArray());
+    }
+
+    private static string Sha256Hex(byte[] bytes) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+
     private static string Joined(object[] values) => string.Join(",", values.Select(PsValue.Str));
 
     [Test]

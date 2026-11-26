@@ -19,6 +19,339 @@ namespace Antiphon.Tests.Scripts;
 [Category("Integration")]
 public sealed class ReleaseCutTests
 {
+    // CARD-1836 S6 (CP-6, V-6, G-20..G-24): an Incremental cut reconciles the owed roster and never reaches the publisher.
+    [Test, Timeout(60_000)]
+    [ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+    public void An_incremental_cut_reconciles_the_roster_and_withholds_publication(CancellationToken token)
+    {
+        var rows = new NightlyCaseRows();
+        var roster = Enumerable.Range(1, 5).Select(i => new RcPlannedChunk
+        {
+            Id = "c" + i, Classes = ["Ns.C" + i], Cases = ["c" + i],
+            ContentDigest = RcChunkReceipt.ContentDigest("antiphon", "native", [new RcCaseIdentity("Antiphon.Tests", "Ns.C" + i, "M", "c" + i)])!,
+        }).ToArray();
+        string[] owed = ["c2", "c3", "c5"];
+
+        // One world per scenario: a prior attempt at the same SHA sealed c1 and c4 clean, c2 FAIL, c3 a skip under a pass label, c5 missing.
+        (ReleaseCutWorld World, string Inventory, List<string> Launches, Func<RcIncrementalExecution?> Last) Setup(string prefix, bool approve = true, TimeSpan? sweepAge = null,
+            bool withdrawn = false, Action<NightlyRunOptions>? beforeTests = null, string? inventorySha = null, Func<int, string>? platformOf = null, bool laterFail = false,
+            Func<int, string>? profileOf = null)
+        {
+            var world = ReleaseCutWorld.Real(prefix);
+            var dir = RcIncrementalCut.IncrementalRoot(world.Release);
+            var prior = Path.Combine(world.Release, "prior");
+            Directory.CreateDirectory(prior);
+            System.Collections.IDictionary Row(int i, string result, int exit, params (string Case, string Outcome)[] cases)
+            {
+                NightlyFixture.WriteTrx(Path.Combine(prior, "c" + i + ".trx"), cases.Select(c => new NightlyTrxRow(c.Case, "Ns.C" + i, "M", c.Outcome)));
+                return new System.Collections.Specialized.OrderedDictionary
+                {
+                    ["id"] = "antiphon", ["chunk"] = "c" + i, ["result"] = result, ["exitCode"] = exit, ["timedOut"] = false, ["skipped"] = false,
+                    ["evidenceReasons"] = Array.Empty<object>(), ["trx"] = "c" + i + ".trx", ["sha"] = world.Sha, ["contentDigest"] = roster[i - 1].ContentDigest,
+                    ["disposition"] = "executed", ["runId"] = "prior-run", ["platform"] = platformOf?.Invoke(i) ?? "windows",
+                    ["architecture"] = RcReceiptScope.CurrentArchitecture(), ["profile"] = profileOf?.Invoke(i) ?? "rc",
+                };
+            }
+            var inventory = Path.Combine(prior, "rc-chunk-receipts.json");
+            System.Collections.IDictionary[] sealedRows =
+                [Row(1, "pass", 0, ("c1", "Passed")), Row(2, "FAIL", 1, ("c2", "Failed")), Row(3, "pass", 0, ("c3", "Passed"), ("c3b", "NotExecuted")), Row(4, "pass", 0, ("c4", "Passed"))];
+            var digest = RcChunkReceipt.Seal(inventory, inventorySha ?? world.Sha, 1, sealedRows);
+            if (approve)
+                NightlyFixture.WriteJson(Path.Combine(dir, "approval.json"), new
+                {
+                    format = "antiphon-rc-incremental-approval-v1", replayVerdictDigest = new string('e', 64), selectorHash = RcIncrementalCut.SelectorHash,
+                    trustPolicyHash = "absent", shadowRunIds = new[] { "shadow-1", "shadow-2" }, withdrawn,
+                });
+            NightlyFixture.WriteJson(Path.Combine(dir, "last-full-sweep.json"), new
+            {
+                completedUtc = (NightlyFixture.DefaultNow - (sweepAge ?? TimeSpan.FromDays(1))).UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ"), sha = world.Sha,
+            });
+            // The comparison is recorded from the D-1 choice: its baseline and every later open obligation (Review r1 D-3).
+            List<RcComparisonInput> attempts =
+            [
+                new() { Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "prior-run", Attempt = "1", CompletedUtc = NightlyFixture.DefaultNow.AddHours(-2),
+                    ReceiptPath = inventory, ReceiptDigest = digest, Sealed = true, Ancestor = true, Rows = sealedRows },
+            ];
+            if (laterFail)
+                attempts.Add(new() { Kind = "rc-attempt", Line = "rc/fixture", Sha = world.Sha, RunId = "later-run", Attempt = "1", CompletedUtc = NightlyFixture.DefaultNow.AddHours(-1),
+                    ReceiptPath = "later", ReceiptDigest = "later", Sealed = false, Ancestor = true, Rows =
+                    [
+                        new System.Collections.Specialized.OrderedDictionary
+                        {
+                            ["id"] = "antiphon", ["chunk"] = "c4", ["result"] = "FAIL", ["exitCode"] = 1, ["sha"] = world.Sha, ["contentDigest"] = roster[3].ContentDigest,
+                            ["disposition"] = "executed", ["skipped"] = false,
+                        },
+                    ] });
+            RcComparisonBaseline.Record(Path.Combine(dir, "comparison.json"), RcComparisonBaseline.Choose("rc/fixture", attempts), inventory, digest);
+            var launches = new List<string>();
+            RcIncrementalExecution? last = null;
+            world.Answer = o =>
+            {
+                beforeTests?.Invoke(o);
+                last = RcIncrementalCut.Execute(o, roster, Path.Combine(world.CandidateRoot, "attempts", o.RunId), c =>
+                {
+                    launches.Add(c.Id);
+                    return new System.Collections.Specialized.OrderedDictionary { ["id"] = "antiphon", ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0 };
+                }, platform: "windows");
+                return new NightlyRunResult { ExitCode = last.Refusal.Length == 0 && last.AllGreen ? 0 : 1, Refusal = last.Refusal, RunId = o.RunId };
+            };
+            return (world, inventory, launches, () => last);
+        }
+        string[] Sorted(IEnumerable<string> keys) => keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
+        bool NoPublisher(ReleaseCutWorld w) => !w.Lines.Any(l => l.StartsWith("[publish-release]", StringComparison.Ordinal)) && w.PublisherGit.Trace.Count == 0 && w.GitHub.Trace.Count == 0;
+
+        var closed = Setup("c1836-closed", approve: false);
+        using (closed.World)
+        {
+            var cut = closed.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "closed-run"; });
+            rows.Check(cut.CoverageScope == "Full" && cut.IncrementalReason == "incremental-not-admitted:approval-absent" && closed.World.Runs.Single().SelectionMode == "Full"
+                && closed.Launches.SequenceEqual(roster.Select(c => c.Id)) && cut.Tested && !cut.Published && NoPublisher(closed.World), "s6-gate-closed-full",
+                cut.CoverageScope + " " + cut.IncrementalReason + " " + string.Join(",", closed.Launches) + " " + cut.Refusal);
+        }
+
+        var admitted = Setup("c1836-admitted");
+        using (admitted.World)
+        {
+            var cut = admitted.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "admitted-run"; });
+            var exec = admitted.Last()!;
+            var inventoryDigest = RcChunkReceipt.FileDigest(admitted.Inventory);
+            rows.Check(cut.CoverageScope == "Incremental" && Sorted(admitted.Launches).SequenceEqual(owed) && admitted.Launches.Count == owed.Length
+                && Sorted(exec.Carried.Select(c => PsValue.Str(c["chunk"]))).SequenceEqual(["c1", "c4"])
+                && exec.Carried.All(c => PsValue.Str(c["disposition"]) == "carried" && PsValue.Str(c["runId"]) == "prior-run" && PsValue.Str(c["originReceiptDigest"]) == inventoryDigest)
+                && exec.Reconciled && exec.AllGreen, "s6-gate-admitted-owed-only", string.Join(",", admitted.Launches) + " " + exec.Refusal + " " + cut.IncrementalReason);
+            rows.Check(cut.Tested && !cut.Published && cut.ExitCode == 0 && NoPublisher(admitted.World) && exec.CoverageScope == "Incremental", "s6-no-publication",
+                string.Join(" | ", admitted.World.Lines.Where(l => l.Contains("publish", StringComparison.Ordinal))));
+
+            // Crash after the first owed launch, then resume the same attempt: only the unlaunched owed chunks launch, none twice.
+            var runOptions = admitted.World.Runs.Single();
+            var attempt = Path.Combine(admitted.World.CandidateRoot, "attempts", "resume-run");
+            var resumed = new List<string>();
+            var crashes = 0;
+            Should.Throw<InvalidOperationException>(() => RcIncrementalCut.Execute(runOptions, roster, attempt, c =>
+            {
+                if (resumed.Count == 1) { crashes++; throw new InvalidOperationException("crash"); }
+                resumed.Add(c.Id);
+                return new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0 };
+            }, platform: "windows"));
+            var second = RcIncrementalCut.Execute(runOptions, roster, attempt, c =>
+            {
+                resumed.Add(c.Id);
+                return new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0 };
+            }, platform: "windows");
+            rows.Check(crashes == 1 && Sorted(resumed).SequenceEqual(owed) && resumed.Count == owed.Length && second.Launched.Count == owed.Length - 1 && second.Reconciled,
+                "s6-crash-resume", string.Join(",", resumed) + " " + second.Refusal);
+        }
+        token.ThrowIfCancellationRequested();
+
+        var full = Setup("c1836-full");
+        using (full.World)
+        {
+            var cut = full.World.Cut(o => o.RunId = "full-run");
+            rows.Check(cut.CoverageScope == "Full" && cut.RequestedMode == "" && full.Launches.Count == roster.Length
+                && full.World.Lines.Count(l => l.StartsWith("[publish-release]", StringComparison.Ordinal)) == 1, "s6-explicit-full-publishes",
+                string.Join(" | ", full.World.Lines.Where(l => l.StartsWith("[publish-release]", StringComparison.Ordinal))));
+        }
+
+        var scriptsRoot = Path.Combine(NightlyPlanCases.Repo, "scripts");
+        var cutScript = File.ReadAllText(Path.Combine(scriptsRoot, "release-cut.ps1"));
+        var runScript = File.ReadAllText(Path.Combine(scriptsRoot, "nightly-run.ps1"));
+        var parsed = ReleaseCutOptions.Parse(["--ref", ReleaseCutWorld.Ref], scriptsRoot, _ => null);
+        var refusedFlag = Should.Throw<NightlyUsageException>(() => ReleaseCutOptions.Parse(["--ref", ReleaseCutWorld.Ref, "--selection-mode", "Incremental"], scriptsRoot, _ => null));
+        rows.Check(new ReleaseCutOptions().SelectionMode == "Full" && new NightlyRunOptions().SelectionMode == "Full" && new NightlyRunOptions().RequestedSelectionMode == ""
+            && new NightlyTestsOptions().SelectionMode == "Full" && parsed.SelectionMode == "Full" && refusedFlag.Message.Contains("--selection-mode", StringComparison.Ordinal)
+            && cutScript.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal)
+            && runScript.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal), "s6-default-full");
+
+        var stale = Setup("c1836-stale", beforeTests: o => File.AppendAllText(o.IncrementalInventoryPath, " "));
+        using (stale.World)
+        {
+            var cut = stale.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "stale-run"; });
+            rows.Check(stale.Last()!.Refusal == "incremental-plan-stale:inventory-digest-mismatch" && stale.Launches.Count == 0 && !cut.Tested && NoPublisher(stale.World),
+                "s6-stale-plan-digest", stale.Last()!.Refusal);
+        }
+
+        var mismatch = Setup("c1836-hop", beforeTests: o => o.RequestedSelectionMode = "");
+        using (mismatch.World)
+        {
+            var cut = mismatch.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "hop-run"; });
+            var shadowHop = mismatch.World.Runs.Single();
+            shadowHop.RequestedSelectionMode = "Incremental";
+            shadowHop.SelectionMode = "Shadow";
+            var hop2 = new List<string>();
+            var second = RcIncrementalCut.Execute(shadowHop, roster, Path.Combine(mismatch.World.CandidateRoot, "attempts", "hop-2"), c =>
+            {
+                hop2.Add(c.Id);
+                return new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0 };
+            });
+            rows.Check(mismatch.Last()!.Refusal == "incremental-hop-mismatch" && second.Refusal == "incremental-hop-mismatch" && mismatch.Launches.Count == 0 && hop2.Count == 0
+                && !cut.Tested,
+                "s6-hop-mismatch", mismatch.Last()!.Refusal + "/" + second.Refusal);
+        }
+
+        var aged = Setup("c1836-age", sweepAge: TimeSpan.FromDays(7));
+        var young = Setup("c1836-young", sweepAge: TimeSpan.FromDays(7) - TimeSpan.FromSeconds(1));
+        using (aged.World)
+        using (young.World)
+        {
+            var old = aged.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "age-run"; });
+            var fresh = young.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "young-run"; });
+            rows.Check(old.CoverageScope == "Full" && old.IncrementalReason == "incremental-not-admitted:full-sweep-expired" && aged.Launches.Count == roster.Length
+                && fresh.CoverageScope == "Incremental", "s6-age-boundary", old.IncrementalReason + " / " + fresh.IncrementalReason);
+        }
+
+        var rollback = Setup("c1836-rollback", withdrawn: true);
+        using (rollback.World)
+        {
+            var cut = rollback.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "rollback-run"; });
+            rows.Check(cut.CoverageScope == "Full" && cut.IncrementalReason == "incremental-not-admitted:approval-withdrawn" && cut.Sha == rollback.World.Sha
+                && rollback.Launches.SequenceEqual(roster.Select(c => c.Id)) && NoPublisher(rollback.World), "s6-rollback", cut.IncrementalReason);
+        }
+
+        // Review r1 D-3: carried provenance is bound to the comparison commit, the platform and every later open obligation.
+        string[] PlanReasons(ReleaseCutWorld w, string runId, string chunk)
+        {
+            using var plan = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(w.CandidateRoot, "attempts", runId, "incremental-plan.json")));
+            return plan.RootElement.GetProperty("entries").EnumerateArray().Single(e => e.GetProperty("chunk").GetString() == chunk)
+                .GetProperty("reasons").EnumerateArray().Select(r => r.GetString() ?? "").ToArray();
+        }
+        string Carried(RcIncrementalExecution? e) => e == null ? "none" : string.Join(",", Sorted(e.Carried.Select(c => PsValue.Str(c["chunk"]))));
+        var other = "d" + new string('1', 39);
+
+        var inventoryMoved = Setup("c1836-inv-sha", inventorySha: other);
+        using (inventoryMoved.World)
+        {
+            var cut = inventoryMoved.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "inv-run"; });
+            rows.Check(cut.CoverageScope == "Full" && cut.IncrementalReason == "incremental-not-admitted:comparison-inventory-sha"
+                && inventoryMoved.Launches.SequenceEqual(roster.Select(c => c.Id)) && NoPublisher(inventoryMoved.World), "s6-inventory-sha-mismatch",
+                cut.CoverageScope + " " + cut.IncrementalReason + " " + string.Join(",", inventoryMoved.Launches));
+        }
+
+        // Review r2 D-8 (N6): a comparison whose owed set is absent, not an object, or edited after its digest never admits;
+        // the cut runs the whole roster Full and publishes nothing. An absent owed set is never read as "no later obligations".
+        string Comparison(ReleaseCutWorld w) => Path.Combine(RcIncrementalCut.IncrementalRoot(w.Release), "comparison.json");
+        void EditComparison(ReleaseCutWorld w, Action<JsonObject> edit)
+        {
+            var node = JsonNode.Parse(File.ReadAllText(Comparison(w)))!.AsObject();
+            edit(node);
+            File.WriteAllText(Comparison(w), node.ToJsonString());
+        }
+        (string Reason, string Detail) Refused(string prefix, string runId, Action<JsonObject> edit, bool laterFail = false)
+        {
+            var world = Setup(prefix, laterFail: laterFail);
+            using (world.World)
+            {
+                EditComparison(world.World, edit);
+                var cut = world.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = runId; });
+                var ranFull = cut.CoverageScope == "Full" && world.World.Runs.Single().SelectionMode == "Full" && world.Launches.SequenceEqual(roster.Select(c => c.Id))
+                    && world.Last()?.Carried.Count == 0 && cut.Tested && !cut.Published && NoPublisher(world.World);
+                return (ranFull ? cut.IncrementalReason : "not-full:" + cut.CoverageScope + ":" + cut.IncrementalReason,
+                    runId + "=" + cut.CoverageScope + " " + cut.IncrementalReason + " launched=" + string.Join(",", world.Launches) + " carried=" + Carried(world.Last()));
+            }
+        }
+        var emptyOwedDigest = RcComparisonBaseline.OwedDigest(new Dictionary<string, string>());
+        // Both fields dropped (a pre-r2 or torn writer), and the owed set dropped while the empty-set digest is kept.
+        var owedGone = Refused("c1836-owed-gone", "owed-gone-run", c => { c.Remove("owed"); c.Remove("owedDigest"); });
+        var owedGoneDigestKept = Refused("c1836-owed-empty", "owed-empty-run", c => { c.Remove("owed"); c["owedDigest"] = emptyOwedDigest; });
+        var owedNull = Refused("c1836-owed-null", "owed-null-run", c => { c["owed"] = null; c["owedDigest"] = emptyOwedDigest; });
+        rows.Check(new[] { owedGone, owedGoneDigestKept, owedNull }.All(r => r.Reason == "incremental-not-admitted:comparison-owed-absent"), "s6-comparison-owed-absent",
+            owedGone.Detail + " | " + owedGoneDigestKept.Detail + " | " + owedNull.Detail);
+
+        // Group 136's shape hidden by hand: the later c4 FAIL is deleted from the owed set but the recorded digest kept; and a digest dropped.
+        var owedEdited = Refused("c1836-owed-edit", "owed-edit-run", c => c["owed"]!.AsObject().Remove(roster[3].ContentDigest), laterFail: true);
+        var digestGone = Refused("c1836-owed-digest", "owed-digest-run", c => c.Remove("owedDigest"));
+        rows.Check(owedEdited.Reason == "incremental-not-admitted:comparison-owed-digest" && digestGone.Reason == "incremental-not-admitted:comparison-owed-digest",
+            "s6-comparison-owed-digest", owedEdited.Detail + " | " + digestGone.Detail);
+
+        // Group 136's shape: an earlier clean inventory at the same SHA, then a later partial attempt where c4 FAILed.
+        var later = Setup("c1836-later", laterFail: true);
+        using (later.World)
+        {
+            var cut = later.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "later-run-a"; });
+            var reasons = later.Last() == null ? Array.Empty<string>() : PlanReasons(later.World, "later-run-a", "c4");
+            rows.Check(cut.CoverageScope == "Incremental" && Sorted(later.Launches).SequenceEqual(["c2", "c3", "c4", "c5"]) && Carried(later.Last()) == "c1"
+                && reasons.Contains("later-open:later-run:FAIL"), "s6-later-fail-same-sha",
+                cut.IncrementalReason + " launched=" + string.Join(",", later.Launches) + " carried=" + Carried(later.Last()) + " c4=" + string.Join(",", reasons));
+        }
+
+        var linux = Setup("c1836-platform", platformOf: i => i == 1 ? "linux" : "windows");
+        using (linux.World)
+        {
+            var cut = linux.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "platform-run"; });
+            var reasons = linux.Last() == null ? Array.Empty<string>() : PlanReasons(linux.World, "platform-run", "c1");
+            rows.Check(cut.CoverageScope == "Incremental" && Sorted(linux.Launches).SequenceEqual(["c1", "c2", "c3", "c5"]) && Carried(linux.Last()) == "c4"
+                && reasons.Contains("platform:linux"), "s6-foreign-platform-owed",
+                "launched=" + string.Join(",", linux.Launches) + " carried=" + Carried(linux.Last()) + " c1=" + string.Join(",", reasons));
+        }
+
+        // Review r2 D-7: a same-SHA receipt sealed under another profile (nightly) is owed in an rc hop.
+        var nightly = Setup("c1836-profile", profileOf: i => i == 1 ? "nightly" : "rc");
+        using (nightly.World)
+        {
+            var cut = nightly.World.Cut(o => { o.SelectionMode = "Incremental"; o.RunId = "profile-run"; });
+            var reasons = nightly.Last() == null ? Array.Empty<string>() : PlanReasons(nightly.World, "profile-run", "c1");
+            rows.Check(cut.CoverageScope == "Incremental" && Sorted(nightly.Launches).SequenceEqual(["c1", "c2", "c3", "c5"]) && Carried(nightly.Last()) == "c4"
+                && reasons.Contains("profile:nightly"), "s6-foreign-profile-owed",
+                "launched=" + string.Join(",", nightly.Launches) + " carried=" + Carried(nightly.Last()) + " c1=" + string.Join(",", reasons));
+        }
+
+        // The hop itself: clean receipts from another commit, and a carried row whose origin is not the bound baseline.
+        var hop = Setup("c1836-origin");
+        using (hop.World)
+        {
+            var prior = Path.Combine(hop.World.Release, "prior");
+            System.Collections.IDictionary Clean(int i, string sha, string disposition = "executed") => new System.Collections.Specialized.OrderedDictionary
+            {
+                ["id"] = "antiphon", ["chunk"] = "c" + i, ["result"] = "pass", ["exitCode"] = 0, ["timedOut"] = false, ["skipped"] = false,
+                ["evidenceReasons"] = Array.Empty<object>(), ["trx"] = "c" + i + ".trx", ["sha"] = sha, ["contentDigest"] = roster[i - 1].ContentDigest,
+                ["disposition"] = disposition, ["runId"] = "prior-run", ["platform"] = "windows", ["architecture"] = RcReceiptScope.CurrentArchitecture(), ["profile"] = "rc",
+            };
+            (List<string> Launched, RcIncrementalExecution Exec) Hop(string name, string baseline, string inventorySha, params System.Collections.IDictionary[] inventoryRows)
+            {
+                var path = Path.Combine(prior, name + "-receipts.json");
+                var digest = RcChunkReceipt.Seal(path, inventorySha, 1, inventoryRows);
+                var options = new NightlyRunOptions
+                {
+                    RunId = name, RequestedSelectionMode = "Incremental", SelectionMode = "Full", ExpectedSha = hop.World.Sha, Profile = "rc",
+                    IncrementalApprovalDigest = new string('a', 64), IncrementalBaselineSha = baseline, IncrementalInventoryPath = path, IncrementalInventoryDigest = digest,
+                    IncrementalOwedDigest = RcComparisonBaseline.OwedDigest(new Dictionary<string, string>()),
+                };
+                var launched = new List<string>();
+                var exec = RcIncrementalCut.Execute(options, roster, Path.Combine(hop.World.CandidateRoot, "attempts", name), c =>
+                {
+                    launched.Add(c.Id);
+                    return new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = "pass", ["exitCode"] = 0 };
+                }, platform: "windows");
+                return (launched, exec);
+            }
+            var cross = Hop("cross", other, other, Clean(1, other), Clean(4, other));
+            rows.Check(cross.Exec.Refusal == "" && Sorted(cross.Launched).SequenceEqual(roster.Select(c => c.Id)) && cross.Exec.Carried.Count == 0 && cross.Exec.Reconciled,
+                "s6-cross-source-executes", cross.Exec.Refusal + " launched=" + string.Join(",", cross.Launched) + " carried=" + Carried(cross.Exec));
+            var origin = Hop("origin", hop.World.Sha, hop.World.Sha, Clean(1, other, "carried"), Clean(4, hop.World.Sha));
+            rows.Check(origin.Exec.Refusal == "" && Sorted(origin.Launched).SequenceEqual(["c1", "c2", "c3", "c5"]) && Carried(origin.Exec) == "c4"
+                && PlanReasons(hop.World, "origin", "c1").Contains("origin-sha:" + other), "s6-origin-sha-mismatch",
+                origin.Exec.Refusal + " launched=" + string.Join(",", origin.Launched) + " carried=" + Carried(origin.Exec));
+
+            // Full: AllGreen is computed from the launched rows, never a constant.
+            // Review r2 A-8 (N9): a launch that returns no row is not green either.
+            RcIncrementalExecution FullRun(string name, string red, bool noRow = false) => RcIncrementalCut.Execute(new NightlyRunOptions(), roster,
+                Path.Combine(hop.World.CandidateRoot, "attempts", name),
+                c => noRow && c.Id == red ? null!
+                    : new System.Collections.Specialized.OrderedDictionary { ["chunk"] = c.Id, ["result"] = c.Id == red ? "FAIL" : "pass", ["exitCode"] = c.Id == red ? 1 : 0 },
+                platform: "windows");
+            var fullRed = FullRun("full-red", "c3");
+            var fullGreen = FullRun("full-green", "");
+            var fullNoRow = FullRun("full-no-row", "c3", noRow: true);
+            rows.Check(fullRed.CoverageScope == "Full" && fullRed.Launched.Count == roster.Length && !fullRed.AllGreen && fullGreen.AllGreen
+                && fullNoRow.Launched.Count == roster.Length && !fullNoRow.AllGreen, "s6-full-red-is-red",
+                "red=" + fullRed.AllGreen + " green=" + fullGreen.AllGreen + " no-row=" + fullNoRow.AllGreen);
+        }
+
+        rows.ShouldAllPass(19, "s6-gate-closed-full", "s6-gate-admitted-owed-only", "s6-no-publication", "s6-explicit-full-publishes", "s6-default-full",
+            "s6-stale-plan-digest", "s6-hop-mismatch", "s6-age-boundary", "s6-crash-resume", "s6-rollback", "s6-inventory-sha-mismatch", "s6-later-fail-same-sha",
+            "s6-foreign-platform-owed", "s6-cross-source-executes", "s6-origin-sha-mismatch", "s6-full-red-is-red", "s6-comparison-owed-absent",
+            "s6-comparison-owed-digest", "s6-foreign-profile-owed");
+    }
+
     [Test]
     public void Refuses_a_ref_that_is_not_a_long_lived_rc_ref_before_anything_is_read()
     {
