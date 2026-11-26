@@ -61,7 +61,7 @@ runner/platform pins. No full-assembly selection or unbounded class is run.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | Recut | `tests/Antiphon.Tests -> bin-c1540-recut-final/` | master-recut | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)/(C1483_S1_*)\|(C1483_S2_*)\|(C1483_S3_*)\|(C1483_S4_*)\|(C1483_S5_*)\|(C1528_*)\|(C1540_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-1..V-8 R-1..R-6 full evaluation and pins, C1380 acceptance | all passed, 0 failed/skipped | 80 | 22 |
+| CP-1 | Recut | `tests/Antiphon.Tests -> bin-c1540-recut-final/` | master-recut | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/(C1483_S1_*)\|(C1483_S2_*)\|(C1483_S3_*)\|(C1483_S4_*)\|(C1483_S5_*)\|(C1528_*)\|(C1540_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_DocsOnlyRebasedLandRecordsNonCodeSkip*)` | V-1..V-8 R-1..R-6 full evaluation and pins, C1380 acceptance | all passed, 0 failed/skipped | 80 | 22 |
 
 Run the checkpoint tool with --plan <this file> --after Recut
 --expected-source-sha <committed HEAD> --total-timeout 30m. Wait to terminal exit,

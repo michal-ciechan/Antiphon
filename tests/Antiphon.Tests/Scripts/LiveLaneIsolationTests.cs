@@ -322,7 +322,7 @@ public class LiveLaneIsolationTests
         LiveClaudeParityCases.Run(context,captures,expected);
         LiveClaudeProfileMutants.Parity(context,captures,expected);
     }
-    private static AgentLaunchSpec Production(LiveClaudePortableContext context,string model)
+    internal static AgentLaunchSpec Production(LiveClaudePortableContext context,string model)
     {
         using var doc=JsonDocument.Parse(LiveClaudeExecutableAudit.Read("server/appsettings.json"));
         var definition=doc.RootElement.GetProperty("Agents").GetProperty("Definitions").GetProperty("claude");

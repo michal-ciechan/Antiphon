@@ -2,6 +2,7 @@ using Antiphon.Tests.Infrastructure;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Antiphon.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -22,12 +23,41 @@ public sealed class PlanCheckpointClassSelectionGuardTests
     [Test]
     public void C2082_Repository_readers_belong_to_the_invariant_namespace()
     {
-        var readers = RepositoryInvariantAudit.Scan(DockerStackDocuments.RepoRoot);
+        var root = DockerStackDocuments.RepoRoot;
+        var readers = RepositoryInvariantAudit.Scan(root);
         readers.ShouldContain(reader => reader.Method == "EveryLiveGateHasDisposition"
             && reader.Input.Contains("LiveLaneGateScan.Matrix", StringComparison.Ordinal),
             "the live checkout must expose the live-gate source inventory");
         var unclassified = readers.Where(reader => !reader.Designated).Select(reader => reader.ToString()).ToArray();
         unclassified.ShouldBeEmpty("Repository readers need both invariant designations:\n" + string.Join('\n', unclassified));
+
+        var historical = PlanTableImporter.ImportFile(Path.Combine(root,
+            "docs/superpowers/plans/2026-10-29-card-1610-failed-task-live-session-plan.md"));
+        historical.ExitCode.ShouldBe(0, historical.Error);
+        var rows = historical.Manifest.ShouldNotBeNull().Checkpoints;
+        foreach (var (row, type, floor) in new[]
+        {
+            ("CP-45", typeof(LandDeliveryWaitRoutingTests), 44),
+            ("CP-81", typeof(BuildOutputNestingTests), 249),
+        })
+        {
+            var selected = rows.Single(checkpoint => checkpoint.Id == row);
+            selected.MinExecuted.ShouldBe(floor, row);
+            selected.Filter.ShouldNotBeNull().Split('/')[3].ShouldContain(type.Name, row);
+            type.Namespace.ShouldBe("Antiphon.Tests.Invariants");
+        }
+        var stagedHelpers = typeof(BuildOutputNestingTests).GetMethod(nameof(BuildOutputNestingTests.Own_output_stages_helper_program));
+        stagedHelpers.ShouldNotBeNull().GetCustomAttributesData().Count(a => a.AttributeType.Name == "ArgumentsAttribute").ShouldBe(11);
+        foreach (var project in new[] { "Antiphon.Tests", "Antiphon.SessionRunner.Tests" })
+        {
+            var projectFile = XDocument.Load(Path.Combine(root, "tests", project, project + ".csproj"));
+            projectFile.Descendants("Compile").Select(item => ((string?)item.Attribute("Include"))?.Replace('\\', '/'))
+                .ShouldContain("../Shared/TestClassificationGuardTests.cs", project);
+        }
+
+        var classAudit = PlanCheckpointClassAudit.Run(root);
+        classAudit.Unresolved.ShouldBeEmpty(string.Join('\n', classAudit.Unresolved));
+        classAudit.UnusedRetirements.ShouldBeEmpty(string.Join('\n', classAudit.UnusedRetirements));
     }
 
     [Test]
