@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 159,
+      "classes": 160,
       "reason": "cap",
-      "owed": 134,
+      "owed": 135,
       "first": [
         "CardFilePrivacyOwnershipTests",
         "CardFilePrivacyPersistenceTests",
@@ -26326,6 +26326,12 @@
       "path": "tests/Antiphon.Tests/Scripts/PosixHarnessToolTests.cs",
       "classes": [
         "RcCoverageAdmissionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ProvenReplayWorld.cs",
+      "classes": [
+        "IncrementalSelectionSoundnessTests"
       ]
     },
     {

@@ -65,6 +65,31 @@ public sealed class IncrementalSelectionSoundnessTests
         }
         identities.Order(StringComparer.Ordinal).SequenceEqual(["l1", "l2"], StringComparer.Ordinal).ShouldBeTrue("P.records");
         records.Select(record => record.GetProperty("missId").GetString()).Distinct().Count().ShouldBe(2);
+        var firstPath = records[0].GetProperty("path").GetString()!;
+        var firstBytes = File.ReadAllBytes(Path.Combine(output, firstPath));
+        using var firstDocument = JsonDocument.Parse(firstBytes);
+        var observation = firstDocument.RootElement.GetProperty("observation").Deserialize<RcSelectionMissObservation>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var identical = await Task.WhenAll(Enumerable.Range(0, 2)
+            .Select(_ => Task.Run(() => RcSelectionMiss.Record(output, observation), cancellationToken)));
+        identical.Select(record => record.MissId).Distinct().Single().ShouldBe(records[0].GetProperty("missId").GetString(), "P.atomic");
+        Should.Throw<InvalidDataException>(() => RcSelectionMiss.Record(output, observation with { Attribution = "wrongly-dropped" }));
+        File.ReadAllBytes(Path.Combine(output, firstPath)).ShouldBe(firstBytes, "P.conflict");
+        var revision = RcSelectionMiss.AppendDisposition(output, records[0].GetProperty("missId").GetString()!,
+            DigestBytes(firstBytes), new("unresolved", null, null, null, null, null, null));
+        using var revisionDocument = Read(output, revision.Path);
+        revisionDocument.RootElement.GetProperty("status").GetString().ShouldBe("open", "P.revision");
+        revisionDocument.RootElement.GetProperty("observationSha").GetString().ShouldBe(DigestBytes(firstBytes));
+        File.ReadAllBytes(Path.Combine(output, firstPath)).ShouldBe(firstBytes, "P.revision immutable observation");
+        var unavailable = world.Output("unavailable");
+        Directory.CreateDirectory(unavailable);
+        File.WriteAllText(Path.Combine(unavailable, "misses"), "fixture fault");
+        Should.Throw<IOException>(() => RcSelectionMiss.Record(unavailable, observation));
+        var manifest = string.Concat(records.OrderBy(record => record.GetProperty("missId").GetString(), StringComparer.Ordinal)
+            .Select(record => record.GetProperty("missId").GetString() + " " +
+                DigestBytes(File.ReadAllBytes(Path.Combine(output, record.GetProperty("path").GetString()!))) + "\n"));
+        verdict.RootElement.GetProperty("missRecordSetDigest").GetString().ShouldBe(
+            DigestBytes(System.Text.Encoding.UTF8.GetBytes(manifest)), "P.evidence set digest");
 
         var clean = world.Output("clean");
         Replay(world.Input("clean", fails: false), clean, true).ShouldBe(0, "P.clean");
@@ -72,6 +97,10 @@ public sealed class IncrementalSelectionSoundnessTests
         cleanVerdict.RootElement.GetProperty("enables").GetBoolean().ShouldBeFalse();
         var initial = "predictions/3.json";
         var resolved = "predictions/3.resolved.json";
+        using var access = Read(output, "runs/3/outcome-access.json");
+        access.RootElement.EnumerateArray().Select(read =>
+            read.GetProperty("purpose").GetString() + "/" + read.GetProperty("chunk").GetString())
+            .SequenceEqual(["score/left", "score/right"], StringComparer.Ordinal).ShouldBeTrue("P.outcome access");
         File.ReadAllBytes(Path.Combine(clean, initial)).ShouldBe(File.ReadAllBytes(Path.Combine(output, initial)), "P.blind");
         File.ReadAllBytes(Path.Combine(clean, resolved)).ShouldBe(File.ReadAllBytes(Path.Combine(output, resolved)), "P.resolved");
         DigestBytes(File.ReadAllBytes(Path.Combine(output, resolved))).ShouldBe(
@@ -90,6 +119,30 @@ public sealed class IncrementalSelectionSoundnessTests
         using var unknownRecord = Read(unknown, unknownFile);
         unknownRecord.RootElement.GetProperty("observation").GetProperty("case").GetProperty("kind").GetString()
             .ShouldBe("chunk-unknown-case");
+        var corrupt = world.Input("corrupt", fails: false);
+        File.AppendAllText(Path.Combine(corrupt, "type-graphs", world.Sha(3) + ".json"), "\n");
+        Replay(corrupt, world.Output("corrupt"), true).ShouldBe(2, "P.invalid artifact");
+
+        var gap = world.Input("gap", fails: false);
+        var custodyPath = Path.Combine(gap, "custody.json");
+        var custody = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(custodyPath))!;
+        custody["runs"]!.AsArray().RemoveAt(2);
+        File.WriteAllText(custodyPath, custody.ToJsonString());
+        ProvenReplayWorld.Seal(gap);
+        Replay(gap, world.Output("gap"), true).ShouldBe(2, "P.cohort");
+
+        var owed = world.Input("owed", fails: true);
+        var thirdPlan = Path.Combine(owed, "runs", "r3000000", "logs", "groups-planned.json");
+        var chunkPlan = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(thirdPlan))!;
+        chunkPlan["census"] = JsonSerializer.SerializeToNode(
+            new[] { new { reader = "L.LeftTests", globs = new[] { ProvenReplayWorld.Changed } } });
+        File.WriteAllText(thirdPlan, chunkPlan.ToJsonString());
+        ProvenReplayWorld.Seal(owed);
+        var owedOutput = world.Output("owed");
+        Replay(owed, owedOutput, true).ShouldBe(3, "P.opportunity all owed");
+        using var owedVerdict = Read(owedOutput, "verdict.json");
+        owedVerdict.RootElement.GetProperty("proofDependentCarries").GetInt32().ShouldBe(0);
+        owedVerdict.RootElement.GetProperty("caughtFailures").GetArrayLength().ShouldBe(1);
 
         int Replay(string custody, string destination, bool enabled)
         {

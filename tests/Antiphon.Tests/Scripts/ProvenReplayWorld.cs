@@ -203,6 +203,11 @@ internal sealed class ProvenReplayWorld : IDisposable
             predecessor = new { run8 = RunKey(0), runId = RunId(0), stamp = "2026-11-20-0100", sha = _shas[0] },
             repository = "card-2076-fixture", line = "rc", missing = Array.Empty<string>(),
         });
+        NightlyFixture.WriteJson(Path.Combine(root, "state", "qualification-cohort.json"), new
+        {
+            asOf = AsOf, repository = "card-2076-fixture", line = "rc",
+            runIds = Enumerable.Range(1, 5).Select(RunId), predecessorRun = RunId(0), predecessorSha = _shas[0],
+        });
         Seal(root);
         return root;
     }
