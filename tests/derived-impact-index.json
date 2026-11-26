@@ -2210,34 +2210,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeGit.cs",
-      "classes": 38,
+      "classes": 39,
       "reason": "cap",
-      "owed": 13,
+      "owed": 14,
       "first": [
+        "MeasureSessionStateCacheScriptTests",
         "PgQpsTests",
         "PostgresJitWindowTests",
         "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcStoppedRunSeedTests",
         "ReleaseStatusTests",
-        "ReviewEngineScriptsTests",
-        "RunnerRestartOsTests"
+        "ReviewEngineScriptsTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/FakeProcessTable.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
+        "PtyHostReaperTests",
         "QualificationEtaTests",
         "RcRunEvidenceTests",
         "ReleaseGatePlatformTests",
         "ReleaseGateRunTests",
         "RepositoryChildRecoveryCommandTests",
         "ReviewEngineScriptsTests",
-        "RunnerRestartOsTests",
-        "ServerDockerInputsTests"
+        "RunnerRestartOsTests"
       ]
     },
     {
@@ -2274,18 +2274,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 58,
+      "classes": 59,
       "reason": "cap",
-      "owed": 33,
+      "owed": 34,
       "first": [
+        "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
         "ClientChecksTests",
         "ClientModeTests",
         "DaemonBuildCheckTests",
         "DesktopPostgresTests",
         "ExpectedDurationSyncTests",
-        "ImpactIndexRegenerationTests",
-        "KeepSixCommandTests"
+        "ImpactIndexRegenerationTests"
       ]
     },
     {
@@ -2986,6 +2986,7 @@
     {
       "path": "docker-compose.dev.yml",
       "classes": [
+        "AntiphonCliLauncherTests",
         "AppHostWatchdogTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
@@ -25912,6 +25913,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/AutostartInstallTests.cs",
+      "classes": [
+        "AntiphonCliLauncherTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/BoardCommandRun.cs",
       "classes": [
         "CapabilityScriptTests",
@@ -26209,6 +26216,7 @@
       "classes": [
         "AgentTuiSmokeScriptTests",
         "AmServiceDeployReadinessTests",
+        "AntiphonCliLauncherTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
@@ -26224,7 +26232,6 @@
         "KeepSixCommandTests",
         "LandAuditToolResolverTests",
         "LinuxCompilerMeasureTests",
-        "MeasureSessionStateCacheScriptTests",
         "NightlyRunTests",
         "NightlyTestHelpersTests",
         "NightlyVerificationContractTests",
@@ -26239,6 +26246,7 @@
       "classes": [
         "AgentTuiSmokeScriptTests",
         "AmServiceDeployReadinessTests",
+        "AntiphonCliLauncherTests",
         "AntiphonLogsTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
@@ -26260,8 +26268,7 @@
         "NightlyVerificationContractTests",
         "OrchestrationWatcherTests",
         "PgQpsTests",
-        "PostgresJitWindowTests",
-        "PtyHostReaperTests"
+        "PostgresJitWindowTests"
       ]
     },
     {
@@ -26426,6 +26433,7 @@
       "classes": [
         "AgentTuiSmokeScriptTests",
         "AmServiceDeployReadinessTests",
+        "AntiphonCliLauncherTests",
         "AntiphonLogsTests",
         "AppHostWorktreeGuardTests",
         "AutostartInstallTests",
@@ -26433,7 +26441,6 @@
         "C1744G3PhoneHomeSupervisionTests",
         "Card0490BootDiskTests",
         "CheckpointToolCommandTests",
-        "ClassCostMeasurementTests",
         "DaemonSupervisorTests",
         "DeployLocalTests",
         "LandGraphCommandTests",
