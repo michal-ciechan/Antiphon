@@ -131,6 +131,15 @@ public sealed class IncrementalSelectionSoundnessTests
         ProvenReplayWorld.Seal(gap);
         Replay(gap, world.Output("gap"), true).ShouldBe(2, "P.cohort");
 
+        var duplicate = world.Input("duplicate-attempt", fails: false);
+        var duplicatePath = Path.Combine(duplicate, "runs", "r3000000", "attempt", "selection-attempt.json");
+        File.WriteAllText(duplicatePath, JsonSerializer.Serialize(new
+        {
+            runId = ProvenReplayWorld.RunId(3), attemptId = ProvenReplayWorld.RunId(2),
+        }));
+        ProvenReplayWorld.Seal(duplicate);
+        Replay(duplicate, world.Output("duplicate-attempt"), true).ShouldBe(2, "P.cohort duplicate attempt");
+
         var owed = world.Input("owed", fails: true);
         var thirdPlan = Path.Combine(owed, "runs", "r3000000", "logs", "groups-planned.json");
         var chunkPlan = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(thirdPlan))!;
