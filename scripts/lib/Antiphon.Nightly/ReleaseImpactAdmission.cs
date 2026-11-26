@@ -55,8 +55,26 @@ public static partial class ReleaseImpactAdmission
     public static Decision Admit(Request request, IReadOnlyList<Chunk>? discovery, Func<Stream> openProposal,
         EvidenceSnapshot? snapshot = null, int envelopeLimit = ReleaseImpactIntegrity.EnvelopeLimit)
     {
-        // The first witness must demonstrate that conservative Full alone loses the bounded proposal.
-        return Full(discovery, "p2-incomplete:admission");
+        if (snapshot is null || discovery is null) return Full(discovery, "p2-incomplete:independent-evidence");
+        if (snapshot.Request != request) return Full(discovery, "p2-context:revision");
+        if (!SameDiscovery(discovery, snapshot.Chunks)) return Full(discovery, "p2-selection:roster");
+        try
+        {
+            using var stream = openProposal();
+            var proposed = ReleaseImpactIntegrity.Decode(stream, snapshot.FoldedPaths, snapshot.OpenProof, envelopeLimit);
+            var mismatch = snapshot.Match(proposed);
+            if (mismatch is not null) return Full(discovery, mismatch);
+            if (!snapshot.Complete) return Full(discovery, "p2-incomplete:selection");
+            return new Decision(new Verified(request, proposed.RootDigest), snapshot.Rows, false, "");
+        }
+        catch (ReleaseImpactIntegrity.WireException error)
+        {
+            return Full(discovery, (error.IsAddress ? RoleFamily(error.Component) : "p2-format") + ":" + error.Component);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return Full(discovery, "p2-format:read");
+        }
     }
 
     public static Decision AdmitPrepared(Request request, IReadOnlyList<Chunk>? discovery, Func<Stream> openProposal,

@@ -109,16 +109,25 @@ public static partial class ReleaseImpactAdmission
                 (!row.Contains("attempt") || pin.Attempt == PsOps.ToInt(row["attempt"])) &&
                 RcChunkReceipt.IsDigest(pin.InventorySeal), "p2-receipt:origin");
             Require(git.Commit(pin.Sha) && git.Ancestor(pin.Sha, inventory.Sha), "p2-receipt:origin-ancestry");
+            IDictionary execution = row;
             if (disposition == "executed")
                 Require(pin.Sha == inventory.Sha && pin.InventorySeal == inventory.Artifact.Digest &&
                     pin.RunId == inventory.RunId && pin.Attempt == inventory.Attempt, "p2-receipt:original-inventory");
             else
-                Require(pin.InventorySeal == Text(row, "originReceiptDigest"), "p2-receipt:carried-origin");
+            {
+                var original = pin.OriginalInventory ?? throw new Refusal("p2-receipt:original-inventory");
+                Require(pin.InventorySeal == original.Artifact.Digest && pin.InventorySeal == Text(row, "originReceiptDigest") &&
+                    pin.Sha == original.Sha && pin.RunId == original.RunId && pin.Attempt == original.Attempt, "p2-receipt:carried-origin");
+                execution = custody.Inventory(original).Rows.SingleOrDefault(candidate => Text(candidate, "chunk") == chunk.Id)
+                    ?? throw new Refusal("p2-receipt:original-row");
+                Require(Text(execution, "disposition") == "executed" && Text(execution, "sha") == pin.Sha &&
+                    Text(execution, "contentDigest") == actualContent, "p2-receipt:original-row");
+            }
 
             // Resolve only a qualification-owned execution pin. Verify and parse the same buffered stream bytes.
             using var evidence = new MemoryStream(custody.Read(pin.Evidence), writable: false);
             observed = RcChunkReceipt.ReadTrx(evidence, strict: true) ?? throw new Refusal("p2-receipt:trx");
-            var candidate = RcChunkReceipt.Reusable(row, observed, chunk.Cases.Select(c => c.CaseUid), scope);
+            var candidate = RcChunkReceipt.Reusable(execution, observed, chunk.Cases.Select(c => c.CaseUid), scope);
             var exact = observed.Select(c => (c.CaseKey, c.Class, c.Method))
                 .OrderBy(key => key, CaseTupleComparer.Instance)
                 .SequenceEqual(chunk.Cases.Select(c => (c.CaseUid, c.Class, c.Method)).OrderBy(key => key, CaseTupleComparer.Instance));

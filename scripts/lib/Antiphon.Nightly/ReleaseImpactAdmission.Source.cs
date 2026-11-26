@@ -212,6 +212,8 @@ public static partial class ReleaseImpactAdmission
         Require(graph.FallbackReasons.Length == 0, "p2-incomplete:project-graph:" + side);
 
         var contract = TestSelection.Contract(authority.RepositoryRoot, tree.Sha, authority.ObservedTarget.Profile);
+        var policy = ExecutionPolicy.Parse(tree.Text(TestSelection.PolicyPath));
+        Require(policy.SelectionCatalog?.Path == TestSelection.CatalogPath, "p2-input:compatibility:" + side);
         Require(contract["platform"] as string == authority.ObservedTarget.Os, "p2-incomplete:target-contract:" + side);
         return new SideSource(tree, evaluation, graph, edges, capped, indexWire, Json(new
         {
