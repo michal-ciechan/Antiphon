@@ -138,7 +138,7 @@ public sealed class ReleaseImpactRelationTests
             "System.Threading", "System.Threading.Tasks"];
         var expectedImplicit = implicitNamespaces.Select(name => $"global using {name};").ToArray();
         sdk.Generated[0].ShouldBe(SdkOutput(["global using North;", ..expectedImplicit]), "IU actual SDK bytes");
-        sdk.Generated[1].ShouldBe(SdkOutput(["global using P = North.Probe;", ..expectedImplicit]), "IU actual SDK alias bytes");
+        sdk.Generated[1].ShouldBe(SdkOutput([..expectedImplicit, "global using P = North.Probe;"]), "IU actual SDK alias bytes");
         sdk.Generated[2].ShouldBe(SdkOutput(["global using North;", "global using South;", ..expectedImplicit]), "IU actual SDK ambiguity bytes");
         ReleaseImpactTypeProofFixture.Context[] ImplicitContexts() =>
             [new(project, "T", [north, south, use, implicitPath], [], sdk.References)];
