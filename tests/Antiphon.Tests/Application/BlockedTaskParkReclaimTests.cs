@@ -40,7 +40,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         {
             f.Wire.Qualified = Idle(TimeSpan.Zero, null);
             await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-            var tip = await ParkedSourceAsync(f);
+            var tip = await f.ParkedSourceAsync();
             var ancientAt = f.Now.AddHours(-30);
             await using (var db = f.Db())
             {
@@ -221,7 +221,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, reclaim: true);
         f.Wire.Qualified = Idle(TimeSpan.Zero, null);
         await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-        await ParkedSourceAsync(f);
+        await f.ParkedSourceAsync();
         var ancientAt = f.Now.AddHours(-30);
         await using (var db = f.Db())
         {
@@ -467,7 +467,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         {
             f.Wire.Qualified = Idle(TimeSpan.FromMilliseconds(119_999), null);
             await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-            await ParkedSourceAsync(f);
+            await f.ParkedSourceAsync();
             var verifier = new RunnerWorkspaceParkService();
             f.Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: { } receipt }
                 && (await verifier.VerifySessionCheckoutAsync(receipt, receipt.Request.Path, default)).Receipt is not null;
@@ -876,7 +876,7 @@ public sealed partial class BlockedTaskParkReclaimTests
             configureDb: options => options.AddInterceptors(fault));
         f.Wire.Qualified = Idle(TimeSpan.Zero, null);
         await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-        await ParkedSourceAsync(f);
+        await f.ParkedSourceAsync();
         await AncientBlockAsync(f, f.TaskId);
         ArmPathVerifier(f);
         var rows = new List<Row> { new(f.TaskId, f.SessionId) };
@@ -1229,7 +1229,7 @@ public sealed partial class BlockedTaskParkReclaimTests
             configureDb: options => options.AddInterceptors(counter));
         f.Wire.Qualified = Idle(TimeSpan.Zero, null);
         await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-        await ParkedSourceAsync(f);
+        await f.ParkedSourceAsync();
         await AncientBlockAsync(f, f.TaskId);
         ArmPathVerifier(f);
         var second = await SeedBlockedAsync(f, "second");
@@ -1358,7 +1358,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         {
             f.Wire.Qualified = Idle(TimeSpan.Zero, null);
             await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-            await ParkedSourceAsync(f);
+            await f.ParkedSourceAsync();
             var ancientAt = f.Now.AddHours(-30);
             await using (var db = f.Db())
             {
@@ -1567,14 +1567,6 @@ public sealed partial class BlockedTaskParkReclaimTests
             Goal = "same agent, other session", Workspace = WorkspaceMode.Worktree
         });
         await db.SaveChangesAsync();
-    }
-
-    // The owned source with a delegate's parked tip already committed and published to origin (the fixture's
-    // parked-tip template), instead of four git processes per case; returns that tip.
-    private static async Task<string> ParkedSourceAsync(RunnerSeatReleaseFixture f, WorkspaceMode mode = WorkspaceMode.Worktree)
-    {
-        await f.CreateSourceAsync(mode, parkedTip: true);
-        return await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
     }
 
     private static Task StampAsync(RunnerSeatReleaseFixture f) => f.EditAsync((task, _) =>

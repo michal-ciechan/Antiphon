@@ -73,7 +73,6 @@ internal static partial class InProcessGitReads
         "diff-tree" => DiffTree(repo, a),
         "ls-tree" => LsTree(repo, a),
         "cat-file" => CatFileExists(repo, a),
-        "rev-list" => RevListCount(repo, a),
         _ => null,
     };
 
@@ -102,12 +101,14 @@ internal static partial class InProcessGitReads
     /// <see cref="Commit"/>). Anything else (an empty end, a symmetric difference, other options, a missing or
     /// non-commit end) is git's.
     /// </summary>
-    private static LandingGitResult? RevListCount(Repository repo, IReadOnlyList<string> a)
+    private static LandingGitResult? RevListCount(Repository repo, string repository, IReadOnlyList<string> a)
     {
         if (a is not ["rev-list", "--count", var range]) return null;
         var dots = range.IndexOf("..", StringComparison.Ordinal);
         if (dots <= 0 || dots + 2 >= range.Length || range.IndexOf("..", dots + 2, StringComparison.Ordinal) >= 0
             || range[dots + 2] == '.') return null;
+        // Without "--" git also reads the argument as a path: a file or directory of that name is its fatal ambiguity.
+        if (File.Exists(Path.Combine(repository, range)) || Directory.Exists(Path.Combine(repository, range))) return null;
         if (RangeEnd(repo, range[..dots]) is not { } from || RangeEnd(repo, range[(dots + 2)..]) is not { } to) return null;
         var filter = new CommitFilter
         {

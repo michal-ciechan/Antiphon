@@ -342,7 +342,9 @@ internal static partial class InProcessGitReads
                 return mergeBase?.Sha == ancestor.Sha ? Ok("") : Exit(1);
             }
 
-            case "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file" or "rev-list":
+            case "rev-list":
+                return RevListCount(repo, repository, a);
+            case "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file":
                 return MoreAnswer(repo, a);
         }
         return null;
@@ -471,6 +473,8 @@ internal static partial class InProcessGitReads
     /// </summary>
     private static LandingGitResult? Commit(Repository repo, string revision, bool peel)
     {
+        // A full id that is also a ref name: git reads the id but warns of the ambiguity, even under --quiet.
+        if (GitText.IsOid(revision) && PlainId(repo, revision) is null) return null;
         if (!(revision == "HEAD" || IsPlainRef(revision) || GitText.IsOid(revision)))
             return peel && ShortName(repo, revision) is { } full ? Commit(repo, full, peel) : null;
         // HEAD read another way too: git warns on stderr, of ambiguity unless --quiet, of a broken or dangling ref

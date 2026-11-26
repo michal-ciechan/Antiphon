@@ -1007,7 +1007,8 @@ public sealed partial class RunnerWorkspaceService
     /// <summary>
     /// libgit2's answer to a read git would print without writing to stderr (the server's
     /// <c>InProcessGitReads.TryAnswerSilently</c>: rev-parse, symbolic-ref, merge-base --is-ancestor, a status listing,
-    /// ls-files -v, ls-remote of a local-path remote, remote get-url judged against this child's environment), or null
+    /// ls-files -v, ls-remote of a local-path remote, remote get-url judged against this child's environment, cat-file -e of
+    /// a present object, rev-list --count &lt;a&gt;..&lt;b&gt;), or null
     /// to start git. Only for the real process starter (a test
     /// that injects one to fault, hold or count git still sees every command) and only where the child would read
     /// the repository libgit2 opens. Inspection runs (isolated config, no replace objects) always start git.

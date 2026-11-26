@@ -689,8 +689,7 @@ public sealed class BlockedTaskParkDeliveryTests
     {
         // The parked tip is committed on the owned branch and already on origin (cloned from its template), so Prepare's
         // push is up to date; that push's own cases are TaskParkPublicationTests'.
-        await f.CreateSourceAsync(parkedTip: true);
-        var tip = await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
+        var tip = await f.ParkedSourceAsync();
         await f.EditAsync((task, _) => task.ResultFilePath = "report.md");
         using var scope = f.Harness.Provider.CreateScope();
         var task = await f.TaskAsync();

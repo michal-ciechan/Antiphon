@@ -630,7 +630,7 @@ public sealed class BlockedTaskParkResumeTests
     private static async Task<string> PublishAsync(RunnerSeatReleaseFixture f,
         WorkspaceMode mode = WorkspaceMode.Worktree, bool handle = true)
     {
-        var tip = await ParkedSourceAsync(f, mode);
+        var tip = await f.ParkedSourceAsync(mode);
         await f.EditAsync((task, _) => task.ResultFilePath = "report.md");
         using var scope = f.Harness.Provider.CreateScope();
         var task = await f.TaskAsync();
@@ -650,14 +650,6 @@ public sealed class BlockedTaskParkResumeTests
         tip.ShouldNotBe(await f.GitAsync(task.RepoPath!, "rev-parse", "master"));
         tip.ShouldNotBe(task.WorktreeBaseSha);
         return tip;
-    }
-
-    // The owned source with a delegate's parked tip already committed and published to origin (the fixture's
-    // parked-tip template), instead of four git processes per case; returns that tip.
-    private static async Task<string> ParkedSourceAsync(RunnerSeatReleaseFixture f, WorkspaceMode mode = WorkspaceMode.Worktree)
-    {
-        await f.CreateSourceAsync(mode, parkedTip: true);
-        return await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
     }
 
     private static Task StampAsync(RunnerSeatReleaseFixture f) => f.EditAsync((task, _) =>

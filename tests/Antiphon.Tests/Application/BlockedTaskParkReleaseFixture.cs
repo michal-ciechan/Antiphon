@@ -40,6 +40,14 @@ internal sealed partial class RunnerSeatReleaseFixture
     public TaskParkPublicationTests.ParkGit SourceGit =>
         (TaskParkPublicationTests.ParkGit)Harness.Provider.GetRequiredService<ITaskProgressGit>();
 
+    /// <summary>The owned local source with a delegate's parked tip already committed and published to origin (the
+    /// parked-tip template), for reclaim and resume cases; returns that tip.</summary>
+    public async Task<string> ParkedSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree)
+    {
+        await CreateSourceAsync(mode, parkedTip: true);
+        return await GitAsync(SourcePath, "rev-parse", "HEAD");
+    }
+
     public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false, bool prePublished = false,
         bool parkedTip = false)
     {

@@ -297,6 +297,14 @@ public sealed class LibGit2VsGitDifferentialTests
         await fixture.RequiredAsync(repo, "update-ref", "refs/heads/" + fixture.SeedSha, head);
         await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", fixture.SeedSha);
         await CompareAsync(repo, Expect.Fallback, "rev-list", "--count", fixture.SeedSha + ".." + head);
+        await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", "--quiet", fixture.SeedSha + "^{commit}");
+        await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", fixture.SeedSha + "^{commit}");
+
+        // A file named like the range: without "--" git dies of the ambiguity (128).
+        await CompareAsync(repo, Expect.Answered, "rev-list", "--count", "master..refs/heads/side");
+        await File.WriteAllTextAsync(Path.Combine(repo, "master..HEAD"), "a path, not a range");
+        await CompareAsync(repo, Expect.Fallback, "rev-list", "--count", "master..HEAD");
+        (await GitAsync(repo, "rev-list", "--count", "master..HEAD")).ExitCode.ShouldBe(128);
     }
 
     [Test]
