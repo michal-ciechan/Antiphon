@@ -8,7 +8,13 @@
         "tests/live-lane-inputs.json",
         "scripts/lib/live-lane-*.ps1",
         "scripts/live-lane-status.ps1",
-        "scripts/run-live-lane.ps1"
+        "scripts/lib/Antiphon.LiveLane/**",
+        "Directory.Build.props",
+        "Directory.Build.targets",
+        "tests/Shared/CheckpointRepeat.targets",
+        "Directory.Build.rsp",
+        "global.json",
+        ".editorconfig"
       ],
       "minimumRoots": [
         "src/Antiphon.Agents.Pty/",
