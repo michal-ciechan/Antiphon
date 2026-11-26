@@ -12,6 +12,7 @@ using static Antiphon.Tests.Application.C1514HostLoadMigrationTests;
 namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
+[Category("Slow")]
 [Category("RepositoryInvariant")]
 [Timeout(60_000)]
 [ParallelLimiter<ProcessSpawnLimit>]

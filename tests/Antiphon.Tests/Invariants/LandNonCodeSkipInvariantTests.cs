@@ -21,6 +21,7 @@ using static Antiphon.Tests.Application.LandNonCodeSkipTests;
 namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
+[Category("Slow")]
 [Category("RepositoryInvariant")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LandNonCodeSkipInvariantTests

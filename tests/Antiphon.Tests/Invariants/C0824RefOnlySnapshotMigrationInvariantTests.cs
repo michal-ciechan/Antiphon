@@ -12,6 +12,7 @@ using static Antiphon.Tests.Application.C0824RefOnlySnapshotMigrationTests;
 namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
+[Category("Slow")]
 [Category("RepositoryInvariant")]
 public sealed class C0824RefOnlySnapshotMigrationInvariantTests
 {

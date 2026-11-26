@@ -15,6 +15,7 @@ using static Antiphon.Tests.Application.SessionTranscriptSummaryMigrationTests;
 namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
+[Category("Slow")]
 [Category("RepositoryInvariant")]
 [NotInParallel]
 public sealed class SessionTranscriptSummaryMigrationInvariantTests
