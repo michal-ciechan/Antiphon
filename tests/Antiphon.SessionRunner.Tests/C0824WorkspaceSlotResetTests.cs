@@ -59,6 +59,25 @@ public sealed class C0824WorkspaceSlotResetTests
     }
 
     [Test]
+    public async Task C0824_ResetClearsMergeRebaseAndSequencerState(CancellationToken ct)
+    {
+        // Each verb's own marker gates its abort; a shape it does not clear gets the full abort-then-quit sweep.
+        using var scratch = Create();
+        var pool = scratch.Pool();
+        var a = await pool.LeaseAsync(scratch.RequestA(), ct);
+        var gitDir = GitDir(a.Path);
+        File.WriteAllText(Path.Combine(gitDir, "MERGE_HEAD"), scratch.ShaA + "\n");
+        Directory.CreateDirectory(Path.Combine(gitDir, "rebase-merge"));
+        Directory.CreateDirectory(Path.Combine(gitDir, "sequencer"));
+        (await Release(pool, a, TaskA)).Outcome.ShouldBe("released");
+
+        var b = await pool.LeaseAsync(scratch.RequestB(), ct);
+        b.Path.ShouldBe(a.Path);
+        foreach (var gone in new[] { "MERGE_HEAD", "rebase-merge", "sequencer" })
+            Path.Exists(Path.Combine(GitDir(b.Path), gone)).ShouldBeFalse(gone + " absent");
+    }
+
+    [Test]
     public async Task C0824_WarmResetWipesEveryNonKeepListClass(CancellationToken ct)
     {
         // V-2. Every wiped class planted by A is gone for B; the accepted Q-3 residue survives.
