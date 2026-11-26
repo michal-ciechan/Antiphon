@@ -18247,6 +18247,7 @@
       "path": "src/Antiphon.HostCleanup/Checkpoints/ICheckpointCleanupIo.cs",
       "classes": [
         "AnchoredPathDeleteWitnessTests",
+        "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "OutputCleanupTests",
