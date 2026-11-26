@@ -78,6 +78,23 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
+    [Test, Timeout(30_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossGlobalUsings(CancellationToken cancellationToken)
+    {
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
+
+        var globals = World("", "_ = typeof(Probe);");
+        globals["tests/T/One.cs"] = "global using North;\n";
+        CheckTypeProof(fixture, cancellationToken, "GU.import", globals, [north]);
+        globals["tests/T/Two.cs"] = "global using South;\n";
+        CheckTypeProof(fixture, cancellationToken, "GU.ambiguous", globals, [north, south], refusal: "compiler-diagnostics");
+        var globalAlias = World("", "_ = typeof(P);");
+        globalAlias["tests/T/One.cs"] = "global using P = North.Probe;\n";
+        CheckTypeProof(fixture, cancellationToken, "GU.alias", globalAlias, [north]);
+    }
+
     [Test, Timeout(8_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners(CancellationToken cancellationToken)
     {
@@ -87,21 +104,12 @@ public sealed class ReleaseImpactRelationTests
         const string use = "tests/T/Use.cs";
         using var fixture = new ReleaseImpactTypeProofFixture();
 
-        var globals = World("", "_ = typeof(Probe);");
-        globals["tests/T/One.cs"] = "global using North;\n";
-        Check("GU.import", globals, [north]);
-        globals["tests/T/Two.cs"] = "global using South;\n";
-        Check("GU.ambiguous", globals, [north, south], refusal: "compiler-diagnostics");
-        var globalAlias = World("", "_ = typeof(P);");
-        globalAlias["tests/T/One.cs"] = "global using P = North.Probe;\n";
-        Check("GU.alias", globalAlias, [north]);
-
         const string otherProject = "tests/U/U.csproj";
         var linked = World("", "_ = typeof(Probe);");
         linked[otherProject] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
         linked["tests/T/One.cs"] = "global using North;\n";
         linked["tests/U/One.cs"] = "global using South;\n";
-        var linkedProof = Check("GU.owners", linked, [north], contexts:
+        var linkedProof = CheckTypeProof(fixture, cancellationToken, "GU.owners", linked, [north], contexts:
         [
             new(project, "T", [north, south, use, "tests/T/One.cs"], [], [fixture.Core]),
             new(otherProject, "U", [north, south, use, "tests/U/One.cs"], [], [fixture.Core]),
@@ -109,6 +117,14 @@ public sealed class ReleaseImpactRelationTests
         linkedProof.Refined.Edges.Single(edge => edge.Path == south).Classes
             .Where(consumer => consumer.Kinds.Contains("type", StringComparer.Ordinal))
             .Select(consumer => consumer.Project).ShouldBe([otherProject], "GU.owners U");
+    }
+
+    [Test, Timeout(30_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossExternAliases(CancellationToken cancellationToken)
+    {
+        const string project = "tests/T/T.csproj";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
 
         const string one = "src/One/One.csproj";
         const string two = "src/Two/Two.csproj";
@@ -132,19 +148,12 @@ public sealed class ReleaseImpactRelationTests
             new(one, "One", [oneSource], [], [fixture.Core]),
             new(two, "Two", [twoSource], [], [fixture.Core]),
         ];
-        Check("EX.left", externs, [oneSource], contexts: ExternContexts(refOne)).Sites
+        CheckTypeProof(fixture, cancellationToken, "EX.left", externs, [oneSource], contexts: ExternContexts(refOne)).Sites
             .Single(site => site.Origin.Name == "Probe").Assembly!.StartsWith("One,", StringComparison.Ordinal).ShouldBeTrue("EX.left assembly");
-        Check("EX.unbound", externs, [oneSource, twoSource], contexts: ExternContexts(refOne with { Aliases = ["Other"] }),
+        CheckTypeProof(fixture, cancellationToken, "EX.unbound", externs, [oneSource, twoSource], contexts: ExternContexts(refOne with { Aliases = ["Other"] }),
             refusal: "compiler-diagnostics");
         externs[use] = ConsumerSource("extern alias R;", "_ = typeof(R::Ident.Probe);");
-        Check("EX.right", externs, [twoSource], contexts: ExternContexts(refOne));
-
-        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
-            string[]? before = null, Dictionary<string, string>? generated = null,
-            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
-            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
-            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
-                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+        CheckTypeProof(fixture, cancellationToken, "EX.right", externs, [twoSource], contexts: ExternContexts(refOne));
     }
 
     [Test, Timeout(8_000)]
