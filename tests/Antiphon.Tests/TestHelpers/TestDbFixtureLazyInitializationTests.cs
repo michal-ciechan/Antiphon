@@ -178,7 +178,7 @@ public sealed class TestDbFixtureLazyInitializationTests
         var root = CreateOwnedRoot();
         var run = await LaunchProcessAsync(
             root,
-            "/*/*/CheckCompactionCrashTests/" + selected.Name,
+            "/*/*/CheckCompactionCrashTests/" + nameof(Application.CheckCompactionCrashTests.Resume_reservation_survives_crash_without_a_second_launch),
             extraEnv: new Dictionary<string, string?> { [marker] = "{" });
         run.Exit.ShouldBe(1, run.Stderr + run.Stdout);
         run.Stderr.ShouldContain(marker + " failed (dbLifecycle=never-requested)", Case.Sensitive, run.Stderr + run.Stdout);

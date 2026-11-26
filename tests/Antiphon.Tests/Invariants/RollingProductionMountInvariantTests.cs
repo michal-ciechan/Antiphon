@@ -26,8 +26,8 @@ public sealed class RollingProductionMountInvariantTests
             {
                 var current = models[project]!["services"]!["session-runner"]!["volumes"]!.AsArray();
                 var previous = models[project + "@" + C1008HostFixture.PreviousSha12]!["services"]!["session-runner"]!["volumes"]!.AsArray();
-                current.ShouldContain(IsTokenMount, project);
-                previous.ShouldNotContain(IsTokenMount, project);
+                current.Any(IsTokenMount).ShouldBeTrue(project);
+                previous.Any(IsTokenMount).ShouldBeFalse(project);
             }
         }
         finally
