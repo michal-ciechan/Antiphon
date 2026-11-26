@@ -39,6 +39,8 @@ public static partial class ReleaseImpactAdmission
 
     private static EvidenceSnapshot Derive(Request request, IReadOnlyList<Chunk> discovery, Authority authority)
     {
+        Require(!string.IsNullOrWhiteSpace(request.RepositoryId) && !string.IsNullOrWhiteSpace(request.Line) &&
+            !string.IsNullOrWhiteSpace(request.RunId), "p2-context:identity");
         var approval = authority.Approval;
         Require(approval.ApprovedRequest == request && !approval.Withdrawn && approval.ObservedAt <= approval.ValidUntil && approval.Watermark.Length > 0,
             "p2-context:approval");
@@ -224,9 +226,9 @@ public static partial class ReleaseImpactAdmission
         {
             foreach (var chunk in chunks.Cast<string?>().Prepend(null))
             {
-                Require(groups.Remove((side, chunk), out var entries), "p2-incomplete:observations");
+                if (!groups.Remove((side, chunk), out var entries)) throw new Refusal("p2-incomplete:observations");
                 var kinds = chunk is null ? TargetObservations : RcChunkDigest.RequiredReceipts;
-                Require(entries!.Select(input => input.Role).OrderBy(role => role, StringComparer.Ordinal)
+                Require(entries.Select(input => input.Role).OrderBy(role => role, StringComparer.Ordinal)
                     .SequenceEqual(kinds.OrderBy(kind => kind, StringComparer.Ordinal)) && entries.All(input =>
                         input.SourceSha == tree.Sha && RcChunkReceipt.IsDigest(input.Digest) && RcChunkReceipt.IsDigest(input.ProvenanceDigest)),
                     "p2-input:observations:" + side);

@@ -21,7 +21,7 @@ public static partial class ReleaseImpactAdmission
     public sealed record Artifact(string Id, string Digest, ulong ByteCount, Func<Stream> Open);
     public sealed record InventoryPin(string RunId, uint Attempt, uint Revision, string Sha, Artifact Artifact);
     public sealed record ExecutionPin(string Chunk, string Sha, string RunId, uint Attempt, string InventorySeal, string InputDigest,
-        Artifact Evidence);
+        Artifact Evidence, InventoryPin? OriginalInventory = null);
     public sealed record TrustContract(string Project, string Side, string Sha, string Extractor, string ContractHash, string EvidenceDigest);
     public sealed record OwnExecution(ExecutionPin Pin, InventoryPin Inventory);
 

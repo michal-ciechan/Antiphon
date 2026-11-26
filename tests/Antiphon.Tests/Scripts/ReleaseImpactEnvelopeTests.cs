@@ -22,7 +22,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
     public void P2CanonicalBytes() => CheckCanonicalVectors();
 
     [Test]
-    public Task TamperedBindingsRefuse() => CheckAdmission();
+    [Timeout(30_000)]
+    public Task TamperedBindingsRefuse(CancellationToken cancellationToken) => CheckAdmission(cancellationToken);
 
     // ImpactedClasses.SelectorFiles, as literals the derived impact index reads.
     private static readonly string[] AlgorithmFiles =

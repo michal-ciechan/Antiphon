@@ -43,12 +43,13 @@ public sealed partial class ReleaseImpactEnvelopeTests
             ["dotnet", "run", "--no-build"]);
 
         internal static async Task<P2World> Create(bool trust = false, bool candidateOnlyTrust = false,
-            bool directHit = false, string? historicalSide = null, bool brokenIndex = false, bool staleCatalog = false)
+            bool directHit = false, string? historicalSide = null, bool brokenIndex = false, bool staleCatalog = false,
+            bool duplicateSimpleName = false)
         {
             var world = new P2World();
             try
             {
-                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog);
+                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog, duplicateSimpleName);
                 return world;
             }
             catch
@@ -58,18 +59,19 @@ public sealed partial class ReleaseImpactEnvelopeTests
             }
         }
 
-        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide, bool brokenIndex, bool staleCatalog)
+        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide, bool brokenIndex, bool staleCatalog, bool duplicateSimpleName)
         {
             _repo.Init();
             _repo.Git("config", "core.autocrlf", "false");
             _repo.Git("config", "commit.gpgsign", "false");
             var survivor = trust ? "Probe.OwnTests" : "Probe.HotTests";
+            var quietClass = duplicateSimpleName ? "Other.HotTests" : "Probe.QuietTests";
             Chunks =
             [
                 new("H", "scripts", "tunit", HotProject, [new(HotProject, "Hot", survivor, "Check", "h1"),
                     .. (trust ? new[] { new P2.Case(HotProject, "Hot", survivor, "Check", "h2") } : [])]),
-                new("Q", "scripts", "tunit", QuietProject, [new(QuietProject, "Quiet", "Probe.QuietTests", "Check", "q1"),
-                    new(QuietProject, "Quiet", "Probe.QuietTests", "Check", "q2")]),
+                new("Q", "scripts", "tunit", QuietProject, [new(QuietProject, "Quiet", quietClass, "Check", "q1"),
+                    new(QuietProject, "Quiet", quietClass, "Check", "q2")]),
             ];
             foreach (var path in TestSelection.ContractFiles)
                 _repo.Put(path, RcInputFixtureRepository.ReadSource(path));
@@ -236,7 +238,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
                     Open = () => new MemoryStream(++QuietOpens == 1 ? trx : Trx(chunk, false, "Failed"), writable: false),
                 };
                 return new P2.ExecutionPin(chunk.Id, originSha, run, originAttempt, original.Artifact.Digest,
-                    InputDigest(b, chunk, "B", observations), identity);
+                    InputDigest(b, chunk, "B", observations), identity, carryOrigin ? original : null);
             }).ToArray();
 
             P2.OwnExecution[]? own = null;
@@ -249,7 +251,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 var readInventory = ownExecuted.Value ? ownInventory : Seal(request.CandidateSha, request.RunId, request.Attempt,
                     request.Revision, [RcChunkReceipt.Carry(row, request.CandidateSha, ownInventory.Artifact.Digest)]);
                 var ownPin = new P2.ExecutionPin(chunk.Id, sha, request.RunId, request.Attempt, ownInventory.Artifact.Digest,
-                    InputDigest(request.CandidateSha, chunk, "A", observations), Artifact("own.trx", Trx(chunk)));
+                    InputDigest(request.CandidateSha, chunk, "A", observations), Artifact("own.trx", Trx(chunk)),
+                    ownExecuted.Value ? null : ownInventory);
                 own = [new P2.OwnExecution(ownPin, readInventory)];
             }
             P2.TrustContract[] contracts =

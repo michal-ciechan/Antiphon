@@ -136,7 +136,8 @@ public static partial class ReleaseImpactIntegrity
                 var sha = RequireText(address["address"], role, RcChunkReceipt.IsDigest);
                 if (address["byteCount"].ValueKind != JsonValueKind.Number || !address["byteCount"].TryGetUInt64(out var length))
                     throw Invalid(role);
-                projections[role] = value = objects.Get(role, sha, length);
+                try { projections[role] = value = objects.Get(role, sha, length); }
+                catch (WireException) { throw new WireException(role, isAddress: true); }
             }
             var canonical = ProjectionBytes(role, value, foldedPaths);
             if (RawSha256(canonical) != fields[role + "Digest"].GetString()) throw Invalid(role);
@@ -292,8 +293,14 @@ public static partial class ReleaseImpactIntegrity
 
     public sealed class WireException : FormatException
     {
-        internal WireException(string component) : base("Invalid P2 evidence: " + component) => Component = component;
+        internal WireException(string component, bool isAddress = false) : base("Invalid P2 evidence: " + component)
+        {
+            Component = component;
+            IsAddress = isAddress;
+        }
+
         public string Component { get; }
+        public bool IsAddress { get; }
     }
 
     private static WireException Invalid(string component) => new(component);
