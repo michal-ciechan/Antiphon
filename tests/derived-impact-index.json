@@ -25787,6 +25787,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Infrastructure/JqRunnerImageContractTests.cs",
+      "classes": [
+        "JqRunnerImageContractInvariantTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Infrastructure/LandingGitTests.cs",
       "classes": [
         "ProcessSpawnLimitTests",
