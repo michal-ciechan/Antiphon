@@ -61,7 +61,7 @@ public static partial class ReleaseImpactAdmission
         var qualifying = chunks.Values.Select(chunk => new RcTrustChunk
         {
             Id = chunk.Id, Project = chunk.Project,
-            Consumes = projects.Keys.Where(producer => producer != chunk.Project && Route(projects, producer, chunk.Project) is not null).ToArray(),
+            Consumes = projects.Select(group => group.Key).Where(producer => producer != chunk.Project && Route(projects, producer, chunk.Project) is not null).ToArray(),
             DirectHit = direct.Any(hit => Applies(hit.Edge, chunk)),
         }).ToArray();
         var results = own?.Select(row => new RcOwnResult
