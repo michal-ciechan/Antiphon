@@ -3,7 +3,7 @@
 # runner project, not the nested dockerd, not the foreign scheduler stack, and not the desktop
 # production database. Phone-home origin, the public vhost, and AppHost stay
 # on the desktop. Use this file only with project antiphon-server2-staging.
-# scripts/deploy-server2-staging-server.ps1 is the entry. It defaults to -WhatIf.
+# scripts/antiphon deploy-server2-staging-server is the entry. It defaults to --what-if.
 name: antiphon-server2-staging
 
 services:

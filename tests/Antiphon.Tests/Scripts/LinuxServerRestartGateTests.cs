@@ -1,20 +1,18 @@
-using System.Diagnostics;
-using Antiphon.TestSupport;
-using Antiphon.Tests.Application;
-using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
+using static Antiphon.Tests.Scripts.LinuxServerRestartWorld;
 
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1745. The Linux server SHA gate is off until a config names the server.
-/// -Execute probes first and does not stop a serving container. The desktop
-/// AppHost scripts stay uncoupled. The harness is a Linux shell fake.
+/// CARD-1745. The Linux server SHA gate is off until a config names the server. --execute probes first and does not stop a
+/// serving container. The desktop AppHost scripts stay uncoupled. Unit 64 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md
+/// made the gate the restart-linux-server command (Antiphon.Nightly.LinuxServerRestart) and deleted its driver
+/// scripts/test-restart-linux-server.ps1, whose cases W1-W17 are these tests, in process on every platform (LinuxServerRestartWorld:
+/// a mock disk, a recording HTTP seam and a recording docker launcher). Each pins the driver's rows and the lines captured from
+/// the script before its deletion. The command's own tables are LinuxServerRestartTests.
 /// </summary>
-[NativeLinuxOnly("Linux-only by construction: the SHA restart gate harness is a #!/bin/sh fake docker plus chmod. The case remains required on Linux.")]
 [Category("Unit")]
-[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class LinuxServerRestartGateTests
 {
     private static readonly string[] DesktopPaths =
@@ -32,76 +30,242 @@ public sealed class LinuxServerRestartGateTests
         "scripts/lib/Antiphon.Nightly/DeployLocal.cs",
     ];
 
-    [Test]
-    public async Task Unconfigured_refuses_and_restarts_nothing()
-        => await AssertCase("W1", "W1-exit-3", "W1-says-not-configured", "W1-says-nothing-restarted", "W1-no-docker", "W1-no-lock");
+    private const string Gate = "scripts/lib/Antiphon.Nightly/LinuxServerRestart.cs";
+
+    private static string[] Unverified(string expected, string observed, string reason, string lockPath, bool execute, string container = "antiphon-staging", string? tag = null)
+    {
+        var lines = new List<string>
+        {
+            "REFUSED: server build unverified (exit 5).",
+            "  expected SHA: " + expected,
+            "  observed SHA: " + observed,
+            "  reason: " + reason,
+            "  lock: " + lockPath,
+        };
+        if (tag != null)
+        {
+            lines.Add("  tag image: " + tag);
+            lines.Add("  The image tag moved. This gate does not recreate the container.");
+        }
+        lines.Add("Nothing was restarted.");
+        if (execute)
+        {
+            lines.Add("The serving container was left running.");
+            lines.Add("recovery: docker start " + container);
+        }
+        return lines.ToArray();
+    }
+
+    private static string[] Probed => [BaseUrl.TrimEnd('/') + "/health", BaseUrl.TrimEnd('/') + "/api/version"];
+
+    private static readonly string[] SameImageInspects =
+    [
+        "inspect --format {{.Image}} antiphon-staging",
+        "inspect --format {{.Config.Image}} antiphon-staging",
+        "image inspect --format {{.Id}} antiphon-server:current",
+    ];
 
     [Test]
-    public async Task WhatIf_match_exits_0_without_docker()
-        => await AssertCase("W2", "W2-exit-0", "W2-verified", "W2-no-docker", "W2-no-lock");
+    public void Unconfigured_refuses_and_restarts_nothing()
+    {
+        // W1-exit-3, W1-says-not-configured, W1-says-nothing-restarted, W1-no-docker, W1-no-lock.
+        var world = new LinuxServerRestartWorld();
+        var run = world.Run();
+        run.Exit.ShouldBe(3, run.ToString());
+        run.Lines.ShouldBe(["REFUSED: Linux server is not configured.", "Nothing was restarted."]);
+        run.Docker.ShouldBeEmpty();
+        run.Http.ShouldBeEmpty();
+        world.LockText.ShouldBeNull();
+    }
 
     [Test]
-    public async Task WhatIf_mismatch_exits_5_and_leaves_lock()
-        => await AssertCase("W3", "W3-exit-5", "W3-lock-remains", "W3-lock-names-sha", "W3-no-docker", "W3-not-verified");
+    public void WhatIf_match_exits_0_without_docker()
+    {
+        // W2: an upper-case version matches the lower-cased expected SHA.
+        var world = new LinuxServerRestartWorld();
+        world.Serve(Version(Sha64.ToUpperInvariant()));
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha64, "--what-if");
+        run.Exit.ShouldBe(0, run.ToString());
+        run.Lines.ShouldBe(["VERIFIED sha=" + Sha64 + " mode=whatif"]);
+        run.Http.ShouldBe(Probed);
+        run.Docker.ShouldBeEmpty();
+        world.LockText.ShouldBeNull();
+    }
 
     [Test]
-    public async Task WhatIf_health_failure_is_not_verified()
-        => await AssertCase("W4", "W4-exit-1", "W4-no-lock", "W4-no-docker", "W4-not-verified");
+    public void WhatIf_mismatch_exits_5_and_leaves_lock()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve(Version(Other));
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha64, "--what-if");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha64, Other, "mismatch", world.Lock, execute: false));
+        world.LockText.ShouldBe(world.ExpectedLock("mismatch", Sha64, Other, "whatif"));
+        run.Docker.ShouldBeEmpty();
+        run.Out.ShouldNotContain("VERIFIED", Case.Sensitive);
+    }
 
     [Test]
-    public async Task Execute_match_reports_already_at_expected_sha_without_stopping()
-        => await AssertCase("W5", "W5-exit-0", "W5-already", "W5-verified-execute", "W5-no-docker", "W5-lock-cleared");
+    public void WhatIf_health_failure_is_not_verified()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}", healthCode: 503);
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--what-if");
+        run.Exit.ShouldBe(1, run.ToString());
+        run.Lines.ShouldBe(["REFUSED: /health was not 200.", "Nothing was restarted."]);
+        run.Http.ShouldBe([Probed[0]]);
+        world.LockText.ShouldBeNull();
+        run.Docker.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Execute_mismatch_refuses_before_stopping()
-        => await AssertCase("W6", "W6-exit-5", "W6-nothing-restarted", "W6-left-running", "W6-recovery", "W6-lock-remains", "W6-lock-records-image", "W6-inspected-same-image", "W6-no-stop", "W6-not-left-stopped");
+    public void Execute_match_reports_already_at_expected_sha_without_stopping()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve(Version(Sha40));
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(0, run.ToString());
+        run.Lines.ShouldBe(["already at expected SHA", "VERIFIED sha=" + Sha40 + " mode=execute"]);
+        run.Docker.ShouldBeEmpty();
+        world.LockText.ShouldBeNull();
+    }
 
     [Test]
-    public async Task Malformed_sha_refuses_before_docker()
-        => await AssertCase("W7", "W7-exit-3", "W7-no-docker", "W7-no-http", "W7-nothing-restarted");
+    public void Execute_mismatch_refuses_before_stopping()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Other + "\"}");
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha40, Other, "mismatch", world.Lock, execute: true));
+        world.LockText.ShouldBe(world.ExpectedLock("mismatch", Sha40, Other, "execute", "sha256:c1745previous"));
+        // W6-inspected-same-image and W6-no-stop: three inspects, no stop or start.
+        run.Docker.ShouldBe(SameImageInspects);
+        run.DockerFiles.ShouldBe([world.DockerPath]);
+        run.Out.ShouldNotContain("VERIFIED", Case.Sensitive);
+        run.Out.ShouldNotContain("left stopped", Case.Sensitive);
+    }
 
     [Test]
-    public async Task Desktop_apphost_port_refuses()
-        => await AssertCase("W8", "W8-exit-3", "W8-names-desktop-port", "W8-no-docker", "W8-no-http");
+    public void Malformed_sha_refuses_before_docker()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}");
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", "abc", "--execute");
+        run.Exit.ShouldBe(3, run.ToString());
+        run.Lines.ShouldBe(["REFUSED: -ExpectedServerSha is not a full 40- or 64-character SHA.", "Nothing was restarted."]);
+        run.Docker.ShouldBeEmpty();
+        run.Http.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Runner_container_refuses()
-        => await AssertCase("W9", "W9-exit-3", "W9-names-runner", "W9-no-docker", "W9-nothing-restarted");
+    public void Desktop_apphost_port_refuses()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}");
+        var run = world.Run("--config", world.Config("http://127.0.0.1:17202/"), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(3, run.ToString());
+        run.Lines.ShouldBe(["REFUSED: baseUrl port 17202 is a desktop AppHost port.", "Nothing was restarted."]);
+        run.Docker.ShouldBeEmpty();
+        run.Http.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Omitted_switches_are_whatif()
-        => await AssertCase("W10", "W10-exit-0", "W10-verified-whatif", "W10-no-docker");
+    public void Runner_container_refuses()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}");
+        var run = world.Run("--config", world.Config(container: "session-runner"), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(3, run.ToString());
+        run.Lines.ShouldBe(["REFUSED: container session-runner is outside this gate.", "Nothing was restarted."]);
+        run.Docker.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Malformed_version_exits_5_and_leaves_lock()
-        => await AssertCase("W13", "W13-exit-5", "W13-lock-remains", "W13-lock-malformed", "W13-no-docker");
+    public void Omitted_switches_are_whatif()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}");
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40);
+        run.Exit.ShouldBe(0, run.ToString());
+        run.Lines.ShouldBe(["VERIFIED sha=" + Sha40 + " mode=whatif"]);
+        run.Docker.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Execute_health_failure_exits_5_without_docker()
-        => await AssertCase("W14", "W14-exit-5", "W14-left-running", "W14-nothing-restarted", "W14-lock-remains", "W14-lock-health", "W14-no-docker");
+    public void Malformed_version_exits_5_and_leaves_lock()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("not-json");
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--what-if");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha40, "", "malformed", world.Lock, execute: false));
+        world.LockText.ShouldBe(world.ExpectedLock("malformed", Sha40, "", "whatif"));
+        run.Docker.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Execute_unknown_version_exits_5_without_docker()
-        => await AssertCase("W15", "W15-exit-5", "W15-nothing-restarted", "W15-lock-remains", "W15-lock-unavailable", "W15-no-docker");
+    public void Execute_health_failure_exits_5_without_docker()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}", healthCode: 503);
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha40, "", "health", world.Lock, execute: true));
+        world.LockText.ShouldBe(world.ExpectedLock("health", Sha40, "", "execute"));
+        run.Http.ShouldBe([Probed[0]]);
+        run.Docker.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Execute_malformed_version_exits_5_without_docker()
-        => await AssertCase("W16", "W16-exit-5", "W16-left-running", "W16-lock-remains", "W16-lock-malformed", "W16-no-docker");
+    public void Execute_unknown_version_exits_5_without_docker()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("{\"version\":\"" + Sha40 + "\"}", versionCode: 500);
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha40, "", "unavailable", world.Lock, execute: true));
+        world.LockText.ShouldBe(world.ExpectedLock("unavailable", Sha40, "", "execute"));
+        run.Docker.ShouldBeEmpty();
+    }
 
     [Test]
-    public async Task Execute_moved_image_refuses_before_stopping()
-        => await AssertCase("W17", "W17-exit-5", "W17-image-moved", "W17-names-new-image", "W17-no-recreate", "W17-left-running", "W17-nothing-restarted", "W17-recovery", "W17-lock-remains", "W17-lock-records-running-image", "W17-no-stop");
+    public void Execute_malformed_version_exits_5_without_docker()
+    {
+        var world = new LinuxServerRestartWorld();
+        world.Serve("not-json");
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha40, "", "malformed", world.Lock, execute: true));
+        world.LockText.ShouldBe(world.ExpectedLock("malformed", Sha40, "", "execute"));
+        run.Docker.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Execute_moved_image_refuses_before_stopping()
+    {
+        var world = new LinuxServerRestartWorld { TagId = (0, ["sha256:c1745moved"]) };
+        world.Serve("{\"version\":\"" + Other + "\"}");
+        var run = world.Run("--config", world.Config(), "--expected-server-sha", Sha40, "--execute");
+        run.Exit.ShouldBe(5, run.ToString());
+        run.Lines.ShouldBe(Unverified(Sha40, Other, "image-moved", world.Lock, execute: true, tag: "sha256:c1745moved"));
+        world.LockText.ShouldBe(world.ExpectedLock("image-moved", Sha40, Other, "execute", "sha256:c1745previous"));
+        run.Docker.ShouldBe(SameImageInspects);
+    }
 
     [Test]
     public void AppHost_files_do_not_reference_the_linux_gate()
     {
         foreach (var relative in DesktopPaths)
         {
-            var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, relative));
+            var text = File.ReadAllText(Path.Combine(Antiphon.Tests.Infrastructure.DockerStackDocuments.RepoRoot, relative));
             text.Contains("restart-linux-server", StringComparison.Ordinal).ShouldBeFalse(relative);
         }
 
-        var gate = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "restart-linux-server.ps1"));
+        // Unit 64: the gate is the command's source; the script and its driver are gone.
+        File.Exists(Path.Combine(Antiphon.Tests.Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "restart-linux-server.ps1")).ShouldBeFalse();
+        File.Exists(Path.Combine(Antiphon.Tests.Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "test-restart-linux-server.ps1")).ShouldBeFalse();
+        var gate = File.ReadAllText(Path.Combine(Antiphon.Tests.Infrastructure.DockerStackDocuments.RepoRoot, Gate));
         foreach (var banned in new[] { "restart-apphost", "deploy-server2", "schtasks", "phone-home", "PhoneHome" })
             gate.Contains(banned, StringComparison.Ordinal).ShouldBeFalse(banned);
     }
@@ -109,56 +273,15 @@ public sealed class LinuxServerRestartGateTests
     [Test]
     public void Docker_stack_doc_names_the_inert_gate()
     {
-        var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "docker-stack.md"));
-        text.ShouldContain("scripts/restart-linux-server.ps1");
-        text.ShouldContain("-Execute");
-        text.ShouldContain("WhatIf");
+        var text = File.ReadAllText(Path.Combine(Antiphon.Tests.Infrastructure.DockerStackDocuments.RepoRoot, "docs", "docker-stack.md"));
+        text.ShouldContain("scripts/antiphon restart-linux-server");
+        text.ShouldContain("--execute");
+        text.ShouldContain("what-if");
         text.ShouldContain("exit 5");
         text.ShouldContain("not configured");
         text.ShouldContain("already at expected SHA");
         text.ShouldContain("left running");
         text.ShouldContain("docker start");
-    }
-
-    private static async Task AssertCase(string caseName, params string[] rows)
-    {
-        var start = new ProcessStartInfo("pwsh")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-restart-linux-server.ps1"));
-        start.ArgumentList.Add("-Case");
-        start.ArgumentList.Add(caseName);
-        start.Environment["TEMP"] = "/tmp";
-        start.Environment["TMP"] = "/tmp";
-        start.Environment.Remove("ANTIPHON_LINUX_SERVER_CONFIG");
-
-        using var process = Process.Start(start)!;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        var stdout = process.StandardOutput.ReadToEndAsync(deadline.Token);
-        var stderr = process.StandardError.ReadToEndAsync(deadline.Token);
-        try
-        {
-            await Task.WhenAll(process.WaitForExitAsync(deadline.Token), stdout, stderr);
-        }
-        catch
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await process.WaitForExitAsync(cleanup.Token);
-            throw;
-        }
-
-        var output = await stdout + await stderr;
-        process.ExitCode.ShouldBe(0, output);
-        foreach (var row in rows)
-            output.ShouldContain("PASS " + row, Case.Sensitive, output);
-        output.ShouldNotContain("FAIL ", Case.Sensitive, output);
+        text.ShouldNotContain("scripts/restart-linux-server.ps1");
     }
 }

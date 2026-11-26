@@ -320,6 +320,14 @@ namespace Antiphon.Scripts
             // and --restore-drill's commands) or ok (--execute on the server2 host daemon), 2 refused (one SERVER2-POSTGRES line), 3
             // ambiguous-mode, 1 an I/O failure. Usage is 2.
             [DeployCommands.DeployServer2PostgresName] = DeployCommands.RunDeployServer2Postgres,
+            // The server2 host servers and the Linux server restart gate answer every input themselves (unit 64).
+            // deploy-server2-server and deploy-server2-staging-server: exit 0 the plan (the default, --what-if) or ok (--execute on
+            // the server2 host daemon; production then runs the gate verify-only in this process), 2 refused (one SERVER2-SERVER or
+            // SERVER2-STAGING line), 3 ambiguous-mode, 1 an I/O failure. restart-linux-server: 0 VERIFIED, 1 a what-if /health that is
+            // not 200, 3 refused, 5 unverified. Usage is 2 for each.
+            [DeployCommands.DeployServer2ServerName] = DeployCommands.RunDeployServer2Server,
+            [DeployCommands.DeployServer2StagingServerName] = DeployCommands.RunDeployServer2StagingServer,
+            [DeployCommands.RestartLinuxServerName] = DeployCommands.RunRestartLinuxServer,
             // The CARD-1776 repository mirrors answer every input themselves (unit 52): exit 0 the plan (the default, --what-if) or the
             // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
             // Usage is 2.

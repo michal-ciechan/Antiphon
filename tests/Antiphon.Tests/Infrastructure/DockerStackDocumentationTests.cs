@@ -554,13 +554,14 @@ public sealed class DockerStackDocumentationTests
             "RunnerWorktreeRetention__Enabled",
             "ZombieCensus__Enabled",
             "Serilog__LogPath",
-            "scripts/restart-linux-server.ps1",
+            // Unit 64: the gate is the restart-linux-server command.
+            "scripts/antiphon restart-linux-server",
             "restart-apphost",
         })
             section.ShouldContain(pin, Case.Sensitive, "c1779-stack: " + pin);
 
         var agents = Read("AGENTS.md");
-        agents.ShouldContain("`scripts/restart-linux-server.ps1` is the production server restart", Case.Sensitive, "c1779-agents-restart");
+        agents.ShouldContain("`scripts/antiphon restart-linux-server` is the production server restart", Case.Sensitive, "c1779-agents-restart");
         agents.ShouldContain("`scripts/antiphon restart-apphost` is the rollback path", Case.Sensitive, "c1779-agents-rollback");
         agents.ShouldContain("maintenance on the desktop is the end state", Case.Sensitive, "c1779-agents-maintenance");
         agents.ShouldContain("marker present", Case.Sensitive, "c1779-agents-marker");

@@ -5,7 +5,7 @@
 # server-session-runner sidecar is the direct runner (Herdr off).
 # Hangfire storage defaults to InMemory. CARD-1768 is on this tip.
 # CARD-1774 A-1/A-2 are not, so PostgreSql is an explicit env flip.
-# scripts/deploy-server2-server.ps1 is the entry. Default is -WhatIf.
+# scripts/antiphon deploy-server2-server is the entry. Default is --what-if.
 # Specialist directories are on the shared work volume, the same path in
 # the server and the session-runner sidecar. server-state-init chowns /work
 # and its top directories one level and walks only /work/specialists

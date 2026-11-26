@@ -11,6 +11,12 @@
 // - deploy-server2-postgres (unit 54, W8 slice D), the CARD-1406 server2 host Postgres service and scratch restore drill. It replaced
 //   scripts/deploy-server2-postgres.ps1. The behaviour is Antiphon.Nightly's Server2PostgresDeploy on the production host (docker,
 //   hostname and tailscale as children, found on PATH by OperatorToolOs), the real file system and this machine's POSIX mode check.
+// - deploy-server2-server, deploy-server2-staging-server and restart-linux-server (unit 64, W8 slice C and W10), the CARD-1775
+//   production server and the CARD-1742 staging server on the server2 host, and the CARD-1745 Linux server restart gate. They replaced
+//   scripts/deploy-server2-server.ps1, scripts/deploy-server2-staging-server.ps1 and scripts/restart-linux-server.ps1. The behaviour is
+//   Antiphon.Nightly's Server2ServerDeploy, Server2StagingDeploy and LinuxServerRestart on the production host (docker, hostname, git
+//   and curl as children, found on PATH by OperatorToolOs), the real file system, this machine's POSIX mode calls and the production
+//   HTTP; the production deploy runs the gate in this process.
 // The checkout is the one this executable was built in, else the current directory. ASCII only.
 using System;
 using System.IO.Abstractions;
@@ -27,7 +33,14 @@ namespace Antiphon.Scripts
 
         internal const string DeployServer2PostgresName = "deploy-server2-postgres";
 
-        internal const string Usage = DeployLocalOptions.Usage + " | " + AmServiceDeployOptions.Usage + " | " + Server2PostgresDeployOptions.Usage;
+        internal const string DeployServer2ServerName = "deploy-server2-server";
+
+        internal const string DeployServer2StagingServerName = "deploy-server2-staging-server";
+
+        internal const string RestartLinuxServerName = "restart-linux-server";
+
+        internal const string Usage = DeployLocalOptions.Usage + " | " + AmServiceDeployOptions.Usage + " | " + Server2PostgresDeployOptions.Usage
+            + " | " + Server2ServerDeployOptions.Usage + " | " + Server2StagingDeployOptions.Usage + " | " + LinuxServerRestartOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -64,6 +77,41 @@ namespace Antiphon.Scripts
             var options = Server2PostgresDeployOptions.Parse(args.Skip(1).ToArray(), Checkout);
             var host = NightlyHost.Production(Console.Out, Console.Error);
             return Server2PostgresDeploy.Run(options, host, new FileSystem(), new Server2PostgresDeploySeams { Resolve = new OperatorToolOs(host.Variables).Find });
+        }
+
+        // Exit 0 the plan (the default, --what-if) or ok (--execute on the server2 host daemon, the verify-only gate passed), 2 refused
+        // (one SERVER2-SERVER line), 3 ambiguous-mode, 1 an I/O failure; usage 2.
+        internal static int RunDeployServer2Server(string[] args)
+        {
+            var options = Server2ServerDeployOptions.Parse(args.Skip(1).ToArray(), Checkout);
+            var host = NightlyHost.Production(Console.Out, Console.Error);
+            return Server2ServerDeploy.Run(options, host, new FileSystem(), new Server2ServerDeploySeams
+            {
+                Resolve = new OperatorToolOs(host.Variables).Find,
+                GateHttp = LinuxServerRestart.Http(),
+            });
+        }
+
+        // Exit 0 the plan (the default, --what-if) or ok (--execute on the server2 host daemon, accepted), 2 refused (one SERVER2-STAGING
+        // line), 3 ambiguous-mode, 1 an I/O failure; usage 2.
+        internal static int RunDeployServer2StagingServer(string[] args)
+        {
+            var options = Server2StagingDeployOptions.Parse(args.Skip(1).ToArray(), Checkout);
+            var host = NightlyHost.Production(Console.Out, Console.Error);
+            return Server2StagingDeploy.Run(options, host, new FileSystem(), new Server2ServerDeploySeams { Resolve = new OperatorToolOs(host.Variables).Find });
+        }
+
+        // Exit 0 VERIFIED, 1 a what-if /health that is not 200 (or a terminating error), 3 refused before the probe, 5 unverified
+        // (the lock written); usage 2.
+        internal static int RunRestartLinuxServer(string[] args)
+        {
+            var options = LinuxServerRestartOptions.Parse(args.Skip(1).ToArray());
+            var host = NightlyHost.Production(Console.Out, Console.Error);
+            return LinuxServerRestart.Run(options, host, new FileSystem(), new LinuxServerRestartSeams
+            {
+                Http = LinuxServerRestart.Http(),
+                Resolve = new OperatorToolOs(host.Variables).Find,
+            });
         }
     }
 }

@@ -11,7 +11,8 @@ namespace Antiphon.Tests.Infrastructure;
 public sealed class Server2StagingServerContractTests
 {
     private const string ComposePath = "docker-compose.server2-staging-server.yml";
-    private const string ScriptPath = "scripts/deploy-server2-staging-server.ps1";
+    // Unit 64 of 2026-11-22-remaining-ps1-to-csharp.md: the deploy is the deploy-server2-staging-server command.
+    private const string ScriptPath = "scripts/lib/Antiphon.Nightly/Server2ServerDeploy.cs";
 
     [Test]
     public void Staging_file_is_its_own_compose_project()
@@ -166,8 +167,8 @@ public sealed class Server2StagingServerContractTests
     public void Staging_script_plans_without_docker_and_refuses_a_foreign_daemon()
     {
         var script = Script();
-        script.ShouldContain("Default is -WhatIf");
-        script.ShouldContain("planOnly = -not $Execute");
+        script.ShouldContain("default is --what-if", Case.Sensitive);
+        script.ShouldContain("var planOnly = !options.Execute;", Case.Sensitive);
         script.ShouldContain("not-server2-host");
         script.ShouldContain("ambiguous-mode");
         script.ShouldContain("bind-any");
@@ -179,7 +180,7 @@ public sealed class Server2StagingServerContractTests
         script.ShouldContain("antiphon-server2-staging");
         script.ShouldNotContain("deploy-server2.ps1");
         DockerStackDocuments.Read("docs/docker-stack.md").ShouldContain(
-            "scripts/deploy-server2-staging-server.ps1` defaults to `-WhatIf`");
+            "`scripts/antiphon deploy-server2-staging-server` defaults to `--what-if`");
         DockerStackDocuments.Read("docs/testing-and-build.md").ShouldContain(
             "docker-compose.server2-staging-server.yml");
     }

@@ -13,7 +13,7 @@ public sealed class Server2SidecarStandingAgentsTests
 {
     private const string ComposePath = "docker-compose.server2-server.yml";
     private const string StagingComposePath = "docker-compose.server2-staging-server.yml";
-    private const string ScriptPath = "scripts/deploy-server2-server.ps1";
+    private const string ScriptPath = "scripts/lib/Antiphon.Nightly/Server2ServerDeploy.cs";
     private const string DocPath = "docs/docker-stack.md";
     private const string Heading = "### Standing agents and specialists on the sidecar (CARD-1778)";
 
@@ -97,10 +97,12 @@ public sealed class Server2SidecarStandingAgentsTests
     [Test]
     public void Deploy_plan_prints_the_new_keys()
     {
-        var script = DockerStackDocuments.Read(ScriptPath);
-        script.ShouldContain("CLAUDE_CONFIG_DIR: /state/claude");
-        script.ShouldContain("SessionRunner__VerifyExecutablesOnServer: \"false\"");
-        script.ShouldContain("Delegation__OrchestratorInstructions__Path: /work/.antiphon/orchestrator-instructions.md");
+        // Unit 64: the deploy's compose needs are the deploy-server2-server command's list.
+        DockerStackDocuments.Read(ScriptPath).ShouldContain("CLAUDE_CONFIG_DIR: /state/claude");
+        var needs = Antiphon.Nightly.Server2ServerDeploy.ComposeNeeds;
+        needs.ShouldContain("CLAUDE_CONFIG_DIR: /state/claude");
+        needs.ShouldContain("SessionRunner__VerifyExecutablesOnServer: \"false\"");
+        needs.ShouldContain("Delegation__OrchestratorInstructions__Path: /work/.antiphon/orchestrator-instructions.md");
     }
 
     private static string StandingAgentsSection()

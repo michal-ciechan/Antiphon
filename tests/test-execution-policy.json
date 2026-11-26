@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "4656a21f3d7f571eaf0b5b46b44e68846d33058da8ec4bea37b1ffb6002e5af9",
+  "policyHash": "8fffc7d928ed1f918f269ac12c8d6ecb241b80b87ace75fb2e8d2a105b1adb2f",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1649,25 +1649,6 @@
         },
         {
           "suite": "antiphon",
-          "class": "LinuxServerRestartGateTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: the SHA restart gate harness is a #!/bin/sh fake docker plus chmod. The case remains required on Linux.",
-          "owner": "CARD-1745"
-        },
-        {
-          "suite": "antiphon",
-          "class": "Server2ProductionServerContractTests",
-          "methods": [
-            "Execute_drains_large_compose_output_without_echoing_a_secret",
-            "Execute_refusals_stop_before_docker",
-            "WhatIf_prints_the_plan_and_calls_no_docker"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: the deploy plan, refusal and compose drain witnesses use Unix file modes (0600), the container marker /.dockerenv and a Unix fake docker on PATH.",
-          "owner": "CARD-1775"
-        },
-        {
-          "suite": "antiphon",
           "class": "DeployServer2ApiDefaultTests",
           "platform": "windows",
           "reason": "Linux-only by construction: the witness puts a #!/bin/sh docker and ssh on PATH and chmod's them. The case remains required on Linux.",
@@ -1831,16 +1812,6 @@
           "platform": "windows",
           "reason": "Linux-only by construction: the probes must run at the same time to prove ScriptModelSpawnLimit is at least 2 wide, and CARD-1984 D-3 makes the lane 1 wide on Windows, so the second probe cannot start until the first gives up. W-1 pins the Windows width of 1. The case remains required on Linux.",
           "owner": "CARD-1514"
-        },
-        {
-          "suite": "antiphon",
-          "class": "C1744G1DesktopWinComposeTests",
-          "methods": [
-            "G1_deploy_whatif_refuses_without_desktop_win_keys"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: the deploy script runs bash and docker on the Linux host, and the witness sets a Unix file mode and puts a fake docker on PATH. The case remains required on Linux.",
-          "owner": "CARD-1744"
         },
         {
           "suite": "antiphon",

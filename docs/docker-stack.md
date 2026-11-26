@@ -1509,16 +1509,19 @@ desktop Vite/serve client remains the rollback UI.
 
 ### Linux server SHA restart gate (CARD-1745)
 
-`scripts/restart-linux-server.ps1` is the host-side gate for one configured Linux server
-container. Topology A leaves it off. With no `-Config` and no `ANTIPHON_LINUX_SERVER_CONFIG`,
-the script exits 3, prints that the Linux server is not configured, and does not probe, lock,
-or call docker. `scripts\antiphon.cmd restart-apphost` remains the desktop AppHost restart.
+`scripts/antiphon restart-linux-server` is the host-side gate for one configured Linux server
+container. Topology A leaves it off. With no `--config` and no `ANTIPHON_LINUX_SERVER_CONFIG`,
+the command exits 3, prints that the Linux server is not configured, and does not probe, lock,
+or call docker. `scripts\antiphon.cmd restart-apphost` remains the desktop AppHost restart. Unit 64
+of the remaining-ps1 plan made the gate this command: it replaced `restart-linux-server.ps1` with the
+same steps, refusals, lines and exit codes (the refusal texts still name `-ExpectedServerSha` and
+`-Execute`/`-WhatIf`, as the script printed them). An unknown flag is a usage error, exit 2.
 
-A config file supplies `baseUrl`, `container`, and `lockPath`. The default mode is WhatIf:
+A config file supplies `baseUrl`, `container`, and `lockPath`. The default mode is what-if (`--what-if`):
 `GET /health` and `GET /api/version` against that base URL, with no docker call. Exit 0
-requires HTTP 200 from `/health` and a `version` field equal to `-ExpectedServerSha` (40 or
+requires HTTP 200 from `/health` and a `version` field equal to `--expected-server-sha` (40 or
 64 hex characters). A mismatch, a malformed body, or a version that is not HTTP 200 is exit 5
-and leaves the lock file. `-Execute` probes that same running server once before any docker
+and leaves the lock file; a what-if `/health` that is not 200 exits 1. `--execute` probes that same running server once before any docker
 call. When the server is already healthy and reports the expected SHA, it prints
 `already at expected SHA` and exits 0 without stopping anything. A different well-formed SHA
 is compared with the container image: `docker inspect` reads `{{.Image}}` and
@@ -1527,21 +1530,21 @@ id means a restart cannot carry a new SHA, so the gate exits 5 with no `docker s
 different id means a new image was pulled for that tag. `docker start` would still run the
 old image, and this gate does not own the compose spec, so it does not recreate the
 container. That path exits 5 with reason `image-moved`, again with no `docker stop`. A
-malformed body, a version that is not HTTP 200, or `/health` not 200 on `-Execute` exits 5
-with no docker call. Every `-Execute` refusal leaves the serving container left running on
+malformed body, a version that is not HTTP 200, or `/health` not 200 on `--execute` exits 5
+with no docker call. Every `--execute` refusal leaves the serving container left running on
 the image it already had. If that container is later found stopped, `docker start <container>`
 resumes that previous image. Replacing the image belongs to the CARD-1742 compose deploy,
-then a fresh probe. The script refuses desktop AppHost ports 17200-17209, a short SHA, and
+then a fresh probe. The command refuses desktop AppHost ports 17200-17209, a short SHA, and
 container names for the runner, Postgres, or the gateway, before any docker call. It does not
 deploy the runner and it does not install a Scheduled Task. The staging compose remains
 CARD-1742; this gate does not create it and it is not the cutover. `docker-compose.server2-server.yml`
 is the production Antiphon server for the server2 host daemon. The project is `antiphon-server2-server`.
 Services are `server-state-init`, `server`, and `server-session-runner`. The check interpreter, diagnose, and output distiller working directories are `/work/specialists/check-interpreter`, `/work/specialists/diagnose`, and `/work/specialists/output-distiller` on the shared work volume, mounted at `/work` by both `server` and `server-session-runner`. `server-state-init` creates them mode 0755 and chowns them to uid 1654. The server publishes
 `127.0.0.1:17400` only and joins the external network `antiphon-server2`, so the connection host is
-`Host=postgres` on the CARD-1406 service. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`.
-`-Execute` is host-only and then calls this gate verify-only, with no execute switch on the gate,
-against `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. Before up, `-Execute`
-refuses `revision-mismatch` unless the env `SOURCE_REVISION` equals `-ExpectedServerSha`, and
+`Host=postgres` on the CARD-1406 service. `scripts/antiphon deploy-server2-server` defaults to `--what-if`.
+`--execute` is host-only and then runs this gate verify-only in the same process, with no execute switch on the gate,
+against `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. Before up, `--execute`
+refuses `revision-mismatch` unless the env `SOURCE_REVISION` equals `--expected-server-sha`, and
 `head-mismatch` or `head-unknown` unless `git rev-parse HEAD` of the compose build context does too
 (CARD-1788). `server-state-init` chowns `/work` and its top directories one level and walks only
 `/work/specialists`, so an up does not walk every repository and worktree. `Hangfire__Storage`
@@ -2212,7 +2215,7 @@ Compare phase 3 of the CARD-1401 plan as well: sequence name / `last_value` / `i
 
 Services are `staging-state-init`, `staging-server`, and `staging-postgres`, so a mistaken project name cannot replace the phone-home runner's `state-init`. The scratch cluster volume is `antiphon-server2-staging_pgdata`, mounted only inside this project. Its image digest and password come from an untracked mode-0600 env file outside the repo (`ANTIPHON_STAGING_POSTGRES_IMAGE`, `POSTGRES_PASSWORD`). The image reference must be `postgres:16@sha256:` or `postgres@sha256:` plus 64 lowercase hex digits. There is no published database port. The server listens on `127.0.0.1:17420` only. The scratch cluster is limited to 1g and 1 CPU.
 
-`scripts/deploy-server2-staging-server.ps1` defaults to `-WhatIf` and does not call docker in that mode. `-Execute` runs only when this process is on the server2 host daemon. Neither mode prints the password. The new cluster password is not the committed dev password. Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode. Acceptance, when an operator does run it, is `http://127.0.0.1:17420/health` and `http://127.0.0.1:17420/api/version`.
+`scripts/antiphon deploy-server2-staging-server` defaults to `--what-if` and does not call docker in that mode. `--execute` runs only when this process is on the server2 host daemon. Unit 64 of the remaining-ps1 plan made both server2 server deploys commands (`deploy-server2-staging-server`, `deploy-server2-server`): they replaced the PowerShell scripts of the same names with the same steps, refusals, lines and exit codes, and the server2 host needs the .NET SDK for `scripts/antiphon` where the scripts needed `pwsh`. Neither mode prints the password. The new cluster password is not the committed dev password. Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode. Acceptance, when an operator does run it, is `http://127.0.0.1:17420/health` and `http://127.0.0.1:17420/api/version`.
 
 Hangfire is on. Zombie census is off. Schedules, the check interpreter, diagnose, and the output distiller are on, with working directories `/state/check-interpreter`, `/state/diagnose`, and `/state/output-distiller` on this project's state volume `antiphon-server2-staging_server-state`. The agent TUI key ring is `/state/keyring` on that same volume. A fresh empty ring cannot read secrets protected by the desktop ring. Production does not copy that ring; certificate custody is in [Production server on the server2 host (CARD-1744)](#production-server-on-the-server2-host-card-1744). Agent executables here are Linux paths; with the session runner off, specialists do not launch until cutover. Worktree residue is on and `Execute` is false (report only, the desktop default); the only worktree root is `/work/worktrees` on this project's work volume `antiphon-server2-staging_work`. Legacy release is off. Runner worktree retention is off, so this worker does not send removals to the phone-home runner. Channel bridge and digest are off. This project has no session runner and does not set a phone-home origin. `deploy-server2.ps1` does not deploy it. AppHost and the public vhost stay on the desktop.
 
@@ -2222,7 +2225,7 @@ Nothing in this card starts the project. Rollback is to remove the compose proje
 
 This is the topology B operating shape from the [CARD-1744 plan](superpowers/plans/2026-11-08-card-1744-cutover-plan.md). It does not record that the window has run. Topology A above remains the supported production deployment until that window. Nothing here starts a container, edits DNS, or prints a password, token, or key.
 
-The compose file is `docker-compose.server2-server.yml`. The project is `antiphon-server2-server`. Services are `server-state-init`, `server`, and `server-session-runner`. The server container is `antiphon-server2-server-server-1`. It publishes `127.0.0.1:17400:8080` and joins the external network `antiphon-server2`, so the database host is the CARD-1406 service `postgres` on port 5432. `scripts/deploy-server2-server.ps1` defaults to `-WhatIf`. `-Execute` is host-only. Once this container is the control plane, `scripts/restart-linux-server.ps1` is the production server restart: its config names base URL `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `scripts\antiphon.cmd restart-apphost` is the desktop rollback path. Until the window, `scripts\antiphon.cmd restart-apphost` remains the desktop production restart.
+The compose file is `docker-compose.server2-server.yml`. The project is `antiphon-server2-server`. Services are `server-state-init`, `server`, and `server-session-runner`. The server container is `antiphon-server2-server-server-1`. It publishes `127.0.0.1:17400:8080` and joins the external network `antiphon-server2`, so the database host is the CARD-1406 service `postgres` on port 5432. `scripts/antiphon deploy-server2-server` defaults to `--what-if`. `--execute` is host-only. Once this container is the control plane, `scripts/antiphon restart-linux-server` is the production server restart: its config names base URL `http://127.0.0.1:17400` and container `antiphon-server2-server-server-1`. `scripts\antiphon.cmd restart-apphost` is the desktop rollback path. Until the window, `scripts\antiphon.cmd restart-apphost` remains the desktop production restart.
 
 ### O-14 and the board dependencies
 
@@ -2244,7 +2247,7 @@ Names only. Values live in the untracked mode-0600 env file on the host, outside
 
 Host keys the compose interpolates: `SOURCE_REVISION`, `KEYRING_CERT_FILE`, `KEYRING_KEY_FILE`, `OPERATOR_TOKEN_FILE`, `POSTGRES_PASSWORD`, `ANTIPHON_PUBLIC_ORIGIN`, `PHONE_HOME_SHARED_SECRET`, `PHONE_HOME_HOST_WORKSPACE_ROOT`, `PHONE_HOME_DESKTOP_WIN_SHARED_SECRET`, `PHONE_HOME_DESKTOP_WIN_HOME`, `HANGFIRE_STORAGE` (default `InMemory`), and `CHANNEL_BRIDGE_ENABLED` (default false).
 
-`desktop-win` is a required phone-home pool entry: enabled, `AllowDelegatedTasks` true, and no standing agent. `PHONE_HOME_DESKTOP_WIN_HOME` is the desktop profile in drive-rooted forward-slash form. The three child homes are that profile plus `/.claude`, `/.codex`, and `/.grok`. When an env file is supplied, `scripts/deploy-server2-server.ps1` refuses a blank `PHONE_HOME_DESKTOP_WIN_SHARED_SECRET` or `PHONE_HOME_DESKTOP_WIN_HOME` before the plan return, so `-WhatIf -EnvFile` fails closed the same way `-Execute` does. `-WhatIf` with no env file still prints the plan. The desktop build-slot broker stays `http://localhost:17204/build-slots`: no discovery, and no `ANTIPHON_BUILD_SLOTS_URL` machine variable. Phase 1 children and the phase 2 runner share that one address. `HostLoadHistory__DirectRunnerKey` is `server2-direct`, so the sidecar's host-load series does not reuse the desktop cursor.
+`desktop-win` is a required phone-home pool entry: enabled, `AllowDelegatedTasks` true, and no standing agent. `PHONE_HOME_DESKTOP_WIN_HOME` is the desktop profile in drive-rooted forward-slash form. The three child homes are that profile plus `/.claude`, `/.codex`, and `/.grok`. When an env file is supplied, `scripts/antiphon deploy-server2-server` refuses a blank `PHONE_HOME_DESKTOP_WIN_SHARED_SECRET` or `PHONE_HOME_DESKTOP_WIN_HOME` before the plan return, so `--what-if --env-file` fails closed the same way `--execute` does. `--what-if` with no env file still prints the plan. The desktop build-slot broker stays `http://localhost:17204/build-slots`: no discovery, and no `ANTIPHON_BUILD_SLOTS_URL` machine variable. Phase 1 children and the phase 2 runner share that one address. `HostLoadHistory__DirectRunnerKey` is `server2-direct`, so the sidecar's host-load series does not reuse the desktop cursor.
 
 Server keys that change behavior: `ConnectionStrings__DefaultConnection`, `SessionRunner__Enabled`, `SessionRunner__BaseUrl`, `SessionRunner__VerifyExecutablesOnServer`, `PhoneHomeRunner__Enabled`, `PhoneHomeRunner__Runners__server2__CallbackOrigin`, `PhoneHomeRunner__Runners__server2__SharedSecret`, `Delegation__ApiBaseUrl`, `Serilog__LogPath`, `AgentTui__KeyRingPath`, `AgentTui__KeyProtection__Mode`, `AgentTui__KeyProtection__CertificatePath`, `AgentTui__KeyProtection__CertificatePrivateKeyPath`, `Operator__TokenPath`, `Hangfire__ServerEnabled`, `Hangfire__Storage`, `ZombieCensus__Enabled`, `WorktreeLegacyRelease__Enabled`, `RunnerWorktreeRetention__Enabled`, `Schedules__Enabled`, `ChannelBridge__Enabled`, and `Digest__Enabled`. The compose file is the closed list, including the rest of the phone-home runner map and the agent executable names.
 

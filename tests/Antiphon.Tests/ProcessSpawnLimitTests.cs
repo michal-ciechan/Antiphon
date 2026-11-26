@@ -100,8 +100,7 @@ public class ProcessSpawnLimitTests
         typeof(AgentTaskLandHalfResetWindowsTests),
         typeof(AgentTaskLandHoldVisibilityTests),
         // Unit 28 (2026-11-22 plan): TaskCeilingScriptTests runs the delegate command in process (no pwsh child) and left this floor.
-        // CARD-1745: each witness starts pwsh for the Linux SHA gate harness.
-        typeof(LinuxServerRestartGateTests),
+        // Unit 64 (2026-11-22 plan): LinuxServerRestartGateTests runs the restart-linux-server command in process (no pwsh child) and left this floor.
     ];
 
     // CARD-1421 Appendix B: strict-roster classes whose only children are git, in fixture-owned repositories.
@@ -161,6 +160,10 @@ public class ProcessSpawnLimitTests
         // W2 slice S21: the live lane's run and outcome cases run in process (Antiphon.LiveLane); no pwsh harness child.
         ("Scripts/LiveLaneRunnerTests.cs", "LiveLaneRunnerTests"),
         ("Scripts/LiveLaneOutcomeTests.cs", "LiveLaneOutcomeTests"),
+        // Unit 64: the CARD-1745 gate and the CARD-1775 deploy witnesses run their commands in process; no pwsh or git child.
+        ("Scripts/LinuxServerRestartGateTests.cs", "LinuxServerRestartGateTests"),
+        ("Infrastructure/Server2ProductionServerContractTests.cs", "Server2ProductionServerContractTests"),
+        ("Infrastructure/C1744G1DesktopWinComposeTests.cs", "C1744G1DesktopWinComposeTests"),
     ];
 
     [Test]
