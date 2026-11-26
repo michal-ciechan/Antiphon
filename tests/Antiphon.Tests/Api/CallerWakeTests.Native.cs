@@ -118,15 +118,16 @@ public partial class CallerWakeTests
         var config = Path.Combine(world.CallerDirectory, "isolated-config");
         const string key = "local-test-provider";
         RealCliStubClaudeConfig.SeedOnboarding(config, key, trustedCwd: cwd);
-        var overlay = new Dictionary<string, string>(RealCliStubEnv.ForClaude(stub.BaseUrl, key, config).Env)
-        {
-            ["ANTIPHON_ORCHESTRATOR"] = "1", ["ANTIPHON_TASK_ID"] = "", ["ANTIPHON_TASK_KIND"] = "",
-            ["ANTIPHON_AGENT_ID"] = agentId.ToString(), ["ANTIPHON_TASK_TOKEN"] = token,
-            ["ANTIPHON_SESSION_ID"] = sessionId.ToString(), ["ANTIPHON_SESSION_GENERATION"] = session.StartedAt.ToString("O"),
-            ["ANTIPHON_API"] = relay.Urls.Single(), ["ANTIPHON_HOOK_STATE_DIR"] = world.CallerDirectory,
-            ["WAKE_TEST_CLI"] = Path.Combine(AppContext.BaseDirectory, "antiphon-scripts", "Antiphon.Scripts.dll"),
-            ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1", ["ANTHROPIC_AUTH_TOKEN"] = "", ["CLAUDE_CODE_OAUTH_TOKEN"] = "",
-        };
+        var overlay = CreateNativeCallerOverlay(stub.BaseUrl, key, config);
+        overlay["ANTIPHON_ORCHESTRATOR"] = "1";
+        overlay["ANTIPHON_TASK_KIND"] = "";
+        overlay["ANTIPHON_AGENT_ID"] = agentId.ToString();
+        overlay["ANTIPHON_TASK_TOKEN"] = token;
+        overlay["ANTIPHON_SESSION_ID"] = sessionId.ToString();
+        overlay["ANTIPHON_SESSION_GENERATION"] = session.StartedAt.ToString("O");
+        overlay["ANTIPHON_API"] = relay.Urls.Single();
+        overlay["ANTIPHON_HOOK_STATE_DIR"] = world.CallerDirectory;
+        overlay["WAKE_TEST_CLI"] = Path.Combine(AppContext.BaseDirectory, "antiphon-scripts", "Antiphon.Scripts.dll");
         var (env, unset) = IsolateNativeCaller(overlay, InheritedVariableNames());
         var reportId = Guid.Empty;
         var sawNotice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -239,11 +240,7 @@ public partial class CallerWakeTests
     [Test]
     public void C2074_Native_caller_strips_every_inherited_provider_variable()
     {
-        var overlay = new Dictionary<string, string>(RealCliStubEnv.ForClaude("http://127.0.0.1:9", "k", Path.GetTempPath()).Env)
-        {
-            ["ANTIPHON_TASK_ID"] = "", ["ANTHROPIC_AUTH_TOKEN"] = "", ["CLAUDE_CODE_OAUTH_TOKEN"] = "",
-            ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1",
-        };
+        var overlay = CreateNativeCallerOverlay("http://127.0.0.1:9", "k", Path.GetTempPath());
         string[] inherited = ["PATH", "HOME", "CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_EFFORT",
             "CLAUDE_PID", "CLAUDE_CONFIG_DIR", "ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"];
 
@@ -272,6 +269,15 @@ public partial class CallerWakeTests
             .Where(name => !overlay.TryGetValue(name, out var value) || value.Length == 0)
             .ShouldAllBe(name => live.Contains(name));
     }
+
+    private static Dictionary<string, string> CreateNativeCallerOverlay(string baseUrl, string key, string config) =>
+        new(RealCliStubEnv.ForClaude(baseUrl, key, config).Env)
+        {
+            ["ANTIPHON_TASK_ID"] = "",
+            ["ANTHROPIC_AUTH_TOKEN"] = "",
+            ["CLAUDE_CODE_OAUTH_TOKEN"] = "",
+            ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1",
+        };
 
     private static IEnumerable<string> InheritedVariableNames() =>
         Environment.GetEnvironmentVariables().Keys.Cast<string>();
