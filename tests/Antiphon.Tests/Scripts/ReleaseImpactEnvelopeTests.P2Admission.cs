@@ -349,11 +349,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         var stamped = JsonNode.Parse(retained.Evidence.WriteProposal())!.AsObject();
         var carried = stamped["projections"]!.AsObject();
-        foreach (var declared in new[] { carried["receipts"]![1]!["origin"]!, carried["selection"]!["decisions"]![1]!["origin"]! })
+        foreach (var declaredOrigin in new[] { carried["receipts"]![1]!["origin"]!, carried["selection"]!["decisions"]![1]!["origin"]! })
         {
-            declared["sha"] = world.Request.BaselineSha;
-            declared["runId"] = "run-b";
-            declared["attempt"] = 2;
+            declaredOrigin["sha"] = world.Request.BaselineSha;
+            declaredOrigin["runId"] = "run-b";
+            declaredOrigin["attempt"] = 2;
         }
         CheckFull("T.receipts.originChain.falseOrigin", Admit(Reseal(stamped, carried), retained), "p2-receipt:");
 
@@ -379,7 +379,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
         Console.WriteLine($"C2069 phase=admission elapsedMs={watch.ElapsedMilliseconds} cases={roster.Count}");
         var declared = File.ReadAllLines(Path.Combine(P2Fixtures, "admission-case-ids.txt"));
         rows.ShouldAllPass(declared.Length, declared);
-        roster.OrderBy(id => id, StringComparer.Ordinal).ShouldBe(declared, "explicit P2 admission case roster");
+        roster.OrderBy(id => id, StringComparer.Ordinal).SequenceEqual(declared)
+            .ShouldBeTrue("explicit P2 admission case roster");
     }
 
     private sealed class FailingStream(byte[] prefix) : MemoryStream(prefix, writable: false)
