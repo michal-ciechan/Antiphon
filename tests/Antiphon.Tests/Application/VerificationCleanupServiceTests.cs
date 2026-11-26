@@ -30,7 +30,7 @@ namespace Antiphon.Tests.Application;
 /// </summary>
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-public sealed class VerificationCleanupServiceTests
+public sealed partial class VerificationCleanupServiceTests
 {
     private const string RemoteRunner = "server2";
 
@@ -156,11 +156,11 @@ public sealed class VerificationCleanupServiceTests
     /// ones the execution really had, so the assertions below are about WHO is asked, not about
     /// what a remote reservation would have written.
     /// </summary>
-    private static async Task BindToRemoteRunnerAsync(PostLandMutationWorld world)
+    private static async Task BindToRemoteRunnerAsync(PostLandMutationWorld world, string runnerId = RemoteRunner)
     {
         await using var db = world.Host.CreateContext();
         await db.AgentTasks.Where(t => t.Id == world.TaskId)
-            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RunnerId, RemoteRunner));
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.RunnerId, runnerId));
     }
 
     private sealed class RecordingWorkspaceDirectory : IVerificationWorkspaceDirectory, IVerificationWorkspace

@@ -26,6 +26,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public bool AdvertiseHerdr { get; set; } = true;
     public bool AdvertiseGrokRules { get; set; }
     public Guid? VerificationStoreId { get; set; }
+    public string VerificationCustodyBackend { get; set; } = VerificationCustodyBackends.WindowsJob;
     public Func<Guid, GrokRulesReceipt?>? RulesReceipt { get; set; }
 
     public bool AdvertiseHerdrAttach { get; set; } = true;
@@ -100,7 +101,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
             SessionRunnerRuntime.SupportedTranscriptFormats,
             SessionBackends: backends,
             Features: features.Count == 0 ? null : features,
-            VerificationCustodyBackend: VerificationStoreId is null ? null : "windows-job-v1",
+            VerificationCustodyBackend: VerificationStoreId is null ? null : VerificationCustodyBackend,
             RunnerStoreId: VerificationStoreId));
     }
 
