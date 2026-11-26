@@ -58,9 +58,10 @@ public sealed class ReleaseImpactEvaluationTests
             var header = Encoding.ASCII.GetBytes(FormattableString.Invariant($"blob {bytes.Length}\0"));
             return new ReleaseCompilerSource(path, Store(bytes), Convert.ToHexStringLower(SHA1.HashData([..header, ..bytes])));
         }).ToArray();
-        var gitBlobs = sources.ToDictionary(source => source.Path, source => source.GitBlob!, StringComparer.Ordinal);
+        Dictionary<string, string> gitBlobs;
         using (var git = new LibGit2Sharp.Repository(repo.Root))
-            gitBlobs.Add(project, git.Head.Tip.Tree[project].Target.Id.Sha);
+            gitBlobs = sources.Select(source => source.Path).Append(project)
+                .ToDictionary(path => path, path => git.Head.Tip.Tree[path].Target.Id.Sha, StringComparer.Ordinal);
         var generatorOutput = Encoding.UTF8.GetBytes("global using Chosen = North.Probe;\n");
         var gen = new ReleaseCompilerSource(generated, Store(generatorOutput), null);
         var context = new ReleaseCompilerContext(project, "T", "windows", "x64", "net9.0", "win-x64", "Release", "AnyCPU",
@@ -130,6 +131,17 @@ public sealed class ReleaseImpactEvaluationTests
             Denied(sha, expected, "compiler-manifest-digest-mismatch", $"I.context {label}");
         }
 
+        var declaredDrift = sources[0] with { GitBlob = gitBlobs[south] };
+        var changedNorth = Store(Encoding.UTF8.GetBytes(files[north] + "// Uncommitted edit\n"));
+        var payloadDrift = sources[0] with { Sha256 = changedNorth };
+        foreach (var (drift, label) in new[] { (declaredDrift, "I.declared blob drift"), (payloadDrift, "I.payload blob drift") })
+        {
+            var pin = Write(manifest with { Contexts = [context with { Sources = [drift, ..sources[1..], gen] }] });
+            Denied(sha, pin, "compiler-tracked-source-unbound", label);
+        }
+        var unsupported = Write(manifest with { Contexts = [context with { LanguageVersion = "preview" }] });
+        Denied(sha, unsupported, "compiler-options-unsupported", "I.preview language version");
+
         Write(manifest).ShouldBe(expected);
         var obj = repo.Full("tests/T/obj/Gen.g.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(obj)!);
@@ -164,6 +176,17 @@ public sealed class ReleaseImpactEvaluationTests
         auditReceipt.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeTrue("I.inputs");
         auditReceipt.RootElement.GetProperty("fallback").GetString().ShouldBe("Full");
         auditReceipt.RootElement.GetProperty("evaluation").GetProperty("sourceSha").GetString().ShouldBe(sha);
+        var wrongTargetPin = Write(auditManifest with { Contexts = [context with { Configuration = "Debug" }] });
+        var wrongTarget = await repo.RunToolAsync([..evaluation, "--compiler-manifest", manifestPath,
+            "--expected-compiler-manifest-sha256", wrongTargetPin]);
+        wrongTarget.ExitCode.ShouldBe(0, wrongTarget.Text);
+        using var wrongTargetReceipt = Receipt(wrongTarget.StandardOutput);
+        wrongTargetReceipt.RootElement.GetProperty("manifestDigest").GetString().ShouldBe(wrongTargetPin);
+        wrongTargetReceipt.RootElement.GetProperty("evaluation").GetProperty("target").GetProperty("configuration")
+            .GetString().ShouldBe("Release");
+        wrongTargetReceipt.RootElement.GetProperty("proofEligible").GetBoolean().ShouldBeFalse("I.evaluation target");
+        wrongTargetReceipt.RootElement.GetProperty("reason").GetString().ShouldBe("compiler-evaluation-target-mismatch", "I.evaluation target");
+        wrongTargetReceipt.RootElement.GetProperty("fallback").GetString().ShouldBe("Full");
         var legacyBytes = Encoding.UTF8.GetBytes(auditReceipt.RootElement.GetProperty("evaluation").GetRawText());
         await File.WriteAllBytesAsync(manifestPath, legacyBytes, cancellationToken);
         ReleaseCompilerInputs.Bind(sha, gitBlobs, manifestPath, Convert.ToHexStringLower(SHA256.HashData(legacyBytes)))
