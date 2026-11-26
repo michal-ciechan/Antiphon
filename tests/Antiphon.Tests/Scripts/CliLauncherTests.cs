@@ -640,6 +640,29 @@ public sealed class CliLauncherTests
         error.ToString().ShouldBeEmpty();
     }
 
+    // The check failed (here: one entry no longer trusted by time and recorded with other bytes) but the current inputs'
+    // build is this very folder: the command runs here, not in a child of itself.
+    [Test]
+    public void A_publish_that_finds_this_very_build_runs_the_command_here()
+    {
+        using var fixture = Checkout();
+        var builds = new Builds();
+        var error = new StringWriter();
+        var published = Folder(fixture, CliPublisher.Ensure(fixture.Root, Options(builds, error))!);
+        var stamp = Path.Combine(published, CliCache.StampName);
+        var lines = File.ReadAllLines(stamp);
+        var parts = lines[7].Split(' ', 4);
+        lines[7] = new string('0', 64) + " " + parts[1] + " 0 " + parts[3];
+        File.WriteAllLines(stamp, lines);
+        var gate = new Gate();
+
+        CliGate.Enter(Argv, gate.Context(fixture.Root, published, builds, error)).ShouldBeNull();
+
+        gate.Children.ShouldBeEmpty();
+        builds.Count.ShouldBe(1, "the identity was published already");
+        error.ToString().ShouldBeEmpty();
+    }
+
     [Test]
     public void An_unpublished_build_with_the_variable_publishes_and_runs_the_published_one()
     {

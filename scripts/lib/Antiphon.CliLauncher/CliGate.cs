@@ -101,6 +101,11 @@ namespace Antiphon.CliLauncher
             context.HoldLease(context.BaseDirectory);
             var dll = CliPublisher.Ensure(checkout, context.Publish);
             if (dll == null) return CliPublisher.Unavailable;
+            // The current build is this one after all (an input rewritten with the same bytes while it was checked).
+            if (!string.IsNullOrEmpty(context.BaseDirectory)
+                && string.Equals(Path.GetFullPath(Path.GetDirectoryName(dll)).TrimEnd('\\', '/'), Path.GetFullPath(context.BaseDirectory).TrimEnd('\\', '/'),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                return null;
             try
             {
                 return context.RunChild(dll, args);
