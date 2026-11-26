@@ -589,18 +589,7 @@ public sealed class PhoneHomeCommandDispatcher
                             TerminalSeatReleaseOutcome.Unsupported, null));
                     return Result(request, await _runtime.ReleaseTerminalSeatAsync(body.SessionId, body.Release, ct));
                 }),
-                PhoneHomeOperation.ReleaseSlot => await MutateAsync(request, async () =>
-                {
-                    var reason = request.Payload is { } payload
-                        && payload.TryGetProperty("reason", out var raw)
-                        && raw.ValueKind == JsonValueKind.String
-                        ? raw.GetString()
-                        : null;
-                    if (string.IsNullOrWhiteSpace(reason))
-                        throw new PhoneHomeAdmissionException(
-                            PhoneHomeProblemTypes.UnsupportedTarget, "A release reason is required.", 400);
-                    return Result(request, await _runtime.ReleaseSlotAsync(ReadSessionId(request), reason, ct));
-                }),
+                PhoneHomeOperation.ReleaseSlot => await ReleaseSlotAsync(request, ct),
                 PhoneHomeOperation.StopCompactionContinuation => await MutateAsync(request, async () =>
                 {
                     var body = request.Payload?.Deserialize<CompactionContinuationStopRequest>(PhoneHomeFraming.Json)
@@ -735,9 +724,11 @@ public sealed class PhoneHomeCommandDispatcher
         await RejectSignedOutGrokAsync(launch, ct);
         await RejectSignedOutCodexAsync(launch, ct);
         launch = WithConfiguredExecutable(launch, _settings.Executables);
-        // Capacity has to be rechecked inside the mutation lock. A check before StartAsync
-        // lets two launches both pass while neither has recorded a session yet.
-        return await MutateAsync(request, async () =>
+        TaskCompletionSource? placementFinished = null;
+        try { return await AdmitLaunchAsync() ?? await StartLaunchAsync(); }
+        finally { placementFinished?.SetResult(); }
+
+        Task<PhoneHomeFrame?> AdmitLaunchAsync() => MutateAsync<PhoneHomeFrame?>(request, async () =>
         {
             // CARD-0679 D-9: a Launch retried after its ack was lost in a reconnect. The same
             // generation is the same launch: answer with the session already running, and do it
@@ -797,10 +788,38 @@ public sealed class PhoneHomeCommandDispatcher
                 _launchGenerations.Record(launch.SessionId, accepting);
             // CARD-1677 D-2: retention keeps a tree one of this runner's sessions was launched in.
             _workspaceActivity.RecordLaunch(launch.SessionId, launch.Cwd);
+            if (launch.VerificationBinding?.Backend != VerificationCustodyBackends.LinuxCgroup)
+                return await StartLaunchAsync();
+
+            // Reserve the admission turn before releasing the lock for the Linux shim handshake.
+            // Capacity, duplicate generation checks and workspace mutations stay ordered until
+            // the runtime has published the session or finished cleaning up its failed start.
+            placementFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _pendingPlacement = (launch.SessionId, placementFinished.Task);
+            return null;
+        });
+
+        async Task<PhoneHomeFrame> StartLaunchAsync()
+        {
             var started = await _runtime.StartAsync(launch, ct);
             trace.Outcome = "started";
             return Result(request, started);
-        });
+        }
+    }
+
+    private Task<PhoneHomeFrame> ReleaseSlotAsync(PhoneHomeFrame request, CancellationToken ct)
+    {
+        var reason = request.Payload is { } payload
+            && payload.TryGetProperty("reason", out var raw)
+            && raw.ValueKind == JsonValueKind.String
+            ? raw.GetString()
+            : null;
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new PhoneHomeAdmissionException(
+                PhoneHomeProblemTypes.UnsupportedTarget, "A release reason is required.", 400);
+        var sessionId = ReadSessionId(request);
+        return MutateAsync(request, async () =>
+            Result(request, await _runtime.ReleaseSlotAsync(sessionId, reason, ct)), releaseSessionId: sessionId);
     }
 
     /// <summary>
@@ -1033,7 +1052,7 @@ public sealed class PhoneHomeCommandDispatcher
         WorkspaceRetainStep? step = null;
         var locked = await MutateAsync(request, async () =>
         {
-            // D-2: under the same lock as Mirror and Launch, so a re-dispatch after the server's reread is seen here.
+            // D-2: ordered with Mirror and Launch, so a re-dispatch after the server's reread is seen here.
             var live = _runtime.List().Where(session => session.Status != "Exited").Select(session => session.SessionId);
             if (_workspaceActivity.Covers(body.Path ?? "", TimeSpan.FromMinutes(_settings.RetentionRecentUseMinutes), live) is { } use)
                 return Result(request, new PhoneHomeWorkspaceRetainResponse(WorkspaceRetentionCodes.Kept, use.Reason, Detail: use.Detail));
@@ -1098,10 +1117,25 @@ public sealed class PhoneHomeCommandDispatcher
                 409);
     }
 
-    private async Task<PhoneHomeFrame> MutateAsync(PhoneHomeFrame request, Func<Task<PhoneHomeFrame>> action)
+    private async Task<T> MutateAsync<T>(PhoneHomeFrame request, Func<Task<T>> action, Guid? releaseSessionId = null)
     {
         var waiting = _time.GetTimestamp();
-        await MutationLock.WaitAsync();
+        while (true)
+        {
+            await MutationLock.WaitAsync();
+            if (_pendingPlacement is not { Finished.IsCompleted: false } pending)
+            {
+                _pendingPlacement = null;
+                break;
+            }
+            // ReleaseSlot only touches its session's runtime gate and durable records. In
+            // particular, a release for the launching session must not overtake registration.
+            if (releaseSessionId is { } id && id != pending.SessionId)
+                break;
+
+            MutationLock.Release();
+            await pending.Finished;
+        }
         var acquired = _time.GetTimestamp();
         try
         {
@@ -1267,6 +1301,7 @@ public sealed class PhoneHomeCommandDispatcher
             ErrorCode: code, ErrorDetail: detail, StatusCode: status);
 
     private readonly SemaphoreSlim MutationLock = new(1, 1);
+    private (Guid SessionId, Task Finished)? _pendingPlacement;
 }
 
 public sealed class PhoneHomeAdmissionException(string code, string message, int statusCode) : Exception(message)

@@ -352,12 +352,16 @@ public class PhoneHomeCommandDispatcherTests
     {
         var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
         var dispatcher = Dispatcher(runtime);
+        var request = TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId);
 
-        var frame = await dispatcher.DispatchAsync(
-            Launch(TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId)), CancellationToken.None);
+        var frame = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
 
         frame.Kind.ShouldBe(PhoneHomeFrameKind.Result);
         runtime.Mutations.ShouldContain("start");
+        var release = await dispatcher.DispatchAsync(ReleaseSlot(request.SessionId), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        release.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.List().ShouldBeEmpty();
     }
 
     [Test]

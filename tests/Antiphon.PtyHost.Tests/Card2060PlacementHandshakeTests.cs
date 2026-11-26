@@ -681,7 +681,7 @@ public sealed class Card2060PlacementHandshakeTests
             using var peer = world.Connect();
             var next = await world.ProveAndPlaceAsync(peer, _ =>
             {
-                delayedTimer.Timestamp = world.Attempt.Deadline;
+                delayedTimer.AdvanceTo(world.Attempt.Deadline);
                 world.Attempt.Token.IsCancellationRequested.ShouldBeFalse();
             }, bound.Token);
             peer.Dispose();
@@ -699,10 +699,11 @@ public sealed class Card2060PlacementHandshakeTests
     private sealed class PlacementClockWithDelayedTimer : TimeProvider
     {
         private readonly FakeTimeProvider _timerClock = new();
+        private long _timestamp;
 
-        public long Timestamp { get; set; }
+        public void AdvanceTo(long timestamp) => Volatile.Write(ref _timestamp, timestamp);
 
-        public override long GetTimestamp() => Timestamp;
+        public override long GetTimestamp() => Volatile.Read(ref _timestamp);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
             _timerClock.CreateTimer(callback, state, dueTime, period);

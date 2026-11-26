@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
@@ -158,7 +159,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
     public async Task C1614_Natural_completion_accepts_exact_receipt_and_allows_shutdown()
     {
         RequireNativeLifecycle();
-        await using var fx = await NativeHold.StartAsync(hold: false);
+        await using var fx = await NativeHold.StartAsync(hold: false, viaPhoneHome: true);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         VerificationCustodyStatus status;
         do
@@ -324,7 +325,7 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         public int HostPid { get; private set; }
         public int HostCountBeforeLaunch { get; private set; }
 
-        public static async Task<NativeHold> StartAsync(bool hold = true)
+        public static async Task<NativeHold> StartAsync(bool hold = true, bool viaPhoneHome = false)
         {
             var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "c1614-life-" + Guid.NewGuid().ToString("N")));
             var snapshot = Path.Combine(root, "snapshot");
@@ -362,7 +363,9 @@ public sealed class LinuxRunnerCustodyLifecycleTests
                 await File.WriteAllTextAsync(script, body);
                 try
                 {
-                    var started = await runtime.StartAsync(request, CancellationToken.None);
+                    var started = viaPhoneHome
+                        ? await StartThroughPhoneHomeAsync(runtime, request)
+                        : await runtime.StartAsync(request, CancellationToken.None);
                     fixture.RootPid = started.Pid ?? 0;
                     fixture.HostPid = started.HostPid ?? 0;
                 }
@@ -384,6 +387,23 @@ public sealed class LinuxRunnerCustodyLifecycleTests
                 throw;
             }
             return fixture;
+        }
+
+        private static async Task<RunnerSessionDto> StartThroughPhoneHomeAsync(
+            SessionRunnerRuntime runtime, RunnerLaunchRequest request)
+        {
+            var adapter = new PhoneHomeRuntimeAdapter(runtime, RunnerBuildIdentity.Resolve());
+            adapter.VerificationCustodyBackend.ShouldBe(VerificationCustodyBackends.LinuxCgroup);
+            var dispatcher = new PhoneHomeCommandDispatcher(adapter, new PhoneHomeSettings
+            {
+                Enabled = true,
+                AllowedCwd = request.Cwd,
+            });
+            var frame = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.Launch,
+                JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json));
+            var reply = await dispatcher.DispatchAsync(frame, CancellationToken.None);
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+            return reply.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json).ShouldNotBeNull();
         }
 
         public async Task WaitForDescendantAsync()

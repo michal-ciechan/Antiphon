@@ -1272,6 +1272,11 @@ isolates each item and reports errors after processing the remaining batch.
   proof. Natural completion requires that proof, root exit from the original
   PTY connection, fenced zero accounting and drained output. Ordinary reads
   leave processes running. Historical accepted receipt bytes remain replayable.
+  Phone-home admission checks capacity and records the accepted generation and recent
+  workspace use under the mutation lock. Pending Linux placement then releases that lock so
+  a `ReleaseSlot` for another session can progress through its own runtime gate.
+  The pending launch still orders other launches, workspace mutations and releases
+  of its own session until registration or failed-start cleanup finishes (CARD-2084).
 
 - **Queued standing launches retain their accepted generation (CARD-0466).** Start holds
   the source and chosen target's delivery locks through reservation commit and launch
