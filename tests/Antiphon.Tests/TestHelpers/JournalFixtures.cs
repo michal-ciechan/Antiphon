@@ -1,5 +1,4 @@
 using System.Collections.Specialized;
-using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -12,8 +11,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// The executed-journal witnesses' fixtures (W2-nightly S08; they were ManifestPublicationHarness.ps1's helpers). The
 /// publication, the executed manifest and the summary are the production C# (Antiphon.Nightly/TestPhasePublication.cs,
 /// TestPhaseManifests.cs, TestPhaseRunSummary.cs; S09 moved the last two in); what is here builds inputs, reads outputs,
-/// keeps the pinned pre-journal writer as the byte oracle, and runs the nightly tests run on a seams file (RunNightlyTests,
-/// W2-nightly S17: scripts/nightly-tests.ps1 is deleted).
+/// and keeps the pinned pre-journal writer as the byte oracle (the nightly tests run on a driver's seams is SeamedNightlyRun,
+/// in process since unit 62 of the 2026-11-22 remaining-ps1 plan).
 /// </summary>
 internal static class JournalFixtures
 {
@@ -254,43 +253,6 @@ internal static class JournalFixtures
         if (!File.Exists(currentPath)) return "";
         using var current = JsonDocument.Parse(File.ReadAllText(currentPath));
         return current.RootElement.GetProperty("generation").GetString() ?? "";
-    }
-
-    // ---- the nightly tests run on a seams file ----
-
-    // W2-nightly S17: Invoke-C487NightlyTests (scripts/lib/c487-nightly-tests.ps1) over the parameters in params.json, exiting
-    // with the run's process exit (the exit scripts/nightly-tests.ps1 had).
-    private const string NightlyTestsRunner = """
-        param([string]$Repo, [string]$ParametersPath)
-        $ErrorActionPreference = 'Stop'
-        $lib = Join-Path $Repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-        . (Join-Path $lib 'c487-harness.ps1')
-        $parameters = [IO.File]::ReadAllText($ParametersPath) | ConvertFrom-Json -AsHashtable
-        $result = Invoke-C487NightlyTests -Parameters $parameters
-        exit ([int]$result.ProcessExitCode)
-        """;
-
-    /// <summary>
-    /// The nightly tests run (NightlyTests.Run) in a pwsh child on the seams file its SeamsPath names, as scripts/nightly-tests.ps1
-    /// ran with those parameters (deleted in W2-nightly S17), with extra environment; its exit and output.
-    /// </summary>
-    internal static Task<(int ExitCode, string Text)> RunNightlyTests(IReadOnlyDictionary<string, object> parameters, CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, string>? environment = null)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "nightly-tests-run-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-        var runner = Path.Combine(dir, "run.ps1");
-        File.WriteAllText(runner, NightlyTestsRunner, Utf8NoBom);
-        var parametersPath = Path.Combine(dir, "params.json");
-        File.WriteAllText(parametersPath, JsonSerializer.Serialize(parameters), Utf8NoBom);
-        var start = new ProcessStartInfo("pwsh") { WorkingDirectory = C1514Support.RepoRoot() };
-        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", runner, "-Repo", C1514Support.RepoRoot(), "-ParametersPath", parametersPath })
-            start.ArgumentList.Add(argument);
-        if (environment is not null)
-            foreach (var pair in environment) start.Environment[pair.Key] = pair.Value;
-        return C1514Support.RunProcess(start, cancellationToken);
     }
 
     /// <summary>

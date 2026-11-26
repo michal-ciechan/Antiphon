@@ -4,7 +4,7 @@ namespace Antiphon.Tests.Scripts.Nightly;
 
 /// <summary>
 /// W2-nightly S01: fake test hosts for a RecordingLauncher. NativePass is the twin of Write-C487NativePassSeams
-/// (scripts/lib/c487-harness.ps1): instead of running a test assembly it writes, from the launch's argv, what a passing
+/// (scripts/lib/c487-harness.ps1, deleted in unit 62): instead of running a test assembly it writes, from the launch's argv, what a passing
 /// native TUnit run leaves behind.
 /// </summary>
 public static class FakeTestHost

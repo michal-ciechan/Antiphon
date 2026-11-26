@@ -224,7 +224,7 @@ public sealed class NightlyScriptsTests
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyRun.cs"),
                      Path.Combine("lib", "Antiphon.Nightly", "NightlyRunOptions.cs"),
                      Path.Combine("lib", "Antiphon.Scripts", "NightlyTestsCommand.cs"),
-                     Path.Combine("lib", "c487-harness.ps1"),
+                     // Unit 62 of 2026-11-22-remaining-ps1-to-csharp.md: lib/c487-harness.ps1 is deleted (its fixtures are C#).
                      // CARD-1698: the toolchain floor checks, their command (scripts/lib/toolchain-floor.ps1 is deleted) and the
                      // restart entry points that run it.
                      Path.Combine("lib", "Antiphon.Nightly", "ToolchainFloor.cs"),

@@ -28,6 +28,8 @@ public sealed class ReleaseImpactScriptTests
     private const string HarnessProbe = "fixture/tests/Harness/HarnessProbe.cs";
     private const string CoreScript = "scripts/test-fixture-core-probe.ps1";
     private const string HarnessScript = "scripts/test-fixture-harness-probe.ps1";
+    private const string CoreLoader = "scripts/lib/fixture-core-loader.ps1";
+    private const string HarnessLibrary = "scripts/lib/fixture-harness.ps1";
     private const string Launcher = Project + "::Antiphon.Tests.Scripts.Nightly.AntiphonCliLauncherTests";
     private const string Harmless = "fixture/tests/Harmless/Harmless.csproj::Fixture.HarmlessProbe";
     private const string Looped = "fixture/tests/Chain/Chain.csproj::Fixture.ChainProbe";
@@ -59,15 +61,16 @@ public sealed class ReleaseImpactScriptTests
     public void BasenameReachesCliSource()
     {
         var result = Case(Shared.Value, "real");
-        // nightly-core.ps1 compiles every scripts/lib/Antiphon.Scripts source into the CLI, so a driver that loads it reaches them.
+        // A loader that builds scripts/lib/Antiphon.Scripts names its sources, so a driver that loads it reaches them.
         // 2026-11-22 plan, unit 8: the release-selection and rc-project-selection drivers this case used are deleted (their
         // classes run in process); unit 15 deleted test-release-gate.ps1, whose policy and run classes were the examples
-        // after unit 14; W2 slice S22 deleted the live-lane fingerprint driver, the example until then. The example is a fixture
-        // probe whose driver loads nightly-core.ps1 as that driver did.
+        // after unit 14; W2 slice S22 deleted the live-lane fingerprint driver, the example until then; unit 62 deleted
+        // scripts/lib/nightly-core.ps1, the loader until then. The example is a fixture probe whose driver loads a fixture
+        // loader that names the project as nightly-core.ps1 did.
         Classes(result, "scripts/lib/Antiphon.Scripts/Program.cs").ShouldContain(CoreDriver);
         var chain = Chain(result, "scripts/lib/Antiphon.Scripts/Program.cs", CoreDriver);
         chain[..2].ShouldBe([CoreProbe, CoreScript]);
-        chain[^2..].ShouldBe(["scripts/lib/nightly-core.ps1", "scripts/lib/Antiphon.Scripts/Program.cs"]);
+        chain[^2..].ShouldBe([CoreLoader, "scripts/lib/Antiphon.Scripts/Program.cs"]);
         Kinds(result, CoreScript, CoreDriver).ShouldContain("script:basename");
         Classes(result, "scripts/lib/Antiphon.Scripts/Program.cs").ShouldNotContain(Harmless);
         AssertIncomplete(result);
@@ -77,9 +80,10 @@ public sealed class ReleaseImpactScriptTests
     public void DotSourceClosureReachesAuthority()
     {
         var result = Case(Shared.Value, "real");
-        // W2 slices S21 and S22 deleted the live-lane drivers that dot-sourced the harness; the fixture probes' drivers do.
+        // W2 slices S21 and S22 deleted the live-lane drivers that dot-sourced the harness, and unit 62 the harness
+        // (scripts/lib/c487-harness.ps1); the fixture probes' drivers dot-source a fixture harness library in its place.
         foreach (var (identity, file, driver) in new[] { (CoreDriver, CoreProbe, CoreScript), (HarnessDriver, HarnessProbe, HarnessScript) })
-            Chain(result, "scripts/lib/c487-harness.ps1", identity).ShouldBe([file, driver, "scripts/lib/c487-harness.ps1"], identity);
+            Chain(result, HarnessLibrary, identity).ShouldBe([file, driver, HarnessLibrary], identity);
         // Fixture: constant foreach imports, multi-hop dot-source, Import-Module and two cycles.
         Paths(result, Looped).ShouldBe(new[]
         {
@@ -386,10 +390,13 @@ public sealed class ReleaseImpactScriptTests
         // The two probes and their drivers, shaped as the deleted live-lane fingerprint and receipt drivers were.
         files["fixture/tests/Core/Core.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
         files[CoreProbe] = "namespace Fixture;\ninternal class CoreProbe { Task Run() => ScriptHarness.RunHarnessCaseAsync(\"test-fixture-core-probe.ps1\", \"C1\", \"C1_X\", 1); }\n";
-        files[CoreScript] = ". \"$PSScriptRoot/lib/nightly-common.ps1\"\n. \"$PSScriptRoot/lib/nightly-core.ps1\"; $null = Test-NightlyCoreAvailable\n. \"$PSScriptRoot/lib/c487-harness.ps1\"\n";
+        files[CoreScript] = ". \"$PSScriptRoot/lib/fixture-core-loader.ps1\"\n. \"$PSScriptRoot/lib/fixture-harness.ps1\"\n";
+        // The loader names the CLI project as the deleted nightly-core.ps1 did; the harness library is a plain dot-source target.
+        files[CoreLoader] = "$project = Join-Path $PSScriptRoot 'Antiphon.Scripts'\n$csproj = Join-Path $project 'Antiphon.Scripts.csproj'\n";
+        files[HarnessLibrary] = "function Write-FixturePass { param([string]$Name) Write-Host ('PASS ' + $Name) }\n";
         files["fixture/tests/Harness/Harness.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
         files[HarnessProbe] = "namespace Fixture;\ninternal class HarnessProbe { Task Run() => ScriptHarness.RunHarnessCaseAsync(\"test-fixture-harness-probe.ps1\", \"C1\", \"C1_X\", 1); }\n";
-        files[HarnessScript] = ". \"$PSScriptRoot/lib/nightly-common.ps1\"\n. \"$PSScriptRoot/lib/c487-harness.ps1\"\n";
+        files[HarnessScript] = ". \"$PSScriptRoot/lib/fixture-harness.ps1\"\n";
         var consumers = new List<ReleaseScriptConsumer>
         {
             Consumer(Harmless, "fixture/tests/Harmless/HarmlessProbe.cs"),

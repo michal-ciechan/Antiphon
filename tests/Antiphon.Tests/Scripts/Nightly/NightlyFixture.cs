@@ -16,7 +16,7 @@ public sealed record NightlyTrxRow(string Id, string ClassName, string MethodNam
 public sealed record NightlyTestNode(string Uid, string Type, string Method, string Namespace = "", string State = "", string ClassName = "");
 
 /// <summary>
-/// W2-nightly S01: the C# twin of the c487-harness fixture functions (scripts/lib/c487-harness.ps1). One temporary
+/// W2-nightly S01: the C# twin of the c487-harness fixture functions (scripts/lib/c487-harness.ps1, deleted in unit 62). One temporary
 /// root per test (New-C487Root), deleted on Dispose after clearing read-only files without following links
 /// (Clear-C487OwnedResultReadOnly). It writes the owned clone (New-C487OwnedClone), TRX, execution, discovery and
 /// evidence files (Write-C487Trx/Execution/Discovery/Evidence), and builds a NightlyHost from fakes in place of the

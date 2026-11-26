@@ -34,8 +34,9 @@ public sealed class C1677TempFamilyRegistryTests
         var root = RepoRoot();
         var families = RunnerTempSweep.RegisteredFamilies;
         // CARD-1981 S2 replay: master already had 20 families (slice 1). This slice adds
-        // dotnet-sdk-empty, so the shipped table is 21.
-        families.Count.ShouldBe(21);
+        // dotnet-sdk-empty, so the shipped table was 21. Unit 62 of the 2026-11-22 remaining-ps1 plan removed "c487"
+        // with its producer (scripts/lib/c487-harness.ps1): 20.
+        families.Count.ShouldBe(20);
         foreach (var family in families)
         {
             if (family.Id is RunnerTempSweep.ClaudeScratch or RunnerTempSweep.DotnetSdkEmpty)

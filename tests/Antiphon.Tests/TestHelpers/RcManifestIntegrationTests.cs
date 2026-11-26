@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.TestHelpers.JournalFixtures;
@@ -14,9 +15,9 @@ namespace Antiphon.Tests.TestHelpers;
 // ManifestPublicationHarness.ps1). The publication, the executed manifest and the summary are the production C#
 // (TestPhasePublication, TestPhaseManifests, TestPhaseRunSummary: the summarize-test-phases command in-process, S09), in-process
 // where a case drives them directly. The qualification loop is NightlyTests.Run since W2-nightly S17 (scripts/nightly-tests.ps1 is
-// deleted): the cases run it in a pwsh child on the seams file the harness passed (Invoke-C487NightlyTests,
-// scripts/lib/c487-nightly-tests.ps1), its commit fault and bound writer read through the journal seams.
-// The harness ran the loop without deferred evidence writes; so do these (ANTIPHON_NIGHTLY_DEFERRED_WRITES=off).
+// deleted): the cases run it in this process on the seams the harness passed (SeamedNightlyRun; unit 62 of the 2026-11-22
+// remaining-ps1 plan deleted the pwsh child and scripts/lib/c487-nightly-tests.ps1 it ran), its commit fault and bound writer
+// read through the journal seams. The harness ran the loop without deferred evidence writes; so do these.
 // NotInParallel: the evidence file system and the cultures are process-wide.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -357,9 +358,10 @@ public sealed class RcManifestIntegrationTests
 
     private static List<(string Suite, string[] Classes)> Classes(params (string Suite, string[] Classes)[] chunks) => chunks.ToList();
 
-    private static async Task<Qualified> Qualify(string work, string name, string mode, string[] suites, List<(string Suite, string[] Classes)> chunkClasses,
+    private static Task<Qualified> Qualify(string work, string name, string mode, string[] suites, List<(string Suite, string[] Classes)> chunkClasses,
         CancellationToken cancellationToken, int faultAt = 0, int faultUntil = 0, string faultStage = "Rename", int faultRemaining = 2, string publication = "")
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var root = Path.Combine(work, name);
         var state = Path.Combine(root, "state");
         Directory.CreateDirectory(state);
@@ -371,8 +373,6 @@ public sealed class RcManifestIntegrationTests
         File.WriteAllText(Path.Combine(state, "report-count.txt"), "0");
         var policy = Path.Combine(root, "policy.json");
         ScopedPolicy(policy, suites, chunkClasses);
-        var seam = Path.Combine(root, "seams.ps1");
-        File.WriteAllText(seam, SeamText, new UTF8Encoding(false));
         var log = Path.Combine(root, "log");
         var timing = Path.Combine(root, "timing");
         FileStream? heldWriter = null;
@@ -394,15 +394,18 @@ public sealed class RcManifestIntegrationTests
         (int ExitCode, string Text) ran;
         try
         {
-            ran = await RunNightlyTests(new Dictionary<string, object>
-                {
-                    ["RepoRoot"] = C1514Support.RepoRoot(), ["LogRoot"] = log, ["TimingRoot"] = timing, ["Suites"] = suites, ["Profile"] = "nightly",
-                    ["Sha"] = Sha40, ["GitRef"] = "origin/master", ["RunId"] = "mp-" + name, ["Attempt"] = 1, ["Trigger"] = "manual", ["SeamsPath"] = seam,
-                    ["PolicyPath"] = policy, ["AllowSharedTree"] = true,
-                }, cancellationToken, new Dictionary<string, string>
-                {
-                    ["MP_STATE"] = state, ["MP_TIMING"] = timing, ["MP_LOG"] = log, ["MP_MODE"] = mode, ["ANTIPHON_NIGHTLY_DEFERRED_WRITES"] = "off",
-                });
+            var seam = new MpSeam(state, timing, log, mode);
+            var run = new SeamedNightlyRun
+            {
+                StartProcess = seam.StartProcess, DockerInfo = SeamedNightlyRun.DockerSeam, DiskFree = SeamedNightlyRun.DiskSeam,
+                PublicationScope = seam.PublicationScope, ExecutedContext = seam.Bind,
+            };
+            var exit = run.Run(new NightlyTestsOptions
+            {
+                RepoRoot = C1514Support.RepoRoot(), LogRoot = log, TimingRoot = timing, Suites = suites, Profile = "nightly", Sha = Sha40,
+                GitRef = "origin/master", RunId = "mp-" + name, Attempt = 1, Trigger = "manual", PolicyPath = policy, AllowSharedTree = true,
+            }).ExitCode;
+            ran = (exit, run.Output.ToString());
         }
         finally { heldWriter?.Dispose(); }
         // missing-state: the state the terminal projection wrote is gone (the harness removed it after each projection).
@@ -420,7 +423,7 @@ public sealed class RcManifestIntegrationTests
         if (generation.Length > 0 && File.Exists(sealPath)) seal = JsonDocument.Parse(File.ReadAllText(sealPath)).RootElement.Clone();
         string Flag(string file) => File.Exists(Path.Combine(state, file)) ? File.ReadAllText(Path.Combine(state, file)).Trim() : "";
         var rescans = int.TryParse(Flag("rescans.txt"), out var r) ? r : 0;
-        return new Qualified(name, ran.ExitCode, summary, seal, Flag("flat-at-barrier.txt"), Flag("stamp-at-barrier.txt"), timing, log, state, rescans, ran.Text);
+        return Task.FromResult(new Qualified(name, ran.ExitCode, summary, seal, Flag("flat-at-barrier.txt"), Flag("stamp-at-barrier.txt"), timing, log, state, rescans, ran.Text));
     }
 
     // New-MpScopedPolicy: the repository policy with these suites required, missing ones declared, one chunk 'same' per
@@ -504,145 +507,83 @@ public sealed class RcManifestIntegrationTests
     private static string Tail(string text) => text.Length <= 1500 ? text : text[^1500..];
 
     // Write-MpSeam: the qualification's seams (a fake test host that writes TRX and diagnostics from the argv), with the
-    // publication fault window and the barrier observations. Its helpers live in the StartProcess block. The run reads the
-    // commit fault through the PublicationScope seam and hands the bound writer context to the ExecutedContext seam (W2-nightly
-    // S17: the journal seams of Invoke-C487NightlyTests); both travel in $global: variables.
-    private const string SeamText = """
-        $NightlySeams = @{
-            PublicationScope = { param($TimingRoot) [Antiphon.Nightly.TestPhasePublicationScope]::new([string]$TimingRoot, [Antiphon.Nightly.TestPhaseRunSummary]::CommandEdition, '1', $null, $global:MpCommitFault) }
-            ExecutedContext = { param($Context) $global:MpExecutedContext = $Context }
-            DockerInfo = { return @{ exitCode = 0; version = "test"; detail = "seam" } }
-            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-            StartProcess = {
-                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-                function Get-MpArgValue {
-                    param([string[]]$ArgumentList, [string]$Name)
-                    $items = @($ArgumentList)
-                    for ($i = 0; $i -lt $items.Count; $i++) {
-                        if ([string]$items[$i] -eq $Name -and ($i + 1) -lt $items.Count) { return [string]$items[$i + 1] }
-                    }
-                    return ""
-                }
-                function Get-MpFilterClass {
-                    param([string]$Filter)
-                    if ($Filter -match '^/\*/([^/]+)/([^/]+)/\*$') { return ($Matches[1] + "." + $Matches[2]) }
-                    return ""
-                }
-                function New-MpDiagRecord {
-                    param([string]$Uid, [string]$TypeName, [string]$Method, [string]$StateName)
-                    $state = $StateName + "TestNodeStateProperty { Explanation = ok }"
-                    return ("TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = " + $Uid + " }, DisplayName = " + $Method + ", Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = " + $TypeName + ", MethodName = " + $Method + ", MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, " + $state + " ] } }")
-                }
-                function Write-MpDiagFile {
-                    param([string]$Directory, [string[]]$Records)
-                    if (-not (Test-Path -LiteralPath $Directory)) { New-Item -ItemType Directory -Path $Directory -Force | Out-Null }
-                    $text = "Version: '1.44.0.0'`nVersion: 2.2.2`n" + (@($Records) -join "`n") + "`n"
-                    [System.IO.File]::WriteAllText((Join-Path $Directory "fixture.diag"), $text, (New-Object System.Text.UTF8Encoding $false))
-                }
-                function Write-MpDefinedTrx {
-                    param([string]$Path, [string]$ClassName, [string]$Outcome)
-                    $dir = Split-Path -Parent $Path
-                    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-                    $xml = '<?xml version="1.0" encoding="utf-8"?><TestRun><TestDefinitions><UnitTest id="t1" name="Plain"><TestMethod className="' + $ClassName + '" name="Plain" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="t1" testName="Plain" outcome="' + $Outcome + '" /></Results></TestRun>'
-                    [System.IO.File]::WriteAllText($Path, $xml, (New-Object System.Text.UTF8Encoding $false))
-                }
-                $state = [string]$env:MP_STATE
-                $utf8 = New-Object System.Text.UTF8Encoding $false
-                # The bound writer's prefix rescans so far (the harness counted Invoke-TestPhasePrefixRescan).
-                $bound = $global:MpExecutedContext
-                if ($null -ne $bound) { [System.IO.File]::WriteAllText((Join-Path $state "rescans.txt"), [string]$bound.PrefixRescans, $utf8) }
-                $items = @($ArgumentList)
-                $argsText = $items -join " "
-                Add-Content -LiteralPath (Join-Path $state "launches.txt") -Value $argsText -Encoding ascii
-                $classes = @([System.IO.File]::ReadAllLines((Join-Path $state "classes.txt")))
-                if ($argsText -match "--list-tests") {
-                    $diag = Get-MpArgValue -ArgumentList $items -Name "--diagnostic-output-directory"
-                    $records = @()
-                    foreach ($className in $classes) {
-                        if ([string]::IsNullOrWhiteSpace($className)) { continue }
-                        $records += (New-MpDiagRecord -Uid ("uid-" + $className) -TypeName $className -Method "Plain" -StateName "Discovered")
-                    }
-                    Write-MpDiagFile -Directory $diag -Records $records
-                    return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
-                }
-                if ($argsText -notmatch "--report-trx") {
-                    return [pscustomobject]@{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = "" }
-                }
-                $n = 0
-                $countPath = Join-Path $state "report-count.txt"
-                if (Test-Path -LiteralPath $countPath) { $n = [int][System.IO.File]::ReadAllText($countPath) }
-                $n++
-                [System.IO.File]::WriteAllText($countPath, ([string]$n), $utf8)
-                $timing = [string]$env:MP_TIMING
-                $flat = Join-Path $timing "groups-executed.json"
-                if ($n -ge 2) {
-                    $flag = "absent"
-                    if (Test-Path -LiteralPath $flat) { $flag = "present" }
-                    [System.IO.File]::WriteAllText((Join-Path $state "flat-at-barrier.txt"), $flag, $utf8)
-                    $logRoot = [string]$env:MP_LOG
-                    $stamp = ""
-                    if (Test-Path -LiteralPath $logRoot) {
-                        $logs = @(Get-ChildItem -LiteralPath $logRoot -Filter "*-tests.log" -File -ErrorAction SilentlyContinue)
-                        foreach ($log in $logs) {
-                            $raw = [System.IO.File]::ReadAllText($log.FullName)
-                            if ($raw -match "C487_INVOCATION=") { $stamp = "stamped" }
-                        }
-                    }
-                    if ([string]::IsNullOrWhiteSpace($stamp)) { $stamp = "unstamped" }
-                    [System.IO.File]::WriteAllText((Join-Path $state "stamp-at-barrier.txt"), $stamp, $utf8)
-                }
-                $mode = [string]$env:MP_MODE
-                if ($mode -eq "throw" -and $n -eq 1) { throw "mp-orchestration" }
-                if ($mode -eq "no-planned") {
-                    $planned = Join-Path $timing "groups-planned.json"
-                    if (Test-Path -LiteralPath $planned) { Remove-Item -LiteralPath $planned -Force }
-                    $index = Join-Path $timing "groups-planned-index.json"
-                    if (Test-Path -LiteralPath $index) { Remove-Item -LiteralPath $index -Force }
-                }
-                $faultAt = 0
-                $faultPath = Join-Path $state "fault-at.txt"
-                if (Test-Path -LiteralPath $faultPath) { $faultAt = [int][System.IO.File]::ReadAllText($faultPath) }
-                $faultUntil = 0
-                $untilPath = Join-Path $state "fault-until.txt"
-                if (Test-Path -LiteralPath $untilPath) { $faultUntil = [int][System.IO.File]::ReadAllText($untilPath) }
-                $stage = "Rename"
-                $stagePath = Join-Path $state "fault-stage.txt"
-                if (Test-Path -LiteralPath $stagePath) {
-                    $stageText = [System.IO.File]::ReadAllText($stagePath).Trim()
-                    if (-not [string]::IsNullOrWhiteSpace($stageText)) { $stage = $stageText }
-                }
-                $inWindow = $false
-                if ($faultAt -gt 0 -and $n -ge $faultAt) {
-                    if ($faultUntil -le 0 -or $n -le $faultUntil) { $inWindow = $true }
-                }
-                if ($inWindow) {
-                    $remaining = 2
-                    $remainPath = Join-Path $state "fault-remaining.txt"
-                    if (Test-Path -LiteralPath $remainPath) { $remaining = [int][System.IO.File]::ReadAllText($remainPath) }
-                    $global:MpCommitFault = [pscustomobject]@{ Stage = $stage; Remaining = $remaining }
-                } elseif ($faultAt -gt 0) {
-                    $global:MpCommitFault = $null
-                }
-                $filter = Get-MpArgValue -ArgumentList $items -Name "--treenode-filter"
-                $className = Get-MpFilterClass -Filter $filter
-                if ([string]::IsNullOrWhiteSpace($className)) { $className = [string]$classes[0] }
-                $outcome = "Passed"
-                $exitCode = 0
-                $timedOut = $false
-                if ($mode -eq "failed") { $outcome = "Failed"; $exitCode = 1 }
-                if ($mode -eq "timeout") { $timedOut = $true }
-                if ($mode -ne "missing-trx") {
-                    $trxName = Get-MpArgValue -ArgumentList $items -Name "--report-trx-filename"
-                    $results = Get-MpArgValue -ArgumentList $items -Name "--results-directory"
-                    if ($trxName -and $results) { Write-MpDefinedTrx -Path (Join-Path $results $trxName) -ClassName $className -Outcome $outcome }
-                    $exec = Get-MpArgValue -ArgumentList $items -Name "--diagnostic-output-directory"
-                    $stateName = "Passed"
-                    if ($outcome -eq "Failed") { $stateName = "Failed" }
-                    Write-MpDiagFile -Directory $exec -Records @((New-MpDiagRecord -Uid ("uid-" + $className) -TypeName $className -Method "Plain" -StateName $stateName))
-                }
-                $drain = 10 + $n
-                return [pscustomobject]@{ ExitCode = $exitCode; TimedOut = $timedOut; ChildrenExited = $true; CleanupComplete = $true; Pid = (40 + $n); LogText = ""; RootStartedAtUtc = "2026-10-30T03:02:00Z"; RootExitedAtUtc = "2026-10-30T03:03:00Z"; JobEmptyObserved = $true; DrainMilliseconds = $drain }
+    // publication fault window and the barrier observations. The run reads the commit fault through the PublicationScope seam
+    // and hands the bound writer context to the ExecutedContext seam (W2-nightly S17: the journal seams of the seamed run).
+    private sealed class MpSeam(string state, string timing, string log, string mode)
+    {
+        private static readonly UTF8Encoding Utf8 = new(false);
+        private object? _fault;
+        private TestPhaseJournalContext? _bound;
+
+        public TestPhasePublicationScope PublicationScope(string timingRoot) =>
+            new(timingRoot, TestPhaseRunSummary.CommandEdition, "1", null, _fault);
+
+        public void Bind(TestPhaseJournalContext context) => _bound = context;
+
+        public object StartProcess(NightlyLaunch launch)
+        {
+            // The bound writer's prefix rescans so far (the harness counted Invoke-TestPhasePrefixRescan).
+            if (_bound is not null) File.WriteAllText(Path.Combine(state, "rescans.txt"), _bound.PrefixRescans.ToString(System.Globalization.CultureInfo.InvariantCulture), Utf8);
+            var items = launch.Arguments ?? [];
+            var argsText = string.Join(" ", items);
+            File.AppendAllText(Path.Combine(state, "launches.txt"), argsText + Environment.NewLine, Encoding.ASCII);
+            var classes = File.ReadAllLines(Path.Combine(state, "classes.txt"));
+            if (argsText.Contains("--list-tests", StringComparison.OrdinalIgnoreCase))
+            {
+                var records = classes.Where(c => !string.IsNullOrWhiteSpace(c)).Select(c => DiagRecord("uid-" + c, c, "Plain", "Discovered")).ToArray();
+                WriteDiag(SeamedNightlyRun.Argument(items, "--diagnostic-output-directory"), records);
+                return SeamedNightlyRun.Answer();
             }
+            if (!argsText.Contains("--report-trx", StringComparison.OrdinalIgnoreCase)) return SeamedNightlyRun.Answer();
+            var countPath = Path.Combine(state, "report-count.txt");
+            var n = (File.Exists(countPath) ? int.Parse(File.ReadAllText(countPath), System.Globalization.CultureInfo.InvariantCulture) : 0) + 1;
+            File.WriteAllText(countPath, n.ToString(System.Globalization.CultureInfo.InvariantCulture), Utf8);
+            if (n >= 2)
+            {
+                File.WriteAllText(Path.Combine(state, "flat-at-barrier.txt"), File.Exists(Path.Combine(timing, "groups-executed.json")) ? "present" : "absent", Utf8);
+                var stamped = Directory.Exists(log) && Directory.EnumerateFiles(log, "*-tests.log").Any(f => File.ReadAllText(f).Contains("C487_INVOCATION=", StringComparison.OrdinalIgnoreCase));
+                File.WriteAllText(Path.Combine(state, "stamp-at-barrier.txt"), stamped ? "stamped" : "unstamped", Utf8);
+            }
+            if (mode == "throw" && n == 1) throw new InvalidOperationException("mp-orchestration");
+            if (mode == "no-planned")
+            {
+                foreach (var planned in new[] { "groups-planned.json", "groups-planned-index.json" })
+                    if (File.Exists(Path.Combine(timing, planned))) File.Delete(Path.Combine(timing, planned));
+            }
+            int Number(string file, int fallback) =>
+                File.Exists(Path.Combine(state, file)) ? int.Parse(File.ReadAllText(Path.Combine(state, file)).Trim(), System.Globalization.CultureInfo.InvariantCulture) : fallback;
+            var faultAt = Number("fault-at.txt", 0);
+            var faultUntil = Number("fault-until.txt", 0);
+            var stagePath = Path.Combine(state, "fault-stage.txt");
+            var stage = File.Exists(stagePath) && !string.IsNullOrWhiteSpace(File.ReadAllText(stagePath)) ? File.ReadAllText(stagePath).Trim() : "Rename";
+            if (faultAt > 0 && n >= faultAt && (faultUntil <= 0 || n <= faultUntil)) _fault = Fault(stage, Number("fault-remaining.txt", 2));
+            else if (faultAt > 0) _fault = null;
+            var filter = Regex.Match(SeamedNightlyRun.Argument(items, "--treenode-filter"), "^/\\*/([^/]+)/([^/]+)/\\*$");
+            var className = filter.Success ? filter.Groups[1].Value + "." + filter.Groups[2].Value : classes[0];
+            var outcome = mode == "failed" ? "Failed" : "Passed";
+            if (mode != "missing-trx")
+            {
+                var trxName = SeamedNightlyRun.Argument(items, "--report-trx-filename");
+                var results = SeamedNightlyRun.Argument(items, "--results-directory");
+                if (trxName.Length > 0 && results.Length > 0) WriteDefinedTrx(Path.Combine(results, trxName), className, outcome);
+                WriteDiag(SeamedNightlyRun.Argument(items, "--diagnostic-output-directory"), [DiagRecord("uid-" + className, className, "Plain", outcome)]);
+            }
+            return new PlainObject(("ExitCode", mode == "failed" ? 1 : 0), ("TimedOut", mode == "timeout"), ("ChildrenExited", true), ("CleanupComplete", true),
+                ("Pid", 40 + n), ("LogText", ""), ("RootStartedAtUtc", "2026-10-30T03:02:00Z"), ("RootExitedAtUtc", "2026-10-30T03:03:00Z"),
+                ("JobEmptyObserved", true), ("DrainMilliseconds", 10 + n));
         }
-        """;
+
+        // New-MpDiagRecord: one TestNodeUpdateMessage line of the TUnit diagnostic log.
+        private static string DiagRecord(string uid, string typeName, string method, string stateName) =>
+            "TestNodeUpdateMessage { DisplayName = TestNode update, Description = This data is used to report a TestNode state change., Properties = [], ParentTestNodeUid = <null>, TestNode = TestNode { Uid = TestNodeUid { Value = "
+            + uid + " }, DisplayName = " + method + ", Properties = [ TestMethodIdentifierProperty { AssemblyFullName = Probe, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null, Namespace = Probe, TypeName = "
+            + typeName + ", MethodName = " + method + ", MethodArity = 0, ParameterTypeFullNames = [], ReturnTypeFullName = System.Void }, " + stateName + "TestNodeStateProperty { Explanation = ok } ] } }";
+
+        // Write-MpDiagFile: the diagnostic directory's fixture.diag.
+        private static void WriteDiag(string directory, string[] records)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "fixture.diag"), "Version: '1.44.0.0'\nVersion: 2.2.2\n" + string.Join("\n", records) + "\n", Utf8);
+        }
+    }
 }

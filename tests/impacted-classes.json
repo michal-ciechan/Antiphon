@@ -552,7 +552,6 @@
         "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs",
         "src/Antiphon.SessionRunner/RunnerTempSweep.cs",
         "tests/Antiphon.Tests/TestHelpers/TestClassificationPolicyTests.cs",
-        "scripts/lib/c487-harness.ps1",
         "tests/Antiphon.Tests/TestHelpers/RemoteControlPtyLane.cs",
         "tests/Antiphon.Tests/Application/SessionGenerationExitTests.cs",
         "tests/Antiphon.Tests/TestHelpers/C1514Support.cs",

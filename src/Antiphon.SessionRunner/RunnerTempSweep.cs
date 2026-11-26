@@ -67,9 +67,9 @@ public sealed class RunnerTempSweep
         new("c487-probe", "^c487-probe-[0-9a-f]{32}\\z",
             "tests/Antiphon.Tests/TestHelpers/TestClassificationPolicyTests.cs", "\"c487-probe-\"",
             "c487-probe-0123456789abcdef0123456789abcdef"),
-        new("c487", "^c487-[0-9a-f]{32}\\z",
-            "scripts/lib/c487-harness.ps1", "('c487-' + [guid]::NewGuid().ToString('N'))",
-            "c487-0123456789abcdef0123456789abcdef"),
+        // The "c487" family (c487-<guid>, New-C487Root's default root) left the table with its producer,
+        // scripts/lib/c487-harness.ps1 (unit 62 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): a
+        // family without a producer pin is never swept, so an old c487-<guid> root is reported as unregistered.
         new("pty-test-root",
             "^antiphon-(cpu-watchdog-tests|liveness-tests|adoption-tests|bufbounds-tests|backend-seam|first-write-race|0180-dto"
             + "|card0395-adoption|card0395-write-fault|card0395-http|c420-barrier|c502-v25|c502-v26|c502-v26-manifest|c502-v26-herdr"

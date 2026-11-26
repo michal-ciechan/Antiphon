@@ -9,7 +9,7 @@ namespace Antiphon.Tests.Scripts;
 /// CARD-1687 D-1: the forced-Windows read-only cleanup witness, so a change to how the owned-results cleanup lists
 /// directories cannot silently break it again. Unit 39 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md
 /// moved it in process: it ran scripts/fixtures/c487-readonly-windows-witness.ps1 (deleted) against
-/// Clear-C487OwnedResultReadOnly in scripts/lib/c487-harness.ps1; it now witnesses that function's C# twin,
+/// Clear-C487OwnedResultReadOnly in scripts/lib/c487-harness.ps1 (deleted in unit 62); it now witnesses that function's C# twin,
 /// <see cref="NightlyFixture.ClearOwnedReadOnly{TNode}"/>, which the in-process nightly tests' fixture runs before it deletes
 /// its root. The rows are the script's: the same fake Windows tree (a root under a home with an apostrophe, three owned Git
 /// objects, a directory link, a file link, a linked results root and an outside file), so it runs on Linux and Windows alike.

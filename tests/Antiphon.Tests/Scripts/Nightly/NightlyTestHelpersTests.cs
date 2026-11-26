@@ -26,6 +26,23 @@ public sealed class NightlyTestHelpersTests
         new("uid-2", "AlphaTests", "Fails", "Antiphon.Tests.Alpha"),
     ];
 
+    // CARD-1691 H1/H2 (C487HarnessRootDefaultTests until unit 62 of the 2026-11-22 remaining-ps1 plan deleted New-C487Root
+    // with scripts/lib/c487-harness.ps1): a fixture's root is a fresh empty directory under the process temp directory
+    // (Path.GetTempPath, which needs no TEMP variable), never inside the repository, where its fixture repositories would
+    // nest in the worktree.
+    [Test]
+    public void C1590_DefaultRootIsUnderTempOutsideTheRepository()
+    {
+        using var fixture = NightlyFixture.Create();
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        fixture.Root.StartsWith(temp + Path.DirectorySeparatorChar, comparison).ShouldBeTrue(fixture.Root);
+        var repo = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Antiphon.Tests.Application.DelegateScriptRunner.RepoRoot));
+        fixture.Root.StartsWith(repo + Path.DirectorySeparatorChar, comparison).ShouldBeFalse(fixture.Root);
+        Directory.Exists(fixture.Root).ShouldBeTrue(fixture.Root);
+        Directory.EnumerateFileSystemEntries(fixture.Root).ShouldBeEmpty(fixture.Root);
+    }
+
     [Test]
     public void Owned_clone_has_the_git_config_head_and_owner_marker()
     {

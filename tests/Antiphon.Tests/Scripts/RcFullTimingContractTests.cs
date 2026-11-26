@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -14,8 +15,8 @@ namespace Antiphon.Tests.Scripts;
 // CARD-1514 S1. Portable contracts for the rc timing instrumentation.
 // Native Windows owner proof is CP-2 and is not discharged here. The manifests, the summary and the phase-timing
 // variables are the production C# (W2-nightly S09), called in-process, as are the owner observation and the setup
-// phases (S12's NightlyChunkRunner, since S16); only the call-site case runs a pwsh child: NightlyTests.Run on its
-// seams files (Invoke-C487NightlyTests, W2-nightly S17; the executor nightly-tests-impl.ps1 is deleted).
+// phases (S12's NightlyChunkRunner, since S16); the call-site case runs NightlyTests.Run in process on its seams
+// (SeamedNightlyRun; unit 62 of the 2026-11-22 remaining-ps1 plan deleted the pwsh child and its harness).
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcFullTimingContractTests
@@ -248,25 +249,112 @@ public sealed class RcFullTimingContractTests
         }
     }
 
+    // The production call sites write the discovery and setup timings (NightlyTests.Run on three seam sets: every launch
+    // passes; rc discovery times out; discovery and TRX answered). Unit 62 of the 2026-11-22 remaining-ps1 plan moved the
+    // runs in process (they ran in a pwsh child through scripts/lib/c487-nightly-tests.ps1); npm resolves to a launcher
+    // under the work root, through the run's PATH, as the child's $env:PATH had it.
     [Test]
     [Timeout(120_000)]
-    public async Task ProductionCallSitesPersistDiscoveryAndSetup(CancellationToken cancellationToken)
+    [NotInParallel("QualificationTimingTests")]
+    public void ProductionCallSitesPersistDiscoveryAndSetup(CancellationToken cancellationToken)
     {
-        var root = FreshRoot();
-        var observed = await Run(CallSiteScript, cancellationToken, root);
-        observed.GetProperty("exitCode").GetInt32().ShouldBe(0, observed.GetProperty("text").GetString());
-        observed.GetProperty("discoveryNull").GetBoolean().ShouldBeTrue("call site copied the suite constant");
-        observed.GetProperty("setupNpmCi").GetBoolean().ShouldBeTrue("npm-ci setup phase was not written");
-        observed.GetProperty("setupNpmBuild").GetBoolean().ShouldBeTrue("npm-build setup phase was not written");
-        observed.GetProperty("setupLint").GetBoolean().ShouldBeTrue("lint setup phase was not written");
-        observed.GetProperty("setupDotnet").GetBoolean().ShouldBeTrue("dotnet-build setup phase was not written");
-        observed.GetProperty("planningPresent").GetBoolean().ShouldBeTrue("planning-<suite> was not written");
-        observed.GetProperty("planningSeconds").GetDouble().ShouldBeGreaterThan(0, "planning-<suite> seconds were zero");
-        observed.GetProperty("successPlanningPresent").GetBoolean().ShouldBeTrue("rc success path did not write planning-<suite>");
-        observed.GetProperty("successPlanningSeconds").GetDouble().ShouldBeGreaterThan(0, "rc success path planning seconds were zero");
-        observed.GetProperty("supplementalIsMarker").GetBoolean().ShouldBeTrue("supplemental discovery was not the marker");
-    }
+        var work = FreshRoot();
+        var bin = Path.Combine(work, "bin");
+        Directory.CreateDirectory(bin);
+        File.WriteAllText(Path.Combine(bin, "npm"), "#!/bin/sh\nexit 0\n");
+        var path = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+        string? Variables(string name) => name.Equals("PATH", StringComparison.OrdinalIgnoreCase) ? path : Environment.GetEnvironmentVariable(name);
+        var log = Path.Combine(work, "run");
+        var timing = Path.Combine(work, "timing");
+        var planningLog = Path.Combine(log, "planning");
+        var supplementalLog = Path.Combine(log, "supplemental");
+        var successLog = Path.Combine(log, "planning-success");
+        var successTiming = Path.Combine(work, "timing-success");
+        foreach (var directory in new[] { log, timing, planningLog, supplementalLog, successLog, successTiming }) Directory.CreateDirectory(directory);
 
+        object Pass(NightlyLaunch launch) => SeamedNightlyRun.Answer();
+        object Planning(NightlyLaunch launch)
+        {
+            if (!(launch.Arguments ?? []).Contains("--list-tests", StringComparer.OrdinalIgnoreCase)) return SeamedNightlyRun.Answer();
+            Thread.Sleep(250);
+            return SeamedNightlyRun.Answer(exitCode: 1, timedOut: true);
+        }
+        object Supplemental(NightlyLaunch launch)
+        {
+            var argv = launch.Arguments ?? [];
+            if (argv.Contains("--list-tests", StringComparer.OrdinalIgnoreCase))
+            {
+                Thread.Sleep(400);
+                var diagnostics = SeamedNightlyRun.Argument(argv, "--diagnostic-output-directory");
+                if (diagnostics.Length == 0) throw new InvalidOperationException("seam-missing-diagnostic-directory");
+                Directory.CreateDirectory(diagnostics);
+                File.WriteAllText(Path.Combine(diagnostics, "log.diag"), "{\"format\":\"antiphon-tunit-discovery-v1\",\"tunitVersion\":\"1.44.0\",\"mtpVersion\":\"2.2.2\",\"assemblyHash\":\"seam-timing-hash\",\"nodes\":[{\"uid\":\"uid-seam\",\"assembly\":\"Antiphon.Tests\",\"namespace\":\"Antiphon.Tests.Scripts\",\"type\":\"SeamTimingProbeTests\",\"method\":\"Probe\",\"signature\":\"\",\"state\":\"Discovered\",\"excluded\":false,\"categories\":[]}]}");
+            }
+            else if (argv.Contains("--report-trx", StringComparer.OrdinalIgnoreCase))
+            {
+                var name = SeamedNightlyRun.Argument(argv, "--report-trx-filename");
+                var results = SeamedNightlyRun.Argument(argv, "--results-directory");
+                if (name.Length == 0 || results.Length == 0) throw new InvalidOperationException("seam-missing-trx");
+                var trx = Path.Combine(results, name);
+                Directory.CreateDirectory(Path.GetDirectoryName(trx)!);
+                File.WriteAllText(trx, "<?xml version=\"1.0\" encoding=\"utf-8\"?><TestRun><TestDefinitions><UnitTest id=\"uid-seam\" name=\"Antiphon.Tests.Scripts.SeamTimingProbeTests.Probe\"><TestMethod className=\"Antiphon.Tests.Scripts.SeamTimingProbeTests\" name=\"Probe\" /></UnitTest></TestDefinitions><Results><UnitTestResult testId=\"uid-seam\" testName=\"Antiphon.Tests.Scripts.SeamTimingProbeTests.Probe\" outcome=\"Passed\" /></Results></TestRun>");
+            }
+            return SeamedNightlyRun.Answer();
+        }
+        bool Ran(Func<NightlyLaunch, object> start, string? platform, string logRoot, string timingRoot, string suite, string profile, string runId)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var run = new SeamedNightlyRun
+            {
+                StartProcess = start, HostPlatform = platform is null ? null : () => platform, DockerInfo = SeamedNightlyRun.DockerSeam,
+                DiskFree = SeamedNightlyRun.DiskSeam, Variables = Variables,
+            };
+            return run.Run(new NightlyTestsOptions
+            {
+                RepoRoot = C1514Support.RepoRoot(), LogRoot = logRoot, TimingRoot = timingRoot, Suites = [suite], Profile = profile,
+                Sha = "9f00008facfc48e75555c08df59887019b3f8dfe", RunId = runId, Trigger = "manual", AllowSharedTree = true,
+            }).Result is not null;
+        }
+        Ran(Pass, null, log, timing, "scripts", "nightly", "call-site").ShouldBeTrue("scripts-threw");
+        Ran(Planning, "linux", planningLog, timing, "antiphon", "rc", "planning-site").ShouldBeTrue("planning-threw");
+        Ran(Supplemental, "linux", supplementalLog, timing, "antiphon", "nightly", "supplemental-site").ShouldBeTrue("supplemental-threw");
+        Ran(Supplemental, "linux", successLog, successTiming, "antiphon", "rc", "planning-success").ShouldBeTrue("planning-success-threw");
+
+        // The setup phases of the shared timing root, and the planning-<suite> row of each rc root.
+        static (string[] Names, double? Planning) Setup(string timingRoot)
+        {
+            var path = Path.Combine(timingRoot, "setup-phases.json");
+            if (!File.Exists(path)) return ([], null);
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var rows = doc.RootElement.TryGetProperty("phases", out var phases) && phases.ValueKind == JsonValueKind.Array ? phases.EnumerateArray().ToArray() : [];
+            static string Name(JsonElement row) => row.TryGetProperty("name", out var name) ? name.ToString() : "";
+            var planning = rows.Where(row => Name(row) == "planning-antiphon")
+                .Select(row => row.TryGetProperty("seconds", out var seconds) && seconds.ValueKind == JsonValueKind.Number ? seconds.GetDouble() : 0.0)
+                .Select(seconds => (double?)seconds).LastOrDefault();
+            return (rows.Select(Name).ToArray(), planning);
+        }
+        // The discoverySeconds token of a suite's timing file ("" when it has none).
+        static string Discovery(string path)
+        {
+            if (!File.Exists(path)) return "";
+            var match = System.Text.RegularExpressions.Regex.Match(File.ReadAllText(path), "\"discoverySeconds\":([^,}]+)");
+            return match.Success ? match.Groups[1].Value.Trim() : "";
+        }
+        var (names, planningSeconds) = Setup(timing);
+        var (_, successPlanningSeconds) = Setup(successTiming);
+        var supplemental = Discovery(Path.Combine(supplementalLog, "antiphon-all.timing.json"));
+        Discovery(Path.Combine(log, "scripts-all.timing.json")).ShouldBe("null", "call site copied the suite constant");
+        names.ShouldContain("npm-ci", "npm-ci setup phase was not written");
+        names.ShouldContain("npm-build", "npm-build setup phase was not written");
+        names.ShouldContain("lint", "lint setup phase was not written");
+        names.ShouldContain("dotnet-build", "dotnet-build setup phase was not written");
+        planningSeconds.ShouldNotBeNull("planning-<suite> was not written");
+        planningSeconds.Value.ShouldBeGreaterThan(0, "planning-<suite> seconds were zero");
+        successPlanningSeconds.ShouldNotBeNull("rc success path did not write planning-<suite>");
+        successPlanningSeconds.Value.ShouldBeGreaterThan(0, "rc success path planning seconds were zero");
+        (double.TryParse(supplemental, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var marker) && marker > 0.2)
+            .ShouldBeTrue("supplemental discovery was not the marker: " + supplemental);
+    }
     // W2-nightly S09: Enable-TestPhaseExecutionEnvironment is TestPhaseEnvironment.Enable, called in-process with the
     // inherited root (this process's ANTIPHON_TEST_PHASE_ROOT in production) as an argument.
     [Test]
@@ -533,226 +621,4 @@ public sealed class RcFullTimingContractTests
         Directory.CreateDirectory(path);
         return path;
     }
-
-    private static async Task<JsonElement> Run(string body, CancellationToken cancellationToken, string root)
-    {
-        var script = Path.Combine(Path.GetTempPath(), "rcspeed-" + Guid.NewGuid().ToString("N") + ".ps1");
-        await File.WriteAllTextAsync(script, body, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
-        var start = new ProcessStartInfo("pwsh");
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(script);
-        start.ArgumentList.Add(C1514Support.RepoRoot());
-        start.ArgumentList.Add(root);
-        var ran = await C1514Support.RunProcess(start, cancellationToken);
-        var resultPath = Path.Combine(root, "observation.json");
-        if (!File.Exists(resultPath))
-            throw new InvalidOperationException("observation missing\n" + ran.Text);
-        using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(resultPath, cancellationToken));
-        var copy = doc.RootElement.Clone();
-        return copy;
-    }
-
-    private const string CallSiteScript = """
-        $ErrorActionPreference = 'Stop'
-        $repo = $args[0]
-        $work = $args[1]
-        $bin = Join-Path $work 'bin'
-        New-Item -ItemType Directory -Path $bin -Force | Out-Null
-        [IO.File]::WriteAllText((Join-Path $bin 'npm'), "#!/bin/sh`nexit 0`n")
-        $env:PATH = $bin + [IO.Path]::PathSeparator + $env:PATH
-        $lib = Join-Path $repo 'scripts/lib'
-        . (Join-Path $lib 'nightly-common.ps1')
-        . (Join-Path $lib 'nightly-core.ps1'); $null = Test-NightlyCoreAvailable
-        # W2-nightly S17: the run is NightlyTests.Run on each seams file (Invoke-C487NightlyTests; nightly-tests-impl.ps1 is deleted).
-        . (Join-Path $lib 'c487-harness.ps1')
-        $log = Join-Path $work 'run'
-        $timing = Join-Path $work 'timing'
-        New-Item -ItemType Directory -Path $log -Force | Out-Null
-        New-Item -ItemType Directory -Path $timing -Force | Out-Null
-        $seamPath = Join-Path $work 'seams.ps1'
-        $seam = @'
-        $NightlySeams = @{
-            DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
-            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-            StartProcess = {
-                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-                return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
-            }
-        }
-        '@
-        [IO.File]::WriteAllText($seamPath, $seam)
-        $planningSeamPath = Join-Path $work 'planning-seams.ps1'
-        $planningSeam = @'
-        $NightlySeams = @{
-            DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
-            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-            HostPlatform = { return 'linux' }
-            StartProcess = {
-                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-                $argv = @($ArgumentList)
-                if ($argv -contains '--list-tests') {
-                    Start-Sleep -Milliseconds 250
-                    return @{ ExitCode = 1; TimedOut = $true; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
-                }
-                return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
-            }
-        }
-        '@
-        [IO.File]::WriteAllText($planningSeamPath, $planningSeam)
-        $supplementalSeamPath = Join-Path $work 'supplemental-seams.ps1'
-        $supplementalSeam = @'
-        $NightlySeams = @{
-            DockerInfo = { return @{ exitCode = 0; version = 'test'; detail = 'seam' } }
-            DiskFree = { return @{ exitCode = 0; freeBytes = 50GB; minimumFreeBytes = 10GB } }
-            HostPlatform = { return 'linux' }
-            StartProcess = {
-                param($FilePath, $ArgumentList, $WorkingDirectory, $TimeoutMilliseconds, $Environment)
-                $argv = @($ArgumentList)
-                if ($argv -contains '--list-tests') {
-                    Start-Sleep -Milliseconds 400
-                    $diagIndex = [array]::IndexOf($argv, '--diagnostic-output-directory')
-                    if ($diagIndex -lt 0 -or ($diagIndex + 1) -ge $argv.Count) { throw 'seam-missing-diagnostic-directory' }
-                    $diagDir = [string]$argv[$diagIndex + 1]
-                    New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
-                    $diag = '{"format":"antiphon-tunit-discovery-v1","tunitVersion":"1.44.0","mtpVersion":"2.2.2","assemblyHash":"seam-timing-hash","nodes":[{"uid":"uid-seam","assembly":"Antiphon.Tests","namespace":"Antiphon.Tests.Scripts","type":"SeamTimingProbeTests","method":"Probe","signature":"","state":"Discovered","excluded":false,"categories":[]}]}'
-                    [IO.File]::WriteAllText((Join-Path $diagDir 'log.diag'), $diag)
-                    return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
-                }
-                if ($argv -contains '--report-trx') {
-                    $nameIndex = [array]::IndexOf($argv, '--report-trx-filename')
-                    $dirIndex = [array]::IndexOf($argv, '--results-directory')
-                    if ($nameIndex -lt 0 -or $dirIndex -lt 0) { throw 'seam-missing-trx' }
-                    $trxPath = Join-Path ([string]$argv[$dirIndex + 1]) ([string]$argv[$nameIndex + 1])
-                    $trxDir = Split-Path -Parent $trxPath
-                    if ($trxDir -and -not (Test-Path -LiteralPath $trxDir)) { New-Item -ItemType Directory -Path $trxDir -Force | Out-Null }
-                    $trx = '<?xml version="1.0" encoding="utf-8"?><TestRun><TestDefinitions><UnitTest id="uid-seam" name="Antiphon.Tests.Scripts.SeamTimingProbeTests.Probe"><TestMethod className="Antiphon.Tests.Scripts.SeamTimingProbeTests" name="Probe" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="uid-seam" testName="Antiphon.Tests.Scripts.SeamTimingProbeTests.Probe" outcome="Passed" /></Results></TestRun>'
-                    [IO.File]::WriteAllText($trxPath, $trx)
-                    return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
-                }
-                return @{ ExitCode = 0; TimedOut = $false; ChildrenExited = $true; CleanupComplete = $true; Pid = 1; LogText = '' }
-            }
-        }
-        '@
-        [IO.File]::WriteAllText($supplementalSeamPath, $supplementalSeam)
-        $planningLog = Join-Path $log 'planning'
-        $supplementalLog = Join-Path $log 'supplemental'
-        New-Item -ItemType Directory -Path $planningLog -Force | Out-Null
-        New-Item -ItemType Directory -Path $supplementalLog -Force | Out-Null
-        $problems = New-Object System.Collections.Generic.List[string]
-        $discoveryNull = $false
-        $setupNpmCi = $false
-        $setupNpmBuild = $false
-        $setupLint = $false
-        $setupDotnet = $false
-        $planningPresent = $false
-        $planningSeconds = 0.0
-        $successPlanningPresent = $false
-        $successPlanningSeconds = 0.0
-        $supplementalIsMarker = $false
-        try {
-            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $log; TimingRoot = $timing; Suites = @('scripts'); Profile = 'nightly'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'call-site'; Trigger = 'manual'; SeamsPath = $seamPath; AllowSharedTree = $true }
-        } catch {
-            $problems.Add('scripts-threw')
-        }
-        try {
-            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $planningLog; TimingRoot = $timing; Suites = @('antiphon'); Profile = 'rc'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'planning-site'; Trigger = 'manual'; SeamsPath = $planningSeamPath; AllowSharedTree = $true }
-        } catch {
-            $problems.Add('planning-threw')
-        }
-        try {
-            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $supplementalLog; TimingRoot = $timing; Suites = @('antiphon'); Profile = 'nightly'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'supplemental-site'; Trigger = 'manual'; SeamsPath = $supplementalSeamPath; AllowSharedTree = $true }
-        } catch {
-            $problems.Add('supplemental-threw')
-        }
-        $successLog = Join-Path $log 'planning-success'
-        $successTiming = Join-Path $work 'timing-success'
-        New-Item -ItemType Directory -Path $successLog -Force | Out-Null
-        New-Item -ItemType Directory -Path $successTiming -Force | Out-Null
-        try {
-            $null = Invoke-C487NightlyTests -Parameters @{ RepoRoot = $repo; LogRoot = $successLog; TimingRoot = $successTiming; Suites = @('antiphon'); Profile = 'rc'; Sha = '9f00008facfc48e75555c08df59887019b3f8dfe'; RunId = 'planning-success'; Trigger = 'manual'; SeamsPath = $supplementalSeamPath; AllowSharedTree = $true }
-        } catch {
-            $problems.Add('planning-success-threw')
-        }
-        $setupPath = Join-Path $timing 'setup-phases.json'
-        if (Test-Path -LiteralPath $setupPath) {
-            $setup = [IO.File]::ReadAllText($setupPath) | ConvertFrom-Json
-            $names = @()
-            if ($null -ne $setup.phases) {
-                foreach ($row in @($setup.phases)) {
-                    $phaseName = [string]$row.name
-                    $names += $phaseName
-                    if ($phaseName -eq 'planning-antiphon') {
-                        $planningPresent = $true
-                        if ($null -ne $row.seconds) { $planningSeconds = [double]$row.seconds }
-                    }
-                }
-            }
-            $setupNpmCi = $names -contains 'npm-ci'
-            $setupNpmBuild = $names -contains 'npm-build'
-            $setupLint = $names -contains 'lint'
-            $setupDotnet = $names -contains 'dotnet-build'
-        }
-        $supplementalPath = Join-Path (Join-Path $log 'supplemental') 'antiphon-all.timing.json'
-        if (Test-Path -LiteralPath $supplementalPath) {
-            $supplementalRaw = [IO.File]::ReadAllText($supplementalPath)
-            $supplementalMatch = [regex]::Match($supplementalRaw, '"discoverySeconds":([^,}]+)')
-            $supplementalToken = ''
-            if ($supplementalMatch.Success) { $supplementalToken = $supplementalMatch.Groups[1].Value.Trim() }
-            $supplementalValue = 0.0
-            $supplementalParsed = $false
-            if ($supplementalToken -ne '' -and $supplementalToken -ne 'null') {
-                $supplementalParsed = [double]::TryParse($supplementalToken, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$supplementalValue)
-            }
-            if ($supplementalParsed -and $supplementalValue -gt 0.2) { $supplementalIsMarker = $true }
-        }
-        $timingPath = Join-Path $log 'scripts-all.timing.json'
-        $token = ''
-        if (Test-Path -LiteralPath $timingPath) {
-            $raw = [IO.File]::ReadAllText($timingPath)
-            $match = [regex]::Match($raw, '"discoverySeconds":([^,}]+)')
-            if ($match.Success) { $token = $match.Groups[1].Value.Trim() }
-        }
-        $discoveryNull = ($token -eq 'null')
-        if (-not $discoveryNull) { $problems.Add('discovery-not-null') }
-        if (-not $setupNpmCi) { $problems.Add('missing-npm-ci') }
-        if (-not $setupNpmBuild) { $problems.Add('missing-npm-build') }
-        if (-not $setupLint) { $problems.Add('missing-lint') }
-        if (-not $setupDotnet) { $problems.Add('missing-dotnet-build') }
-        $successSetupPath = Join-Path $successTiming 'setup-phases.json'
-        if (Test-Path -LiteralPath $successSetupPath) {
-            $successSetup = [IO.File]::ReadAllText($successSetupPath) | ConvertFrom-Json
-            if ($null -ne $successSetup.phases) {
-                foreach ($row in @($successSetup.phases)) {
-                    if ([string]$row.name -eq 'planning-antiphon') {
-                        $successPlanningPresent = $true
-                        if ($null -ne $row.seconds) { $successPlanningSeconds = [double]$row.seconds }
-                    }
-                }
-            }
-        }
-        if (-not $planningPresent) { $problems.Add('planning-suite-missing') }
-        if ($planningSeconds -le 0) { $problems.Add('planning-seconds-zero') }
-        if (-not $successPlanningPresent) { $problems.Add('planning-success-missing') }
-        if ($successPlanningSeconds -le 0) { $problems.Add('planning-success-seconds-zero') }
-        if (-not $supplementalIsMarker) { $problems.Add('supplemental-not-marker') }
-        $exit = 0
-        $text = ''
-        if ($problems.Count -gt 0) { $exit = 1; $text = ($problems -join '; ') }
-        $out = [ordered]@{
-            exitCode = [int]$exit
-            text = [string]$text
-            discoveryNull = [bool]$discoveryNull
-            setupNpmCi = [bool]$setupNpmCi
-            setupNpmBuild = [bool]$setupNpmBuild
-            setupLint = [bool]$setupLint
-            setupDotnet = [bool]$setupDotnet
-            planningPresent = [bool]$planningPresent
-            planningSeconds = [double]$planningSeconds
-            successPlanningPresent = [bool]$successPlanningPresent
-            successPlanningSeconds = [double]$successPlanningSeconds
-            supplementalIsMarker = [bool]$supplementalIsMarker
-        }
-        [IO.File]::WriteAllText((Join-Path $work 'observation.json'), ($out | ConvertTo-Json -Compress -Depth 5))
-        """;
 }
