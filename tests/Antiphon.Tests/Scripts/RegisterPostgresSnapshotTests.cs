@@ -20,7 +20,7 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RegisterPostgresSnapshotTests
 {
-    private static readonly string Windmill = Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "windmill");
+    internal static readonly string Windmill = Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "windmill");
     private const string Preview = "preview path=u/lndcobra/antiphon_postgres_snapshot schedule=0 50 7 * * * timezone=Europe/London enabled=true";
     private const string PreviewStale = "preview path=u/lndcobra/antiphon_postgres_snapshot_stale schedule=0 0 8 * * * timezone=Europe/London enabled=true";
 
@@ -103,9 +103,7 @@ public sealed class RegisterPostgresSnapshotTests
         exit.ShouldBe(0);
         lines.ShouldBe([Preview, PreviewStale]);
         world.Launcher.Launches.ShouldBeEmpty("the preview contacts nothing");
-        RegisterPostgresSnapshotOptions.Parse([], DockerStackDocuments.RepoRoot).DefinitionRoot.ShouldBe(Windmill);
         Should.Throw<NightlyUsageException>(() => RegisterPostgresSnapshotOptions.Parse(["-Apply"], "x")).Message.ShouldBe("unexpected argument '-Apply'");
-        File.Exists(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "register-postgres-snapshot.ps1")).ShouldBeFalse();
     }
 
     [Test]

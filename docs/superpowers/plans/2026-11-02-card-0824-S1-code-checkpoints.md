@@ -27,7 +27,7 @@ retirement and drain re-arm consumers both call it), with the cases `slot-manage
 | CP-8 | S1 | CP-1 | portable-slot-rehome | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotRehomeTests/* | V-34, V-34b, V-34c, V-35a, V-35b, V-51, V-52 | class, 0 failed/skipped | 11 | 2 | true |
 | CP-9 | S1 | CP-1 | portable-slot-cold-reset | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotColdResetTests/* | V-28a, V-28b, V-28c, V-29, V-30a, V-30b, V-30c, V-53 | class, 0 failed/skipped | 9 | 2 | true |
 | CP-10 | S1 | CP-3 | linux-native-slot-rehome | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotNativeRehomeTests/* | V-36 | class, 0 failed/skipped | 1 | 2 | true |
-| CP-15 | S1 | CP-1 | portable-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-4 (+ R-6 notes) | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-15 | S1 | CP-1 | portable-native-policy-regression | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | R-4 (+ R-6 notes) | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-16 | S1 | CP-1 | portable-workspace-service-regression | /*/Antiphon.SessionRunner.Tests/RunnerWorkspaceServiceTests/* | R-3 | existing class, 0 failed/skipped | 35 | 3 | true |
 | CP-4 | S1 | tests/Antiphon.Tests -> bin-c0824-s1s/ | portable-slot-server | /*/Antiphon.Tests.Application/C0824WorkspaceSlotServerTests/* | V-10a, V-10b, V-12, V-13, V-37a, V-37b, V-39, V-40, V-41, V-42, V-43, V-55 | class, 0 failed/skipped | 22 | 14 | true |
 | CP-5 | S1 | CP-4 | portable-slot-regression | /*/Antiphon.Tests.Application/RemoteWorkspacePreparerTests/* | R-1 | existing class, 0 failed/skipped | 18 | 3 | true |

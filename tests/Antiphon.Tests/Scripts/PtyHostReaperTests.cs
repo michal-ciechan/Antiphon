@@ -218,11 +218,6 @@ public sealed class PtyHostReaperTests
         Should.Throw<NightlyUsageException>(() => PtyHostReaperOptions.Parse(["-Execute"]));
         Should.Throw<NightlyUsageException>(() => PtyHostReaperOptions.Parse(["--limit", "all"]));
 
-        var repo = DockerStackDocuments.RepoRoot;
-        File.Exists(Path.Combine(repo, "scripts", "reap-orphaned-pty-hosts.ps1")).ShouldBeFalse("the reaper is a command");
-        File.ReadAllBytes(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "PtyHostReaper.cs")).ShouldAllBe(b => b < 128, "ASCII only");
-        File.ReadAllText(Path.Combine(repo, "docs", "testing-and-build.md")).ShouldContain("scripts\\antiphon.cmd reap-orphaned-pty-hosts");
-        File.ReadAllText(Path.Combine(repo, "docs", "ops-http.md")).ShouldContain("reap-orphaned-pty-hosts");
     }
 
     // ---- the machine ----

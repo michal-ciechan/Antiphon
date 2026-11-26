@@ -52,7 +52,7 @@ Desktop filters for the orchestrator after run `e7f92f66`, even when Linux is gr
 | CP-5 | fix | CP-1 | ref-only-rewind | `/*/*/C0824RefOnlyIdentityTests/Mode_round_trips_with_legacy_default` | V-5 | 1 case, 0 failed, 0 skipped | 1 | 5 | true |
 | CP-6 | fix | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-6 | 81 cases, 0 failed, 0 skipped | 81 | 10 | true |
 | CP-7 | fix | n/a | derived-driver | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo` | V-6 | exit 0, 0 errors | n/a | 8 | true |
-| CP-8 | fix | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | V-6 | 27 cases, 0 failed, 0 skipped | 27 | 5 | true |
+| CP-8 | fix | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-6 | 27 cases, 0 failed, 0 skipped | 27 | 5 | true |
 | CP-9 | fix | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-1 | exit 0 | n/a | 8 | true |
 | CP-10 | fix | n/a | evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef 810e7fa73dfd66fd11d40af19e33f0818ecfba9d -HeadRef HEAD` | R-2 | exit 0 | n/a | 3 | true |
 

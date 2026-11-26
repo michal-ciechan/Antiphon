@@ -25,7 +25,6 @@ public sealed class CheckpointTaskScriptTests
     [Test]
     public async Task Dirty_worktree_commits_a_wip_checkpoint()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "CheckpointTask.cs")).ShouldAllBe(b => b < 128);
         using var repo = new ScratchGitRepo("card0153-ckpt");
         await repo.CommitFileAsync("README.md", "base\n");
         await File.WriteAllTextAsync(Path.Combine(repo.Path, "wip.cs"), "uncommitted\n");

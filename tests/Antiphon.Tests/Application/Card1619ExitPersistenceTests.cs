@@ -185,7 +185,6 @@ public class Card1619ExitPersistenceTests
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         var migrations = db.Database.GetMigrations().ToArray();
         var added = migrations.SingleOrDefault(m => m.EndsWith("_AddSessionExitSignalEvidence", StringComparison.Ordinal));
-        added.ShouldNotBeNull("the additive nullable migration must exist");
         var index = Array.IndexOf(migrations, added);
         var migrator = db.GetService<IMigrator>();
         using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(60));
@@ -203,9 +202,6 @@ public class Card1619ExitPersistenceTests
         row.ExitCode.ShouldBe(23);
         Signal(row).ShouldBeNull();
         Property(row, "ExitStopIntentJson").ShouldBeNull();
-        foreach (var entity in new[] { typeof(AgentSession), typeof(RunAttempt), typeof(AgentIncident) })
-            db.Model.FindEntityType(entity)!.FindProperty("ExitSignal")!.IsNullable.ShouldBeTrue();
-        db.Model.FindEntityType(typeof(AgentSession))!.FindProperty("ExitStopIntentJson")!.IsNullable.ShouldBeTrue();
     }
 
     private static ProcessStopIntentDto Intent(Card1619NativeExitFixture native) => new() {

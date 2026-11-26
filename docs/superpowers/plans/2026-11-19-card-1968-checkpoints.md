@@ -39,7 +39,7 @@ CP-1's EstimatedMinutes 15 is the cold-build allowance. The class itself is a fe
 |---|---|---|---|---|---|---|---|---:|---|---|
 | CP-1 | fix | tests/Antiphon.Tests -> bin-c1968/ | compiler-policy | `/*/*/LinuxSharedCompilerPolicyTests/*` | V-1, V-2, R-1 | all listed, 0 failed | 10 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-2 | fix | CP-1 | classification | `/*/*/TestClassificationPolicyTests/*` | R-2 | all listed, 0 failed | 42 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-3 | fix | CP-1 | derived-impact | `/*/*/DerivedImpactIndexTests/*` | R-3 | all listed, 0 failed | 27 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-3 | fix | CP-1 | derived-impact | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-3 | all listed, 0 failed | 27 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | fix | CP-1 | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-4 | 45 passed, 1 Linux skip `C1210_Windows_linux_only_outcomes_are_exact`, 0 failed | 45 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | fix | n/a | adapter | `pwsh -NoProfile -File scripts/test-linux-shared-compiler.ps1 -Case Adapter` | R-5 | assertions=36 failed=0; diagnostic heap=0x200000000 | n/a | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-6 | fix | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-6 | exit 0, approved | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |

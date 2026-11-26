@@ -22,7 +22,6 @@ public sealed class TestDataPruneCommandTests
     [Test]
     public void The_dry_run_is_the_default_and_names_every_guard_without_writing()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "TestDataPrune.cs")).ShouldAllBe(b => b < 128);
         var http = Board();
         var run = Run(http, "task-secret");
 

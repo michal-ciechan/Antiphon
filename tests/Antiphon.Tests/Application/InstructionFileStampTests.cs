@@ -127,14 +127,6 @@ public class InstructionFileStampTests
     [Test]
     public void default_instruction_files_are_the_plan_list()
     {
-        PolicyRefreshSettings.DefaultInstructionFiles.ShouldBe([
-            "CLAUDE.md",
-            "AGENTS.md",
-            "docs/orchestration-loop.md",
-            "docs/agent-card-lifecycle.md",
-            "docs/ops-http.md",
-            ".claude/skills/antiphon-delegate/SKILL.md",
-        ]);
         var settings = new PolicyRefreshSettings();
         settings.IdleMinutes.ShouldBe(2);
         settings.CooldownMinutes.ShouldBe(30);

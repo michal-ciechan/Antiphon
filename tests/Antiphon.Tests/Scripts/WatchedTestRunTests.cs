@@ -121,10 +121,6 @@ public sealed class WatchedTestRunTests
         defaults.EnvVars.ShouldBeEmpty();
         WatchedTestRunOptions.Parse(["--exe", Exe, "--cpu-floor", "0.25"], Root, Bin).CpuFloor.ShouldBe(0.25);
 
-        var repo = DockerStackDocuments.RepoRoot;
-        File.Exists(Path.Combine(repo, "scripts", "run-tests-watched.ps1")).ShouldBeFalse("the watched run is a command");
-        File.ReadAllBytes(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "WatchedTestRun.cs")).ShouldAllBe(b => b < 128, "ASCII only");
-        File.ReadAllText(Path.Combine(repo, "docs", "testing-and-build.md")).ShouldContain("scripts\\antiphon.cmd run-tests-watched --exe");
     }
 
     // ---- the machine ----

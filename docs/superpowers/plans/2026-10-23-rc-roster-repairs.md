@@ -34,8 +34,8 @@ All PCs remain pending for SourceLanding Mutation; Code owns only original-defec
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---|---:|---|---|
-| CP-1 | S2 | tests/Antiphon.Tests -> bin-rcroster/ | rc-roster | `/*/Antiphon.Tests.Scripts/(RcRosterRepairTests*)\|(ReleaseGatePlatformTests*)\|(C1514LandingSplitBudgetTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
-| CP-2 | S3 | tests/Antiphon.Tests -> bin-rcroster2/ | rc-roster-repair | `/*/Antiphon.Tests.Scripts/(RcRosterRepairTests*)\|(ReleaseGatePlatformTests*)\|(C1514LandingSplitBudgetTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-1 | S2 | tests/Antiphon.Tests -> bin-rcroster/ | rc-roster | `/*/*/(RcRosterRepairTests*)\|(ReleaseGatePlatformTests*)\|(C1514LandingSplitBudgetTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
+| CP-2 | S3 | tests/Antiphon.Tests -> bin-rcroster2/ | rc-roster-repair | `/*/*/(RcRosterRepairTests*)\|(ReleaseGatePlatformTests*)\|(C1514LandingSplitBudgetTests*)/*` | V-1,V-2,V-3,R-1 | all listed, 0 failed | 8 | 6 | true | TEMP=/tmp;TMP=/tmp;TMPDIR=/tmp |
 
 Run with an explicit 15m total timeout and expected-source-sha set to committed HEAD.
 No repetitions. An extra compile in the RC scratch is required by the brief (R-3).

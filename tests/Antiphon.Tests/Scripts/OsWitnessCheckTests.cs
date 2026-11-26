@@ -238,16 +238,6 @@ public sealed class OsWitnessCheckTests
         rows.Check(usage.Message.Contains("--evidence-path", StringComparison.Ordinal), "usage names the missing flag", usage.Message);
     });
 
-    [Test]
-    public void C1526_The_testing_doc_names_the_command()
-    {
-        var testing = File.ReadAllText(Path.Combine(DockerStackDocuments.RepoRoot, "docs", "testing-and-build.md"));
-        testing.ShouldContain("## OS branch witnesses");
-        testing.ShouldContain("scripts/antiphon check-os-witnesses --base-ref <full-base-sha> --head-ref <full-head-sha> --evidence-path <ignored-json> --plan <repo-relative-plan.md>");
-        testing.ShouldNotContain("check-os-witnesses.ps1");
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "OsWitnessCheck.cs")).ShouldAllBe(b => b < 128);
-    }
-
     private static JsonObject Copy(JsonObject value) => value.DeepClone().AsObject();
 
     private static JsonObject WithTest(JsonObject valid, string path)

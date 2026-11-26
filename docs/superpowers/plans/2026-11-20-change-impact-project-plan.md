@@ -638,7 +638,7 @@ dependencies and map `client/**` into units. Today `client/**` is
 |---|---|---|---|
 | CP-1 | `tools/ChangeImpact/tests/ChangeImpact.Tests -> bin-ci1/` | `/*/*/(GlobPatternTests*)\|(GitTreeSourceTests*)\|(CanonicalJsonTests*)/*` | 0 failed, 0 skipped, executed ≥ the method count TestDesign fixes |
 | CP-2 | n/a | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | exit 0 (proves `Antiphon.sln` graph unchanged) |
-| CP-3 | `tests/Antiphon.Tests -> bin-ci1-guards/` | `/*/*/(RcProjectSelectionTests*)\|(DerivedImpactIndexTests*)/*` | 0 failed |
+| CP-3 | `tests/Antiphon.Tests -> bin-ci1-guards/` | `/*/*/(RcProjectSelectionTests*)\|(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | 0 failed |
 
 - UNKNOWN whether the checkpoint tool accepts a Build cell outside `tests/`. TestDesign checks
   this with `import --plan`. The fallback is a `build-slot`-wrapped `dotnet run --project` command

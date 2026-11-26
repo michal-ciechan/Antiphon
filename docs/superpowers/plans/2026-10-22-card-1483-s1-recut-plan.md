@@ -33,7 +33,7 @@ No LandNonCodeSkipTests row is added or changed: the 1409 suite stays green with
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-A | R3 | `tests/Antiphon.Tests -> bin-c1483-recut/` | c1483-recut | `/*/*/LandGraphEvaluationTests/(C1483_S1_*)` | V-1 V-1a V-1b V-2 V-3 V-3a V-4 | exactly 7 executed, 0 failed/skipped | 7 | 15 |
-| CP-B | R3 | `tests/Antiphon.Tests -> bin-c1483-recut/` | c1483-recut | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | CARD-1409 V-1..V-32, R2 recipe | exactly 85 executed, 0 failed/skipped | 85 | 15 |
+| CP-B | R3 | `tests/Antiphon.Tests -> bin-c1483-recut/` | c1483-recut | `/*/*/(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | CARD-1409 V-1..V-32, R2 recipe | exactly 85 executed, 0 failed/skipped | 85 | 15 |
 
 ### Cost
 

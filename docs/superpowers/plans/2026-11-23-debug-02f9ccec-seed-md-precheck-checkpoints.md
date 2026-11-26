@@ -24,5 +24,5 @@ class and `LandGraphEvaluationTests` (13 min alone) are left to the rc qualifica
 | CP-1 | S1 | tests/Antiphon.Tests -> bin-d02f9/ | precheck | `/*/*/LandNonCodeSkipTests/(C1390*)\|(C1400*)\|(C1409*)\|(C1483*)\|(ReviewSeedCheck*)\|(C1380_NonAllowlistedInputsBuild*)` | R1 | all listed, 0 failed | 83 | 15 |
 | CP-2 | S1 | CP-1 | selector | `/*/*/ImpactedClassesSelectorTests/(Review_seed_check*)\|(seed_kinds*)` | R2 | all listed, 0 failed | 2 | 2 |
 | CP-3 | S1 | CP-1 | seed-parser | `/*/*/ReviewCheckParserTests/*` | R2 | all listed, 0 failed | 4 | 1 |
-| CP-4 | S1 | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R3 | all listed, 0 failed | 27 | 4 |
+| CP-4 | S1 | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R3 | all listed, 0 failed | 27 | 4 |
 | CP-5 | S1 | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R3 | Final guards | 84 | 3 |

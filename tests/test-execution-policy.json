@@ -808,6 +808,13 @@
         },
         {
           "suite": "antiphon",
+          "class": "RetiredTempContainerHostInvariantTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: native Linux host contracts (bash, flock and POSIX filesystem semantics). The case remains required on Linux.",
+          "owner": "CARD-1050"
+        },
+        {
+          "suite": "antiphon",
           "class": "HostJqPrerequisiteScriptTests",
           "platform": "windows",
           "reason": "Linux-only by construction: host jq contracts require native Linux (bash, flock, /proc and GNU coreutils). The case remains required on Linux.",

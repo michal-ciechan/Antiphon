@@ -107,7 +107,7 @@ for SourceLanding Mutation. No green repetitions. Budgets below are provisional.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-10 | S6a | `tests/Antiphon.Tests -> bin-c1836-s6a/` | linux-dirty-order | `/*/*/(RcDirtyLaunchOrderTests*)\|(RcFailureHistoryTests*)/*` | V-10 R-3 D-1 D-2 A-1 | all listed, 0 failed/skipped | 8 | 15 |
 | CP-90 | S6a | CP-10 | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
-| CP-93 | S6a | CP-10 | index | `/*/*/DerivedImpactIndexTests/*` | derived guard | all methods, 0 failed/skipped | 27 | 5 |
+| CP-93 | S6a | CP-10 | index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | derived guard | all methods, 0 failed/skipped | 27 | 5 |
 | CP-94 | S6a | CP-10 | release-impact | `/*/*/ReleaseImpactEnvelopeTests/*` | impacted index edge | all listed, 0 failed/skipped | 8 | 4 |
 | CP-91 | S6a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s6a-pty/` | pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn census | both methods, 0 failed/skipped | 2 | 1 |
 | CP-92 | S6a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s6a-runner/` | runner-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn census | both methods, 0 failed/skipped | 2 | 2 |

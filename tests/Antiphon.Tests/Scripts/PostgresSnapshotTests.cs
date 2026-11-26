@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class PostgresSnapshotTests
 {
-    private static readonly string Repo = DockerStackDocuments.RepoRoot;
+    internal static readonly string Repo = DockerStackDocuments.RepoRoot;
 
     private static readonly string[] AgePlan =
     [
@@ -165,24 +165,6 @@ public sealed class PostgresSnapshotTests
         Should.Throw<NightlyUsageException>(() => PostgresSnapshotOptions.Parse(["--retain", "x"])).Message.ShouldBe("--retain expects an integer, not 'x'");
         Should.Throw<NightlyUsageException>(() => PostgresSnapshotOptions.Parse(["--bogus"])).Message.ShouldBe("unknown flag --bogus");
         Should.Throw<NightlyUsageException>(() => PostgresSnapshotOptions.Parse(["-WhatIf"])).Message.ShouldBe("unexpected argument '-WhatIf'");
-    }
-
-    [Test]
-    public void Sources_are_ascii_and_carry_no_recipient_or_password_literal()
-    {
-        // WhatIfPlan's script checks, now over the command's sources and the launcher.
-        var files = new[] { "Antiphon.Nightly", "Antiphon.Scripts" }.SelectMany(project => Directory.GetFiles(Path.Combine(Repo, "scripts", "lib", project), "*PostgresSnapshot*.cs"))
-            .Append(Path.Combine(Repo, "scripts", "postgres-snapshot.ps1")).ToArray();
-        files.Length.ShouldBeGreaterThanOrEqualTo(5);
-        foreach (var file in files)
-        {
-            var bytes = File.ReadAllBytes(file);
-            bytes.ShouldAllBe(b => b < 128, file + " is ASCII only");
-            var text = Encoding.ASCII.GetString(bytes);
-            Regex.IsMatch(text, "age1[0-9a-z]{10,}").ShouldBeFalse(file + " has no age recipient literal");
-            Regex.IsMatch(text, @"(?i)password\s*=").ShouldBeFalse(file + " has no password literal");
-        }
-        File.Exists(Path.Combine(Repo, "scripts", "test-postgres-snapshot.ps1")).ShouldBeFalse("the driver's cases are this class");
     }
 
     // ---- the age path's plan and refusals ----
@@ -1045,7 +1027,6 @@ public sealed class PostgresSnapshotTests
         var off = world.Run(["--what-if", "--plain", "--destination", dest, "--sync-root", world.Sync, "--staging-path", world.Stage]);
         off.Out.ShouldNotContain("step onedrive:");
         off.Out.ShouldNotContain("keep 7");
-        File.ReadAllText(Path.Combine(Repo, "scripts", "postgres-snapshot.ps1")).ShouldContain("[switch]$OneDriveCopy");
     }
 
     // ---- the plain status ----

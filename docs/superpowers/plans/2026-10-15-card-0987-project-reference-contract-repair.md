@@ -64,7 +64,7 @@ and the brief's one-build/exact-filters scope. No repetitions are required after
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c15685311-fixed/` | checkpoint-project-contract | `/*/Antiphon.Tests.Infrastructure/CheckpointToolProjectContractTests/*` | V-1 | all 4 cases, 0 failed/skipped | 4 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c15685311-fixed/` | checkpoint-project-contract | `/*/Antiphon.Tests.Invariants/CheckpointToolProjectContractTests/*` | V-1 | all 4 cases, 0 failed/skipped | 4 | 7 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 | CP-2 | S1 | CP-1 | adjacent-project-contracts | `/*/*/(DotnetToolManifestContractTests*)\|(E2ECopyOwnedPtyHostAppHostContractTests*)\|(PackageVersionPinContractTests*)\|(ChannelOutboundContractTests*)/*` | R-1 | all 7 cases, 0 failed/skipped | 7 | 1 | true | `C804_ORPHAN_SWEEP_ROOT=c826-disabled;TUNIT_MAX_PARALLEL_TESTS=1` |
 
 Ordinary remaining estimate: 8 minutes plus manual smoke and actual slot waits.

@@ -59,7 +59,7 @@ nightly inputs remain unchanged, so policy/digest re-pinning is not warranted.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-RED | witness | tests/Antiphon.Tests -> bin-c1886-l-red/ | layering-red | `/*/*/C1729LayeringGuardTests/*` | V-L | new method assertion-red; inventory VIOLATIONS 1 LISTED 162 | 10 | 6 |
 | CP-2 | repair | tests/Antiphon.Tests -> bin-c1886-l-s2/ | action-claim | `/*/*/(RuntimeActionClaimQueryTests*)\|(SessionRuntimeActionTests*)\|(SessionRuntimeActionRecoveryTests*)\|(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)/*` | V-2 | all classes; inherited red explicitly attributed | 6 | 6 |
-| CP-10 | repair | CP-2 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | V-L, R-1 | all classes, 0 failed/skipped; VIOLATIONS 0 LISTED 162 | 10 | 6 |
+| CP-10 | repair | CP-2 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | V-L, R-1 | all classes, 0 failed/skipped; VIOLATIONS 0 LISTED 162 | 10 | 6 |
 
 --- next stage ---
 next: review

@@ -446,7 +446,7 @@ refuses a build reused across After groups).
 | CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s1r/ | c1677-runner-engine | /*/*/(C1677RetentionEngineTests*)\|(C1677RetentionInventoryTests*)/* | V-1..V-19 | classes, 0 failed/skipped | 19 | 4 | true |
 | CP-2 | S1 | CP-1 | c1677-runner-native-process | /*/*/C1677RetentionNativeProcessTests/* | V-20..V-22 | class, 0 failed/skipped | 3 | 2 | true |
 | CP-3 | S1 | CP-1 | c1677-runner-workspace-regression | /*/*/RunnerWorkspaceServiceTests/* | R-1 | existing class, 0 failed/skipped | 35 | 3 | true |
-| CP-4 | S1 | CP-1 | c1677-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-4 | S1 | CP-1 | c1677-native-policy-regression | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-5 | S1 | tests/Antiphon.Tests -> bin-c1677-s1s/ | c1677-server-retention | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)/* | V-30..V-36 | classes, 0 failed/skipped | 14 | 10 | true |
 | CP-6 | S1 | CP-5 | c1677-phonehome-ops-regression | /*/*/PhoneHomeConnectionTests/Supported_operations_preserve_contracts | R-3 | method, 0 failed/skipped | 1 | 2 | true |
 | CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s2r/ | c1677-runner-temp | /*/*/(C1677TempSweepTests*)\|(C1677TempFamilyRegistryTests*)/* | V-40..V-48 | classes, 0 failed/skipped | 10 | 3 | true |

@@ -605,7 +605,7 @@ fail even when the count floor passes. These are the closed ordinary rows.
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1,S3,S4,S5 | `tests/Antiphon.Tests -> bin-c788a/` | unit | `/*/*/*/*[Category=Unit]` | R-6, V-5 (shape) | >= 3000 executed, 0 failed; all named shape rows | 3000 | 15 | false |
 | CP-2 | S1,S3,S4,S5 | `CP-1` | land-admission | `/*/Antiphon.Tests.Application/(AgentTaskLandApprovalRequestTests*)\|(AgentTaskLandAdoptionTests*)/*` | V-1, R-1 | all listed, 0 failed/skipped | 44 | 15 | true |
-| CP-3 | S1,S3,S4,S5 | `CP-1` | base-inspection | `/*/Antiphon.Tests.Application/(AgentTaskWorktreeBaseResolverTests*)\|(WorktreeBaseSelectionTests*)\|(AgentTaskDispatchBaseGuardTests*)/*` | V-3, V-4, R-3, R-4 | all listed, 0 failed/skipped | 170 | 30 | true |
+| CP-3 | S1,S3,S4,S5 | `CP-1` | base-inspection | `/*/*/(AgentTaskWorktreeBaseResolverTests*)\|(WorktreeBaseSelectionTests*)\|(AgentTaskDispatchBaseGuardTests*)\|(WorktreeBaseSelectionInvariantTests*)/*` | V-3, V-4, R-3, R-4 | all listed, 0 failed/skipped | 170 | 30 | true |
 | CP-4 | S1,S3,S4,S5 | `CP-1` | progress-warning | `/*/Antiphon.Tests.Application/(RunnerTaskSettlementTests*)\|(RunnerCompletionProgressTests*)/*` | V-5, R-5 | all listed, 0 failed/skipped | 31 | 18 | true |
 | CP-5 | S2 | `tests/Antiphon.Tests -> bin-c788b/` | evidence-consistency | `/*/Antiphon.Tests.Application/(ReviewEvidenceConsistencyTests*)\|(ReviewEvidenceSettlementTests*)\|(AgentTaskReviewEvidenceTests*)/*` | V-2, V-8, R-2 | all listed, 0 failed/skipped | 58 | 35 | true |
 | CP-6 | S1,S3,S4,S5 | `CP-1` | progress-delivery | `/*/Antiphon.Tests.Application/CompletionWarningDeliveryTests/*` | V-6 | all listed, 0 failed/skipped | 11 | 25 | true |

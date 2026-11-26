@@ -18,7 +18,7 @@ namespace Antiphon.Tests.Scripts;
 [NotInParallel]
 public class LiveLaneIsolationTests
 {
-    private static LiveClaudeProfileSpec Build(LiveClaudeProfile profile,string role,string session,string? overlay)
+    internal static LiveClaudeProfileSpec Build(LiveClaudeProfile profile,string role,string session,string? overlay)
     {
         using var f=new LiveClaudeExecutableCases(LiveClaudeCore.C680,
             (u,r,c,l)=>ClaudeDialogWatchdogCanaryTests.PrepareExecutable(r,c,l));
@@ -30,7 +30,6 @@ public class LiveLaneIsolationTests
     private static void Run(string v)
     {
         LiveClaudeProfileCases.Run(v,Build,project:ClaudeDialogWatchdogCanaryTests.ProjectProfile);
-        LiveClaudeProfileAudit.C680Callers(Build,ClaudeDialogWatchdogCanaryTests.ProjectProfile);
         LiveClaudeProfileMutants.Run(v);
     }
     [Test]

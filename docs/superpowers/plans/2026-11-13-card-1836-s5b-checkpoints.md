@@ -45,7 +45,7 @@ child 45s plus 10s cleanup; no timeout widening. No repeated green proof.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-6 | S5b | `tests/Antiphon.Tests -> bin-c1836-s5b/` | linux-admission | `/*/*/(RcHistoricalAdmissionTests*)\|(RcIncrementalLedgerTests*)\|(RcLedgerDurationTests*)/*` | V-6 R-1 | all named methods/classes, no failures/skips | 7 | 10 |
 | CP-90 | S5b | CP-6 | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, no failures/skips | 79 | 4 |
-| CP-93 | S5b | CP-6 | linux-index | `/*/*/DerivedImpactIndexTests/*` | derived index guard | all methods, no failures/skips | 27 | 5 |
+| CP-93 | S5b | CP-6 | linux-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | derived index guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S5b | CP-6 | linux-release-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | release envelope guard | all methods, no failures/skips | 4 | 1 |
 | CP-95 | S5b | CP-6 | linux-adjacent | `/*/*/(RcBoundaryChunkIdTests*)\|(RcChunkInputDigestTests*)\|(RcForcedFullTests*)/*` | named adjacent contracts | all methods, no failures/skips | 24 | 2 |
 | CP-91 | S5b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s5b-pty/` | linux-pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 1 |

@@ -42,7 +42,7 @@ internal static class LinuxOnlyCensus
         "tests/Shared/" + Name + "Attribute.cs",
         "tests/Shared/NativeLinuxPolicyWitness.cs",
         "tests/Shared/NativeLinuxPolicyWitnessTests.cs",
-        "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs",
+        "tests/Antiphon.Tests/Invariants/NativeLinuxPolicyWitnessMutationTests.cs",
         "tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs",
     ];
 

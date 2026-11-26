@@ -459,7 +459,7 @@ separate build on the actual Windows source SHA. Do not reuse a binary across ho
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S5b-1 | tests/Antiphon.Tests -> bin-c0824-ref-1/ | portable-ref-identity | /*/Antiphon.Tests.Application/(C0824RefOnlyIdentityTests*)\|(C0824RefOnlyGateTests*)/* | D-1..D-6; S5b-1 identity/gate | all 10 named methods, 0 failed/skipped | 10 | 13 | true |
+| CP-1 | S5b-1 | tests/Antiphon.Tests -> bin-c0824-ref-1/ | portable-ref-identity | /*/*/(C0824RefOnlyIdentityTests*)\|(C0824RefOnlyGateTests*)\|(C0824RefOnlyIdentityInvariantTests*)/* | D-1..D-6; S5b-1 identity/gate | all 10 named methods, 0 failed/skipped | 10 | 13 | true |
 | CP-2 | S5b-1 | CP-1 | portable-ref-land-cleanup | /*/Antiphon.Tests.Application/(C0824RefOnlyLandingTests*)\|(C0824RefOnlyCleanupTests*)/* | D-7,D-9; late land, mode ticket, cleanup | all 7 named methods, 0 failed/skipped | 7 | 4 | true |
 | CP-3 | S5b-1 | CP-1 | portable-legacy-base | /*/Antiphon.Tests.Application/DelegationWorktreeTests/(C508_ReuseKeepsRecordedBase*)\|(C508_BaseResolutionRequiresOwnedLease*) | Checkout base/admission unchanged | both exact intended methods, 0 failed/skipped | 2 | 1 | true |
 | CP-4 | S5b-2 | tests/Antiphon.Tests -> bin-c0824-ref-2/ | portable-ref-sync-debt | /*/Antiphon.Tests.Application/(C0824RefOnlySyncTests*)\|(C0824RefOnlyDebtTests*)/* | D-3..D-6; exact ref, debt and CAS | all 10 named methods, 0 failed/skipped | 10 | 14 | true |

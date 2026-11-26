@@ -235,7 +235,6 @@ public sealed class DispatchConcurrencyMigrationTests
     {
         var migrations = db.Database.GetMigrations().ToArray();
         var index = Array.FindIndex(migrations, name => name.EndsWith("_AddDispatchConcurrencySettings", StringComparison.Ordinal));
-        index.ShouldBeGreaterThan(0);
         await db.GetService<IMigrator>().MigrateAsync(migrations[index - 1]);
     }
 

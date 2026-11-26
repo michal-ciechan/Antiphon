@@ -28,7 +28,7 @@ All rows are server2 (Linux). One run at the repaired tip.
 | CP-7 | all | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s2r2/ | c1677-runner-temp-r2 | /*/*/(C1677TempSweepTests*)\|(C1677TempFamilyRegistryTests*)/* | V-40..V-48c, D-1 | 2 classes, 0 failed/skipped | 27 | 4 | true |
 | CP-14 | all | CP-7 | c1677-runner-temp-dispatch | /*/*/C1677TempSweepDispatchTests/* | D-2(a) | class, 0 failed/skipped | 10 | 1 | true |
 | CP-8 | all | CP-7 | c1677-runner-temp-native-r2 | /*/*/C1677TempSweepNativeTests/* | V-49, V-49b, V-50, D-1, D-2(b), A-2 | class, 0 failed/skipped | 7 | 1 | true |
-| CP-13 | all | CP-7 | c1677-native-policy-regression-s2r2 | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-13 | all | CP-7 | c1677-native-policy-regression-s2r2 | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-9 | all | tests/Antiphon.Tests -> bin-c1677-s2s2/ | c1677-server-temp-r2 | /*/*/C1677TempSweepServerTests/* | V-51..V-51c, D-2(c) | class, 0 failed/skipped | 7 | 4 | true |
 | CP-5 | all | CP-9 | c1677-server-retention-r2 | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)/* | V-30..V-39c, V-74..V-80 | 2 classes, 0 failed/skipped | 66 | 7 | true |
 

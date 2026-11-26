@@ -13,18 +13,18 @@ namespace Antiphon.Tests.Application;
 [Timeout(60_000)] // CARD-1514: provisional; real additive migration/refused Down, measured in CP-M1.
 public sealed class C1514HostLoadMigrationTests
 {
-    private const string Previous = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
-    private const string Telemetry = "20261107034430_HostLoadTelemetryS1";
-    private const string Membership = "20261107040142_HostLoadSnapshotMembership";
-    private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
-    private const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
-    private const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
-    private const string Summary = "20261114063858_AddSessionTranscriptSummaries";
-    private const string LandFailure = "20261119045705_AddLandVerificationFailure";
-    private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
-    private const string ReviewEngine = "20261122173647_AddReviewEngine";
-    private const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
-    private const string FutureMigration = "29991231235959_C2074FutureMigration";
+    internal const string Previous = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
+    internal const string Telemetry = "20261107034430_HostLoadTelemetryS1";
+    internal const string Membership = "20261107040142_HostLoadSnapshotMembership";
+    internal const string Catchup = "20261107104114_HostLoadRetentionCatchup";
+    internal const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
+    internal const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
+    internal const string Summary = "20261114063858_AddSessionTranscriptSummaries";
+    internal const string LandFailure = "20261119045705_AddLandVerificationFailure";
+    internal const string ModelAlias = "20261120091515_AddRequestedModelAlias";
+    internal const string ReviewEngine = "20261122173647_AddReviewEngine";
+    internal const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
+    internal const string FutureMigration = "29991231235959_C2074FutureMigration";
     private IsolatedTestSchema? _schema;
 
     [Before(Class)]
@@ -44,53 +44,6 @@ public sealed class C1514HostLoadMigrationTests
     public async Task ReleaseHistoricalBaseline()
     {
         if (_schema is not null) await _schema.DisposeAsync();
-    }
-
-    [Test]
-    public void ChainIsLinearAndSnapshotMatchesModel()
-    {
-        using var db = Metadata();
-        // Read declared IDs before EF projects them into a dictionary keyed by ID.
-        AssertChain([.. TestMigrationFingerprint.Default.MigrationIds]);
-        db.Database.HasPendingModelChanges().ShouldBeFalse("generated-snapshot-matches-runtime-model");
-    }
-
-    /// <summary>
-    /// CARD-2074 witness. The pin is this card's linear window; a migration added after it
-    /// (the next card's) must not break the pin, which the Merge task had to repair by hand.
-    /// </summary>
-    [Test]
-    public void C2074_Chain_pin_accepts_a_newer_migration()
-    {
-        using var db = Metadata();
-        AssertChain([.. db.Database.GetMigrations(), FutureMigration]);
-    }
-
-    [Test, Arguments(FutureMigration), Arguments("29991231235958_C2078EarlierFutureMigration")]
-    public void C2078_Chain_pin_rejects_invalid_later_migrations(string second)
-    {
-        string[] temporaryChain = [.. TestMigrationFingerprint.Default.MigrationIds, FutureMigration, second];
-        var error = Should.Throw<ShouldAssertException>(() => AssertChain(temporaryChain));
-        error.Message.ShouldContain("later-migrations-are-linear");
-    }
-
-    private static void AssertChain(string[] chain)
-    {
-        var previous = Array.IndexOf(chain, Previous);
-        previous.ShouldBeGreaterThanOrEqualTo(0);
-        chain.Skip(previous).Take(3).ShouldBe([Previous, Telemetry, Membership], "linear-after-current-master");
-        chain[previous + 3].ShouldBe(Catchup, "retention-catchup-follows-membership");
-        chain[previous + 4].ShouldBe(PromptStamp, "prompt-stamp-index-follows-retention-catchup");
-        chain[previous + 5].ShouldBe(ShadowCohort, "shadow-cohort-follows-prompt-stamp");
-        chain[previous + 6].ShouldBe(Summary, "transcript-summary-follows-shadow-cohort");
-        chain[previous + 7].ShouldBe(LandFailure, "land-verification-failure-follows-transcript-summary");
-        chain[previous + 8].ShouldBe(ModelAlias, "requested-model-alias-follows-land-verification-failure");
-        chain[previous + 9].ShouldBe(ReviewEngine, "review-engine-follows-requested-model-alias");
-        chain[previous + 10].ShouldBe(CallerReportReceipt, "caller-report-receipt-follows-review-engine");
-        // Strict ordinal increase from the window's last ID rejects duplicates and reversals.
-        var later = chain.Skip(previous + 11).ToArray();
-        later.Prepend(CallerReportReceipt).Zip(later)
-            .ShouldAllBe(pair => string.CompareOrdinal(pair.First, pair.Second) < 0, "later-migrations-are-linear");
     }
 
     [Test]
@@ -160,7 +113,7 @@ public sealed class C1514HostLoadMigrationTests
                 .ShouldBeGreaterThan(0, "old-writer-gets-membership-default");
     }
 
-    private static AppDbContext Metadata() => new(new DbContextOptionsBuilder<AppDbContext>()
+    internal static AppDbContext Metadata() => new(new DbContextOptionsBuilder<AppDbContext>()
         .UseNpgsql("Host=localhost;Database=metadata_only").Options);
 
     private static Migration Migration(string id)

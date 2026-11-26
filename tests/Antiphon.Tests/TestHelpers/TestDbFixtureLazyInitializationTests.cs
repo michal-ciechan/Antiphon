@@ -174,10 +174,6 @@ public sealed class TestDbFixtureLazyInitializationTests
     public async Task A_worker_child_exits_before_the_shared_store_warmup(string marker)
     {
         SkipIfChildProcess();
-        var selected = typeof(Antiphon.Tests.Application.CheckCompactionCrashTests).GetMethod(
-            nameof(Antiphon.Tests.Application.CheckCompactionCrashTests.Resume_reservation_survives_crash_without_a_second_launch))
-            ?? throw new InvalidOperationException("selected store-reaching test is missing");
-        SharedStoreWarmup.ReachesDefaultStore(selected).ShouldBeTrue("the child selection must reach the shared store");
 
         var root = CreateOwnedRoot();
         var run = await LaunchProcessAsync(

@@ -370,7 +370,7 @@ table below.
 | CP-1 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c779r/` | runner-workspace | `/*/Antiphon.SessionRunner.Tests/(RunnerWorkspaceServiceTests*)\|(PhoneHomeCommandDispatcherTests*)\|(RunnerCapabilitiesTests*)/*` | V-1, V-2, V-3 | all three classes, 0 failed | 70 | 14 |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c779/` | settlement-sync | `/*/Antiphon.Tests.Application/(RunnerSettlementSyncTests*)\|(RunnerCompletionProgressTests*)/*` | V-4, R-1 | both classes, 0 failed | 28 | 20 |
 | CP-3 | S1-S3 | CP-2 | settlement-e2e | `/*/Antiphon.Tests.Application/(RunnerTaskSettlementTests*)\|(RemoteWorktreeMirrorTests*)\|(RemoteWorkspacePreparerTests*)/*` | V-5, V-7, R-1, R-2 | all three classes, 0 failed | 36 | 15 |
-| CP-4 | S1-S3 | CP-2 | brief-drain-docs | `/*/Antiphon.Tests.Application/(DelegationReportFormatterTests*)\|(PhoneHomeRollingRunnerTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-6, V-7, V-8 | all three classes, 0 failed; the drain class's 4 platform-explicit methods may skip | 80 | 12 |
+| CP-4 | S1-S3 | CP-2 | brief-drain-docs | `/*/*/(DelegationReportFormatterTests*)\|(PhoneHomeRollingRunnerTests*)\|(RunnerBranchContractDocumentationTests*)/*` | V-6, V-7, V-8 | all three classes, 0 failed; the drain class's 4 platform-explicit methods may skip | 80 | 12 |
 
 `Min` values are floors on executed TUnit results: CP-1 has 64 methods today (22 + 42) plus the
 capability pin and at least 8 new methods; CP-2 has 24 (16 + 8) plus at least 6 new; CP-3 has 35

@@ -27,7 +27,7 @@ a1f403eb are not landed. Fixes Review cff23aba D-1.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-A | R3 | `tests/Antiphon.Tests -> bin-c1483-repair/` | c1483-repair | `/*/*/LandGraphEvaluationTests/(C1483_S1_*)` | V-1 V-1a V-1b V-2 V-3 V-3a V-4 | exactly 7 executed, 0 failed/skipped | 7 | 15 |
-| CP-B | R3 | `tests/Antiphon.Tests -> bin-c1483-repair/` | c1483-repair | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | CARD-1409 V-1..V-32, recipe | exactly 85 executed, 0 failed/skipped | 85 | 15 |
+| CP-B | R3 | `tests/Antiphon.Tests -> bin-c1483-repair/` | c1483-repair | `/*/*/(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | CARD-1409 V-1..V-32, recipe | exactly 85 executed, 0 failed/skipped | 85 | 15 |
 | CP-C | R3 | `tests/Antiphon.Tests -> bin-c1483-repair/` | c1483-repair | `/*/*/LandNonCodeSkipTests/(C1483_*)` | D-1 pins | exactly 16 executed, 0 failed/skipped | 16 | 10 |
 
 ### Cost

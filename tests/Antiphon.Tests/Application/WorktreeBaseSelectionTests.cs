@@ -350,7 +350,6 @@ public partial class WorktreeBaseSelectionTests
     {
         var migrations = MigrationTestDatabase.Names();
         var cut = Array.FindIndex(migrations, m => m.EndsWith("_AddWorktreeBaseSelection", StringComparison.Ordinal));
-        cut.ShouldBeGreaterThan(0);
         await using var schema = await MigrationTestDatabase.CreateAsync(migrations[cut - 1], CancellationToken.None);
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);

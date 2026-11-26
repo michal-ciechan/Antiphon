@@ -336,7 +336,6 @@ public sealed class RollingProductionMountTests
         C1008HostFixture.RequireNativeLinux();
         using var f = new C1008HostFixture();
         var accept = C1008HostFixture.LoadComposeV218(f.Root);
-        SessionVolumeBinds(accept).ShouldBe(11);
         var shortSet = accept.DeepClone().AsObject();
         var mounts = shortSet["services"]!["session-runner"]!["volumes"]!.AsArray();
         mounts.Remove(mounts.Single(x => x!["target"]!.GetValue<string>() == "/run/antiphon/github-token"));
@@ -483,7 +482,7 @@ public sealed class RollingProductionMountTests
     private static void WriteV218(C1008HostFixture f, string name, JsonNode model) =>
         File.WriteAllText(Path.Combine(f.Root, name), model.ToJsonString());
 
-    private static int SessionVolumeBinds(JsonObject model) =>
+    internal static int SessionVolumeBinds(JsonObject model) =>
         model["services"]!["session-runner"]!["volumes"]!.AsArray()
             .Count(x => x!["type"]!.GetValue<string>() is "volume" or "bind");
 

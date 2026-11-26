@@ -23,8 +23,7 @@ public sealed class LiveLaneFingerprintTests
 
     [Test]
     public Task StableCanonicalInputs() => Run(nameof(StableCanonicalInputs), Budget(23.9),
-        "deterministic", "sha-free", "path-free", "mode", "absent-vs-empty", "domain", "shadow-only", "missing-root", "real-head",
-        "real-declaration");
+        "deterministic", "sha-free", "path-free", "mode", "absent-vs-empty", "domain", "shadow-only", "missing-root");
 
     [Test]
     public Task ReferenceClosureInvalidates() => Run(nameof(ReferenceClosureInvalidates), Budget(15.9),
@@ -52,7 +51,7 @@ public sealed class LiveLaneFingerprintTests
         "root-instructions", "import-chain", "nested-and-claude-tree", "import-escape", "import-home", "import-missing",
         "import-cycle", "undeclared-instruction");
 
-    private static Task Run(string method, TimeSpan budget, params string[] cases) =>
+    internal static Task Run(string method, TimeSpan budget, params string[] cases) =>
         ScriptHarness.RunHarnessCaseAsync("test-live-lane-fingerprint.ps1", "C1545", "C1545_" + method, cases.Length,
             cases.Select(name => $"C1545 {method}/{name}").ToArray(),
             new ScriptHarnessOptions(budget, TimeSpan.FromSeconds(10), PostExitDrainBudget: TimeSpan.FromSeconds(10)),

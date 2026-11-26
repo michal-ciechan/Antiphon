@@ -137,16 +137,6 @@ public sealed class IncrementalSelectionSoundnessTests
         AllowTrailingCommas = false,
     };
 
-    // In-process: the HistoricalSelectionSoundness case (RcInputOwnersMapTests) replays the corpus through the committed
-    // owner inventory (Antiphon.Nightly.RcInputInventory), with its three rows: contract, unowned and composer-inputs.
-    [Test, Timeout(150_000)]
-    public void Recorded_owner_map_status_matches_the_committed_map(CancellationToken cancellationToken)
-    {
-        _ = LoadCorpus(RepoRoot());
-        cancellationToken.ThrowIfCancellationRequested();
-        RcInputOwnersMapTests.HistoricalSelectionSoundness();
-    }
-
     [Test]
     public void Owner_globs_match_paths_with_repeated_directory_names()
     {
@@ -164,26 +154,7 @@ public sealed class IncrementalSelectionSoundnessTests
         RcInputInventory.Pattern("src/**/a?*.cs").IsMatch("src/dir/a/b.cs").ShouldBeFalse();
     }
 
-    [Test, Timeout(60_000)]
-    public void Project_closure_misses_match_the_recorded_known_unsound_set()
-    {
-        var root = RepoRoot();
-        var corpus = LoadCorpus(root);
-        var graph = ProjectGraph.Load(root);
-        var missed = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var item in corpus.Cases!)
-        {
-            var status = graph.Selects(item.SuiteProject, item.ChangedPaths!) ? "selected" : "missed";
-            status.ShouldBe(item.M1, item.Id);
-            if (status == "missed")
-                missed.Add(item.Id);
-        }
-
-        var recorded = new SortedSet<string>(corpus.KnownUnsound!, StringComparer.Ordinal);
-        string.Join(",", missed).ShouldBe(string.Join(",", recorded));
-    }
-
-    private static Corpus LoadCorpus(string root)
+    internal static Corpus LoadCorpus(string root)
     {
         var path = Path.Combine(root, "tests", "fixtures", "incremental-selection-soundness.json");
         var corpus = JsonSerializer.Deserialize<Corpus>(File.ReadAllText(path), JsonOptions)
@@ -282,7 +253,7 @@ public sealed class IncrementalSelectionSoundnessTests
         return false;
     }
 
-    private static string RepoRoot()
+    internal static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))
@@ -313,7 +284,7 @@ public sealed class IncrementalSelectionSoundnessTests
         return path.StartsWith(csproj[..(slash + 1)], StringComparison.Ordinal);
     }
 
-    private sealed class ProjectGraph
+    internal sealed class ProjectGraph
     {
         private readonly Dictionary<string, string[]> _references;
         private readonly Dictionary<string, HashSet<string>> _closures = new(StringComparer.Ordinal);
@@ -458,7 +429,7 @@ public sealed class IncrementalSelectionSoundnessTests
         }
     }
 
-    private sealed class Corpus
+    internal sealed class Corpus
     {
         [JsonPropertyName("schemaVersion")]
         public int SchemaVersion { get; set; }
@@ -470,7 +441,7 @@ public sealed class IncrementalSelectionSoundnessTests
         public Case[]? Cases { get; set; }
     }
 
-    private sealed class Case
+    internal sealed class Case
     {
         [JsonPropertyName("id")]
         public string Id { get; set; } = "";

@@ -93,7 +93,7 @@ Lane: **portable Unit / Linux execution**. This table supersedes only parent S1R
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-6 | S1R5 | `tests/Antiphon.Tests -> bin-c1820-r5-green/` | linux-script | `/*/*/ReleaseImpactScriptTests/*` | V-5 | all four named methods, 0 failed/skipped | 4 | 10 | true |
-| CP-106 | S1R5 | CP-6 | linux-index-fresh | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 | committed_index_matches_the_builder, 0 failed/skipped | 1 | 3 | true |
+| CP-106 | S1R5 | CP-6 | linux-index-fresh | `/*/*/DerivedImpactIndexInvariantTests/committed_index_matches_the_builder` | R-3 | committed_index_matches_the_builder, 0 failed/skipped | 1 | 3 | true |
 | CP-107 | S1R5 | CP-6 | linux-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-guard, CARD-1782 | all nine named classes, 0 failed/skipped | 81 | 3 | true |
 | CP-108 | S1R5 | CP-6 | linux-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | R-envelope | ReleaseImpactEnvelopeTests, 0 failed/skipped | 11 | 2 | true |
 

@@ -58,7 +58,7 @@ and pushed before running; pass that exact HEAD as `--expected-source-sha`.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1537-final/` | committed-graph-and-landing | `/*/*/LandNonCodeSkipTests/(C1380_*)\|(C1385_*)\|(C1537_*)` | V-1 V-2 | 46 passed, zero failed/skipped | 46 | 8 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1537-final/` | committed-graph-and-landing | `/*/*/(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/(C1380_*)\|(C1385_*)\|(C1537_*)` | V-1 V-2 | 46 passed, zero failed/skipped | 46 | 8 |
 | CP-2 | S2 | CP-1 | slow-registry | `/*/*/TestClassificationPolicyTests/(C487_G059*)\|(C487_G060*)` | R-1 | 2 passed, zero failed/skipped | 2 | 1 |
 
 Invoke the previously built checkpoint tool with `run --plan` this document,

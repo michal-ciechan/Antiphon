@@ -69,4 +69,4 @@ No R-n. No positive controls. Mutation has nothing to plant. Zero-PC plan.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1390/` | c1390-graph | `/*/*/LandNonCodeSkipTests/(C1390_UpdateRefusesDocsMarkdownInput*)\|(C1390_MissingNulFailsUnderNonInvariantCulture*)\|(C1390_MalformedManifestForcesTheBuild*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 | exactly 4 executed, 0 failed/skipped | 4 | 25 |
+| CP-1 | S2 | `tests/Antiphon.Tests -> bin-c1390/` | c1390-graph | `/*/*/(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/(C1390_UpdateRefusesDocsMarkdownInput*)\|(C1390_MissingNulFailsUnderNonInvariantCulture*)\|(C1390_MalformedManifestForcesTheBuild*)\|(C1385_RegistryMatchesNarrowGraph*)` | V-1 V-2 V-3 V-4 | exactly 4 executed, 0 failed/skipped | 4 | 25 |

@@ -28,7 +28,7 @@ Unlisted, named in the Code report: the red four-class run, the two green confir
 | CP-3 | advisories | `CP-1` | dirty-harness | `/*/*/RcDirtyLaunchOrderTests/*` | V-3 | all 6, 0 failed/skipped | 6 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | advisories | `CP-1` | policy | `/*/*/TestClassificationPolicyTests/*` | V-4 | 45 executed, 0 failed/skipped | 45 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | advisories | `CP-1` | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-5 | 39 executed, 0 failed/skipped | 39 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-6 | advisories | `CP-1` | derived-index | `/*/*/DerivedImpactIndexTests/*` | V-6 | 27 executed, 0 failed/skipped | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-6 | advisories | `CP-1` | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-6 | 27 executed, 0 failed/skipped | 27 | 12 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-7 | advisories | `CP-1` | nightly-core | `/*/*/NightlyCoreTests/*` | V-7 | 1 executed, 0 failed/skipped | 1 | 4 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-8 | advisories | `CP-1` | live-lane | `/*/*/LiveLaneRunnerTests/*` | V-8 | all 4, 0 failed/skipped | 4 | 6 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-9 | advisories | `CP-1` | spawn-tests | `/*/*/ProcessSpawnLimitTests/*` | V-9 | 57 executed, 0 failed/skipped | 57 | 10 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |

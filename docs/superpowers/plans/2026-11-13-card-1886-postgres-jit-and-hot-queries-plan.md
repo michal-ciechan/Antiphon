@@ -259,7 +259,7 @@ Every row below is portable server/Postgres lane; ordinary scope is exactly thes
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1886-s1/ | jit-policy | `/*/*/(PostgresJitPolicyTests*)\|(TestDbFixtureLifecycleTests*)\|(TestDbFixtureIsolationTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestDbFixtureSchemaCacheLifecycleTests*)/*` | V-1 | all listed, 0 failed | 3 | 5 |
+| CP-1 | S1 | tests/Antiphon.Tests -> bin-c1886-s1/ | jit-policy | `/*/*/(PostgresJitPolicyTests*)\|(TestDbFixtureLifecycleTests*)\|(TestDbFixtureIsolationTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestDbFixtureSchemaCacheLifecycleTests*)\|(TestDbFixtureLazyInitializationInvariantTests*)/*` | V-1 | all listed, 0 failed | 3 | 5 |
 | CP-2 | S2 | tests/Antiphon.Tests -> bin-c1886-s2b/ | action-claim | `/*/*/(RuntimeActionClaimQueryTests*)\|(SessionRuntimeActionTests*)\|(SessionRuntimeActionRecoveryTests*)\|(SessionRuntimeActionRoutingTests*)\|(SessionRuntimeActionDeferralTests*)\|(SessionRuntimeActionTemporaryBlockTests*)/*` | V-2 | all listed, 0 failed | 6 | 6 |
 | CP-3 | S3 | tests/Antiphon.Tests -> bin-c1887-s3/ | pin-query | `/*/*/(SessionStatePinQueryTests*)\|(SessionStateProjectionTests*)\|(SessionStateWarmupTests*)\|(SessionStateCacheReadTests*)/*` | V-3 | all listed, 0 failed | 4 | 4 |
 | CP-4 | S4 | tests/Antiphon.Tests -> bin-c1888-s4/ | ingest-identity | `/*/*/(TranscriptIdentityWindowTests*)\|(AgentSessionRuntimeTests*)\|(SessionStateCommitTests*)\|(SessionStateWarmupTests*)\|(TranscriptSinceClientTests*)/*` | V-4 | all listed, 0 failed | 5 | 5 |
@@ -268,7 +268,7 @@ Every row below is portable server/Postgres lane; ordinary scope is exactly thes
 | CP-7 | S5 | CP-6 | refresh-and-reply | `/*/*/(PolicyRefreshServiceTests*)\|(ChannelReplyLateConfirmDispatchTests*)/*` | V-5 | all listed, 0 failed | 2 | 2 |
 | CP-8 | S5 | CP-6 | pipeline-activity | `/*/*/AgentTaskPipelineStatusTests/last_activity_uses_transcript_after_dispatch_and_falls_back_otherwise` | V-5 | all listed, 0 failed | 1 | 1 |
 | CP-9 | S5 | CP-6 | channel-ttl | `/*/*/ChannelReplyDurabilityTests/(Ttl_with_no_matching_prompt_is_stale_ttl*)\|(Ttl_with_a_matching_prompt_but_no_turn_end_is_turn_incomplete*)\|(Ttl_with_a_completed_answer_captures_before_recording_expired_preparation*)` | V-5 | all listed, 0 failed | 3 | 1 |
-| CP-10 | all | tests/Antiphon.Tests -> bin-c1886-allc/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
+| CP-10 | all | tests/Antiphon.Tests -> bin-c1886-allc/ | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-1 | all listed, 0 failed | 9 | 2 |
 
 ## Nightly pins, publication and handoff
 

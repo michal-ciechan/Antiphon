@@ -389,7 +389,7 @@ start after the plan's CP-13. `Min` is the executed TUnit floor (`-MinExecuted`)
 | CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1653-s1/ | portable-identity-refusal | /*/Antiphon.SessionRunner.Tests/Card1653RefusalRetainsHostTests/* | V-1, V-1b, V-3, V-3b, V-5 | class, 0 failed/skipped | 7 | 4 | true |
 | CP-2 | S1 | CP-1 | portable-c1636-regression | /*/Antiphon.SessionRunner.Tests/Card1636AdoptionIdentityTests/* | R-1, V-4 | class, 0 failed/skipped | 6 | 1 | true |
 | CP-3 | S1 | CP-1 | linux-native-fresh-launch | /*/Antiphon.SessionRunner.Tests/Card1653FreshLaunchIdentityTests/* | V-6 (V-7 folded) | class, 0 failed/skipped | 3 | 1 | true |
-| CP-14 | S1 | CP-1 | portable-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-3 | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-14 | S1 | CP-1 | portable-native-policy-regression | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | R-3 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-15 | S1 | CP-1 | portable-workspace-conflict-regression | /*/Antiphon.SessionRunner.Tests/CompletedCardWorkspaceRemovalTests/C1032_FenceStartupAdoptionOrders | R-2 | method, 0 failed/skipped | 1 | 1 | true |
 | CP-16 | S1 | tests/Antiphon.Tests -> bin-c1653-s1s/ | portable-pending-incident | /*/Antiphon.Tests.Application/SessionReconciliationServiceTests/Pty_identity_unproven_pending_row_is_held_and_raises_the_pending_incident | V-8 | method, 0 failed/skipped | 1 | 13 | true |
 

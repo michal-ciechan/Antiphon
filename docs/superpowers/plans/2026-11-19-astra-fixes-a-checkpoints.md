@@ -37,7 +37,7 @@ Not in this closed list, under the short-test bound (operator 2026-11-18): `scri
 | CP-6 | all | CP-5 | live-lane | `/*/*/LiveLaneRunnerTests/*` | R-5 | all listed, 0 failed | 4 | 8 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-7 | all | CP-5 | release-impact | `/*/*/ReleaseImpactScriptTests/*` | R-7 | all listed, 0 failed | 10 | 8 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-8 | all | CP-5 | policy | `/*/*/TestClassificationPolicyTests/*` | R-1 | all listed, 0 failed | 42 | 8 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
-| CP-9 | all | CP-5 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-2 | all listed, 0 failed | 27 | 12 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-9 | all | CP-5 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed | 27 | 12 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-10 | all | CP-5 | linux-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 39 | 10 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-11 | all | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-4 | exit 0 | n/a | 3 | true | n/a |
 | CP-12 | all | n/a | evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -Repository . -BaseRef d86d0f39422b152faf8c39e362a58b745eb95267 -HeadRef HEAD` | R-6 | exit 0 | n/a | 3 | true | n/a |

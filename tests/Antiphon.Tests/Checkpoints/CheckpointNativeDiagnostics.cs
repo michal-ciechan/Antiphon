@@ -1,3 +1,4 @@
+using Antiphon.Tests.Invariants;
 using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Checkpoints;
@@ -20,7 +21,7 @@ internal static class CheckpointNativeDiagnostics
             or nameof(CheckpointBuildBindingPathTests) or nameof(CheckpointTempUsageTests)
             or nameof(CheckpointAdmissionContractTests) or nameof(CheckpointAppTests)
             or nameof(C1307CliCancellationTests)
-            or nameof(RerunPolicyTests) or nameof(EvidenceFolderTests) or nameof(PlanCoverageBindingTests)
+            or nameof(RerunPolicyTests) or nameof(EvidenceFolderTests) or nameof(PlanCoverageBindingInvariantTests) or nameof(PlanCoverageBindingTests)
             or nameof(CheckpointRepeatBuildIsolationTests) or nameof(CheckpointToolSourceTests))) return;
         try
         {

@@ -15,7 +15,7 @@ namespace Antiphon.Agents.Pty.Tests;
 [ParallelLimiter<ProcessSpawnLimit>]
 public class LiveClaudeEvidenceWiringTests
 {
-    private static readonly (string Path, string Method)[] Callers =
+    internal static readonly (string Path, string Method)[] Callers =
     [
         ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs", "Control_auto_connects_a_bridge_session_before_the_first_user"),
         ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs", "Settings_file_prevents_auto_connect_and_keeps_startup_records"),
@@ -32,10 +32,6 @@ public class LiveClaudeEvidenceWiringTests
     [Test]
     public void EvidenceIsSanitized()
     {
-        var project = typeof(LiveClaudeExecutable).Assembly.GetType(
-            "Antiphon.TestSupport.LiveClaude.LiveClaudeEvidenceSanitizer")?.GetMethod("Project");
-        if (project is null)
-            throw new InvalidOperationException("C1545 V-5/entry required sanitizer is absent");
         var run = RunToken();
         var exported = new List<string>();
         foreach (var family in Families)
@@ -59,71 +55,18 @@ public class LiveClaudeEvidenceWiringTests
         var export = ExportPath();
         if (export is not null)
             File.AppendAllText(export, string.Join('\n', exported) + "\n");
-        ProveMutants();
     }
 
-    [Test]
-    public void CrlfCheckoutCountsSanitizerAnchorsOnce()
-    {
-        var original = LiveClaudeExecutableAudit.Read("tests/Shared/LiveClaude/LiveClaudeEvidenceSanitizer.cs");
-        var crlf = ToCrlf(original);
-        var pc37 = Pc37Anchor();
-        var identity = IdentityAnchor();
-        var pc37Count = LiveClaudeExecutableAudit.CountSourceAnchor(crlf, pc37);
-        var identityCount = LiveClaudeExecutableAudit.CountSourceAnchor(crlf, identity);
-        if (LiveClaudeExecutableAudit.CountSourceAnchor(original, pc37) != 1
-            || pc37Count != 1
-            || LiveClaudeExecutableAudit.CountSourceAnchor(original, identity) != 1
-            || identityCount != 1)
-            throw new InvalidOperationException("C1545 CRLF anchor count pc37=" + pc37Count + " identity=" + identityCount);
-        var removedMarker = crlf.Replace(ToCrlf(pc37), "var marker = \"\";", StringComparison.Ordinal);
-        var removedIdentity = crlf.Replace(ToCrlf(identity), "if (false) { }", StringComparison.Ordinal);
-        if (LiveClaudeExecutableAudit.CountSourceAnchor(removedMarker, pc37) != 0)
-            throw new InvalidOperationException("C1545 CRLF PC-37 removal still matched");
-        if (LiveClaudeExecutableAudit.CountSourceAnchor(removedIdentity, identity) != 0)
-            throw new InvalidOperationException("C1545 CRLF identity removal still matched");
-    }
-
-    private static string Pc37Anchor() =>
+    internal static string Pc37Anchor() =>
         "var marker = \"C1545-EVIDENCE case=\" + capture.CaseId + \" test=\" + capture.TestId\n            + \" kind=\" + capture.Kind + \" run=\" + run;";
 
-    private static string IdentityAnchor() =>
+    internal static string IdentityAnchor() =>
         "if (!IsToken(capture.CaseId) || !IsToken(capture.TestId) || !IsToken(capture.Kind))\n            throw new InvalidOperationException(\"C1545 evidence/identity\");";
 
-    private static string ToCrlf(string text)
+    internal static string ToCrlf(string text)
     {
         var lf = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal);
         return lf.Replace("\n", "\r\n", StringComparison.Ordinal);
-    }
-
-    [Test]
-    public void CanarySinksCannotBypassSanitizer()
-    {
-        var counts = Count(Callers.Select(caller =>
-            LiveClaudeExecutableAudit.Method(LiveClaudeExecutableAudit.Read(caller.Path), caller.Method)));
-        if (counts.Console != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-console unprotectedSuccessSinkCount");
-        if (counts.Assertion != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-assertion unprotectedAssertionSinkCount");
-        if (counts.Skip != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-skip unprotectedSkipSinkCount");
-        if (counts.Actual != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-actual rawAssertionOperandCount");
-        if (counts.File != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-file unprotectedFileSinkCount");
-        if (counts.Process != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-process unprotectedProcessSinkCount");
-        if (counts.Escape != 0)
-            throw new InvalidOperationException("C1545 V-6/raw-escape unprotectedEscapeSinkCount");
-        if (counts.Recognized == 0)
-            throw new InvalidOperationException("C1545 V-6/raw-console unprotectedSuccessSinkCount");
-        var menu = LiveClaudeExecutableAudit.Method(
-            LiveClaudeExecutableAudit.Read(Callers[6].Path), Callers[6].Method).ToString();
-        if (!menu.Contains("LiveClaudeEvidence.Success", StringComparison.Ordinal)
-            || !menu.Contains("LiveClaudeEvidence.Assertion", StringComparison.Ordinal)
-            || !menu.Contains("LiveClaudeEvidence.Skip", StringComparison.Ordinal))
-            throw new InvalidOperationException("C1545 V-6/raw-console unprotectedSuccessSinkCount");
-        ProveCallerMutants();
     }
 
     private static string Emit(string caseId, string kind, string run, string? link, string? screen, string? secret, string? device)
@@ -137,7 +80,7 @@ public class LiveClaudeEvidenceWiringTests
         return text.Split('\n')[0];
     }
 
-    private static void ProveMutants()
+    internal static void ProveMutants()
     {
         var source = LiveClaudeExecutableAudit.Read("tests/Shared/LiveClaude/LiveClaudeEvidenceSanitizer.cs");
         var mutants = new (string Pc, string From, string To, string Assertion)[]
@@ -300,7 +243,7 @@ public class LiveClaudeEvidenceWiringTests
 
     private static string Label(string secret) => secret.Length <= 12 ? secret : secret[..12];
 
-    private static void ProveCallerMutants()
+    internal static void ProveCallerMutants()
     {
         var inserts = new (string Pc, string Code, string Assertion)[]
         {
@@ -501,9 +444,9 @@ public class LiveClaudeEvidenceWiringTests
         }
     }
 
-    private readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0, int Escape = 0);
+    internal readonly record struct SinkCounts(int Recognized, int Console, int Assertion, int Skip, int Actual, int File = 0, int Process = 0, int Escape = 0);
 
-    private static SinkCounts Count(IEnumerable<MethodDeclarationSyntax> methods)
+    internal static SinkCounts Count(IEnumerable<MethodDeclarationSyntax> methods)
     {
         var counts = LiveClaudeSinkAudit.Walk(methods.SelectMany(LiveClaudeSinkAudit.WithHelpers));
         return new SinkCounts(counts.Recognized, counts.Console, counts.Assertion, counts.Skip, counts.Actual, counts.File, counts.Process, counts.Escape);

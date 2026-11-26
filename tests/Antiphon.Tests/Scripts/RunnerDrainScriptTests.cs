@@ -18,7 +18,6 @@ public sealed class RunnerDrainScriptTests
     [Test]
     public async Task Script_is_ascii_offers_the_four_verbs_and_sends_the_token_without_printing_it()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "RunnerDrain.cs")).ShouldAllBe(b => b < 128);
         foreach (var verb in new[] { "status", "drain", "clear", "retire" })
             RunnerDrainOptions.Parse([verb, "--reason", "why", "--confirm", "server2"], null, null, "token-file").Verb.ShouldBe(verb);
         Should.Throw<NightlyUsageException>(() => RunnerDrainOptions.Parse(["undrain"], null, null, "token-file"));

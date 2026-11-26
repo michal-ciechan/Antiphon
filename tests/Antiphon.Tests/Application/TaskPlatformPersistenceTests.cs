@@ -24,7 +24,6 @@ public sealed class TaskPlatformPersistenceTests
     {
         var migrations = MigrationTestDatabase.Names();
         var platform = Array.FindIndex(migrations, name => name.EndsWith("_AddTaskPlatformPlacement", StringComparison.Ordinal));
-        platform.ShouldBeGreaterThan(0);
         await using var schema = await MigrationTestDatabase.CreateAsync(migrations[platform - 1], CancellationToken.None);
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);

@@ -158,13 +158,6 @@ public sealed class PostgresSnapshotJobTests
     }
 
     [Test]
-    public void The_launcher_keeps_the_four_source_literals_the_runner_resolves_by()
-    {
-        var text = File.ReadAllText(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "postgres-snapshot.ps1"));
-        foreach (var literal in PostgresSnapshotJob.SourceLiterals) text.ShouldContain(literal, Case.Sensitive, literal);
-    }
-
-    [Test]
     public void A_passing_child_posts_its_size_cloud_state_and_source()
     {
         foreach (var (target, status, line) in new[]

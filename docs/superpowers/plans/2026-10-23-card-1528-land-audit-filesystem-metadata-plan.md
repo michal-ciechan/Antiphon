@@ -219,7 +219,7 @@ Counts are TUnit results; internal matrices do not increase Min.
 | CP-3 | S1-S3 | CP-1 | recorded-probes | `/*/*/LandGraphEvaluationTests/(C1483_S4_ExistsProbeOfDocsRefuses*)\|(C1483_S4_FileReadingPropertyFunctionRefuses*)` | R-1 R-2 | exactly 9 passed, 0 failed/skipped | 9 | 1 |
 | CP-4 | S1-S3 | CP-1 | real-approval | `/*/*/LandGraphEvaluationTests/(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S4_RealRepositoryApproves*)` | R-3 | exactly 2 passed, 0 failed/skipped | 2 | 1 |
 | CP-5 | S1-S3 | CP-1 | publication | `/*/*/LandGraphEvaluationTests/(C1528_UpdateRefusalPreservesRecords*)\|(C1483_S5_EvaluationFailurePreservesRecords*)\|(C1483_S5_CheckRequiresEvaluationRecord*)` | V-7 R-4 | exactly 3 passed, 0 failed/skipped | 3 | 1 |
-| CP-6 | S1-S3 | CP-1 | manifest | `/*/*/LandNonCodeSkipTests/C1385_RegistryMatchesNarrowGraph` | R-4 | exactly 1 passed, 0 failed/skipped | 1 | 1 |
+| CP-6 | S1-S3 | CP-1 | manifest | `/*/*/LandNonCodeSkipInvariantTests/C1385_RegistryMatchesNarrowGraph` | R-4 | exactly 1 passed, 0 failed/skipped | 1 | 1 |
 
 ## Code verification design (task 2d02464e)
 

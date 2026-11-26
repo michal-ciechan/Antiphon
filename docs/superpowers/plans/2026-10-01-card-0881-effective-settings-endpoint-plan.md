@@ -492,7 +492,7 @@ Closed ordinary list: one isolated build and one exact filter per row. Red-first
 | CP-1 | S1-S3 | `tests/Antiphon.Tests -> bin-c881-s1/` | scoped-admission | `/*/Antiphon.Tests.Application/(PipelineAdmissionSnapshotTests*)\|(AgentTaskPipelineStatusTests*)\|(AgentTaskConcurrencyLimitTests*)/*` | V-01..10, R-1..2 | Linux 93 / Windows 93 executed; 0 failed, 0 skipped; every named class | 93 | 8 |
 | CP-2 | S1-S3 | `tests/Antiphon.Tests -> bin-c881-s2/` | effective-projection | `/*/Antiphon.Tests.Application/(DispatchEffectiveSettingsProjectionTests*)\|(HostBudgetServiceTests*)/*` | V-11..22, R-3 | Linux 20 / Windows 20 executed; 0 failed, 0 skipped; every named class | 20 | 6 |
 | CP-3 | S1-S3 | `tests/Antiphon.Tests -> bin-c881-s3/` | aggregate-wire | `/*/Antiphon.Tests.Application/(DispatchEffectiveSettingsWireTests*)\|(HostEndpointTests*)\|(RunnerDefaultSettingsTests*)\|(RunnerDefaultsWireTests*)/*` | V-23..36, R-4..5 | Linux 29 / Windows 29 executed; 0 failed, 0 skipped; every named class | 29 | 8 |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c881-s4/` | final-policy | `/*/Antiphon.Tests.Application/(StandingPipelinePolicyDocumentationTests*)\|(InstructionBundleTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)/*` | V-37..40, R-6 | Linux 80 / Windows 80 executed; 0 failed, 0 skipped; every named class | 80 | 5 |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c881-s4/` | final-policy | `/*/*/(StandingPipelinePolicyDocumentationTests*)\|(InstructionBundleTests*)\|(TaskPlatformGuidanceTests*)\|(RunnerDefaultGuidanceTests*)/*` | V-37..40, R-6 | Linux 80 / Windows 80 executed; 0 failed, 0 skipped; every named class | 80 | 5 |
 
 ## Activation and rollback
 

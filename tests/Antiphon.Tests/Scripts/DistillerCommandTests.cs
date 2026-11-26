@@ -20,7 +20,6 @@ public sealed class DistillerCommandTests
     [Test]
     public void Stats_print_the_totals_the_cost_and_each_section_in_the_servers_order()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DistillerLedger.cs")).ShouldAllBe(b => b < 128);
         var http = new RecordingOperatorHttp(_ => new(200, """
             {"since":"2026-11-16T09:00:00Z","total":12,"byOutcome":{"Applied":9,"Timeout":3},"byFeedback":{"None":10,"LostInformation":2},
              "byBundleStamp":{"v3":12},"medianRatio":0.31,"p90Ratio":0.5,"topMissingAnchorClasses":["sha","path"],"fullReadRate":0.25,"costUsd":0.0123}

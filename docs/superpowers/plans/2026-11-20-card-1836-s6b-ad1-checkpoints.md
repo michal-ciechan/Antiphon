@@ -24,7 +24,7 @@ CP-1 includes the real nightly-run witness OneEvidenceRootPerRun, about one minu
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S6b-ad1 | `tests/Antiphon.Tests -> bin-c1836-ad1/` | rc-run-evidence | `/*/*/RcRunEvidenceTests/*` | shadow Passed strictness, existing run-evidence witnesses | all listed, 0 failed/skipped | 9 | 15 |
 | CP-2 | S6b-ad1 | `tests/Antiphon.Tests -> bin-c1836-ad1-policy/` | policy | `/*/*/TestClassificationPolicyTests/*` | classification policy once | all listed, 0 failed/skipped | 42 | 10 |
-| CP-3 | S6b-ad1 | `tests/Antiphon.Tests -> bin-c1836-ad1-impact/` | derived-impact | `/*/*/DerivedImpactIndexTests/*` | committed derived-impact index | all listed, 0 failed/skipped | 27 | 15 |
+| CP-3 | S6b-ad1 | `tests/Antiphon.Tests -> bin-c1836-ad1-impact/` | derived-impact | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | committed derived-impact index | all listed, 0 failed/skipped | 27 | 15 |
 
 ### Restart
 

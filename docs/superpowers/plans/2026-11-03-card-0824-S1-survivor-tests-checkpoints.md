@@ -35,4 +35,4 @@ One run: S1.
 | CP-6 | S1 | CP-1 | slot-cold-reset-regression | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotColdResetTests/* | regression | existing class, 0 failed/skipped | 12 | 3 | true |
 | CP-7 | S1 | CP-1 | slot-process-scan-regression | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotProcessScanTests/* | regression | existing class, 0 failed/skipped | 3 | 2 | true |
 | CP-8 | S1 | CP-1 | slot-native-rehome-regression | /*/Antiphon.SessionRunner.Tests/C0824WorkspaceSlotNativeRehomeTests/* | regression | existing class, 0 failed/skipped | 1 | 2 | true |
-| CP-9 | S1 | CP-1 | native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | policy census unchanged | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-9 | S1 | CP-1 | native-policy-regression | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | policy census unchanged | existing class, 0 failed/skipped | 3 | 1 | true |

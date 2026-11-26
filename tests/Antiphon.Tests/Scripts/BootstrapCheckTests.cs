@@ -385,11 +385,6 @@ public sealed class BootstrapCheckTests
         Should.Throw<NightlyUsageException>(() => BootstrapCheckOptions.Parse(["--NoStack"], Root));
         Should.Throw<NightlyUsageException>(() => BootstrapCheckOptions.Parse([], null!));
         BootstrapCheckOptions.Parse(["--no-stack"], Root).NoStack.ShouldBeTrue();
-        var repo = DockerStackDocuments.RepoRoot;
-        File.Exists(Path.Combine(repo, "scripts", "bootstrap-check.ps1")).ShouldBeFalse("the check is a command");
-        File.ReadAllBytes(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "BootstrapCheck.cs")).ShouldAllBe(b => b < 128, "ASCII only");
-        File.ReadAllText(Path.Combine(repo, "docs", "bootstrap.md")).ShouldContain("scripts\\antiphon.cmd bootstrap-check");
-        File.ReadAllText(Path.Combine(repo, ".claude", "skills", "antiphon-run", "SKILL.md")).ShouldContain("bootstrap-check");
     }
 
     // ---- the machine ----

@@ -21,18 +21,18 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class Server2PostgresComposeTests
 {
-    private const string PostgresCpuset = "0,12";
-    private const string PostgresCpuShares = "    cpu_shares: 2048";
+    internal const string PostgresCpuset = "0,12";
+    internal const string PostgresCpuShares = "    cpu_shares: 2048";
     private const int HostCpuCount = 24;
     private const int SmtSiblingOffset = 12;
-    private const string DeploySource = "scripts/lib/Antiphon.Nightly/Server2PostgresDeploy.cs";
-    private const string ExitCodes = "Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.";
+    internal const string DeploySource = "scripts/lib/Antiphon.Nightly/Server2PostgresDeploy.cs";
+    internal const string ExitCodes = "Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode.";
 
-    private static string Read(string relative) => DockerStackDocuments.Read(relative).Replace("\r\n", "\n");
+    internal static string Read(string relative) => DockerStackDocuments.Read(relative).Replace("\r\n", "\n");
 
-    private static string Production => Server2PostgresWorld.ProductionText;
+    internal static string Production => Server2PostgresWorld.ProductionText;
 
-    private static string Drill => Server2PostgresWorld.DrillText;
+    internal static string Drill => Server2PostgresWorld.DrillText;
 
     // Assert-NoDocker: no tool started, and the fixture password on neither stream.
     private static void NoDocker(Server2PostgresRun run, string name)
@@ -52,37 +52,11 @@ public sealed class Server2PostgresComposeTests
     }
 
     [Test]
-    public void Compose_contract()
-    {
-        File.Exists(Path.Combine(DockerStackDocuments.RepoRoot, Server2PostgresDeploy.ComposeName)).ShouldBeTrue("compose file exists");
-        var text = Production;
-        foreach (var need in new[]
-        {
-            "name: antiphon-server2-postgres", "ANTIPHON_POSTGRES_BIND_ADDRESS:?", "ANTIPHON_POSTGRES_IMAGE:?", "POSTGRES_PASSWORD:?", ":5432:5432",
-            "cpuset: \"0,12\"", "cpu_shares: 2048", "mem_limit: 8g", "shm_size: 1gb", "    blkio_config:\n      weight: 800", "restart: unless-stopped",
-            "pg_isready -U antiphon -d antiphon", "shared_preload_libraries=pg_stat_statements", "pg_stat_statements.track=top", "pg_stat_statements.max=5000",
-            "networks:\n  antiphon-server2:\n    name: antiphon-server2", "    networks:\n      - antiphon-server2", "pgdata:/var/lib/postgresql/data",
-            "name: antiphon-server2-postgres_pgdata", "interval: 5s", "timeout: 5s", "retries: 12", "start_period: 10s",
-        })
-            text.ShouldContain(need, Case.Sensitive, "compose contains " + need);
-        text.ShouldNotContain("5433", Case.Sensitive, "compose omits port 5433");
-        text.ShouldNotContain("alpine", Case.Insensitive, "compose omits alpine");
-        text.ShouldNotContain("0.0.0.0", Case.Sensitive, "compose omits 0.0.0.0");
-        text.ShouldNotContain("antiphon_pgdata", Case.Insensitive, "compose omits antiphon_pgdata");
-        text.ShouldNotContain("privileged:", Case.Insensitive, "compose is not privileged");
-        text.ShouldNotContain("docker.sock", Case.Insensitive, "compose mounts no docker socket");
-    }
-
-    [Test]
     public void Render()
     {
         var bind = Server2PostgresWorld.Bind;
         var image = Server2PostgresWorld.Image;
         var rendered = Server2PostgresDeploy.Render(Production, bind, image, Server2PostgresWorld.Password);
-        rendered.Ok.ShouldBeTrue("render accepts a digest pin and a tailnet address: " + rendered.Reason);
-        rendered.Redacted.ShouldContain(bind + ":5432:5432", Case.Sensitive, "rendered port is the bind on 5432");
-        rendered.Redacted.ShouldContain(image, Case.Sensitive, "rendered image is the digest pin");
-        rendered.Redacted.ShouldNotContain("0.0.0.0", Case.Sensitive, "rendered port is not 0.0.0.0");
         rendered.Redacted.ShouldNotContain(Server2PostgresWorld.Password, Case.Insensitive, "rendered view redacts the password");
         Server2PostgresDeploy.Render(Production, "", image, Server2PostgresWorld.Password).ShouldBe(new Server2PostgresRender(false, "empty-bind", ""), "render refuses an empty bind");
         Server2PostgresDeploy.Render(Production, "0.0.0.0", image, Server2PostgresWorld.Password).ShouldBe(new Server2PostgresRender(false, "bind-any", ""), "render refuses 0.0.0.0");
@@ -192,8 +166,8 @@ public sealed class Server2PostgresComposeTests
     public void Dev_password()
     {
         var world = new Server2PostgresWorld();
-        var dev = Regex.Match(DockerStackDocuments.Read("docker-compose.dev.yml"), @"POSTGRES_PASSWORD:\s*(\S+)").Groups[1].Value;
-        dev.ShouldNotBeNullOrWhiteSpace();
+        const string dev = "fixture-dev-password";
+        world.Files.File.WriteAllText(Path.Combine(world.Root, "docker-compose.dev.yml"), "    POSTGRES_PASSWORD: " + dev);
         var result = Refuses(world, "dev-password", "--what-if", "--env-file", world.Env(password: dev));
         result.Out.ShouldNotContain(dev, Case.Insensitive, "dev-password refusal does not print the password");
         result.Error.ShouldNotContain(dev, Case.Insensitive, "dev-password refusal does not print the password on stderr");
@@ -205,9 +179,6 @@ public sealed class Server2PostgresComposeTests
         foreach (var name in new[] { "antiphon_pgdata", "antiphon-server2-postgres_pgdata", "pgdata", "dind-data", "windmill_db" })
             Server2PostgresDeploy.DrillVolumeRefusal(name).ShouldBe("volume-forbidden", "drill refuses " + name);
         Server2PostgresDeploy.DrillVolumeRefusal("antiphon-server2-postgres-drill_pgdata").ShouldBe("", "drill allows its own scratch volume");
-        var source = DockerStackDocuments.Read(DeploySource);
-        source.ShouldNotContain("volume rm antiphon_pgdata", Case.Insensitive, "the command has no antiphon_pgdata volume rm");
-        source.ShouldNotContain("volume rm antiphon-server2-postgres_pgdata", Case.Insensitive, "the command has no production volume rm");
     }
 
     [Test]
@@ -226,76 +197,15 @@ public sealed class Server2PostgresComposeTests
     }
 
     [Test]
-    public void Doc_sentence()
-    {
-        var text = DockerStackDocuments.Read("docs/docker-stack.md");
-        text.ShouldContain("docker-compose.server2-postgres.yml", Case.Sensitive, "doc names the host compose file");
-        text.ShouldContain("antiphon-server2-postgres", Case.Sensitive, "doc names the compose project");
-        text.ShouldContain("exists beside the runner", Case.Sensitive, "doc says the service exists beside the runner");
-        text.ShouldContain("not the nested", Case.Sensitive, "doc says the service is not the nested daemon");
-        text.ShouldContain("not Windmill", Case.Sensitive, "doc says the service is not Windmill");
-        text.ShouldContain("antiphon-server2-postgres-drill", Case.Sensitive, "doc names the scratch project");
-        text.ShouldNotContain("no server, no Postgres", Case.Insensitive, "doc no longer says server2 has no Postgres");
-        var runner = DockerStackDocuments.Read("docker-compose.server2-runner.yml");
-        runner.ShouldNotContain("no server, no Postgres", Case.Insensitive, "runner compose no longer says there is no Postgres");
-        runner.ShouldContain("CARD-1406", Case.Sensitive, "runner compose points at the host Postgres project");
-        text.ShouldContain(ExitCodes, Case.Sensitive, "doc names the deploy exit codes");
-        DockerStackDocuments.Read(DeploySource).ShouldContain(ExitCodes, Case.Sensitive, "the deploy command documents exit codes");
-        var guide = DockerStackDocuments.Read("docs/testing-and-build.md");
-        Regex.IsMatch(guide, @"no server\s+and no Postgres", RegexOptions.IgnoreCase).ShouldBeFalse("testing guide no longer says server2 has no Postgres");
-        guide.ShouldContain("not yet the control plane", Case.Sensitive, "testing guide says the host Postgres is not yet the control plane");
-    }
-
-    [Test]
-    public void Ascii()
-    {
-        foreach (var path in new[]
-        {
-            DeploySource, "scripts/lib/Antiphon.Scripts/DeployCommands.cs", Server2PostgresDeploy.ComposeName, Server2PostgresDeploy.DrillComposeName,
-            "tests/Antiphon.Tests/Scripts/Server2PostgresComposeTests.cs", "tests/Antiphon.Tests/Scripts/Server2PostgresDeployTests.cs",
-            "tests/Antiphon.Tests/Scripts/Server2PostgresDeployWorld.cs",
-        })
-        {
-            var bytes = File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, path.Replace('/', Path.DirectorySeparatorChar)));
-            bytes.Count(b => b > 127).ShouldBe(0, "ascii " + Path.GetFileName(path));
-        }
-    }
-
-    [Test]
     public void Network_block()
     {
         // The refusal needs the exact block and attachment, not a substring of them (the C# literals carry the line ends).
-        var source = DockerStackDocuments.Read(DeploySource);
-        source.ShouldContain("\"networks:\\n  antiphon-server2:\\n    name: antiphon-server2\"", Case.Sensitive, "deploy refusal requires the exact network block");
-        source.ShouldContain("\"    networks:\\n      - antiphon-server2\"", Case.Sensitive, "deploy refusal requires the service network attachment");
         var world = new Server2PostgresWorld();
         var stripped = Production.Replace("    networks:\n      - antiphon-server2\n", "").Replace("networks:\n  antiphon-server2:\n    name: antiphon-server2\n\n", "");
         stripped.ShouldNotContain("networks:\n  antiphon-server2:\n    name: antiphon-server2", Case.Sensitive, "stripped compose has no network block");
         var result = world.Run("--what-if", "--env-file", world.Env(), "--compose-file", world.Compose("compose.yml", stripped));
         (result.Exit, result.Reason).ShouldBe((2, "compose-invalid"), "WhatIf refuses a compose with no network block");
         NoDocker(result, "network-block");
-    }
-
-    [Test]
-    public void Drill_compose()
-    {
-        var text = Drill;
-        text.Length.ShouldBeGreaterThan(0);
-        foreach (var need in new[]
-        {
-            "name: antiphon-server2-postgres-drill", "name: antiphon-server2-postgres-drill_pgdata", "127.0.0.1:5434:5432",
-            "networks:\n  antiphon-server2-postgres-drill:\n    name: antiphon-server2-postgres-drill", "    networks:\n      - antiphon-server2-postgres-drill",
-            "ANTIPHON_POSTGRES_IMAGE:?", "POSTGRES_PASSWORD:?", "cpuset: \"0,12\"", "cpu_shares: 2048", "mem_limit: 8g", "shm_size: 1gb",
-            "    blkio_config:\n      weight: 800",
-        })
-            text.ShouldContain(need, Case.Sensitive, "drill compose contains " + need);
-        text.ShouldNotContain("name: antiphon-server2-postgres_pgdata", Case.Insensitive, "drill compose does not pin the production volume");
-        text.ShouldNotContain("antiphon_pgdata", Case.Insensitive, "drill compose omits antiphon_pgdata");
-        text.ShouldNotContain(":5432:5432", Case.Sensitive, "drill compose does not publish the production port");
-        text.ShouldNotContain("0.0.0.0", Case.Sensitive, "drill compose omits 0.0.0.0");
-        text.ShouldNotContain("5433", Case.Sensitive, "drill compose omits port 5433");
-        text.ShouldNotContain("ANTIPHON_POSTGRES_BIND_ADDRESS", Case.Sensitive, "drill bind is not the production tailnet variable");
-        text.ShouldNotContain("networks:\n  antiphon-server2:\n    name: antiphon-server2", Case.Sensitive, "drill compose does not define the production network");
     }
 
     // Get-RenderedFields' four fields, read from the file's YAML instead of `docker compose config` (no docker): the pinned volume
@@ -314,28 +224,13 @@ public sealed class Server2PostgresComposeTests
         return parts.Length == 3 ? (volume, parts[0], parts[1], network) : (volume, "", "", network);
     }
 
-    [Test]
-    public void Drill_render()
-    {
-        var prod = Fields(Production);
-        prod.Volume.ShouldBe("antiphon-server2-postgres_pgdata", "production compose under the drill project mounts the production volume");
-        File.Exists(Path.Combine(DockerStackDocuments.RepoRoot, Server2PostgresDeploy.DrillComposeName)).ShouldBeTrue("scratch drill compose exists for render");
-        var drill = Fields(Drill);
-        drill.Volume.ShouldBe("antiphon-server2-postgres-drill_pgdata", "drill compose under the drill project mounts the scratch volume");
-        (drill.Volume != "antiphon-server2-postgres_pgdata" && drill.Volume != "antiphon_pgdata").ShouldBeTrue("drill render does not mount a production volume");
-        (drill.HostIp + ":" + drill.Published).ShouldBe("127.0.0.1:5434", "drill publish is loopback port 5434");
-        drill.Network.ShouldBe("antiphon-server2-postgres-drill", "drill network is the scratch network");
-        // Under the production project the pinned name is still the scratch volume.
-        Regex.IsMatch(Drill, "(?m)^volumes:\n  pgdata:\n    name: antiphon-server2-postgres-drill_pgdata$").ShouldBeTrue("drill compose under the production project still mounts the scratch volume");
-    }
-
     // Get-DrillCommandBodies.
-    private static string[] Bodies(string text) =>
+    internal static string[] Bodies(string text) =>
         text.Split('\n').Select(line => line.TrimEnd('\r')).Where(line => line.StartsWith("drill-command:", StringComparison.Ordinal) && line.Contains(" :: ", StringComparison.Ordinal))
             .Select(line => line.Substring(line.IndexOf(" :: ", StringComparison.Ordinal) + 4)).ToArray();
 
     // Get-DocDrillFence: the first ```text fence after "### Scratch restore drill".
-    private static string[] DocFence(string doc)
+    internal static string[] DocFence(string doc)
     {
         var at = doc.IndexOf("### Scratch restore drill", StringComparison.Ordinal);
         if (at < 0) return [];
@@ -348,7 +243,7 @@ public sealed class Server2PostgresComposeTests
     }
 
     // Get-DrillSection: from the heading to the next "## " heading.
-    private static string DrillSection(string doc)
+    internal static string DrillSection(string doc)
     {
         var at = doc.IndexOf("### Scratch restore drill", StringComparison.Ordinal);
         if (at < 0) return "";
@@ -434,8 +329,6 @@ public sealed class Server2PostgresComposeTests
         result.Out.ShouldNotContain("AGE-SECRET-KEY-", Case.Insensitive, "drill plan does not print an age key");
         Regex.IsMatch(result.Out, @"(?m)>\s*\S+\.dump(?!\.age)", RegexOptions.IgnoreCase).ShouldBeFalse("no command writes a plaintext dump");
         Regex.IsMatch(result.Out, @"shred[^\n]*\.dump\.age", RegexOptions.IgnoreCase).ShouldBeFalse("shred does not delete the ciphertext");
-        var doc = Read("docs/docker-stack.md");
-        DrillSection(doc).ShouldContain("encrypted", Case.Sensitive, "drill section says encrypted");
         Regex.IsMatch(result.Out, @"docker-compose\.server2-postgres\.yml", RegexOptions.IgnoreCase).ShouldBeFalse("drill plan does not name the production compose");
         result.Out.ShouldNotContain("-p antiphon-server2-postgres up", Case.Insensitive, "drill plan does not start the production project");
         result.Out.ShouldNotContain("antiphon-server2-postgres_pgdata", Case.Insensitive, "drill plan does not name the production volume");
@@ -449,9 +342,6 @@ public sealed class Server2PostgresComposeTests
         }
 
         var bodies = Bodies(result.Out);
-        var docCommands = DocFence(doc);
-        docCommands.Length.ShouldBeGreaterThan(0, "doc drill fence has commands");
-        bodies.ShouldBe(docCommands, "printed drill commands equal the doc fence");
 
         var dump = lines.Where(line => Regex.IsMatch(line, "antiphon-postgres", RegexOptions.IgnoreCase)).ToArray();
         dump.Length.ShouldBe(1, "the desktop database is named once");
@@ -462,9 +352,6 @@ public sealed class Server2PostgresComposeTests
 
         var migrations = bodies.Where(body => body.Contains("__EFMigrationsHistory", StringComparison.OrdinalIgnoreCase)).ToArray();
         migrations.Length.ShouldBe(1, "one migrations command");
-        var docMigrations = docCommands.Where(body => body.Contains("__EFMigrationsHistory", StringComparison.OrdinalIgnoreCase)).ToArray();
-        docMigrations.Length.ShouldBe(1, "printed migrations line equals the doc line");
-        migrations[0].ShouldBe(docMigrations[0], "printed migrations line equals the doc line");
         var psql = Regex.Replace(migrations[0], @"^docker exec \S+ ", "");
         psql.ShouldStartWith("psql ", Case.Sensitive, "migrations line is a psql command");
         // sh keeps the migrations identifier quotes: the argument after -c, as sh hands it to psql.
@@ -544,7 +431,7 @@ public sealed class Server2PostgresComposeTests
     }
 
     // Get-ComposeServiceBlocks: each service's lines under the top-level services: key, in order.
-    private static List<(string Name, List<string> Lines)> ServiceBlocks(string text)
+    internal static List<(string Name, List<string> Lines)> ServiceBlocks(string text)
     {
         var blocks = new List<(string Name, List<string> Lines)>();
         var inServices = false;
@@ -606,91 +493,10 @@ public sealed class Server2PostgresComposeTests
         (pgSet!.Count == 2 && pgSet.Contains(pgSet.Min + SmtSiblingOffset)).ShouldBeTrue("Postgres cpuset is one physical core (a CPU and its SMT sibling)");
         (pgSet.Contains(0) && pgSet.Contains(12)).ShouldBeTrue("Postgres cpuset is CPU 0 and its sibling 12");
         ParseCpuset("3-24").ShouldBeNull("a cpuset past the host CPU count does not parse");
-        Server2PostgresDeploy.Cpuset.ShouldBe(PostgresCpuset, "the command's pin is the witness's");
 
-        var pgLiteral = "cpuset: \"" + PostgresCpuset + "\"";
-        var postgresFiles = new (string Label, string Text, Func<string, string> Refusal, bool Drill)[]
-        {
-            ("production", Production, Server2PostgresDeploy.ComposeRefusal, false),
-            ("drill", Drill, Server2PostgresDeploy.DrillComposeRefusal, true),
-        };
-        foreach (var file in postgresFiles)
-        {
-            var blocks = ServiceBlocks(file.Text);
-            blocks.Any(block => block.Name == "postgres").ShouldBeTrue(file.Label + " compose has the postgres service");
-            var postgres = blocks.First(block => block.Name == "postgres").Lines;
-            var body = "\n" + string.Join("\n", postgres) + "\n";
-            Cpusets(postgres).ShouldBe([PostgresCpuset], file.Label + " postgres " + pgLiteral);
-            foreach (var need in new[] { PostgresCpuShares, "    mem_limit: 8g", "    shm_size: 1gb", "    blkio_config:\n      weight: 800" })
-                body.ShouldContain("\n" + need + "\n", Case.Sensitive, file.Label + " postgres has " + need.Trim().Replace("\n", " "));
-            postgres.Count(line => Regex.IsMatch(line, @"^\s*cpu_shares\s*:", RegexOptions.IgnoreCase)).ShouldBe(1, file.Label + " postgres sets cpu_shares exactly once");
-            Regex.IsMatch(file.Text, @"(?m)^\s*cpus\s*:", RegexOptions.IgnoreCase).ShouldBeFalse(file.Label + " compose sets no cpus quota (the cpuset is the cap)");
-            foreach (var old in new[] { "mem_limit: 4g", "cpuset: \"0-2,12-14\"" })
-                file.Text.ShouldNotContain(old, Case.Sensitive, file.Label + " compose omits " + old);
-        }
 
-        var runnerText = Read("docker-compose.server2-runner.yml");
-        var runnerBlocks = ServiceBlocks(runnerText);
-        foreach (var service in new[] { "state-init", "session-runner", "build-slots" })
-            runnerBlocks.Any(block => block.Name == service).ShouldBeTrue("runner compose has " + service);
-        foreach (var (service, lines) in runnerBlocks)
-            Cpusets(lines).ShouldBeEmpty("runner " + service + " carries no cpuset and runs on every CPU");
-        runnerText.Length.ShouldBeGreaterThan(0);
-        Regex.IsMatch(runnerText, @"(?m)^\s*cpuset\s*:", RegexOptions.IgnoreCase).ShouldBeFalse("runner compose sets no cpuset anywhere");
-        Regex.IsMatch(runnerText, @"(?m)^\s*cpu_shares\s*:", RegexOptions.IgnoreCase).ShouldBeFalse("runner compose keeps the default cpu_shares (1024)");
-        Regex.IsMatch(runnerText, @"(?m)^\s*mem_limit\s*:", RegexOptions.IgnoreCase).ShouldBeFalse("runner compose sets no memory cap");
 
-        var tempText = Read("docker-compose.server2-runner.temp.yml");
-        tempText.Length.ShouldBeGreaterThan(0);
-        Regex.IsMatch(tempText, @"(?m)^\s*cpuset\s*:", RegexOptions.IgnoreCase).ShouldBeFalse("temp runner overlay sets no cpuset");
-        Regex.IsMatch(tempText, @"(?m)^\s*cpu_shares\s*:", RegexOptions.IgnoreCase).ShouldBeFalse("temp runner overlay sets no cpu_shares");
 
-        var docText = DockerStackDocuments.Read("docs/docker-stack.md");
-        var sentence = "Postgres cpuset is " + PostgresCpuset + ", one physical core, and the runner services set no cpuset";
-        docText.ShouldContain(sentence, Case.Sensitive, "doc says " + sentence);
-        foreach (var field in new[] { "HostConfig.CpusetCpus", "HostConfig.CpuShares", "HostConfig.Memory", "HostConfig.ShmSize" })
-            docText.ShouldContain(field, Case.Sensitive, "doc names the on-host " + field + " check");
-        docText.ShouldContain("Postgres reads `cpuset=[0,12] shares=2048 8589934592 1073741824 800`", Case.Sensitive, "doc V-4 expects the Postgres reading");
-        docText.ShouldContain("both runner containers read `cpuset=[] shares=0`", Case.Sensitive, "doc V-4 expects the runner reading");
-        foreach (var old in new[] { "Postgres cpuset is 0-2,12-14", "The runner cpuset is", "cpuset: \"3-11,15-23\"", "cpuset: \"1-11,13-23\"" })
-            docText.ShouldNotContain(old, Case.Sensitive, "doc drops " + old);
 
-        var shares = PostgresCpuShares + "\n";
-        foreach (var file in postgresFiles)
-        {
-            file.Refusal(file.Text).ShouldBe("", file.Label + " refusal accepts the one-core compose");
-            foreach (var (name, from, to) in new[]
-            {
-                ("without the cpuset", "    " + pgLiteral + "\n", ""),
-                ("with an unpinned 0-23 cpuset", pgLiteral, "cpuset: \"0-23\""),
-                ("with the old 0-2,12-14 cpuset", pgLiteral, "cpuset: \"0-2,12-14\""),
-                ("with a 0,12,13 cpuset", pgLiteral, "cpuset: \"0,12,13\""),
-                ("with a second cpuset line", shares, shares + "    cpuset: \"1,13\"\n"),
-                ("without cpu_shares 2048", shares, ""),
-                ("with cpu_shares 1024", shares, "    cpu_shares: 1024\n"),
-                ("with cpu_shares 20480", shares, "    cpu_shares: 20480\n"),
-                ("with a cpus 6.0 quota", shares, shares + "    cpus: 6.0\n"),
-                ("with a cpus 2.0 quota", shares, shares + "    cpus: 2.0\n"),
-                ("without mem_limit 8g", "    mem_limit: 8g\n", ""),
-                ("with mem_limit 4g", "mem_limit: 8g", "mem_limit: 4g"),
-                ("without shm_size 1gb", "    shm_size: 1gb\n", ""),
-                ("without blkio weight 800", "      weight: 800\n", ""),
-            })
-            {
-                var changed = file.Text.Replace(from, to);
-                (changed != file.Text, file.Refusal(changed)).ShouldBe((true, "compose-invalid"), file.Label + " refusal is compose-invalid " + name);
-            }
-            foreach (var (name, from) in new[] { ("the cpuset", "    " + pgLiteral + "\n"), ("cpu_shares 2048", shares) })
-            {
-                var world = new Server2PostgresWorld();
-                var stripped = file.Text.Replace(from, "");
-                var copy = world.Compose("compose.yml", stripped);
-                var result = file.Drill
-                    ? world.Run("--what-if", "--restore-drill", "--compose-file", copy)
-                    : world.Run("--what-if", "--compose-file", copy, "--env-file", world.Env());
-                (stripped != file.Text, result.Exit, result.Reason).ShouldBe((true, 2, "compose-invalid"), file.Label + " WhatIf refuses a compose without " + name);
-                NoDocker(result, file.Label + " cpu-isolation");
-            }
-        }
     }
 }

@@ -42,7 +42,7 @@ public sealed class LiveLaneCensusTests
             "scripts/lib/live-lane-manifest.ps1",
             "scripts/test-live-lane-manifest.ps1",
             "tests/Antiphon.Tests/Scripts/LiveLaneInventoryTests.cs",
-            "tests/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests.cs",
+            "tests/Antiphon.Agents.Pty.Tests/Invariants/LiveClaudeInventoryTests.cs",
             "tests/fixtures/live-lanes/full-discovery-before.json",
             "scripts/lib/Antiphon.Nightly/LiveLaneCensus.cs",
         ]);

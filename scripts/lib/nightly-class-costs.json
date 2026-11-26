@@ -196,7 +196,7 @@
       "basis": "conservative-bound",
       "source": "CARD-1584: unmeasured native retirement/delivery class; explicit provisional 500 s per expanded case, at most three rows per method (1500 s). Requires fresh release-owned Windows measurements; not a measured duration or p95. Denominator: committed expanded source census at e5a867361937752b959c1451824ab9716fac83c0 (177 total, seven policy-excluded); no native run in this task."
     },
-    "Antiphon.TestSupport.TestClassificationGuardTests": {
+    "Antiphon.TestSupport.Invariants.TestClassificationGuardTests": {
       "nodes": 1,
       "seconds": 10,
       "basis": "conservative-bound",
@@ -3891,13 +3891,13 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-66; 6 nodes; 87 serial test-seconds; completed 6 of 6 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-406644-363ed2afe1074c19bb640a9ad7aef9f5.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95; may-understate: 1 failed tests in this run can end early."
     },
-    "Antiphon.Tests.Infrastructure.AppDbContextModelTests": {
+    "Antiphon.Tests.Invariants.AppDbContextModelTests": {
       "nodes": 3,
       "seconds": 16,
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-67; 3 nodes; 16 serial test-seconds; completed 3 of 3 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-90904-9a653634b3074b5d8a8da95fa038ff45.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
     },
-    "Antiphon.Tests.Infrastructure.CodexRootExecContractTests": {
+    "Antiphon.Tests.Invariants.CodexRootExecContractTests": {
       "nodes": 4,
       "seconds": 20,
       "basis": "measured",
@@ -3921,7 +3921,7 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-67; 2 nodes; 7 serial test-seconds; completed 2 of 2 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-90904-9a653634b3074b5d8a8da95fa038ff45.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
     },
-    "Antiphon.Tests.Infrastructure.EvidencePolicyWorkflowTests": {
+    "Antiphon.Tests.Invariants.EvidencePolicyWorkflowTests": {
       "nodes": 4,
       "seconds": 7,
       "basis": "measured",
@@ -4131,7 +4131,7 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-76; 6 nodes; 57 serial test-seconds; completed 6 of 6 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-269752-599fe5d8b63c4d4e90e4984d1016150e.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95; may-understate: 3 failed tests in this run can end early."
     },
-    "Antiphon.Tests.Scripts.C1514LandingSplitBudgetTests": {
+    "Antiphon.Tests.Invariants.C1514LandingSplitBudgetTests": {
       "nodes": 4,
       "seconds": 33,
       "basis": "measured",
@@ -4550,7 +4550,7 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-79; 2 nodes; 39 serial test-seconds; completed 2 of 2 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-227236-fae0a77cef2c4fedb99bab6ec1d22fc7.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
     },
-    "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests": {
+    "Antiphon.Tests.Invariants.DelegationHarnessCensusTests": {
       "nodes": 7,
       "seconds": 8,
       "basis": "measured",
@@ -4604,7 +4604,7 @@
       "basis": "measured",
       "source": "task 44a6e14e measured serial test-seconds; run 8f055f87; chunk all-group-79; 16 nodes; 17 serial test-seconds; completed 16 of 16 planned; journal rc-2026-10-25-105792f7d22f/logs/2026-10-26-0946-8f055f87/timing/cases-227236-fae0a77cef2c4fedb99bab6ec1d22fc7.jsonl; investigation 658b8049233b1d9b75ef2b2fdeda70fd183e8426; not a p95."
     },
-    "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests": {
+    "Antiphon.Tests.Invariants.TestLaneCategoryGuardTests": {
       "nodes": 1,
       "seconds": 1,
       "basis": "measured",
