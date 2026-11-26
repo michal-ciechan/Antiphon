@@ -65,6 +65,28 @@ public sealed class MergeHighRadiusSubsetTests
         }
         File.ReadAllText(Path.Combine(root, "docs/testing-and-build.md")).ShouldContain(category);
         File.ReadAllText(Path.Combine(root, "docs/testing-and-build.md")).ShouldContain("impacted-classes --repository-invariants --json");
+
+        using var native = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("c2082-native-receipt");
+        var receipt = Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests.CountReport();
+        var path = Path.Combine(native.Root, "report.json");
+        async Task<(int Exit, string Output)> Validate(string host, string row)
+        {
+            receipt.Host.Os = host;
+            await File.WriteAllTextAsync(path, ReportWriter.JsonText(receipt));
+            using var output = new StringWriter();
+            var exit = await Antiphon.Checkpoints.Program.RunAsync(
+                ["validate", "--evidence", path, "--expected-source-sha", receipt.Commit, "--rows", row, "--require-windows-host"],
+                new CheckpointApp.Runtime { RepoRoot = root, Output = output });
+            return (exit, output.ToString());
+        }
+        var nativeRow = receipt.Rows.Single().Id;
+        (await Validate("Microsoft Windows 10.0.19045", nativeRow)).Exit.ShouldBe(0);
+        var substituted = await Validate("Debian GNU/Linux 12 (bookworm)", nativeRow);
+        substituted.Exit.ShouldBe(2);
+        substituted.Output.ShouldContain("receipt_host_not_windows");
+        var missing = await Validate("Microsoft Windows 10.0.19045", "CP-999");
+        missing.Exit.ShouldBe(2);
+        missing.Output.ShouldContain("selected_rows_missing");
     }
 
     private const string MigrationRange =

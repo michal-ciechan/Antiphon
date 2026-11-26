@@ -548,7 +548,7 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
         }
     }
 
-    private static ReportModel CountReport()
+    internal static ReportModel CountReport()
     {
         var report = ValidReport();
         report.MarkdownSha256 = new string('c', 64);
