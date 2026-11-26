@@ -70,15 +70,27 @@ public sealed class ChangeAwareReleaseTests
             if (ReleaseGateCredit.Verdict(state).Ok) rejected = false;
         }
         rows.Check(rejected, "C1313 unqualified-no-credit");
-        // The release cut (ReleaseCut; scripts/release-cut.ps1, started by Windmill, is its launcher) defaults the mode to Full
-        // and hands it to the attempt.
-        var launcher = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "release-cut.ps1"));
-        var cutSource = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "ReleaseCut.cs"));
-        rows.Check(launcher.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal)
-            && launcher.Contains("'--selection-mode', $SelectionMode", StringComparison.Ordinal) && new ReleaseCutOptions().SelectionMode == "Full"
-            && ReleaseCutOptions.Parse([], "", _ => null).SelectionMode == "Full" && cutSource.Contains("SelectionMode = options.SelectionMode ?? \"\"", StringComparison.Ordinal)
-            && cutSource.Contains("ReleaseSelectionAttempt.Create(", StringComparison.Ordinal),
-            "C1313 default-full");
+        var launcherPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/release-cut.ps1");
+        var launcher = File.ReadAllText(launcherPath);
+        using (var world = ReleaseCutWorld.Real("c1313-default-full"))
+        {
+            // Omit --selection-mode and exercise the cut through attempt sealing and the nightly-run handoff.
+            var options = ReleaseCutOptions.Parse(
+                ["--ref", ReleaseCutWorld.Ref, "--release-root", world.Release, "--remote-url", world.Origin,
+                    "--coordination-root", world.Fixture.PathOf("coord"), "--repository", "fixture/repository", "--skip-publish"],
+                Path.GetDirectoryName(launcherPath)!, _ => null);
+            var cut = ReleaseCut.Run(options, world.Host());
+            var run = world.Runs.Count == 1 ? world.Runs[0] : null;
+            rows.Check(launcher.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal)
+                && launcher.Contains("'--selection-mode', $SelectionMode", StringComparison.Ordinal) && options.SelectionMode == "Full"
+                && cut.ExitCode == 0 && cut.Tested
+                && run is { SelectionMode: "Full", RequestedSelectionMode: "", IncrementalApprovalDigest: "" }
+                && File.Exists(run.SelectionAttemptPath)
+                && cut.Selection is IDictionary selection && Field(selection, "requestedMode") == "Full"
+                && Field(selection, "effectiveMode") == "Full" && Field(selection, "coverageScope") == "Full"
+                && selection["executionEvidence"] is false,
+                "C1313 default-full", $"parsed={options.SelectionMode} cut={cut.ExitCode}/{cut.Refusal} run={run?.SelectionMode}/{run?.RequestedSelectionMode}");
+        }
 
         var (chain, b, a, release) = Fixture("c1313-mode");
         using (chain)
