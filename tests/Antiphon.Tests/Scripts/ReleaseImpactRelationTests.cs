@@ -14,7 +14,7 @@ public sealed class ReleaseImpactRelationTests
 
     [Test]
     [Timeout(30_000)]
-    public async Task UniqueBindingsPruneOnlyTheirOwnContributions(CancellationToken cancellationToken)
+    public void UniqueBindingsPruneOnlyTheirOwnContributions(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";
         const string north = "tests/T/A.cs";
@@ -36,10 +36,10 @@ public sealed class ReleaseImpactRelationTests
         occurrence.Origin.Length.ShouldBe(5);
         occurrence.SourceSha256.Length.ShouldBe(64);
         occurrence.ContextDigest.Length.ShouldBe(64);
-        Check("Q.qualified", World("", "_ = typeof(global::North.Probe);"), [north]);
+        Check("Q.qualified", World("", "_ = typeof(global::North.Probe);"), [north], [north, south]);
         var block = World("", "");
         block[use] = "namespace Cases { using North; public partial class SpecTests { public void Check() { _ = typeof(Probe); } } }\n";
-        Check("Q.block", block, [north]);
+        Check("Q.block", block, [north], [north, south]);
         Check("Q.ambiguous", World("using North; using South;", "_ = typeof(Probe);"), [north, south], refusal: "compiler-diagnostics");
         var mixed = Check("Q.mixed", World("", "_ = typeof(global::North.Probe); _ = typeof(South.Probe);"), [north, south]);
         mixed.Sites.Where(site => site.Origin.Name == "Probe").Select(site => site.Retained.Single()).ShouldBe([north, south]);
@@ -56,16 +56,17 @@ public sealed class ReleaseImpactRelationTests
         Check("Q.limit", limited, [north, south, decoy], maximumCandidates: 2)
             .Sites.Single(site => site.Origin.Name == "Probe").Rule.ShouldBe("proof-candidate-limit");
 
-        Check("AL.type", World("using P = North.Probe;", "_ = typeof(P);"), [north]);
+        var typeAlias = Check("AL.type", World("using P = North.Probe;", "_ = typeof(P);"), [north], [north, south]);
+        Consumer(typeAlias.Refined, use, "Cases.SpecTests").Kinds.ShouldContain("directive", "AL.type directive");
         Check("AL.namespace", World("using N = North;", "_ = typeof(N.Probe);"), [north]);
-        Check("AL.rebound", World("using P = South.Probe;", "_ = typeof(P);"), [south]);
+        Check("AL.rebound", World("using P = South.Probe;", "_ = typeof(P);"), [south], [north, south]);
         Check("AL.duplicate", World("using P = North.Probe; using P = South.Probe;", "_ = typeof(P);"), [north, south], refusal: "compiler-diagnostics");
         Check("AL.failed", World("using P = Missing.Probe;", "_ = typeof(P);"), [north, south], refusal: "compiler-diagnostics");
 
         var partial = World("using North;", "_ = typeof(Probe);");
         partial[north] = "namespace North; public partial class Probe {}\n";
         var generated = new Dictionary<string, string> { [generatedPath] = "namespace North; public partial class Probe { public int Count; }\n" };
-        Check("P.parts", partial, [north, generatedPath], generated: generated);
+        Check("P.parts", partial, [north, generatedPath], [north, south, generatedPath], generated: generated);
         Check("P.unbound", partial, [north, south, generatedPath], generated: generated,
             refusal: "compiler-generated-source-unbound", unavailableGenerated: generatedPath);
         partial[part] = "namespace Cases; public partial class SpecTests { public void Second() { _ = typeof(South.Probe); } }\n";
@@ -124,51 +125,6 @@ public sealed class ReleaseImpactRelationTests
             refusal: "compiler-diagnostics");
         externs[use] = ConsumerSource("extern alias R;", "_ = typeof(R::Ident.Probe);");
         Check("EX.right", externs, [twoSource], contexts: ExternContexts(refOne));
-
-        const string implicitPath = "tests/T/T.GlobalUsings.g.cs";
-        var implicitFiles = World("", "_ = typeof(Probe);");
-        string[] sdkProjects =
-        [
-            SdkProject("""<Using Include="North" />"""),
-            SdkProject("""<Using Include="North.Probe" Alias="P" />"""),
-            SdkProject("""<Using Include="North" /><Using Include="South" />"""),
-        ];
-        var sdk = await fixture.GenerateGlobalUsingsAsync(sdkProjects, cancellationToken);
-        string[] implicitNamespaces = ["System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
-            "System.Threading", "System.Threading.Tasks"];
-        var expectedImplicit = implicitNamespaces.Select(name => $"global using {name};").ToArray();
-        sdk.Generated[0].ShouldBe(SdkOutput(["global using North;", ..expectedImplicit]), "IU actual SDK bytes");
-        sdk.Generated[1].ShouldBe(SdkOutput([..expectedImplicit, "global using P = North.Probe;"]), "IU actual SDK alias bytes");
-        sdk.Generated[2].ShouldBe(SdkOutput(["global using North;", "global using South;", ..expectedImplicit]), "IU actual SDK ambiguity bytes");
-        ReleaseImpactTypeProofFixture.Context[] ImplicitContexts() =>
-            [new(project, "T", [north, south, use, implicitPath], [], sdk.References)];
-        implicitFiles[project] = sdkProjects[0];
-        var imports = new Dictionary<string, string>
-        {
-            [implicitPath] = sdk.Generated[0],
-        };
-        Check("IU.implicit", implicitFiles, [north], generated: imports, contexts: ImplicitContexts());
-        implicitFiles[project] = sdkProjects[1];
-        implicitFiles[use] = ConsumerSource("", "_ = typeof(P);");
-        imports[implicitPath] = sdk.Generated[1];
-        Check("IU.alias", implicitFiles, [north], generated: imports, contexts: ImplicitContexts());
-        implicitFiles[project] = sdkProjects[2];
-        implicitFiles[use] = ConsumerSource("", "_ = typeof(Probe);");
-        imports[implicitPath] = sdk.Generated[2];
-        Check("IU.ambiguous", implicitFiles, [north, south], generated: imports, contexts: ImplicitContexts(), refusal: "compiler-diagnostics");
-        implicitFiles[project] = sdkProjects[0];
-        imports[implicitPath] = sdk.Generated[0];
-        Check("IU.missing", implicitFiles, [north, south], generated: imports, contexts: ImplicitContexts(),
-            refusal: "compiler-manifest-digest-mismatch",
-            proposal: manifest => manifest with { Contexts = [manifest.Contexts[0] with
-            {
-                Sources = manifest.Contexts[0].Sources.Where(source => source.Path != implicitPath).ToArray(),
-            }] });
-
-        static string SdkProject(string items) =>
-            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework>"
-            + "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup><ItemGroup>" + items + "</ItemGroup></Project>\n";
-        static string SdkOutput(string[] lines) => string.Join(Environment.NewLine, new[] { "// <auto-generated/>" }.Concat(lines)) + Environment.NewLine;
 
         var nested = World("using static North.Box;", "_ = typeof(Inner);");
         nested[north] = "namespace North; public class Box { public class Inner {} } public class Derived : Box {}\n";
@@ -274,7 +230,7 @@ public sealed class ReleaseImpactRelationTests
             new(libraryProject, "Library", [apiPath], [], [fixture.Core, oldFacade]),
             new(destinationProject, "Destination", [destinationPath], [], [fixture.Core]),
         ];
-        var chain = Check("FW.chain", forwardSources, [destinationPath, apiPath],
+        var chain = Check("FW.chain", forwardSources, [destinationPath, apiPath], [destinationPath, apiPath, south],
             contexts: ForwardContexts([fixture.Core, library, facade, destination]));
         Consumer(chain.Refined, facadePath, "Cases.SpecTests").Kinds.ShouldContain("compiler-forwarder", "FW.chain facade");
         using (var chainProof = JsonDocument.Parse(ReleaseImpactGraphBuilder.Serialize(
@@ -363,78 +319,149 @@ public sealed class ReleaseImpactRelationTests
             string[]? before = null, Dictionary<string, string>? generated = null,
             ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
             Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
-            string? unavailableGenerated = null)
-        {
-            generated ??= new(StringComparer.Ordinal);
-            contexts ??= [new(project, "T", files.Keys.Concat(generated.Keys).Where(path => path.EndsWith(".cs", StringComparison.Ordinal))
-                .Order(StringComparer.Ordinal).ToArray(), [], [fixture.Core])];
-            var binding = fixture.Capture(files, generated, contexts, proposal, unavailableGenerated);
-            binding.Eligible.ShouldBe(refusal is null, label + " fixture: " + binding.Reason);
-            if (refusal is not null) binding.Reason.ShouldBe(refusal, label);
-            var proof = ReleaseImpactGraphBuilder.BuildWithTypeProof(files, binding, maximumCandidates);
-            TypePaths(proof.Refined).ShouldBe(expected.Order(StringComparer.Ordinal), label);
-            if (before is not null) TypePaths(proof.Conservative).ShouldBe(before.Order(StringComparer.Ordinal), label + " before");
-            Consumer(proof.Refined, use, "Cases.SpecTests").Kinds.ShouldContain("declaration", label + " declaration");
-
-            var reversedFiles = files.Reverse().ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
-            var reversedGenerated = generated.Reverse().ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
-            var reversedContexts = contexts.Reverse().Select(context => context with
-            {
-                SourcePaths = context.SourcePaths.Reverse().ToArray(),
-                References = context.References.Reverse().ToArray(),
-            }).ToArray();
-            var reversed = fixture.Capture(reversedFiles, reversedGenerated, reversedContexts, proposal, unavailableGenerated, permuted: true);
-            reversed.Reason.ShouldBe(binding.Reason, label + " reordered input verdict");
-            var reversedProof = ReleaseImpactGraphBuilder.BuildWithTypeProof(reversedFiles, reversed, maximumCandidates);
-            // The raw authority pin binds the capture's exact bytes. The graph
-            // and context identities have their own canonical ordering.
-            ReleaseImpactGraphBuilder.Serialize(reversedProof with { ManifestDigest = null })
-                .ShouldBe(ReleaseImpactGraphBuilder.Serialize(proof with { ManifestDigest = null }), label + " reordered graph bytes");
-            var orderedSites = proof.Sites.Select(site => (site.Origin.Consumer.Project, site.Origin.Consumer.FullName,
-                site.Origin.Source, site.Origin.Start, site.ContextDigest)).ToArray();
-            orderedSites.SequenceEqual(orderedSites.Distinct().OrderBy(site => site.Project, StringComparer.Ordinal)
-                .ThenBy(site => site.FullName, StringComparer.Ordinal).ThenBy(site => site.Source, StringComparer.Ordinal)
-                .ThenBy(site => site.Start).ThenBy(site => site.ContextDigest, StringComparer.Ordinal))
-                .ShouldBeTrue(label + " stored site order");
-            foreach (var site in proof.Sites.Where(site => site.Rule == "unique-source-type"))
-            {
-                var source = generated.TryGetValue(site.Origin.Source, out var emitted) ? emitted : files[site.Origin.Source];
-                var expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source)));
-                site.SourceSha256.ShouldBe(expectedHash, label + " use-site source hash");
-                var span = source.AsSpan(site.Origin.Start, site.Origin.Length).ToString();
-                (span == site.Origin.Name || span.StartsWith(site.Origin.Name + "<", StringComparison.Ordinal))
-                    .ShouldBeTrue(label + " source span " + span);
-                site.Assembly.ShouldNotBeNullOrEmpty(label + " assembly");
-                site.MetadataName.ShouldNotBeNullOrEmpty(label + " metadata name");
-                site.Winners.ShouldNotBeEmpty(label + " known winner");
-                site.Retained.ShouldBe(site.Winners, label + " retained winner");
-                site.Winners.ShouldAllBe(path => site.Origin.Candidates.Contains(path, StringComparer.Ordinal)
-                    && (files.ContainsKey(path) || generated.ContainsKey(path)), label + " proved winner belongs to the frozen input");
-            }
-            return proof;
-        }
-
-        static Dictionary<string, string> World(string imports, string body) => new(StringComparer.Ordinal)
-        {
-            [project] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework>"
-                + "<AssemblyName>T</AssemblyName><LangVersion>12</LangVersion><ImplicitUsings>disable</ImplicitUsings>"
-                + "<Deterministic>true</Deterministic></PropertyGroup></Project>\n",
-            [north] = "namespace North; public class Probe {}\n",
-            [south] = "namespace South; public class Probe {}\n",
-            [use] = ConsumerSource(imports, body),
-        };
-
-        static string ConsumerSource(string imports, string body) => imports + "\n" +
-            "namespace Cases; public partial class SpecTests { public void Check() { " + body + " } }\n";
-
-        static IEnumerable<string> TypePaths(ReleaseImpactGraph graph) => graph.Edges
-            .Where(edge => edge.Classes.Any(consumer => consumer.Project == project && consumer.FullName == "Cases.SpecTests"
-                && consumer.Kinds.Contains("type", StringComparer.Ordinal)))
-            .Select(edge => edge.Path);
-
-        static ReleaseImpactConsumer Consumer(ReleaseImpactGraph graph, string path, string name) =>
-            graph.Edges.Single(edge => edge.Path == path).Classes.Single(consumer => consumer.Project == project && consumer.FullName == name);
+            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
+                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
+
+    [Test, Timeout(30_000)]
+    public async Task SdkGeneratedUsingsRetainOnlyPinnedBindings(CancellationToken cancellationToken)
+    {
+        const string project = "tests/T/T.csproj";
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
+
+        const string implicitPath = "tests/T/T.GlobalUsings.g.cs";
+        var implicitFiles = World("", "_ = typeof(Probe);");
+        string[] sdkProjects =
+        [
+            SdkProject("""<Using Include="North" />"""),
+            SdkProject("""<Using Include="North.Probe" Alias="P" />"""),
+            SdkProject("""<Using Include="North" /><Using Include="South" />"""),
+        ];
+        var sdk = await fixture.GenerateGlobalUsingsAsync(sdkProjects, cancellationToken);
+        string[] implicitNamespaces = ["System", "System.Collections.Generic", "System.IO", "System.Linq", "System.Net.Http",
+            "System.Threading", "System.Threading.Tasks"];
+        var expectedImplicit = implicitNamespaces.Select(name => $"global using {name};").ToArray();
+        sdk.Generated[0].ShouldBe(SdkOutput(["global using North;", ..expectedImplicit]), "IU actual SDK bytes");
+        sdk.Generated[1].ShouldBe(SdkOutput([..expectedImplicit, "global using P = North.Probe;"]), "IU actual SDK alias bytes");
+        sdk.Generated[2].ShouldBe(SdkOutput(["global using North;", "global using South;", ..expectedImplicit]), "IU actual SDK ambiguity bytes");
+        ReleaseImpactTypeProofFixture.Context[] ImplicitContexts() =>
+            [new(project, "T", [north, south, use, implicitPath], [], sdk.References)];
+        implicitFiles[project] = sdkProjects[0];
+        var imports = new Dictionary<string, string>
+        {
+            [implicitPath] = sdk.Generated[0],
+        };
+        var implicitGraph = CheckTypeProof(fixture, cancellationToken, "IU.implicit", implicitFiles, [north], [north, south],
+            generated: imports, contexts: ImplicitContexts());
+        Consumer(implicitGraph.Refined, implicitPath, "Cases.SpecTests").Kinds.ShouldBe(["directive"], "IU pinned generated directive");
+        implicitFiles[project] = sdkProjects[1];
+        implicitFiles[use] = ConsumerSource("", "_ = typeof(P);");
+        imports[implicitPath] = sdk.Generated[1];
+        CheckTypeProof(fixture, cancellationToken, "IU.alias", implicitFiles, [north], [north, south],
+            generated: imports, contexts: ImplicitContexts());
+        implicitFiles[project] = sdkProjects[2];
+        implicitFiles[use] = ConsumerSource("", "_ = typeof(Probe);");
+        imports[implicitPath] = sdk.Generated[2];
+        CheckTypeProof(fixture, cancellationToken, "IU.ambiguous", implicitFiles, [north, south], generated: imports, contexts: ImplicitContexts(), refusal: "compiler-diagnostics");
+        implicitFiles[project] = sdkProjects[0];
+        imports[implicitPath] = sdk.Generated[0];
+        CheckTypeProof(fixture, cancellationToken, "IU.missing", implicitFiles, [north, south], generated: imports, contexts: ImplicitContexts(),
+            refusal: "compiler-manifest-digest-mismatch",
+            proposal: manifest => manifest with { Contexts = [manifest.Contexts[0] with
+            {
+                Sources = manifest.Contexts[0].Sources.Where(source => source.Path != implicitPath).ToArray(),
+            }] });
+
+        static string SdkProject(string items) =>
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework>"
+            + "<ImplicitUsings>enable</ImplicitUsings></PropertyGroup><ItemGroup>" + items + "</ItemGroup></Project>\n";
+        static string SdkOutput(string[] lines) => string.Join(Environment.NewLine, new[] { "// <auto-generated/>" }.Concat(lines)) + Environment.NewLine;
+    }
+
+    private static ReleaseImpactTypeProof CheckTypeProof(ReleaseImpactTypeProofFixture fixture,
+        CancellationToken cancellationToken, string label, Dictionary<string, string> files, string[] expected,
+        string[]? before = null, Dictionary<string, string>? generated = null,
+        ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
+        Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
+        string? unavailableGenerated = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        const string project = "tests/T/T.csproj";
+        const string use = "tests/T/Use.cs";
+        generated ??= new(StringComparer.Ordinal);
+        contexts ??= [new(project, "T", files.Keys.Concat(generated.Keys).Where(path => path.EndsWith(".cs", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal).ToArray(), [], [fixture.Core])];
+        var binding = fixture.Capture(files, generated, contexts, proposal, unavailableGenerated);
+        binding.Eligible.ShouldBe(refusal is null, label + " fixture: " + binding.Reason);
+        if (refusal is not null) binding.Reason.ShouldBe(refusal, label);
+        var proof = ReleaseImpactGraphBuilder.BuildWithTypeProof(files, binding, maximumCandidates);
+        TypePaths(proof.Refined).ShouldBe(expected.Order(StringComparer.Ordinal), label);
+        if (refusal is not null) TypePaths(proof.Conservative).ShouldBe(expected.Order(StringComparer.Ordinal), label + " include all");
+        if (before is not null) TypePaths(proof.Conservative).ShouldBe(before.Order(StringComparer.Ordinal), label + " before");
+        Consumer(proof.Refined, use, "Cases.SpecTests").Kinds.ShouldContain("declaration", label + " declaration");
+
+        var reversedFiles = files.Reverse().ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+        var reversedGenerated = generated.Reverse().ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+        var reversedContexts = contexts.Reverse().Select(context => context with
+        {
+            SourcePaths = context.SourcePaths.Reverse().ToArray(),
+            References = context.References.Reverse().ToArray(),
+        }).ToArray();
+        var reversed = fixture.Capture(reversedFiles, reversedGenerated, reversedContexts, proposal, unavailableGenerated, permuted: true);
+        reversed.Reason.ShouldBe(binding.Reason, label + " reordered input verdict");
+        var reversedProof = ReleaseImpactGraphBuilder.BuildWithTypeProof(reversedFiles, reversed, maximumCandidates);
+        // The raw authority pin binds the capture's exact bytes. The graph
+        // and context identities have their own canonical ordering.
+        ReleaseImpactGraphBuilder.Serialize(reversedProof with { ManifestDigest = null })
+            .ShouldBe(ReleaseImpactGraphBuilder.Serialize(proof with { ManifestDigest = null }), label + " reordered graph bytes");
+        var orderedSites = proof.Sites.Select(site => (site.Origin.Consumer.Project, site.Origin.Consumer.FullName,
+            site.Origin.Source, site.Origin.Start, site.ContextDigest)).ToArray();
+        orderedSites.SequenceEqual(orderedSites.Distinct().OrderBy(site => site.Project, StringComparer.Ordinal)
+            .ThenBy(site => site.FullName, StringComparer.Ordinal).ThenBy(site => site.Source, StringComparer.Ordinal)
+            .ThenBy(site => site.Start).ThenBy(site => site.ContextDigest, StringComparer.Ordinal))
+            .ShouldBeTrue(label + " stored site order");
+        foreach (var site in proof.Sites.Where(site => site.Rule == "unique-source-type"))
+        {
+            var source = generated.TryGetValue(site.Origin.Source, out var emitted) ? emitted : files[site.Origin.Source];
+            var expectedHash = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source)));
+            site.SourceSha256.ShouldBe(expectedHash, label + " use-site source hash");
+            var span = source.AsSpan(site.Origin.Start, site.Origin.Length).ToString();
+            (span == site.Origin.Name || span.StartsWith(site.Origin.Name + "<", StringComparison.Ordinal))
+                .ShouldBeTrue(label + " source span " + span);
+            site.Assembly.ShouldNotBeNullOrEmpty(label + " assembly");
+            site.MetadataName.ShouldNotBeNullOrEmpty(label + " metadata name");
+            site.Winners.ShouldNotBeEmpty(label + " known winner");
+            site.Retained.ShouldBe(site.Winners, label + " retained winner");
+            site.Winners.ShouldAllBe(path => site.Origin.Candidates.Contains(path, StringComparer.Ordinal)
+                && (files.ContainsKey(path) || generated.ContainsKey(path)), label + " proved winner belongs to the frozen input");
+        }
+        return proof;
+    }
+
+    private static Dictionary<string, string> World(string imports, string body) => new(StringComparer.Ordinal)
+    {
+        ["tests/T/T.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net9.0</TargetFramework>"
+            + "<AssemblyName>T</AssemblyName><LangVersion>12</LangVersion><ImplicitUsings>disable</ImplicitUsings>"
+            + "<Deterministic>true</Deterministic></PropertyGroup></Project>\n",
+        ["tests/T/A.cs"] = "namespace North; public class Probe {}\n",
+        ["tests/T/B.cs"] = "namespace South; public class Probe {}\n",
+        ["tests/T/Use.cs"] = ConsumerSource(imports, body),
+    };
+
+    private static string ConsumerSource(string imports, string body) => imports + "\n" +
+        "namespace Cases; public partial class SpecTests { public void Check() { " + body + " } }\n";
+
+    private static IEnumerable<string> TypePaths(ReleaseImpactGraph graph) => graph.Edges
+        .Where(edge => edge.Classes.Any(consumer => consumer.Project == "tests/T/T.csproj" && consumer.FullName == "Cases.SpecTests"
+            && consumer.Kinds.Contains("type", StringComparer.Ordinal)))
+        .Select(edge => edge.Path);
+
+    private static ReleaseImpactConsumer Consumer(ReleaseImpactGraph graph, string path, string name) =>
+        graph.Edges.Single(edge => edge.Path == path).Classes.Single(consumer => consumer.Project == "tests/T/T.csproj" && consumer.FullName == name);
+
     [Test]
     public void AllTwentySixConsumersSurvive()
     {

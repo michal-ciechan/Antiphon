@@ -15,7 +15,7 @@ The locations below are candidate source anchors. The binding needs the reviewed
 | PC-7 | Single | CP-2 | T / `EX.unbound` | `DeclarationPaths` checks the resolved assembly and the pinned reference project. |
 | PC-8 | (a), (b) | CP-2 | T / `P.parts`, `P.unbound` | `DeclarationPaths` retains every declaration. `Bind` identifies an unavailable generated input. |
 | PC-9 | (a), (b) | CP-2 | T / `GU.ambiguous`, `GU.owners` | `Resolve` evaluates each owner and unions occurrence results. |
-| PC-10 | (a), (b) | CP-2 | T / `IU.ambiguous`, `IU.missing` | `Bind` and `Resolve` use actual SDK-emitted, frozen global usings and preserve candidates on refusal. |
+| PC-10 | (a), (b) | `/*/*/ReleaseImpactRelationTests/SdkGeneratedUsingsRetainOnlyPinnedBindings` | T / `IU.ambiguous`, `IU.missing` | `Bind` and `Resolve` use actual SDK-emitted, frozen global usings and preserve candidates on refusal. |
 | PC-11 | Single | CP-2 | T / `N.ambiguous` | `ResolveSite` binds the nested type and keeps the declaring metadata name. |
 | PC-12 | (a), (b) | CP-2 | T / `AR.ambiguous`, `AR.argument` | `ResolveSite` uses the original definition and treats argument and constraint occurrences independently. |
 | PC-13 | (a), (b), (c) | CP-2 | T / `EXT.ambiguous`, `EXT.dynamic`, `EXT.receiver` | `ResolveSite` requires the reduced extension provider and resolved receiver. The unsupported path retains candidates. |
