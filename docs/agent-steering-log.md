@@ -459,6 +459,28 @@ adding warm-up machinery."
 
 ---
 
+## 2026-11-26 - One porting agent at a time
+
+**Context:** The `.ps1`-to-C# units run as background agents in their own worktrees. The integrator checks and pushes
+each one in `wip/next`. All of them share one machine-wide build and test lock on the laptop.
+
+**What the agent did:** It ran two unit agents at once: unit 51 in `antiphon-wt-a` and unit 54 in `antiphon-wt-d`.
+Unit 53's integration check was running at the same time.
+
+**Why the agent picked it:** The two units touched separate files. Running them side by side looked like more
+throughput, with the lock keeping their builds apart.
+
+**What the owner preferred:** "Just keep 1 running in parallel". Only one unit agent runs beside the integrator. The
+next unit starts once the running one has finished and been integrated.
+
+**Principle (the agent's reading):** On one laptop, the lock serialises the builds and tests anyway. A second agent
+mostly waits, and it also adds memory pressure and wall-clock time to the check that gates the push.
+
+**Candidate guidance:** "Run one background unit agent at a time; queue the next unit behind the integration of the
+current one."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
