@@ -348,11 +348,12 @@
     },
     {
       "path": "server/Application/Dtos/AttentionDtos.cs",
-      "classes": 28,
+      "classes": 29,
       "reason": "cap",
-      "owed": 3,
+      "owed": 4,
       "first": [
         "TaskSupervisionVisibilityTests",
+        "VerificationCleanupServiceTests",
         "StandingBootDocumentationTests",
         "BootStallDocumentationTests"
       ]
@@ -1376,14 +1377,14 @@
       "reason": "cap",
       "owed": 35,
       "first": [
+        "PipelineHandoffPilotTests",
         "RunnerCodexCliEvidenceTests",
         "RunnerStateAlarmExclusionTests",
         "AdvisoryChangePolicyTests",
         "BlockedTaskParkReclaimTests",
         "C0824RefOnlyConsumerTests",
         "C1677RetentionServerTests",
-        "ClaudeCredentialProbeDispatcherTests",
-        "DefaultRunnerEligibilityTests"
+        "ClaudeCredentialProbeDispatcherTests"
       ]
     },
     {
@@ -1420,9 +1421,9 @@
     },
     {
       "path": "server/Domain/Entities/AgentIncident.cs",
-      "classes": 41,
+      "classes": 42,
       "reason": "cap",
-      "owed": 16,
+      "owed": 17,
       "first": [
         "SessionReconciliationServiceTests",
         "StandingSessionSwitchConcurrencyTests",
@@ -1858,9 +1859,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 110,
+      "classes": 112,
       "reason": "cap",
-      "owed": 85,
+      "owed": 87,
       "first": [
         "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
@@ -1874,9 +1875,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 81,
+      "classes": 83,
       "reason": "cap",
-      "owed": 56,
+      "owed": 58,
       "first": [
         "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeReadAdmissionTests",
@@ -1922,9 +1923,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 442,
+      "classes": 443,
       "reason": "cap",
-      "owed": 417,
+      "owed": 418,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -2000,34 +2001,43 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
+        "RunnerMultilinePromptDeliveryTests",
         "RunnerReadJsonTests",
         "TranscriptSinceReadTests",
         "UnixPtyArgvAdmissionTests",
         "RunnerWorkspaceServiceTests",
         "CompletedCardWorkspaceRemovalTests",
         "LegacyWorkspaceRemovalGateTests",
-        "C0824WorkspaceSlotOverflowTests",
-        "C0824WorkspaceSlotRehomeTests"
+        "C0824WorkspaceSlotOverflowTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/PhoneHomeRuntimeAdapter.cs",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "CompletedCardWorkspaceContractTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeSettings.cs",
-      "classes": 42,
+      "classes": 43,
       "reason": "cap",
-      "owed": 17,
+      "owed": 18,
       "first": [
         "DelegationDispatchRecoveryBoundaryTests",
         "DockerStackContractTests",
         "HerdrSnapshotBoundedReadTests",
+        "LinuxRunnerCustodyLifecycleTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeEpochAgreementTests",
-        "PhoneHomeRollingRunnerTests",
-        "PhoneHomeSpillTransportTests"
+        "PhoneHomeRollingRunnerTests"
       ]
     },
     {
@@ -2462,9 +2472,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/PhoneHomeTestHost.cs",
-      "classes": 69,
+      "classes": 70,
       "reason": "cap",
-      "owed": 44,
+      "owed": 45,
       "first": [
         "C1960QuarantineReleaseRouteTests",
         "C1964RecoveryPumpStallTests",
@@ -5960,7 +5970,8 @@
         "BlockedTaskParkReclaimTests",
         "PermissionWaitTests",
         "RunnerSeatOrphanSweepTests",
-        "RunnerSlotEndpointTests"
+        "RunnerSlotEndpointTests",
+        "VerificationCleanupServiceTests"
       ]
     },
     {
@@ -11506,6 +11517,19 @@
       ]
     },
     {
+      "path": "server/Application/Services/RunnerSlotService.Custody.cs",
+      "classes": [
+        "AttentionServiceTests",
+        "BlockedTaskParkReclaimTests",
+        "C2074IncidentCapIntentTests",
+        "PhoneHomeDeferredKillTests",
+        "RunnerSlotEndpointTests",
+        "RunnerSlotRulesTests",
+        "SeatOccupancyProjectionTests",
+        "VerificationCleanupServiceTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/RunnerSlotService.cs",
       "classes": [
         "AttentionServiceTests",
@@ -11515,7 +11539,8 @@
         "PhoneHomeDeferredKillTests",
         "RunnerSlotEndpointTests",
         "RunnerSlotRulesTests",
-        "SeatOccupancyProjectionTests"
+        "SeatOccupancyProjectionTests",
+        "VerificationCleanupServiceTests"
       ]
     },
     {
@@ -13435,9 +13460,9 @@
         "PhoneHomeStrandedQueueTests",
         "PhoneHomeTaskCreateTests",
         "PhoneHomeTaskDispatchProjectionTests",
-        "PipelineHandoffPilotTests",
         "RemoteExecutableLaunchTests",
-        "RemoteWorkspacePreparerTests"
+        "RemoteWorkspacePreparerTests",
+        "RunnerSlotRulesTests"
       ]
     },
     {
@@ -17256,7 +17281,8 @@
         "ReviewEvidenceRecoveryEndpointTests",
         "RunnerSlotEndpointTests",
         "SessionQueueAbandonTests",
-        "TaskCeilingControlTests"
+        "TaskCeilingControlTests",
+        "VerificationCleanupServiceTests"
       ]
     },
     {
@@ -20480,6 +20506,7 @@
         "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "HerdrSnapshotBoundedReadTests",
+        "LinuxRunnerCustodyLifecycleTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeCompletedCardTransportTests",
@@ -20493,7 +20520,6 @@
         "RunnerAbsenceEvidencePhoneHomeTests",
         "RunnerCapacityCountTests",
         "RunnerCodexCliEvidenceTests",
-        "RunnerMultilinePromptDeliveryTests",
         "RunnerWorkspaceBindingTests",
         "StandingRunnerCwdTests"
       ]
@@ -20543,11 +20569,11 @@
         "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
         "Card1619RunnerExitTests",
-        "CompletedCardWorkspaceContractTests",
         "CompletedCardWorkspaceRemovalTests",
         "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "HerdrSnapshotBoundedReadTests",
+        "LinuxRunnerCustodyLifecycleTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeEpochAgreementTests",
@@ -21441,22 +21467,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs",
-      "classes": [
-        "ClaudeRemoteControlMenuCanaryTests",
-        "LiveClaudeEvidenceWiringTests",
-        "LiveClaudeIsolationWiringTests",
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs",
-      "classes": [
-        "LiveClaudeEvidenceWiringTests",
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Agents.Pty.Tests/ClaudeSignalCanaryTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -21469,18 +21479,21 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs",
+      "path": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractHarness.cs",
       "classes": [
+        "ClaudeRemoteControlMenuCanaryTests",
+        "ClaudeSubmitContractLiveTests",
+        "ClaudeSubmitContractTests",
         "LiveClaudeEvidenceWiringTests",
-        "ProcessSpawnLimitTests"
+        "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs",
       "classes": [
-        "ClaudeRemoteControlMenuCanaryTests",
-        "ClaudeSubmitContractLiveTests",
-        "LiveClaudeEvidenceWiringTests",
         "ProcessSpawnLimitTests"
       ]
     },
@@ -22109,6 +22122,90 @@
       "path": "tests/Antiphon.GitInProcess.Tests/LibGit2VsGitWorktreeListTests.cs",
       "classes": [
         "TestFixtureCleanupGuardTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj",
+      "classes": [
+        "LiveLaneFingerprintTests",
+        "LiveLaneProjectIsolationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeDialogCanaryDiagnostics.cs",
+      "classes": [
+        "ClaudeDialogWatchdogCanaryTests",
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.Launch.cs",
+      "classes": [
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.cs",
+      "classes": [
+        "IncrementalSelectionSoundnessTests",
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests",
+        "RcInputOwnersMapTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.Launch.cs",
+      "classes": [
+        "ClaudeRemoteControlMenuCanaryTests",
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveClaudeIsolationWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs",
+      "classes": [
+        "ClaudeRemoteControlMenuCanaryTests",
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveClaudeIsolationWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlMenuCanaryTests.cs",
+      "classes": [
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.LiveClaude.Tests/ClaudeSubmitContractLiveTests.cs",
+      "classes": [
+        "LiveClaudeEvidenceWiringTests",
+        "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
+        "LiveLaneExecutableTests",
+        "LiveLaneIsolationTests"
       ]
     },
     {
@@ -22930,24 +23027,6 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Agents/ClaudeDialogCanaryDiagnostics.cs",
-      "classes": [
-        "ClaudeDialogWatchdogCanaryTests",
-        "LiveLaneEvidenceTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs",
-      "classes": [
-        "IncrementalSelectionSoundnessTests",
-        "LiveClaudeIsolationWiringTests",
-        "LiveLaneEvidenceTests",
-        "LiveLaneExecutableTests",
-        "LiveLaneIsolationTests",
-        "RcInputOwnersMapTests"
-      ]
-    },
-    {
       "path": "tests/Antiphon.Tests/Agents/ClaudeRealCliStubProxyCanaryTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -23253,7 +23332,7 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/ApiKeys/ApiKeyStoreTests.cs",
+      "path": "tests/Antiphon.Tests/ApiKeys/ApiKeyStoreTests.FakeApiKeyProtector.cs",
       "classes": [
         "AgentTuiLaunchResolverTests",
         "AgentTuiSecretMigratorTests",
@@ -23847,7 +23926,8 @@
         "ProviderQuotaRefusalAcceptanceTests",
         "StandingBootAttentionTests",
         "StandingBootQueueWitnessTests",
-        "StandingBootStatementBudgetTests"
+        "StandingBootStatementBudgetTests",
+        "VerificationCleanupServiceTests"
       ]
     },
     {
@@ -23863,7 +23943,8 @@
         "ProviderQuotaRefusalAcceptanceTests",
         "StandingBootAttentionTests",
         "StandingBootQueueWitnessTests",
-        "StandingBootStatementBudgetTests"
+        "StandingBootStatementBudgetTests",
+        "VerificationCleanupServiceTests"
       ]
     },
     {
@@ -23879,7 +23960,8 @@
         "ProviderQuotaRefusalAcceptanceTests",
         "StandingBootAttentionTests",
         "StandingBootQueueWitnessTests",
-        "StandingBootStatementBudgetTests"
+        "StandingBootStatementBudgetTests",
+        "VerificationCleanupServiceTests"
       ]
     },
     {
@@ -29293,6 +29375,7 @@
       "classes": [
         "LiveClaudeEvidenceWiringTests",
         "LiveClaudeExecutableWiringTests",
+        "LiveLaneEvidenceTests",
         "LiveLaneExecutableTests",
         "LiveLaneIsolationTests"
       ]
