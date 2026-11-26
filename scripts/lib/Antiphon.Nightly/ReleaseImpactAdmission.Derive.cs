@@ -92,7 +92,7 @@ public static partial class ReleaseImpactAdmission
         var own = ReadOwnExecutions(custody, authority, measured, git, request);
         var (trust, grants, policyB, policyA) = ComputeTrust(authority, b, a, current, changes, bGraph, aGraph, own);
         Require(trust.Mode != "Full", "p2-incomplete:trust-global");
-        var globalReasons = new[] { "runtimeHash", "selectorHash" }
+        var globalReasons = new[] { "catalogHash", "policyHash", "runtimeHash", "selectorHash" }
             .Where(component => !JsonElement.DeepEquals(b.Contract.GetProperty(component), a.Contract.GetProperty(component)))
             .Select(component => "contract-changed:" + component).ToArray();
         var incompleteReasons = (b.Evaluation.Inputs.Unresolved ?? []).Concat(a.Evaluation.Inputs.Unresolved ?? [])
@@ -157,7 +157,7 @@ public static partial class ReleaseImpactAdmission
             ["selection"] = Json(new
             {
                 complete = incompleteReasons.Length == 0, fallback = incompleteReasons.Length + globalReasons.Length == 0 ? "Scoped" : "Full",
-                globalReasons = Array.Empty<string>(), incompleteReasons,
+                globalReasons, incompleteReasons,
                 classes = selection.Where(row => row.Disposition == "execute").SelectMany(row => row.Chunk.Cases)
                     .Select(c => new { c.Project, c.Class }).Distinct(),
                 decisions = selection.Select(row => new { chunk = row.Chunk.Id, row.Disposition, row.Origin, row.Reasons }),
