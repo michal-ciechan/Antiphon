@@ -193,14 +193,13 @@ public sealed class ExpectedPlatformSkipRosterTests
     }
 
     // The committed roster against tests/: its Windows rows, their source and reason text, and WindowsUnitSkipRoster.cs.
-    // 33 Windows rows since unit 60 removed the C680 live-context row (the canary left every nightly and rc suite).
     private static void Census(NightlyCaseRows rows)
     {
         var committed = NightlyChunkVerdict.SkipRoster(RosterPath);
         var windows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "platform")) == "windows").ToArray();
         var unique = windows.Select(e => PsValue.Str(PsValue.Prop(e, "test"))).Distinct(StringComparer.Ordinal).Count();
         var gaps = NightlyExpectedSkips.SourceGaps(Repo, "windows", committed, null);
-        rows.Check(windows.Length == 33 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
+        rows.Check(windows.Length == 36 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
             "windows=" + windows.Length + " unique=" + unique + " gaps=" + string.Join(",", gaps));
 
         var planted = committed.Append(Entry("windows", Missing, "gone")).ToArray();
