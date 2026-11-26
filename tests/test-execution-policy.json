@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a3ca6bd9ad1afe0527091835b3ab273d68c5cda9a0f62a298e5c9bdd2e826fb5",
+  "policyHash": "1819d4f4aefb0c30baf6f64f0c7728743047de178fcea3a1452881d34a410d6f",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -67,6 +67,15 @@
           "class": "OutputDistillationApplyCanaryTests",
           "reason": "real headed provider / distiller approval; owned by its canary workflow",
           "owner": "CARD-0599"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CallerWakeTests",
+          "methods": [
+            "Adopted_native_recipient_reads_its_report"
+          ],
+          "reason": "Explicit native caller canary requires an installed Claude CLI and the opt-in local model stub.",
+          "owner": "CARD-2074"
         },
         {
           "suite": "antiphon",

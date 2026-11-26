@@ -572,6 +572,28 @@
       ]
     },
     {
+      "id": "live-gate-inventory",
+      "globs": [
+        "scripts/lib/Antiphon.Nightly/LiveLaneGateScan.cs",
+        "tests/live-lanes.json"
+      ],
+      "added": {
+        "glob": "tests/Antiphon*.Tests/**/*.cs",
+        "literals": [
+          "[Explicit",
+          "ANTIPHON_HEADED_TESTS",
+          "SkipIfNotEligible",
+          "RealCliStub",
+          "[GateShape"
+        ],
+        "removed": true
+      },
+      "methods": [
+        "LiveLaneInventoryTests/EveryLiveGateHasDisposition",
+        "LiveLaneInventoryTests/ExplicitGatesAreNeverFullRequired"
+      ]
+    },
+    {
       "id": "nightly-live-lane",
       "globs": [
         "scripts/lib/nightly-*.ps1",

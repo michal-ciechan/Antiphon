@@ -426,7 +426,7 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Get-LiveLaneGateDisposition: core for a live-claude core identity, else policy-excluded with the first
-        /// exclusion row that names the gate's class, else diagnostic.
+        /// exclusion row that covers the gate's class and method, else diagnostic.
         /// </summary>
         public static LiveLaneGateDisposition Disposition(LiveLaneGate gate, IReadOnlyList<ExclusionRow> exclusions)
         {
@@ -434,7 +434,11 @@ namespace Antiphon.Nightly
             foreach (var want in LiveLaneContract.Core)
                 if (Same(want.Key, key)) return new LiveLaneGateDisposition("core", "CARD-1545", "live-claude core roster");
             foreach (var row in exclusions ?? new ExclusionRow[0])
-                if (Same(row.Class, gate.Class)) return new LiveLaneGateDisposition("policy-excluded", row.Owner ?? "", row.Reason ?? "");
+            {
+                if (!Same(row.Class, gate.Class)) continue;
+                if (row.Methods is { Length: > 0 } && !row.Methods.Any(method => Same(method, gate.Method))) continue;
+                return new LiveLaneGateDisposition("policy-excluded", row.Owner ?? "", row.Reason ?? "");
+            }
             return new LiveLaneGateDisposition("diagnostic", "CARD-1545", "live-claude diagnostic gate");
         }
 
