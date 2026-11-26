@@ -59,7 +59,7 @@ work itself.
   own cold outputs; a custom output that is still required ends with a FORWARD slash.
 
 - BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. `scripts/run-checkpoint.ps1` (run unchanged) takes a
-  slot itself; run any other build or test driver (`dotnet build|test|run`) as
+  slot itself; run any other build or test driver as
   `scripts/antiphon build-slot --label <what> -- <command>` (bash/sh) or
   `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>` (PowerShell; quote `-x:y`).
   The gate waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver
