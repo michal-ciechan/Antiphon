@@ -28,7 +28,7 @@ No manual acceptance or PC-n variants are declared by this slice; deliberate con
 | CP-2 | S1R2 | `tests/Antiphon.Tests -> bin-c1820-r2-green/` | linux-relation | `/*/*/ReleaseImpactRelationTests/*` | V-2 | all 4 named, 0 failed/skipped | 4 | 10 | true |
 | CP-3 | S1R2 | CP-2 | linux-ordinary-cap | `/*/*/DerivedImpactIndexTests/(a_path_with_26_classes_is_capped*)\|(solution_file_selects_no_derived_class*)` | R-1 | both methods, 0 failed/skipped | 2 | 1 | true |
 | CP-101 | S1R2 | CP-2 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | Final guards and matched test-lane-category | all listed, 0 failed/skipped | 78 | 3 | true |
-| CP-102 | S1R2 | CP-2 | ordinary-index-drift | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 drift | named method, 0 failed/skipped | 1 | 1 | true |
+| CP-102 | S1R2 | CP-2 | ordinary-index-drift | `/*/*/DerivedImpactIndexInvariantTests/committed_index_matches_the_builder` | R-3 drift | named method, 0 failed/skipped | 1 | 1 | true |
 | CP-103 | S1R2 | CP-2 | spawn-census | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | all listed, 0 failed/skipped | 57 | 2 | true |
 | CP-104 | S1R2 | CP-2 | ordinary-driver | `/*/*/DerivedImpactIndexTests/regenerate_script_reports_changed_then_unchanged` | ordinary driver compatibility | named method, 0 failed/skipped | 1 | 1 | true |
 

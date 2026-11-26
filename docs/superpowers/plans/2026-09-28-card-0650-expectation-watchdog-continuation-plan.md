@@ -372,7 +372,7 @@ this does not replace in-assembly process-spawn limiters. Escaped pipes are Mark
 | CP-4 | S2 | `tests/Antiphon.Tests -> bin-c650-answer/` | receipt-answer | `/*/*/(ExpectationResponseTests*)\|(ExpectationSchedulingTests*)\|(ExpectationReceiptTests*)\|(ExpectationEpisodeTests*)/*` | V-3, R-1, R-2 | all 23 listed executions, 0 failed/skipped | 23 | 9 | true |
 | CP-5 | S2 | CP-4 | direct-input | `/*/*/(ExpectationDirectDeliveryTests*)\|(ExpectationHoldReleaseEndpointTests*)\|(SessionMessageQueueServiceTests*)/(C650_*)\|(Send_now_delivers_immediately_and_does_not_queue*)\|(Delivery_sends_body_then_a_separate_CR_not_one_combined_write*)\|(Multiline_delivery_is_wrapped_in_bracketed_paste*)\|(When_idle_message_is_held_while_the_agent_is_working*)` | R-2 | all 22 selected executions, 0 failed/skipped | 22 | 6 | true |
 | CP-6 | S3 | `tests/Antiphon.Tests -> bin-c650-operator/` | operator-status | `/*/*/(ExpectationEscalationTests*)\|(ExpectationStatusTests*)/*` | V-4 | all 11 listed executions, 0 failed/skipped | 11 | 10 | true |
-| CP-7 | S4 | `tests/Antiphon.Tests -> bin-c650-scheduled/` | scheduled-scenario | `/*/*/(ExpectationWatchdogJobTests*)\|(ExpectationWatchdogScenarioTests*)\|(HangfireStartupSafetyTests*)/*` | V-5, R-4 | all 22 listed executions, 0 failed/skipped | 22 | 12 | true |
+| CP-7 | S4 | `tests/Antiphon.Tests -> bin-c650-scheduled/` | scheduled-scenario | `/*/*/(ExpectationWatchdogJobTests*)\|(ExpectationWatchdogScenarioTests*)\|(HangfireStartupSafetyTests*)\|(ExpectationWatchdogJobInvariantTests*)/*` | V-5, R-4 | all 22 listed executions, 0 failed/skipped | 22 | 12 | true |
 
 ## Acceptance and handoff
 

@@ -103,7 +103,7 @@ No R-n. No positive controls. Mutation has nothing new to plant beyond the refus
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S31 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/LandNonCodeSkipTests/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 V-31 V-32 | exactly 85 executed, 0 failed/skipped | 85 | 15 |
+| CP-1 | S31 | `tests/Antiphon.Tests -> bin-c1409/` | c1409-imports | `/*/*/(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/(C1409_*)\|(C1400_*)\|(C1390_*)\|(C1385_RegistryMatchesNarrowGraph*)\|(C1380_*)` | V-1 V-2 V-3 V-4 V-5 V-7 V-8 V-9 V-10 V-11 V-12 V-13 V-14 V-15 V-16 V-17 V-18 V-19 V-20 V-21 V-22 V-23 V-24 V-25 V-26 V-27 V-28 V-29 V-30 V-31 V-32 | exactly 85 executed, 0 failed/skipped | 85 | 15 |
 
 ### Cost
 

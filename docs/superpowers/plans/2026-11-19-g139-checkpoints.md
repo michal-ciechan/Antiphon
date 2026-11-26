@@ -53,7 +53,7 @@ No PC variants. Every PC stays pending for method-scoped SourceLanding Mutation;
 | CP-3 | S1 | CP-1 | guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-3 | all listed, 0 failed, 0 skipped | 34 | 8 | true |
 | CP-4 | S1 | CP-1 | slow-registry | `/*/*/SlowTestRegistryMergeTests/*` | V-3 | 5 cases, 0 failed, 0 skipped | 5 | 8 | true |
 | CP-5 | S1 | n/a | derived-driver | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false --nologo` | V-4 | exit 0, 0 errors | n/a | 8 | true |
-| CP-6 | S1 | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | V-4 | 27 methods, 0 failed, 0 skipped | 27 | 10 | true |
+| CP-6 | S1 | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-4 | 27 methods, 0 failed, 0 skipped | 27 | 10 | true |
 | CP-7 | S1 | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-2 | exit 0 | n/a | 10 | true |
 
 CP-3 Min is the seven named classes: TestClassificationGuardTests 1, SlowTestTripwireTests 2, NativeLinuxPolicyWitnessTests 3, MechanicalPcContractTests 11, TaskPlatformGuidanceTests 5, C1729LayeringGuardTests 11, TestLaneCategoryGuardTests 1. `RunnerDefaultGuidanceTests` is four methods in the same file as `TaskPlatformGuidanceTests` and is outside this filter.

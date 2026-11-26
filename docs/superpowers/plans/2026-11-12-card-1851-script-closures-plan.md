@@ -50,7 +50,7 @@ Unit lane, full assembly, loaded repetitions or deliberate mutants run in Code.
 | CP-3 | S2 | CP-2 | nightly-adapters | `/*/*/NightlyVerificationContractTests/(C544_ProductionJobAdapter*)\|(C545_JobResultFetch*)` | R-3 | all listed, 0 failed | 2 | 2 |
 | CP-4 | S2 | CP-1 | runner-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 1 |
 | CP-5 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1851-pty/ | pty-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | all listed, 0 failed | 2 | 2 |
-| CP-6 | S2 | CP-2 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-2 | all listed, 0 failed; CP-0 prerequisite completed | 1 | 4 |
+| CP-6 | S2 | CP-2 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed; CP-0 prerequisite completed | 1 | 4 |
 
 CARD-1860 A-3 repair: run this closed list with `--serial` and include CP-0 before
 CP-6 (or any external guard row that includes DerivedImpactIndexTests). A fresh

@@ -29,7 +29,7 @@ The same filter then passed once, unlisted, on the helper-copy commit `e1b4074ce
 | CP-3 | S1 | CP-2 | c2004scr-policy | `/*/*/TestClassificationPolicyTests/*` | R-1 | 0 failed, 0 skipped, executed at least 42 | 42 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-4 | S1 | CP-2 | c2004scr-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-2 | 0 failed, 0 skipped, executed at least 34 | 34 | 8 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-5 | S1 | CP-2 | c2004scr-slow | `/*/*/SlowTestRegistryMergeTests/*` | R-3 | 0 failed, 0 skipped, executed 5 | 5 | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-6 | S1 | CP-2 | c2004scr-index | `/*/*/DerivedImpactIndexTests/*` | R-4 | 0 failed, 0 skipped, executed at least 27 | 27 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-6 | S1 | CP-2 | c2004scr-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-4 | 0 failed, 0 skipped, executed at least 27 | 27 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-7 | S1 | n/a | c2004scr-land | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-5 | exit 0 | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-8 | S1 | n/a | c2004scr-evidence | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef 5f0804e425384f8b03f88b833fbdad0e93f966d3 -HeadRef HEAD` | R-5 | exit 0 | n/a | 3 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-9 | S1 | n/a | c2004scr-pins | `pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest` | R-5 | exit 0 | n/a | 5 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |

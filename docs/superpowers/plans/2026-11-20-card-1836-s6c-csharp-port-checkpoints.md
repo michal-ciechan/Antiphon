@@ -33,6 +33,6 @@ The nightly-core pre-warm and the derived-index driver build are unlisted. They 
 | CP-2 | port | `CP-1` | shadow-harness | `/*/*/RcIncrementalShadowTests/*` | existing S8b harness through the wrapper | all 12 methods, 0 failed/skipped | 12 | 12 | true |
 | CP-3 | port | `CP-1` | dirty-harness | `/*/*/RcDirtyLaunchOrderTests/*` | existing S6a harness through the wrapper | all 6 methods, 0 failed/skipped | 6 | 8 | true |
 | CP-4 | port | `CP-1` | policy | `/*/*/TestClassificationPolicyTests/*` | classification policy once | all listed, 0 failed/skipped | 42 | 6 | true |
-| CP-5 | port | `CP-1` | derived-index | `/*/*/DerivedImpactIndexTests/*` | derived impact index | all listed, 0 failed/skipped | 27 | 12 | true |
+| CP-5 | port | `CP-1` | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | derived impact index | all listed, 0 failed/skipped | 27 | 12 | true |
 | CP-6 | port | `CP-1` | nightly-core | `/*/*/NightlyCoreTests/*` | nightly-core harness after the new sources | all listed, 0 failed/skipped | 1 | 4 | true |
 | CP-7 | port | `CP-1` | live-lane | `/*/*/LiveLaneRunnerTests/*` | live-lane runner after the nightly library change | all 4 methods, 0 failed/skipped | 4 | 6 | true |

@@ -405,7 +405,7 @@ lesson): the green group cannot reuse the red build.
 | CP-4 | green | CP-2 | directory-lease | `/*/*/(PhoneHomeDirectoryTests*)\|(PhoneHomeRunnerRetirementIdentityTests*)\|(PhoneHomeRunnerRetirementCycleTests*)\|(PhoneHomeImmediateSendTests*)/*` | R-2 | all listed, 0 failed | 31 | 4 |
 | CP-5 | green | CP-2 | backpressure-rolling | `/*/*/(PhoneHomeBackpressureTests*)\|(PhoneHomeRollingRunnerTests*)/*` | R-1,R-2 | all listed, 0 failed | 43 | 6 |
 | CP-6 | green | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 81 | 6 |
-| CP-7 | green | CP-2 | impact-index | `/*/*/DerivedImpactIndexTests/*` | R-3 | all listed, 0 failed, after the regenerate script ran and the index was committed | 27 | 12 |
+| CP-7 | green | CP-2 | impact-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-3 | all listed, 0 failed, after the regenerate script ran and the index was committed | 27 | 12 |
 
 **Import check (2026-11-17, plan task):** `dotnet tools/Antiphon.Checkpoints/bin/Debug/net9.0/Antiphon.Checkpoints.dll import --plan <this plan> --out .antiphon/c1964-plan/manifest-1.yaml` (ignored path). It printed `imported 7 rows`, exit 0, with **no warnings**. The row timeouts it derived are 45, 45, 15, 15, 18, 18 and 36 minutes.
 

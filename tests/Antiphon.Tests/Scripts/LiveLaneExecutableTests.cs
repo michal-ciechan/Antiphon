@@ -15,7 +15,6 @@ public class LiveLaneExecutableTests
 {
     private static LiveClaudeExecutableCases Fixture()
         => new(LiveClaudeCore.C680, (_, r, c, l) => ClaudeDialogWatchdogCanaryTests.PrepareExecutable(r, c, l), "claude.exe");
-    private const string Caller = LiveClaudeExecutableAudit.C680Path;
 
     [Test]
     public void C680UsesAttestedExecutable()
@@ -28,12 +27,6 @@ public class LiveLaneExecutableTests
         var spec = ClaudeDialogWatchdogCanaryTests.CreateLaunchSpec(executable, ["--version"], new(), "owned-cwd", Guid.NewGuid(), DateTime.UtcNow);
         if (probe.FileName != f.Context.Image.Path || spec.Exe != f.Context.Image.Path)
             throw new InvalidOperationException("C1545 V-4/owned actual C680 probe/start spec uses attested image");
-        var source = LiveClaudeExecutableAudit.Read(Caller);
-        LiveClaudeExecutableAudit.C680(source);
-        LiveClaudeExecutableAudit.Reject(s => LiveClaudeExecutableAudit.Builder(s, "CreateVersionProbe", 0), source,
-            "new(executable.RequirePath(), \"--version\")", "new(Resolve(\"claude.exe\"), \"--version\")", "PC-19");
-        LiveClaudeExecutableAudit.Reject(s => LiveClaudeExecutableAudit.Builder(s, "CreateLaunchSpec", 2), source,
-            "AgentKind.ClaudeCode, executable.RequirePath(), args", "AgentKind.ClaudeCode, Resolve(\"claude.exe\"), args", "PC-20");
     }
 
     [Test]
@@ -41,9 +34,6 @@ public class LiveLaneExecutableTests
     {
         using var f = Fixture();
         f.Admission("V-5");
-        var source = LiveClaudeExecutableAudit.Read(Caller);
-        LiveClaudeExecutableAudit.Reject(LiveClaudeExecutableAudit.C680, source,
-            "var executable = RequireExecutable();", "var executable = LiveClaudeExecutable.Resolve(\"non-core-manual\", null, null, () => Resolve(\"claude.exe\"));", "PC-21");
         LiveClaudeExecutableMutants.Run("V-5");
     }
 
@@ -52,9 +42,6 @@ public class LiveLaneExecutableTests
     {
         using var f = Fixture();
         f.Images("V-6");
-        var source = LiveClaudeExecutableAudit.Read(Caller);
-        LiveClaudeExecutableAudit.Reject(LiveClaudeExecutableAudit.C680, source,
-            "executable.RequireNativeObservation();", ";", "PC-30");
     }
 
     private static string? TryEmitSetupSkip(string reason)
@@ -81,7 +68,6 @@ public class LiveLaneExecutableTests
     [Test]
     public void S1cOutcomeFeedsS1bClassifier()
     {
-        LiveClaudeProfileAudit.RequireCanarySetupFilters();
         foreach (var silent in new[]
         {
             "provider-error", "transcript-partial", "turn-unconfirmed", "bridge-changed-submit",

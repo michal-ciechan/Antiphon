@@ -20,7 +20,6 @@ public sealed class RunnerSlotsCommandTests
     [Test]
     public async Task List_reads_without_the_operator_token_and_prints_the_answer_indented()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "RunnerSlots.cs")).ShouldAllBe(b => b < 128);
         using var directory = new RunnerSlotsTokenFolder();
         await directory.WriteAsync("operator-secret");
         var http = new RecordingOperatorHttp(_ => new(200, """{"declaredCapacity":10,"occupied":1,"slots":[{"sessionId":"s","orphan":false}]}"""));

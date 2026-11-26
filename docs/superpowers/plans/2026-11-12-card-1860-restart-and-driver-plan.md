@@ -42,7 +42,7 @@ build is intentional: regenerate-derived-impact-index.ps1 -NoBuild looks there.
 | CP-2 | S1 | tests/Antiphon.Tests -> bin-c1860-red-driver/ | red-missing-driver | `/*/*/DerivedImpactIndexTests/regenerate_script_reports_changed_then_unchanged` | V-2 | expected missing driver red | 1 | 3 |
 | CP-0 | S2 | n/a | driver-prerequisite | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false -maxcpucount:1 --nologo` | V-2 | exit 0; native-default driver exists before CP-4 | n/a | 5 |
 | CP-3 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1860-final-runner/ | restart-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,R-1 | >= 20 executed, 0 failed; native Windows skips pending | 20 | 3 |
-| CP-4 | S2 | tests/Antiphon.Tests -> bin-c1860-final-driver/ | driver-and-impact | `/*/*/(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)/*` | V-2,R-2 | both classes, 0 failed | 2 | 4 |
+| CP-4 | S2 | tests/Antiphon.Tests -> bin-c1860-final-driver/ | driver-and-impact | `/*/*/(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexInvariantTests*)/*` | V-2,R-2 | both classes, 0 failed | 2 | 4 |
 | CP-5 | S2 | CP-3 | runner-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | 0 failed | 2 | 1 |
 | CP-6 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1860-final-pty/ | pty-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | 0 failed | 2 | 2 |
 

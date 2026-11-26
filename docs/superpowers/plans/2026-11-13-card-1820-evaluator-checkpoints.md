@@ -38,7 +38,7 @@ deliberate execution is waived by the operator, not satisfied by ordinary green.
 | CP-106 | S1R3E | `tests/Antiphon.Tests -> bin-c1820-eval-final/` | evaluator | `/*/*/ReleaseImpactEvaluationTests/*` | V-3E | four named methods, zero failed/skipped | 4 | 3 | true |
 | CP-4 | S1R3E | CP-106 | project | `/*/*/ReleaseImpactProjectTests/*` | V-3 | four methods, zero failed/skipped | 4 | 1 | true |
 | CP-101 | S1R3E | CP-106 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy/mechanical/platform/layering | all named classes, zero failed/skipped | 78 | 4 | true |
-| CP-102 | S1R3E | CP-106 | index | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | R-3 | named method, zero failed/skipped | 1 | 2 | true |
+| CP-102 | S1R3E | CP-106 | index | `/*/*/DerivedImpactIndexInvariantTests/committed_index_matches_the_builder` | R-3 | named method, zero failed/skipped | 1 | 2 | true |
 | CP-103 | S1R3E | CP-106 | project-shape | `/*/*/LandGraphAuditProjectInstanceTests/*` | impacted land-graph-audit-project | one method, zero failed/skipped | 1 | 1 | true |
 | CP-104 | S1R3E | CP-106 | spawn-limiter | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all cases, zero failed/skipped | 57 | 1 | true |
 | CP-105 | S1R3E | CP-106 | default-audit | `/*/*/LandGraphEvaluationTests/(C1483_S1_HarmlessFixtureApproves*)\|(C1483_S1_EvaluatedSkippableItemRefuses*)` | default command remains unchanged | two methods, zero failed/skipped | 2 | 1 | true |

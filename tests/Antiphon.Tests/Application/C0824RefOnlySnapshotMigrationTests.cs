@@ -22,20 +22,20 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     // 2026-11-10, four sha256sum /dev/zero workers, load 26-43. Park's own p95 was 17.1s (n=12).
     // Bodies on that run were about 5s, so this is also the body backstop.
     private const int HistoricalBaselineBudgetMilliseconds = 70_000;
-    private const string Previous = "20261105121558_Card0824RefOnlyDesktopCleanup";
-    private const string Debt = "20261106005946_AddRefOnlySettlementDebtWorkspaceSnapshot";
-    private const string Park = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
-    private const string Telemetry = "20261107034430_HostLoadTelemetryS1";
-    private const string Membership = "20261107040142_HostLoadSnapshotMembership";
-    private const string Catchup = "20261107104114_HostLoadRetentionCatchup";
-    private const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
-    private const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
-    private const string Summary = "20261114063858_AddSessionTranscriptSummaries";
-    private const string LandFailure = "20261119045705_AddLandVerificationFailure";
-    private const string ModelAlias = "20261120091515_AddRequestedModelAlias";
-    private const string ReviewEngine = "20261122173647_AddReviewEngine";
-    private const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
-    private const string FutureMigration = "29991231235959_C2074FutureMigration";
+    internal const string Previous = "20261105121558_Card0824RefOnlyDesktopCleanup";
+    internal const string Debt = "20261106005946_AddRefOnlySettlementDebtWorkspaceSnapshot";
+    internal const string Park = "20261106032116_AddRefOnlyParkWorkspaceSnapshot";
+    internal const string Telemetry = "20261107034430_HostLoadTelemetryS1";
+    internal const string Membership = "20261107040142_HostLoadSnapshotMembership";
+    internal const string Catchup = "20261107104114_HostLoadRetentionCatchup";
+    internal const string PromptStamp = "20261108121426_Card1773TranscriptPromptStampIndex";
+    internal const string ShadowCohort = "20261110213738_Card1294ShadowCohort";
+    internal const string Summary = "20261114063858_AddSessionTranscriptSummaries";
+    internal const string LandFailure = "20261119045705_AddLandVerificationFailure";
+    internal const string ModelAlias = "20261120091515_AddRequestedModelAlias";
+    internal const string ReviewEngine = "20261122173647_AddReviewEngine";
+    internal const string CallerReportReceipt = "20261125151517_AddCallerReportSettlementReceipt";
+    internal const string FutureMigration = "29991231235959_C2074FutureMigration";
     private IsolatedTestSchema? _historical;
 
     [Before(Class)]
@@ -45,9 +45,6 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     public async Task PrepareHistoricalBaseline()
     {
         var name = TestContext.Current!.Metadata.TestDetails.TestName;
-        if (name is nameof(Migration_chain_is_linear_and_snapshot_matches_the_final_model)
-            or nameof(C2074_Chain_pin_accepts_a_newer_migration)
-            or nameof(C2078_Chain_pin_rejects_invalid_later_migrations)) return;
         // These round trips exercise the historical migrations. Starting from
         // the current template would first hit the later telemetry Down guard.
         // Completes when the baseline migration is applied. The budget is only the backstop.
@@ -61,48 +58,6 @@ public sealed class C0824RefOnlySnapshotMigrationTests
     public async Task ReleaseHistoricalBaseline()
     {
         if (_historical is not null) await _historical.DisposeAsync();
-    }
-
-    [Test]
-    public void Migration_chain_is_linear_and_snapshot_matches_the_final_model()
-    {
-        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql("Host=localhost;Database=metadata_only").Options);
-        // Read declared IDs before EF projects them into a dictionary keyed by ID.
-        AssertChain([.. TestMigrationFingerprint.Default.MigrationIds]);
-        db.Database.HasPendingModelChanges().ShouldBeFalse("final-model-matches-generated-snapshot");
-    }
-
-    /// <summary>
-    /// CARD-2074 witness. A migration added after this card's window must not break the pin.
-    /// </summary>
-    [Test]
-    public void C2074_Chain_pin_accepts_a_newer_migration()
-    {
-        using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>()
-            .UseNpgsql("Host=localhost;Database=metadata_only").Options);
-        AssertChain([.. db.Database.GetMigrations(), FutureMigration]);
-    }
-
-    [Test, Arguments(FutureMigration), Arguments("29991231235958_C2078EarlierFutureMigration")]
-    public void C2078_Chain_pin_rejects_invalid_later_migrations(string second)
-    {
-        string[] temporaryChain = [.. TestMigrationFingerprint.Default.MigrationIds, FutureMigration, second];
-        var error = Should.Throw<ShouldAssertException>(() => AssertChain(temporaryChain));
-        error.Message.ShouldContain("later-migrations-are-linear");
-    }
-
-    private static void AssertChain(string[] chain)
-    {
-        string[] window = [Debt, Park, Telemetry, Membership, Catchup, PromptStamp, ShadowCohort, Summary, LandFailure, ModelAlias, ReviewEngine, CallerReportReceipt];
-        var start = Array.IndexOf(chain, Debt);
-        start.ShouldBeGreaterThan(0, "the debt migration follows its predecessor");
-        chain[start - 1].ShouldBe(Previous, "linear-after-master-with-original-ids");
-        chain.Skip(start).Take(window.Length).ShouldBe(window, "linear-after-master-with-original-ids");
-        // Strict ordinal increase from the window's last ID rejects duplicates and reversals.
-        var later = chain.Skip(start + window.Length).ToArray();
-        later.Prepend(CallerReportReceipt).Zip(later)
-            .ShouldAllBe(pair => string.CompareOrdinal(pair.First, pair.Second) < 0, "later-migrations-are-linear");
     }
 
     [Test]

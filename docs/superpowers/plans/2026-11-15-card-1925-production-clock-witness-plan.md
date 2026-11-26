@@ -48,7 +48,7 @@ No full Unit/assembly run: this task has bounded test-only impact.
 | CP-2 | S1 | CP-1 | adjacent-clock | `/*/*/(EfLambdaClockGuardTests*)\|(EfCompiledQueryCacheTests*)/*` | R-1 | all passed | 14 | 1 |
 | CP-3 | S1 | CP-1 | policy-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)/*` | R-2 | all passed | 5 | 2 |
 | CP-4 | S1 | CP-1 | contract-guards | `/*/*/(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)/*` | R-2 | all passed; layering VIOLATIONS 0 LISTED 162 | 5 | 2 |
-| CP-5 | S1 | CP-1 | derived-guard | `/*/*/DerivedImpactIndexTests*/*` | R-2 | all passed | 1 | 2 |
+| CP-5 | S1 | CP-1 | derived-guard | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all passed | 1 | 2 |
 | CP-6 | S1 | CP-1 | impacted-envelope | `/*/*/ReleaseImpactEnvelopeTests*/*` | R-3 | all passed | 1 | 2 |
 
 ## Manual acceptance

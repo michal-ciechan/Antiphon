@@ -19,17 +19,17 @@ public sealed class DerivedImpactIndexTests
 {
     private const string MigrationPath = "server/Migrations/20261108121426_Card1773TranscriptPromptStampIndex.cs";
 
-    private const string LeakSweepPath = "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs";
+    internal const string LeakSweepPath = "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs";
 
-    private const string LandingGitPath = "server/Infrastructure/Git/LandingGit.cs";
+    internal const string LandingGitPath = "server/Infrastructure/Git/LandingGit.cs";
 
-    private const string NotificationServicePath = "server/Application/Services/AgentTaskLandNotificationService.cs";
+    internal const string NotificationServicePath = "server/Application/Services/AgentTaskLandNotificationService.cs";
 
     // The land-graph pre-check's rules: a change to the audit tool alone selects the budget method (the selector's tool-only rule).
     private const string PrecheckPath = "tools/Antiphon.LandGraphAudit.Core/LandGraphPrecheck.cs";
 
     // The land-graph-audit command (unit 11 of 2026-11-22-remaining-ps1-to-csharp.md; it replaced the audit-land-verification-*.ps1).
-    private const string AuditCommandPath = "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs";
+    internal const string AuditCommandPath = "scripts/lib/Antiphon.Nightly/LandGraphAuditRun.cs";
 
     private static readonly string[] HandMigrationClasses =
     [
@@ -132,66 +132,6 @@ public sealed class DerivedImpactIndexTests
         ("16", "fabda595738775bfc98b4a487dce5543288e7883", "TestLaneCategoryGuardTests"),
         ("17", "c8fc4a413cafc76f5e52c2262ba9419794f196ad", "TestLaneCategoryGuardTests"),
     ];
-
-    [Test]
-    public async Task committed_index_matches_the_builder()
-    {
-        var root = RepoRoot();
-        var started = Stopwatch.StartNew();
-        var index = DerivedImpactIndexBuilder.Build(root);
-        started.Stop();
-        started.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(60), "derived index rebuild");
-        index.Cap.ShouldBe(DerivedImpactIndexBuilder.Cap);
-        index.Allowlist.ShouldBe(DerivedImpactIndexBuilder.Allowlist);
-        index.Utf8.Length.ShouldBeLessThanOrEqualTo(DerivedImpactIndexBuilder.ByteLimit);
-
-        // Hand windows:only classes are not derived windowsOnly. The override list and the
-        // class-level LinuxOnly declaration are.
-        index.WindowsOnly.ShouldContain("CodexAdapterLocalShellTests");
-        index.WindowsOnly.ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
-        index.LinuxOnly.ShouldContain("PlatformTaxonomyClassFilterTests");
-        index.LinuxOnly.ShouldNotContain("PlatformTaxonomyFilterTests");
-        index.WindowsOnly.ShouldNotContain("PlatformTaxonomyFilterTests");
-        index.LinuxOnly.ShouldNotContain("CodexAdapterLocalShellTests");
-
-        var path = Path.Combine(root, "tests", "derived-impact-index.json");
-        File.Exists(path).ShouldBeTrue(path);
-        var committed = await File.ReadAllBytesAsync(path);
-        using (var committedJson = JsonDocument.Parse(committed))
-        {
-            var windowsOnly = Strings(committedJson.RootElement, "windowsOnly");
-            windowsOnly.ShouldContain("CodexAdapterLocalShellTests");
-            windowsOnly.ShouldNotContain("RepositoryLeaseWindowsBoundaryTests");
-            var linuxOnly = Strings(committedJson.RootElement, "linuxOnly");
-            linuxOnly.ShouldContain("PlatformTaxonomyClassFilterTests");
-            linuxOnly.ShouldNotContain("PlatformTaxonomyFilterTests");
-            var committedText = System.Text.Encoding.UTF8.GetString(committed);
-            var blinded = committedText.Replace(
-                "\"PlatformTaxonomyClassFilterTests\"",
-                "\"PlatformTaxonomyClassFilterTestsBlind\"",
-                StringComparison.Ordinal);
-            blinded.ShouldNotBe(committedText);
-            using var broken = JsonDocument.Parse(blinded);
-            Strings(broken.RootElement, "linuxOnly")
-                .ShouldNotContain("PlatformTaxonomyClassFilterTests");
-        }
-
-        committed.ShouldBe(index.Utf8);
-
-        foreach (var broad in DerivedImpactIndexBuilder.Allowlist)
-            index.Edges.Any(edge => edge.Path == broad).ShouldBeFalse(broad);
-
-        committed.Any(b => b == (byte)'\r').ShouldBeFalse("committed index contains CR");
-
-        // A capped path keeps its 25 most specific classes. The remainder is owed, not dropped.
-        Capped(index, LandingGitPath);
-        Capped(index, LeakSweepPath);
-        Capped(index, NotificationServicePath);
-        Edge(index, LandingGitPath).ShouldContain("DispatchBaseNotificationTests");
-        Edge(index, NotificationServicePath).ShouldContain("PostLandMutationDeliveryTests");
-        Edge(index, LeakSweepPath).ShouldContain("PtyHostAdoptionTests");
-        Edge(index, AuditCommandPath).ShouldContain("LandGraphEvaluationTests");
-    }
 
     // CARD-1838. A stale committed index is rewritten by the Merge command, and a second run
     // is a no-op. The command runs in this process and starts the driver staged by the test build.
@@ -1136,10 +1076,10 @@ public sealed class DerivedImpactIndexTests
         return Strings(index.RootElement, "windowsOnly").ToHashSet(StringComparer.Ordinal);
     }
 
-    private static List<string> Edge(DerivedImpactIndex index, string path) =>
+    internal static List<string> Edge(DerivedImpactIndex index, string path) =>
         index.Edges.Single(edge => edge.Path == path).Classes.ToList();
 
-    private static void Capped(DerivedImpactIndex index, string path)
+    internal static void Capped(DerivedImpactIndex index, string path)
     {
         var row = index.CappedPaths.Single(item => item.Path == path);
         row.Reason.ShouldBe("cap", path);
@@ -1306,7 +1246,7 @@ public sealed class DerivedImpactIndexTests
         return names;
     }
 
-    private static List<string> Strings(JsonElement root, string property) =>
+    internal static List<string> Strings(JsonElement root, string property) =>
         root.GetProperty(property).EnumerateArray().Select(item => item.GetString() ?? "").ToList();
 
     private static List<string> Git(string root, params string[] args)
@@ -1362,7 +1302,7 @@ public sealed class DerivedImpactIndexTests
         return (exit, stdout, stdout + error);
     }
 
-    private static string RepoRoot()
+    internal static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln")))

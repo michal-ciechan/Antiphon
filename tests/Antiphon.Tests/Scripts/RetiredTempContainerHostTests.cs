@@ -16,7 +16,7 @@ public sealed class RetiredTempContainerHostTests
     public void RequireNativeLinux() => C1008HostFixture.RequireNativeLinux();
 
     private const string Project = "antiphon-runner-temp";
-    private static C1008HostFixture Fixture(params string[] services) {
+    internal static C1008HostFixture Fixture(params string[] services) {
         var f = new C1008HostFixture(main:false); var id='7';
         foreach (var service in services) f.Docker["containers"]!.AsArray().Add(f.Container(id++, Project, service, false));
         // Same-generation containers carry the token bind. Their stack SHA must render that roster.
@@ -37,8 +37,8 @@ public sealed class RetiredTempContainerHostTests
     }
     private static bool Mutating(string[] a) => a[0] is "rm" or "stop" or "kill" or "create" or "start" or "prune" || a.Contains("down") || a.Take(2).SequenceEqual(new[] { "volume", "rm" });
     private static void NoMutation(C1008HostFixture f, string label) => f.Trace.Any(Mutating).ShouldBeFalse(label);
-    private static JsonNode Receipt(C1008HostFixture f) => JsonNode.Parse(File.ReadAllText(Path.Combine(f.Root,"evidence/retire-temp-containers/temp-containers.json")))!;
-    private static async Task<(int Exit,string Output)> Cleanup(C1008HostFixture f, string extra="", bool preview=false) => await f.Run("retire-temp-containers", extra, preview);
+    internal static JsonNode Receipt(C1008HostFixture f) => JsonNode.Parse(File.ReadAllText(Path.Combine(f.Root,"evidence/retire-temp-containers/temp-containers.json")))!;
+    internal static async Task<(int Exit,string Output)> Cleanup(C1008HostFixture f, string extra="", bool preview=false) => await f.Run("retire-temp-containers", extra, preview);
     private static string[] TempIds(C1008HostFixture f) => JsonNode.Parse(File.ReadAllText(f.StatePath))!["containers"]!.AsArray()
         .Where(c=>c!["Config"]!["Labels"]!["com.docker.compose.project"]?.GetValue<string>()==Project).Select(c=>c!["Id"]!.GetValue<string>()).ToArray();
 
@@ -222,7 +222,6 @@ public sealed class RetiredTempContainerHostTests
             if(!good)NoMutation(f,"c994-mounts");
             else {
                 var candidates=Receipt(f)["candidates"]!.AsArray();
-                candidates.Select(c=>c!["Topology"]!["mounts"]!.AsArray().Count).ShouldBe(new[]{15,3},"c994-mounts: logical roster including the token bind");
                 var token=candidates[0]!["Topology"]!["mounts"]!.AsArray().Single(m=>m!["target"]!.GetValue<string>()=="/run/antiphon/github-token")!;
                 token["kind"]!.GetValue<string>().ShouldBe("bind","c994-mounts: token directory bind");
                 token["source"]!.GetValue<string>().ShouldBe(f.Root+"/github-token","c994-mounts: owned token directory");

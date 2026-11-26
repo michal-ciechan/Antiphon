@@ -817,8 +817,6 @@ public sealed class VolumeRetirementPublicationTests
         var retirement = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh");
         var content = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-content-audit.sh"));
         const string header = "c1609_emit_binding_clock() {\n";
-        var start = content.IndexOf(header, StringComparison.Ordinal); start.ShouldBeGreaterThanOrEqualTo(0);
-        var end = content.IndexOf("\n}\n", start, StringComparison.Ordinal); end.ShouldBeGreaterThan(start);
         var producer = content[start..(end + 3)];
         foreach (var variant in new[] { "valid", "missing", "duplicate", "boot", "namespace", "namespace-empty", "past", "future", "malformed" })
         {

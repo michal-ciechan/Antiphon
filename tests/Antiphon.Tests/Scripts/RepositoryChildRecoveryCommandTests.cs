@@ -23,7 +23,6 @@ public sealed class RepositoryChildRecoveryCommandTests
     [Test]
     public void The_command_line_takes_the_repository_and_both_switches()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "RepositoryChildRecovery.cs")).ShouldAllBe(b => b < 128);
         var preview = RepositoryChildRecoveryOptions.Parse(["--repository", @"C:\checkout"]);
         (preview.Repository, preview.Execute, preview.ConfirmDescendantsExited).ShouldBe((@"C:\checkout", false, false));
         var confirmed = RepositoryChildRecoveryOptions.Parse(["--confirm-descendants-exited", "--repository", "/work/x", "--execute"]);

@@ -1,9 +1,11 @@
+using Antiphon.TestSupport;
 using System.Reflection;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.TestSupport;
+namespace Antiphon.TestSupport.Invariants;
 
+[Category("RepositoryInvariant")]
 [Category("Unit")]
 public sealed class NativeLinuxPolicyWitnessTests
 {

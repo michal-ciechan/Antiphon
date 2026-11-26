@@ -686,7 +686,7 @@ Lane: server2 (linux) for CP-1 to CP-4. Desktop (`-Platform Windows`) for CP-5.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-cli-s1/` | s1-cli-linux | `/*/*/(AntiphonCli*)\|(StatusSnapshotScriptTests*)\|(RegisteredCallerScriptTests*)\|(AgentTaskGetPollMetricsTests*)/*` | S1 | all listed, 0 failed | TestDesign counts | 18 |
-| CP-2 | S1 | CP-1 | s1-guards-linux | `/*/*/(DerivedImpactIndexTests*)\|(TestClassificationPolicyTests*)\|(ImpactedClassesSelectorTests*)\|(LinkedTestHelperClosureTests*)/*` | S1 | all listed, 0 failed | TestDesign counts | 6 |
+| CP-2 | S1 | CP-1 | s1-guards-linux | `/*/*/(DerivedImpactIndexTests*)\|(TestClassificationPolicyTests*)\|(ImpactedClassesSelectorTests*)\|(LinkedTestHelperClosureTests*)\|(DerivedImpactIndexInvariantTests*)/*` | S1 | all listed, 0 failed | TestDesign counts | 6 |
 | CP-3 | S1 | n/a | s1-land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | S1 | exit 0 | n/a | 6 |
 | CP-4 | S1 | n/a | s1-real-publish-linux | `sh scripts/antiphon --version` with `ANTIPHON_CLI_CACHE` at an ignored `.antiphon/` path | S1 | exit 0; the identity printed equals `identity`; one `BUILD SLOT` lease | n/a | 6 |
 | CP-5 | S1 | n/a | s1-launchers-windows | `scripts\antiphon.cmd --version`, then `powershell -NoProfile -File scripts/status-snapshot.ps1 -?` (5.1 parse) | S1 | exit 0 both; 5.1 parses the launcher | n/a | 8 |

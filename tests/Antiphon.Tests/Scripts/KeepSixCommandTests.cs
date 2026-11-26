@@ -23,7 +23,6 @@ public sealed class KeepSixCommandTests
     [Test]
     public void The_command_source_is_ascii_and_the_status_read_sends_the_task_token_only_when_set()
     {
-        File.ReadAllBytes(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "KeepSix.cs")).ShouldAllBe(b => b < 128);
         var http = new RecordingOperatorHttp(_ => new(200, """[ { "agentId": "x", "enabled": true, "target": 6 } ]"""));
 
         var anonymous = Run(http, taskToken: null);

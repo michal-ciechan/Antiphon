@@ -463,7 +463,7 @@ a 10 % margin; a floor, not a census.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c684a/` | dispatch-base-guard | `/*/*/(AgentTaskDispatchBaseGuardTests*)\|(DispatchBaseNotificationTests*)/*` | V-1, V-2, V-3, V-4, R-1 | all listed, 0 failed | 45 | 10 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c684a/` | dispatch-base-guard | `/*/*/(AgentTaskDispatchBaseGuardTests*)\|(DispatchBaseNotificationTests*)\|(DispatchBaseNotificationInvariantTests*)/*` | V-1, V-2, V-3, V-4, R-1 | all listed, 0 failed | 45 | 10 |
 | CP-2 | S2-S4 | CP-1 | helper-and-writer | `/*/*/(MergeHelperBriefTests*)\|(MergeHelperResolutionTests*)\|(DelegationWorktreeTests*)\|(AgentTaskLandHoldVisibilityTests*)\|(AgentTaskDetailBlockedContextTests*)/*` | V-5, V-6, V-7, V-8, V-9, V-9b, R-1 | all listed, 0 failed | 60 | 10 |
 | CP-3 | S1-S4 | CP-1 | land-regression-r1 | `/*/*/(AgentTaskLandRequestTests*)\|(AgentTaskLandMonitoringTests*)\|(AgentTaskLandStageOutcomeTests*)\|(ExpectationPipelineTests*)\|(ExpectationSnapshotTests*)/*` | R-1 | all listed, 0 failed | 60 | 8 |
 | CP-4 | S5 | n/a | docs-r1 | `git grep -n -e "NeedsResolution" -e "merge_helper_active" -e "force-with-lease" -- docs/orchestration-loop.md docs/ops-http.md` | S5 | ≥ 3 matching lines, exit 0 | n/a | 1 |

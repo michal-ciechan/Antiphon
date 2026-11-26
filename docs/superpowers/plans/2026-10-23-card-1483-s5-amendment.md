@@ -44,7 +44,7 @@ are required after green. Estimated red cost 12 minutes; final cost 25 minutes.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
 | CP-Red | red | `tests/Antiphon.Tests -> bin-c1483-s5-red/` | c1483-s5-red | `/*/*/LandGraphEvaluationTests/C1483_S5_*` | V-14 V-15 | new gate witnesses fail before implementation | 12 | 12 |
-| CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1483-s5/` | c1483-s5 | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)/*` | V-1..V-16 V-1a V-1b V-3a | exactly 144 executed (42 evaluation, 102 pre-check/landing), 0 failed/skipped | 144 | 25 |
+| CP-5 | S5 | `tests/Antiphon.Tests -> bin-c1483-s5/` | c1483-s5 | `/*/*/(LandGraphEvaluationTests*)\|(LandNonCodeSkipTests*)\|(LandNonCodeSkipInvariantTests*)/*` | V-1..V-16 V-1a V-1b V-3a | exactly 144 executed (42 evaluation, 102 pre-check/landing), 0 failed/skipped | 144 | 25 |
 
 ### Integrated master manifest correction
 

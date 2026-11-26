@@ -942,13 +942,13 @@ executed floor (`-MinExecuted`).
 | CP-1 | S1 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s1r/ | c1677-runner-engine | /*/*/(C1677RetentionEngineTests*)\|(C1677RetentionInventoryTests*)\|(C1677RetentionDispatchTests*)/* | V-1..V-19, V-24..V-29, V-14d, V-70..V-73 | 3 classes, 0 failed/skipped | 53 | 5 | true |
 | CP-2 | S1 | CP-1 | c1677-runner-native-process | /*/*/C1677RetentionNativeProcessTests/* | V-20..V-23 | class, 0 failed/skipped | 4 | 1 | true |
 | CP-3 | S1 | CP-1 | c1677-runner-workspace-regression | /*/*/RunnerWorkspaceServiceTests/* | R-1 | existing class, 0 failed/skipped | 35 | 1 | true |
-| CP-4 | S1 | CP-1 | c1677-native-policy-regression | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-4 | S1 | CP-1 | c1677-native-policy-regression | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-12 | S1 | CP-1 | c1677-slot-probe-regression | /*/*/C0824WorkspaceSlotProcessScanTests/* | R-6 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-5 | S1 | tests/Antiphon.Tests -> bin-c1677-s1s/ | c1677-server-retention | /*/*/(C1677RetentionServerTests*)\|(C1677RetentionSettingsTests*)/* | V-30..V-39c, V-74..V-80 | 2 classes, 0 failed/skipped | 66 | 7 | true |
 | CP-6 | S1 | CP-5 | c1677-phonehome-ops-regression | /*/*/PhoneHomeConnectionTests/Supported_operations_preserve_contracts | R-3 | method, 0 failed/skipped | 1 | 1 | true |
 | CP-7 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1677-s2r/ | c1677-runner-temp | /*/*/(C1677TempSweepTests*)\|(C1677TempFamilyRegistryTests*)/* | V-40..V-48c | 2 classes, 0 failed/skipped | 27 | 4 | true |
 | CP-8 | S2 | CP-7 | c1677-runner-temp-native | /*/*/C1677TempSweepNativeTests/* | V-49, V-49b, V-50 | class, 0 failed/skipped | 3 | 1 | true |
-| CP-13 | S2 | CP-7 | c1677-native-policy-regression-s2 | /*/Antiphon.TestSupport/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
+| CP-13 | S2 | CP-7 | c1677-native-policy-regression-s2 | /*/Antiphon.TestSupport.Invariants/NativeLinuxPolicyWitnessTests/* | R-2 | existing class, 0 failed/skipped | 3 | 1 | true |
 | CP-9 | S2 | tests/Antiphon.Tests -> bin-c1677-s2s/ | c1677-server-temp | /*/*/C1677TempSweepServerTests/* | V-51..V-51c | class, 0 failed/skipped | 3 | 4 | true |
 | CP-10 | S3 | tests/Antiphon.Tests -> bin-c1677-s3s/ | c1677-server-disk-alarm | /*/*/(C1677DiskAlarmTests*)\|(AttentionKindWireTests*)/* | V-60..V-67, R-4 | 2 classes, 0 failed/skipped | 15 | 5 | true |
 | CP-11 | S3 | n/a | c1677-client-attention | `pwsh -NoProfile -File scripts/test-client.ps1 attentionVisuals.test.ts` | R-5 | file, 0 failed | n/a | 3 | true |

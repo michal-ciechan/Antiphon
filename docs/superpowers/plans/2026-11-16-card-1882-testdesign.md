@@ -393,7 +393,7 @@ Those allowances are not expected durations.
 | CP-21 | S1 | CP-1 | build-targets | `/*/*/ReleaseImpactEnvelopeTests/AlgorithmSourceDriftIsRefused_16_BuildTargets` | V-20, R-1, R-2 | AlgorithmSourceDriftIsRefused_16_BuildTargets; B/W, zero failed/skipped | 2 | 1 | true |
 | CP-22 | S1 | CP-1 | repeat-targets | `/*/*/ReleaseImpactEnvelopeTests/AlgorithmSourceDriftIsRefused_17_CheckpointRepeatTargets` | V-21, R-1, R-2 | AlgorithmSourceDriftIsRefused_17_CheckpointRepeatTargets; B/W, zero failed/skipped | 2 | 1 | true |
 | CP-23 | S1 | CP-1 | evaluator-core-project | `/*/*/ReleaseImpactEnvelopeTests/AlgorithmSourceDriftIsRefused_18_EvaluatorCoreProject` | V-22, R-1, R-2 | AlgorithmSourceDriftIsRefused_18_EvaluatorCoreProject; B/W, zero failed/skipped | 2 | 1 | true |
-| CP-24 | S1b | CP-16 | index-fresh | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | V-23, R-5 | committed_index_matches_the_builder; zero failed/skipped | 1 | 3 | true |
+| CP-24 | S1b | CP-16 | index-fresh | `/*/*/DerivedImpactIndexInvariantTests/committed_index_matches_the_builder` | V-23, R-5 | committed_index_matches_the_builder; zero failed/skipped | 1 | 3 | true |
 
 Union: all 43 envelope results, one admission case, nine inherited guard classes
 with floor 78, limiter floor 57, and one index result: total minimum 180

@@ -104,7 +104,6 @@ public sealed class Server2PostgresDeployTests
         Should.Throw<NightlyUsageException>(() => Server2PostgresDeployOptions.Parse(["--env-file"], "")).Message.ShouldBe("missing value for --env-file");
         Server2PostgresDeployOptions.Usage.ShouldBe("deploy-server2-postgres [--what-if | --execute] [--restore-drill] [--project antiphon-server2-postgres]"
             + " [--env-file <file>] [--compose-file <file>] [--repo-root <dir>]");
-        File.Exists(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "deploy-server2-postgres.ps1")).ShouldBeFalse();
     }
 
     // ---- the plan (the default and --what-if) ----

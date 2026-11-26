@@ -325,9 +325,9 @@ Filters: `--treenode-filter "/*/*/CheckpointManifestDocumentationTests/<method>"
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min |
 |---|---|---|---|---|---|---|---|
-| CP-1 | S3-S5 | `tests/Antiphon.Tests -> bin-c585/` | bundle-contracts | `/*/Antiphon.Tests.Application/(InstructionBundleTests*)\|(VerificationRoundInstructionTests*)\|(ScopedVerificationInstructionTests*)/*` | R-1, R-2, R-5 | all listed, 0 failed | 7 |
+| CP-1 | S3-S5 | `tests/Antiphon.Tests -> bin-c585/` | bundle-contracts | `/*/*/(InstructionBundleTests*)\|(VerificationRoundInstructionTests*)\|(ScopedVerificationInstructionTests*)/*` | R-1, R-2, R-5 | all listed, 0 failed | 7 |
 | CP-2 | S6 | `tests/Antiphon.Tests -> bin-c585/` | checkpoint-script | `/*/Antiphon.Tests.Scripts/(RunCheckpointScriptTests*)\|(NightlyVerificationContractTests*)/(C585_*)\|(C544_DailyValidity*)` | V-5..V-14, R-4 | all listed, 0 failed | 5 |
-| CP-3 | S7 | `tests/Antiphon.Tests -> bin-c585/` | doc-pins | `/*/Antiphon.Tests.Application/(CheckpointManifestDocumentationTests*)\|(InstructionBundleTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(CommitOnSettleDocumentationTests*)/*` | V-1..V-4, R-1, R-3 | all listed, 0 failed | 3 |
+| CP-3 | S7 | `tests/Antiphon.Tests -> bin-c585/` | doc-pins | `/*/*/(CheckpointManifestDocumentationTests*)\|(InstructionBundleTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(CommitOnSettleDocumentationTests*)/*` | V-1..V-4, R-1, R-3 | all listed, 0 failed | 3 |
 | CP-4 | S7 | CP-3 | unit-lane | `/*/*/*/*[Category=Unit]` (run through `scripts/run-checkpoint.ps1 -Name CP-4 -NoBuild -MinExecuted 1000`) | Final whole Unit lane | >= 1000 executed, 0 failed | 4 |
 
 If CP-2's method-segment OR does not select on the pinned TUnit 1.44 (CARD-0403 notes it works for `Class/(A*)|(B*)` but the class-and-method OR combination above is unverified), split it into two rows sharing CP-2's build: `RunCheckpointScriptTests/*` and `NightlyVerificationContractTests/C544_DailyValidity`. Delete every `bin-c585` directory before settling.

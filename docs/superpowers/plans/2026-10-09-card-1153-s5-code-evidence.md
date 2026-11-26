@@ -132,11 +132,11 @@ platform skip). Run them as a separate Windows-pinned task with
 | CP-32 | all | `CP-26` | portable-docs | `/*/*/SessionRunnerAbsenceEvidenceDocumentationTests/C1153_Owner_sentences_match_the_protocol*` | V-21 | 1 executed, 0 failed/skipped | 1 | 1 | true | n/a |
 | CP-33 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1153-final-runner/` | portable-launch-generation | `/*/*/PhoneHomeCommandDispatcherTests/Duplicate_launch*` | R-4 | all 3 duplicate-launch methods, 0 failed/skipped | 3 | 5 | true | n/a |
 | CP-34 | all | `CP-33` | portable-release-generation | `/*/*/PhoneHomeCommandDispatcherTests/(Pre_ack_resend*)\|(Launch_of_an_exited_session_under_a_new_generation_still_relaunches*)` | R-4 | all 3 methods, 0 failed/skipped | 3 | 1 | true | n/a |
-| CP-45 | all | `CP-26` | portable-guard-classification | `/*/Antiphon.TestSupport/TestClassificationGuardTests/*` | registry guard | all, 0 failed/skipped | 1 | 1 | true | n/a |
+| CP-45 | all | `CP-26` | portable-guard-classification | `/*/Antiphon.TestSupport.Invariants/TestClassificationGuardTests/*` | registry guard | all, 0 failed/skipped | 1 | 1 | true | n/a |
 | CP-46 | all | `CP-26` | portable-guard-slow | `/*/Antiphon.Tests.TestHelpers/SlowTestTripwireTests/*` | registry guard | all, 0 failed/skipped | 2 | 1 | true | n/a |
-| CP-47 | all | `CP-26` | portable-doc-pins | `/*/Antiphon.Tests.Application/(BootStallDocumentationTests*)\|(RunnerBranchContractDocumentationTests*)\|(RepairSourceDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(DelegationCapabilityContractTests*)\|(CommitOnSettleDocumentationTests*)\|(PipelineDefinitionDocumentationTests*)/*` | doc pins | 18 executed, 0 failed/skipped | 18 | 2 | true | n/a |
-| CP-50 | all | `CP-26` | portable-doc-pins-infra | `/*/Antiphon.Tests.Infrastructure/(DockerStackDocumentationTests*)\|(RunnerPushCredentialDocsTests*)/*` | doc pins | 15 executed, 0 failed/skipped | 15 | 1 | true | n/a |
-| CP-48 | all | `CP-33` | portable-guard-classification-runner | `/*/Antiphon.TestSupport/TestClassificationGuardTests/*` | registry guard | all, 0 failed/skipped | 1 | 1 | true | n/a |
+| CP-47 | all | `CP-26` | portable-doc-pins | `/*/*/(BootStallDocumentationTests*)\|(RunnerBranchContractDocumentationTests*)\|(RepairSourceDocumentationTests*)\|(BlockedTaskParkProjectionTests*)\|(DelegationCapabilityContractTests*)\|(CommitOnSettleDocumentationTests*)\|(PipelineDefinitionDocumentationTests*)/*` | doc pins | 18 executed, 0 failed/skipped | 18 | 2 | true | n/a |
+| CP-50 | all | `CP-26` | portable-doc-pins-infra | `/*/*/(DockerStackDocumentationTests*)\|(RunnerPushCredentialDocsTests*)/*` | doc pins | 15 executed, 0 failed/skipped | 15 | 1 | true | n/a |
+| CP-48 | all | `CP-33` | portable-guard-classification-runner | `/*/Antiphon.TestSupport.Invariants/TestClassificationGuardTests/*` | registry guard | all, 0 failed/skipped | 1 | 1 | true | n/a |
 | CP-49 | all | `CP-33` | portable-doc-pins-runner | `/*/*/PushProbeOutcomeTests/*` | doc pins | all, 0 failed/skipped | 5 | 1 | true | n/a |
 
 ## Pending

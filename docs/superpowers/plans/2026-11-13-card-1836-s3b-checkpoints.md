@@ -24,7 +24,7 @@ Index regeneration changed stale derived bytes in its own commit 0f30b7596c46c00
 | CP-90 | S3b | `CP-5` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, spawn census | all listed, 0 failed/skipped | 79 | 4 |
 | CP-91 | S3b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s3b-r3-runner-a/` | runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
 | CP-92 | S3b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s3b-r3-pty-a/` | pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 3 |
-| CP-93 | S3b | `CP-5` | index-consistency | `/*/*/DerivedImpactIndexTests/*` | derived index consistency | all methods, 0 failed/skipped | 1 | 2 |
+| CP-93 | S3b | `CP-5` | index-consistency | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | derived index consistency | all methods, 0 failed/skipped | 1 | 2 |
 | CP-94 | S3b | `CP-5` | impact-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | derived index impact | all methods, 0 failed/skipped | 1 | 2 |
 | CP-95 | S3b | `CP-5` | s2-smoke | `/*/*/RcBoundaryChunkIdTests/*` | CARD-1871 S2 smoke | all 11 methods, 0 failed/skipped | 11 | 2 |
 

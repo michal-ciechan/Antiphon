@@ -38,7 +38,7 @@ The unbound candidate is `docs/superpowers/mutations/2026-10-20-card-1380-s2-can
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-4P | S2Repick | `tests/Antiphon.Tests -> bin-c1380-2repick/` | any-noncode-repick | `/*/*/LandNonCodeSkipTests*/*` | V-2, S2 repair | all 42 cases, 0 failed/skipped | 42 | 8 |
+| CP-4P | S2Repick | `tests/Antiphon.Tests -> bin-c1380-2repick/` | any-noncode-repick | `/*/*/(LandNonCodeSkipTests*)|(LandNonCodeSkipInvariantTests*)/*` | V-2, S2 repair | all 42 cases, 0 failed/skipped | 42 | 8 |
 
 Use committed HEAD as `--expected-source-sha`, wait to terminal completion, and
 inspect fresh TRX for all 13 methods and 42 data cases. On a receipt refusal,

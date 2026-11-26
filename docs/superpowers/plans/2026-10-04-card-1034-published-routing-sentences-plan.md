@@ -193,9 +193,9 @@ method-scoped baseline/red/green cycles (nine phase runs), excluding slot waits.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1034-routing/` | unit-published-routing | `/*/Antiphon.Tests.Application/PublishedRoutingDocumentationTests/*` | V-1, V-2, V-3 | all 3 named methods with all 3 document arguments each; exactly 9 executed, 0 failed/skipped | 9 | 5 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1034-routing/` | unit-published-routing | `/*/Antiphon.Tests.Invariants/PublishedRoutingDocumentationTests/*` | V-1, V-2, V-3 | all 3 named methods with all 3 document arguments each; exactly 9 executed, 0 failed/skipped | 9 | 5 | true |
 | CP-2 | S1 | CP-1 | unit-existing-routing | `/*/Antiphon.Tests.Application/InstructionBundleTests/C1011_*` | R-1 | exactly the 5 named C1011 methods, 0 failed/skipped | 5 | 1 | true |
-| CP-3 | S1 | CP-1 | unit-existing-image-pin | `/*/Antiphon.Tests.Infrastructure/GrokRunnerImageContractTests/Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers` | R-2 | exactly the named method, 0 failed/skipped | 1 | 1 | true |
+| CP-3 | S1 | CP-1 | unit-existing-image-pin | `/*/Antiphon.Tests.Invariants/GrokRunnerImageContractTests/Qualified_pin_agrees_with_install_assertion_docs_fixtures_and_verifiers` | R-2 | exactly the named method, 0 failed/skipped | 1 | 1 | true |
 
 ## Handoff and completion
 

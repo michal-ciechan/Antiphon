@@ -38,7 +38,6 @@ public sealed class PostLandMutationAdmissionTests
         await using var db = new AppDbContext(options);
         var migrations = db.Database.GetMigrations().ToArray();
         var custody = Array.FindIndex(migrations, m => m.EndsWith("_VerificationExecutionCustody", StringComparison.Ordinal));
-        custody.ShouldBeGreaterThan(0);
         await db.GetService<IMigrator>().MigrateAsync(migrations[custody - 1]);
         var historical = Guid.NewGuid();
         await db.Database.ExecuteSqlInterpolatedAsync($"""

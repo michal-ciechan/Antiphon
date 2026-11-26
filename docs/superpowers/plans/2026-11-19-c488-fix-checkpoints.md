@@ -45,4 +45,4 @@ Run through the checkpoint tool with `--expected-source-sha` set to committed HE
 | CP-7 | all | CP-1 | claimed-attempt | `/*/*/SessionMessageQueueInterruptedAttemptTests/(C1892_Composerless_*)\|(C1892_Notice_*)` | V-3 | all listed, 0 failed/skipped | 9 | 6 | true |
 | CP-8 | all | CP-1 | guard-union | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-1 | 81 pass, 0 failed/skipped | 81 | 8 | true |
 | CP-9 | all | CP-1 | windows-admission | `/*/*/WindowsUnitPlatformAdmissionTests/*` | R-1 | 6 pass; 1 rostered Linux skip | 6 | 6 | true |
-| CP-10 | all | CP-1 | derived-index | `/*/*/DerivedImpactIndexTests/*` | R-2 | all listed, 0 failed/skipped | 27 | 15 | true |
+| CP-10 | all | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed/skipped | 27 | 15 | true |

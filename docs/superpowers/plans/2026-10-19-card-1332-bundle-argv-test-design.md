@@ -325,7 +325,7 @@ Omit Runner/Platform pins for this portable lane; re-read placement when commiss
 | CP-8 | S2 | CP-2 | portable-unit-platform | `/*/*/TaskPlatformGuidanceTests/(Stage_guidance_omits_platform_unless_needed_and_preserves_runner_routes*)\|(Orchestration_guidance_keeps_inheritance_and_task_scoped_unpinning*)` | V-2 | both methods, 0 failed/skipped | 2 | 1 |
 | CP-9 | S2 | CP-2 | portable-unit-placement | `/*/*/RunnerDefaultGuidanceTests/(Bundles_read_runtime_defaults_without_pinning_location*)\|(Platform_pins_are_explicit_and_bundles_defer_to_orchestrator_contract*)` | V-2 | both methods, 0 failed/skipped | 2 | 1 |
 | CP-10 | S2 | CP-2 | portable-unit-pin | `/*/*/CheckpointRepeatDocumentationTests/repeat_budget_reaches_code_briefs_without_bundle_growth` | R-2 | 1 executed, 0 failed/skipped | 1 | 1 |
-| CP-11 | S2 | CP-2 | portable-unit-policy | `/*/Antiphon.Tests.Application/(KeepSixDocumentationTests*)\|(PostLandRetrospectiveContractTests*)/*` | R-1 | all 7 methods in the two named classes, 0 failed/skipped | 7 | 1 |
+| CP-11 | S2 | CP-2 | portable-unit-policy | `/*/*/(KeepSixDocumentationTests*)\|(PostLandRetrospectiveContractTests*)/*` | R-1 | all 7 methods in the two named classes, 0 failed/skipped | 7 | 1 |
 | CP-12 | S2 | CP-2 | portable-unit-fragments | `/*/*/InstructionFragmentTests/C1213_ExpandedBudgetIsEnforced` | R-3 | 1 executed, 0 failed/skipped | 1 | 1 |
 | CP-13 | S2 | CP-2 | portable-unit-overflow | `/*/*/InstructionBundleTests/(an_oversized_composition_throws_and_names_what_to_shrink*)\|(the_other_arguments_count_towards_the_budget_not_just_the_append*)` | R-3 | both methods, 0 failed/skipped | 2 | 1 |
 

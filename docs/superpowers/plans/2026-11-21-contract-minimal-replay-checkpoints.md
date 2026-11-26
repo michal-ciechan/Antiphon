@@ -22,5 +22,5 @@ The prior replay covered the guard and consumer classes on the reviewed source. 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | all | tests/Antiphon.Tests -> bin-6bf9a4f0/ | project-contract | `/*/Antiphon.Tests.Infrastructure/CheckpointToolProjectContractTests/*` | V-1 | 0 failed, 0 skipped | 7 | 7 | true |
-| CP-2 | all | CP-1 | derived-index | `/*/Antiphon.Tests.Scripts/DerivedImpactIndexTests/*` | V-2 | 0 failed, 0 skipped; committed_index_matches_the_builder | 27 | 3 | true |
+| CP-1 | all | tests/Antiphon.Tests -> bin-6bf9a4f0/ | project-contract | `/*/Antiphon.Tests.Invariants/CheckpointToolProjectContractTests/*` | V-1 | 0 failed, 0 skipped | 7 | 7 | true |
+| CP-2 | all | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-2 | 0 failed, 0 skipped; committed_index_matches_the_builder | 27 | 3 | true |

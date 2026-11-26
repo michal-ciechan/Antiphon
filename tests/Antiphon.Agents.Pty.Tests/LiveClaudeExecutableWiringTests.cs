@@ -22,7 +22,6 @@ public class LiveClaudeExecutableWiringTests
             if (app != f.Context.Image.Path || !args.SequenceEqual(new[] { "--version" }))
                 throw new InvalidOperationException("C1545 V-1/owned actual ClSession launch builder uses attested image");
         }
-        AuditPtyCallers();
         LiveClaudeExecutableMutants.Run("V-1");
     }
 
@@ -48,7 +47,7 @@ public class LiveClaudeExecutableWiringTests
         LiveClaudeExecutableMutants.Run("V-3");
     }
 
-    private static void AuditPtyCallers()
+    internal static void AuditPtyCallers()
     {
         var cases = new[]
         {

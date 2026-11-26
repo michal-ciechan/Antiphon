@@ -22,7 +22,6 @@ public sealed class PhoneHomeCompletedCardTransportTests
     // PC-588: omit server capability guard/fallback to legacy -> unsupported or retained tree oracle fails.
     [Test] public async Task C1032_TransportClientUnsupported()
     {
-        RequireClient();
         await using var w = await World.Start(false);
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var response = await Call(w.Client, "RemoveCompletedCardWorkspaceAsync", w.Command, bound.Token);
@@ -65,7 +64,6 @@ public sealed class PhoneHomeCompletedCardTransportTests
     [NativeLinuxOnly("Real phone-home runner join qualified on Linux")]
     [Test] public async Task C1032_TransportQueueRecipientReplay()
     {
-        RequireClient();
         if (!OperatingSystem.IsLinux()) throw new SkipTestException("Real phone-home runner join qualified on Linux");
         await using var w = await World.Start(true);
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(45));
@@ -111,12 +109,6 @@ public sealed class PhoneHomeCompletedCardTransportTests
             if (first is not null) { try { await first; } catch (OperationCanceledException) { } }
             if (queued is not null) { try { await queued; } catch (OperationCanceledException) { } }
         }
-    }
-
-    private static void RequireClient()
-    {
-        typeof(PhoneHomeRunnerClient).GetMethod("RemoveCompletedCardWorkspaceAsync").ShouldNotBeNull("S6 server typed removal transport seam");
-        typeof(PhoneHomeRunnerClient).GetMethod("InspectCompletedCardWorkspaceAsync").ShouldNotBeNull("S6 server typed inspection transport seam");
     }
     private static async Task<JsonElement> Call(object client, string method, object command, CancellationToken ct)
     {

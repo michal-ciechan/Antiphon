@@ -228,7 +228,7 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.TestSupport.TestClassificationGuardTests": {
+    "Antiphon.TestSupport.Invariants.TestClassificationGuardTests": {
       "seconds": 10,
       "basis": "conservative-bound",
       "hostId": null,
@@ -4547,14 +4547,14 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Infrastructure.AppDbContextModelTests": {
+    "Antiphon.Tests.Invariants.AppDbContextModelTests": {
       "seconds": 16,
       "basis": "measured",
       "hostId": null,
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Infrastructure.CodexRootExecContractTests": {
+    "Antiphon.Tests.Invariants.CodexRootExecContractTests": {
       "seconds": 20,
       "basis": "measured",
       "hostId": null,
@@ -4582,7 +4582,7 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Infrastructure.EvidencePolicyWorkflowTests": {
+    "Antiphon.Tests.Invariants.EvidencePolicyWorkflowTests": {
       "seconds": 7,
       "basis": "measured",
       "hostId": null,
@@ -4827,7 +4827,7 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.Scripts.C1514LandingSplitBudgetTests": {
+    "Antiphon.Tests.Invariants.C1514LandingSplitBudgetTests": {
       "seconds": 33,
       "basis": "measured",
       "hostId": null,
@@ -5317,7 +5317,7 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.TestHelpers.DelegationHarnessCensusTests": {
+    "Antiphon.Tests.Invariants.DelegationHarnessCensusTests": {
       "seconds": 8,
       "basis": "measured",
       "hostId": null,
@@ -5380,7 +5380,7 @@
       "os": null,
       "measuredRunId": null
     },
-    "Antiphon.Tests.TestHelpers.TestLaneCategoryGuardTests": {
+    "Antiphon.Tests.Invariants.TestLaneCategoryGuardTests": {
       "seconds": 1,
       "basis": "measured",
       "hostId": null,

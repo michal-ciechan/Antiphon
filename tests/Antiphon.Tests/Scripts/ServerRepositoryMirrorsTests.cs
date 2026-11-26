@@ -48,7 +48,6 @@ public sealed class ServerRepositoryMirrorsTests
         Should.Throw<NightlyUsageException>(() => ServerRepositoryMirrorsOptions.Parse(["--table-file"], null)).Message.ShouldBe("missing value for --table-file");
         ServerRepositoryMirrorsOptions.Usage.ShouldBe("server2-repository-mirrors --table-file <file> [--what-if | --execute]"
             + " [--token-file /run/antiphon/github-token/token] [--policy-file /run/antiphon/push-allow-list] [--repos-root /work/repos]");
-        File.Exists(Path.Combine(DockerStackDocuments.RepoRoot, "scripts", "server2-repository-mirrors.ps1")).ShouldBeFalse();
     }
 
     // ---- the plan (the default) ----

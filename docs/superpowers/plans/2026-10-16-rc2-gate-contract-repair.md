@@ -89,10 +89,10 @@ the built DLL at the actual OutputPath root launched this run.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | tests/Antiphon.Tests -> bin-rc2-red-8a76c085/ | red-registry | /*/Antiphon.TestSupport/TestClassificationGuardTests/Registry_matches_compiled_metadata | V-1 | all listed, 0 failed | 1 | 4 |
+| CP-1 | S1 | tests/Antiphon.Tests -> bin-rc2-red-8a76c085/ | red-registry | /*/Antiphon.TestSupport.Invariants/TestClassificationGuardTests/Registry_matches_compiled_metadata | V-1 | all listed, 0 failed | 1 | 4 |
 | CP-2 | S1 | CP-1 | red-classification | /*/Antiphon.Tests.TestHelpers/TestClassificationPolicyTests/C487_G059 | V-2 | all listed, 0 failed | 1 | 1 |
 | CP-3 | S1 | CP-1 | red-queue-policy | /*/Antiphon.Tests.Application/AbsentLaunchPolicyTests/* | V-3, R-1 | all listed, 0 failed | 87 | 1 |
-| CP-4 | S2 | tests/Antiphon.Tests -> bin-rc2-green-8a76c085/ | green-registry | /*/Antiphon.TestSupport/TestClassificationGuardTests/Registry_matches_compiled_metadata | V-1 | all listed, 0 failed | 1 | 4 |
+| CP-4 | S2 | tests/Antiphon.Tests -> bin-rc2-green-8a76c085/ | green-registry | /*/Antiphon.TestSupport.Invariants/TestClassificationGuardTests/Registry_matches_compiled_metadata | V-1 | all listed, 0 failed | 1 | 4 |
 | CP-5 | S2 | CP-4 | green-classification | /*/Antiphon.Tests.TestHelpers/TestClassificationPolicyTests/C487_G059 | V-2 | all listed, 0 failed | 1 | 1 |
 | CP-6 | S2 | CP-4 | green-queue-policy | /*/Antiphon.Tests.Application/AbsentLaunchPolicyTests/* | V-3, R-1 | all listed, 0 failed | 87 | 1 |
 

@@ -251,7 +251,7 @@ Rows:
 | CP-21 | S1 | as CP-1 | build-targets | `/*/*/ReleaseImpactEnvelopeTests/AlgorithmSourceDriftIsRefused_16_BuildTargets` | V-20, R-1, R-2 | 2 | S1R5, S1R6 |
 | CP-22 | S1 | as CP-1 | repeat-targets | `/*/*/ReleaseImpactEnvelopeTests/AlgorithmSourceDriftIsRefused_17_CheckpointRepeatTargets` | V-21, R-1, R-2 | 2 | S1R5, S1R6 |
 | CP-23 | S1 | as CP-1 | evaluator-core-project | `/*/*/ReleaseImpactEnvelopeTests/AlgorithmSourceDriftIsRefused_18_EvaluatorCoreProject` | V-22, R-1, R-2 | 2 | S1R5, S1R6 |
-| CP-24 | S1 (guard run, see budget) | guard build | index-fresh | `/*/*/DerivedImpactIndexTests/committed_index_matches_the_builder` | V-23 | 1 | S5c d2fff5d4 landed or index released |
+| CP-24 | S1 (guard run, see budget) | guard build | index-fresh | `/*/*/DerivedImpactIndexInvariantTests/committed_index_matches_the_builder` | V-23 | 1 | S5c d2fff5d4 landed or index released |
 
 Other row changes:
 

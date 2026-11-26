@@ -122,12 +122,6 @@ public sealed class AwayDigestSendTests
         request.Since!.Value.Kind.ShouldBe(DateTimeKind.Utc);
         var printed = JsonSerializer.Deserialize<AwayDigestSendResult[]>(run.Out, web)!;
         printed.ShouldBe([new AwayDigestSendResult(channel, false, "send_failed"), new AwayDigestSendResult(null, false, "no_digest_channel")]);
-
-        // The route the command posts to is the server's.
-        File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "server/Api/Endpoints/DigestEndpoints.cs"))
-            .ShouldContain("app.MapPost(\"/api/digest/send\"", Case.Sensitive);
-        File.ReadAllText(Path.Combine(NightlyPlanCases.Repo, "scripts/lib/Antiphon.Nightly/AwayDigestSend.cs"))
-            .ShouldContain("\"/api/digest/send\"", Case.Sensitive);
     }
 
     [Test]

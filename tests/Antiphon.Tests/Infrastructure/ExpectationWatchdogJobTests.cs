@@ -38,9 +38,6 @@ public sealed class ExpectationWatchdogJobTests
         job.Id.ShouldBe(ExpectationWatchdogJob.RecurringJobId);
         job.Cron.ShouldBe("* * * * *");
         job.TimeZoneId.ShouldBe("UTC");
-        typeof(ExpectationWatchdogJob).GetMethod(nameof(ExpectationWatchdogJob.ExecuteAsync))!
-            .GetCustomAttributes(typeof(QueueAttribute), true).OfType<QueueAttribute>()
-            .ShouldHaveSingleItem().Queue.ShouldBe("expectations");
         await Task.CompletedTask;
     }
 

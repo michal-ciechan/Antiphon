@@ -65,6 +65,10 @@ public sealed class LiveLaneFingerprintTests
         w.Repo.Git("update-index", "--chmod=+x", "src/Agents.Pty/A.cs");
         var executable = w.Repo.CommitIndex();
         w.Cases.Check("mode", Differs(w.Fp(executable), before, "repositoryClosure"));
+    }, "deterministic", "sha-free", "path-free", "absent-vs-empty", "domain", "missing-root", "shadow-only", "mode");
+
+    internal static void CheckTrackedInputs() => Run(nameof(StableCanonicalInputs), w =>
+    {
         var repository = LiveLaneTestSources.RepoRoot;
         try
         {
@@ -106,7 +110,7 @@ public sealed class LiveLaneFingerprintTests
             w.Cases.Check("real-head", false, e.Message);
             w.Cases.Check("real-declaration", false, e.Message);
         }
-    }, "deterministic", "sha-free", "path-free", "absent-vs-empty", "domain", "missing-root", "shadow-only", "mode", "real-head", "real-declaration");
+    }, "real-head", "real-declaration");
 
     /// <summary>
     /// Unit 60 (the owner: "the source files for this digest should all be in an isolated project dedicated to running real

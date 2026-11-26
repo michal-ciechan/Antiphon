@@ -170,7 +170,7 @@ rc question: master only.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0856-s1/` (rc-based branch) | schema-cache-rc | `/*/*/(TestDbFixtureSchemaCacheLifecycleTests*)\|(TestSchemaCacheTests*)\|(TestSchemaSnapshotTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestDbFixtureLifecycleTests*)/*` | V-1 | 0 failed, 0 skipped | 41 | 12 | |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c0856-s1/` (rc-based branch) | schema-cache-rc | `/*/*/(TestDbFixtureSchemaCacheLifecycleTests*)\|(TestSchemaCacheTests*)\|(TestSchemaSnapshotTests*)\|(TestDbFixtureLazyInitializationTests*)\|(TestDbFixtureLifecycleTests*)\|(TestDbFixtureLazyInitializationInvariantTests*)/*` | V-1 | 0 failed, 0 skipped | 41 | 12 | |
 | CP-2 | S1 | CP-1 (-NoBuild), **desktop** | schema-cache-hit | `/*/*/AgentTaskCheckInterpreterTests/*` run twice (`--repeat 2`) | V-2 | 0 failed; second ordinal stderr has `C1420 schema-cache hit`; first-test delta at most 12 s | 40 | 6 | ANTIPHON_TEST_SCHEMA_CACHE=%TEMP%\antiphon-c0856-cache |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-c0856-s2/` (rc-based branch) | lanes-rc | `/*/*/ProcessSpawnLimitTests/*` | V-3 | 0 failed, 0 skipped | 14 | 8 | |
 | CP-4 | S3 | n/a | measured-groups | `pwsh -NoProfile -File scripts/test-nightly-tests.ps1 -Case C1410_MeasuredCostGroups` | V-4 | exit 0 | n/a | 5 | TEMP=/tmp |

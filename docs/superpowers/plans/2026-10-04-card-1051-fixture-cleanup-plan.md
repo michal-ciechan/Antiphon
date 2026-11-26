@@ -194,7 +194,7 @@ the importer has no platform column, so the Windows dispatch/preflight is requir
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1051/` | windows-fixture-cleanup | `/*/Antiphon.Tests.Scripts/EvidenceGitFixtureTests/C1051_DisposeAsync_RemovesReadOnlyGitObject` | V-1 | exactly 1 executed/passed, 0 failed/skipped | 1 | 8 | true |
-| CP-2 | S1 | CP-1 | windows-workflow-unit | `/*/Antiphon.Tests.Infrastructure/EvidencePolicyWorkflowTests/*` | R-1 | exactly 4 executed/passed, 0 failed/skipped | 4 | 1 | true |
+| CP-2 | S1 | CP-1 | windows-workflow-unit | `/*/Antiphon.Tests.Invariants/EvidencePolicyWorkflowTests/*` | R-1 | exactly 4 executed/passed, 0 failed/skipped | 4 | 1 | true |
 | CP-3 | S1 | CP-1 | windows-existing-helper | `/*/Antiphon.Tests.Application/WorktreeRetirementRaceTests/C694_DeleteDirectory_RemovesReadOnlyFile` | R-2 | exactly 1 executed/passed, 0 failed/skipped | 1 | 1 | true |
 | CP-4 | S1 | CP-1 | windows-anchored-consumer | `/*/Antiphon.Tests.Scripts/EvidenceSupplementalDeletionGuardTests/Verifies_later_cleanup_without_original_anchor_entries` | R-3 | exactly 1 executed/passed, 0 failed/skipped | 1 | 4 | true |
 
