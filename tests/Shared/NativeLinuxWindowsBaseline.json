@@ -1562,27 +1562,27 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
       "Signature": "Entrypoint_heal_chowns_the_tmp_directory_once()",
       "RowClass": "CodexRootExecContractTests",
       "RowMethods": [
         "Entrypoint_heal_chowns_the_tmp_directory_once",
         "Entrypoint_heal_never_names_a_path_outside_tmp"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.CodexRootExecContractTests|Antiphon.Tests.Invariants.CodexRootExecContractTests|Entrypoint_heal_chowns_the_tmp_directory_once()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Entrypoint_heal_chowns_the_tmp_directory_once()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
       "Signature": "Entrypoint_heal_never_names_a_path_outside_tmp()",
       "RowClass": "CodexRootExecContractTests",
       "RowMethods": [
         "Entrypoint_heal_chowns_the_tmp_directory_once",
         "Entrypoint_heal_never_names_a_path_outside_tmp"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.CodexRootExecContractTests|Antiphon.Tests.Invariants.CodexRootExecContractTests|Entrypoint_heal_never_names_a_path_outside_tmp()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Entrypoint_heal_never_names_a_path_outside_tmp()"
     },
     {
       "Suite": "antiphon",
@@ -1682,8 +1682,8 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "Version_row_accepts_only_exact_successful_pin_without_stderr(System.String,System.Int32,System.String,System.String)",
       "RowClass": "JqRunnerImageContractTests",
       "RowMethods": [
@@ -1693,12 +1693,12 @@
         "C1054_Jq_row_rejects_canonical_leaf_symlink",
         "C1054_Jq_row_records_found_and_resolved_paths"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Version_row_accepts_only_exact_successful_pin_without_stderr(System.String,System.Int32,System.String,System.String)"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Version_row_accepts_only_exact_successful_pin_without_stderr(System.String,System.Int32,System.String,System.String)"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_rejects_home_shadow()",
       "RowClass": "JqRunnerImageContractTests",
       "RowMethods": [
@@ -1708,12 +1708,12 @@
         "C1054_Jq_row_rejects_canonical_leaf_symlink",
         "C1054_Jq_row_records_found_and_resolved_paths"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_rejects_home_shadow()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_rejects_home_shadow()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_accepts_canonical_file_and_alias()",
       "RowClass": "JqRunnerImageContractTests",
       "RowMethods": [
@@ -1723,12 +1723,12 @@
         "C1054_Jq_row_rejects_canonical_leaf_symlink",
         "C1054_Jq_row_records_found_and_resolved_paths"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_accepts_canonical_file_and_alias()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_accepts_canonical_file_and_alias()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_rejects_canonical_leaf_symlink()",
       "RowClass": "JqRunnerImageContractTests",
       "RowMethods": [
@@ -1738,12 +1738,12 @@
         "C1054_Jq_row_rejects_canonical_leaf_symlink",
         "C1054_Jq_row_records_found_and_resolved_paths"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_rejects_canonical_leaf_symlink()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_rejects_canonical_leaf_symlink()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_records_found_and_resolved_paths()",
       "RowClass": "JqRunnerImageContractTests",
       "RowMethods": [
@@ -1753,7 +1753,7 @@
         "C1054_Jq_row_rejects_canonical_leaf_symlink",
         "C1054_Jq_row_records_found_and_resolved_paths"
       ],
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_records_found_and_resolved_paths()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_records_found_and_resolved_paths()"
     },
     {
       "Suite": "antiphon",
@@ -6129,27 +6129,27 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
       "Signature": "Entrypoint_heal_chowns_the_tmp_directory_once()",
       "Reason": "CARD-1210: Codex heal contracts require native Linux with unshare user\u002Bmount namespaces and a bind-mountable /state",
       "ReasonSha256": "52a9174b8ffe2ef38bc965a1b8de4ac7e8ac004119beee0f6f37aea9eed49f6f",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "Entrypoint_heal_chowns_the_tmp_directory_once \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.CodexRootExecContractTests|Antiphon.Tests.Invariants.CodexRootExecContractTests|Entrypoint_heal_chowns_the_tmp_directory_once()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Entrypoint_heal_chowns_the_tmp_directory_once()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.CodexRootExecContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.CodexRootExecContractTests",
       "Signature": "Entrypoint_heal_never_names_a_path_outside_tmp()",
       "Reason": "CARD-1210: Codex heal contracts require native Linux with unshare user\u002Bmount namespaces and a bind-mountable /state",
       "ReasonSha256": "52a9174b8ffe2ef38bc965a1b8de4ac7e8ac004119beee0f6f37aea9eed49f6f",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "Entrypoint_heal_never_names_a_path_outside_tmp \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.CodexRootExecContractTests|Antiphon.Tests.Invariants.CodexRootExecContractTests|Entrypoint_heal_never_names_a_path_outside_tmp()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Antiphon.Tests.Infrastructure.CodexRootExecContractTests|Entrypoint_heal_never_names_a_path_outside_tmp()"
     },
     {
       "Suite": "antiphon",
@@ -6225,63 +6225,63 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "Version_row_accepts_only_exact_successful_pin_without_stderr(System.String,System.Int32,System.String,System.String)",
       "Reason": "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.",
       "ReasonSha256": "abb7a4f8aabadd8d9cc12cb2a9b3e9a5709dd325ac41230ef235ff123aa8903b",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "Version_row_accepts_only_exact_successful_pin_without_stderr \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Version_row_accepts_only_exact_successful_pin_without_stderr(System.String,System.Int32,System.String,System.String)"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Version_row_accepts_only_exact_successful_pin_without_stderr(System.String,System.Int32,System.String,System.String)"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_rejects_home_shadow()",
       "Reason": "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.",
       "ReasonSha256": "abb7a4f8aabadd8d9cc12cb2a9b3e9a5709dd325ac41230ef235ff123aa8903b",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "C1054_Jq_row_rejects_home_shadow \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_rejects_home_shadow()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_rejects_home_shadow()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_accepts_canonical_file_and_alias()",
       "Reason": "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.",
       "ReasonSha256": "abb7a4f8aabadd8d9cc12cb2a9b3e9a5709dd325ac41230ef235ff123aa8903b",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "C1054_Jq_row_accepts_canonical_file_and_alias \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_accepts_canonical_file_and_alias()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_accepts_canonical_file_and_alias()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_rejects_canonical_leaf_symlink()",
       "Reason": "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.",
       "ReasonSha256": "abb7a4f8aabadd8d9cc12cb2a9b3e9a5709dd325ac41230ef235ff123aa8903b",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "C1054_Jq_row_rejects_canonical_leaf_symlink \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_rejects_canonical_leaf_symlink()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_rejects_canonical_leaf_symlink()"
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
-      "Declaring": "Antiphon.Tests.Invariants.JqRunnerImageContractTests",
+      "Concrete": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
+      "Declaring": "Antiphon.Tests.Infrastructure.JqRunnerImageContractTests",
       "Signature": "C1054_Jq_row_records_found_and_resolved_paths()",
       "Reason": "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.",
       "ReasonSha256": "abb7a4f8aabadd8d9cc12cb2a9b3e9a5709dd325ac41230ef235ff123aa8903b",
       "WindowsOutcomeAtGate": "NotExecuted",
       "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
       "Via": "C1054_Jq_row_records_found_and_resolved_paths \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Invariants.JqRunnerImageContractTests|Antiphon.Tests.Invariants.JqRunnerImageContractTests|C1054_Jq_row_records_found_and_resolved_paths()"
+      "Identity": "antiphon|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|Antiphon.Tests.Infrastructure.JqRunnerImageContractTests|C1054_Jq_row_records_found_and_resolved_paths()"
     },
     {
       "Suite": "antiphon",
