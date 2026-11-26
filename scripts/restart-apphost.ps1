@@ -7,7 +7,7 @@
 
     Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/cutover-postgres-server2.ps1
     starts this file by path and the desktop-win-phase1-secrets command (unit 51) tells the operator to run it. Delete it when
-    they no longer do (wave W8); the deploy-local command (unit 49) runs restart-apphost in its process. Agents run
+    they no longer do (unit 55: the owner keeps the one-off cutover as PowerShell); the deploy-local command (unit 49) runs restart-apphost in its process. Agents run
     `scripts/antiphon restart-apphost`; Windows runbooks `scripts\antiphon.cmd restart-apphost`.
 
     The parameters are the script's; only the ones given are passed (the command's defaults are the script's): -NoBuild,

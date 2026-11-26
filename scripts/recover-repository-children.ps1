@@ -6,7 +6,7 @@
 
     Unit 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept only because
     scripts/cutover-postgres-server2.ps1 starts this file by path (the repository preview before
-    StopOnly). Delete it when the cutover is ported (wave W8). Operators run
+    StopOnly), and the owner keeps that one-off as PowerShell (unit 55). Operators run
     `scripts/antiphon recover-repository-children` (Windows: scripts\antiphon.cmd ...) directly.
 
     The parameters are the script's: -Repository (preview), plus -Execute and

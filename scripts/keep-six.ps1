@@ -5,7 +5,7 @@
 
     Unit 23 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept only because
     scripts/cutover-postgres-server2.ps1 starts this file by path (-Hold and -ClearHold around the
-    cutover window). Delete it when the cutover is ported (wave W8). Agents and operators run
+    cutover window), and the owner keeps that one-off as PowerShell (unit 55). Agents and operators run
     `scripts/antiphon keep-six` (Windows: scripts\antiphon.cmd keep-six) directly.
 
     The parameters are the script's: no verb reads the status; -Hold -Agent -Reason -Until,

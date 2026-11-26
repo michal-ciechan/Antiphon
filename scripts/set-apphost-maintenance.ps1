@@ -7,7 +7,7 @@
     watchdog-state observer. It never starts or stops the AppHost.
 
     Unit 31 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: kept because scripts/cutover-postgres-server2.ps1
-    starts this file by path (-EnterIfAbsent, -Clear). Delete it when the cutover is ported (wave W8). Agents run
+    starts this file by path (-EnterIfAbsent, -Clear), and the owner keeps that one-off as PowerShell (unit 55). Agents run
     `scripts/antiphon set-apphost-maintenance`; Windows runbooks `scripts\antiphon.cmd set-apphost-maintenance`.
 
     The parameters are the script's: -Clear, -EnterIfAbsent (create-new; exit 2 when the marker already exists), -Root,

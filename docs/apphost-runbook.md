@@ -52,7 +52,12 @@ exits before `dev-aspire` and releases the restart lock, because no launch
 child is left behind. Exit 3 stays a refusal and kills nothing. `--stop-only
 --what-if` prints the stop and does not POST, take the restart lock, or launch.
 Postgres on 17280 and the session runner on 17204 stay up. The cutover script
-is the caller. Start that window with
+is the caller. The cutover is done (note of 2026-11-26): the CARD-1407 window ran on
+2026-11-18 and the desktop database was removed on 2026-11-24
+([teardown](investigations/2026-11-24-desktop-postgres-teardown.md)). Its scripts
+(`scripts/cutover-postgres-server2.ps1`, `scripts/test-cutover-postgres-server2.ps1` and
+`scripts/postgres-cutover-monitor.ps1`) are kept as PowerShell for reference only; do not run them.
+The rest of this paragraph records how the window worked. Start that window with
 `pwsh -File scripts/cutover-postgres-server2.ps1`. Default `-WhatIf`
 changes nothing and ends with one `CONFIRM TOKEN <8 hex>` line.
 `-Execute -ConfirmWindow -ConfirmToken <that token>` is the real window. If

@@ -1588,6 +1588,12 @@ password and the age key are not printed. The new cluster password is not the co
 in `docker-compose.dev.yml:31`. On 2026-10-21, server2 host port 5432 was refused on Tailscale
 `100.93.77.126` and LAN `192.168.4.34`. That observation was not repeated.
 
+**The cutover is done (note of 2026-11-26).** The CARD-1407 window ran on 2026-11-18, and the desktop `antiphon-postgres`
+container and its `antiphon_pgdata` volume were removed on 2026-11-24
+([teardown](investigations/2026-11-24-desktop-postgres-teardown.md)). `scripts/cutover-postgres-server2.ps1`, its driver
+`scripts/test-cutover-postgres-server2.ps1` and the monitor `scripts/postgres-cutover-monitor.ps1` are kept as PowerShell
+for reference only (owner, 2026-11-26). Do not run them: the desktop database they move and roll back to no longer exists.
+
 ### Unverified
 
 - No fresh image smoke and no live `/capabilities` read in the decision. SourceLanding's null advertisement is the 2026-10-13 observation, not repeated.
