@@ -59,7 +59,9 @@ public static class NativeLinuxPolicyWitness
     // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
     // Full group 141 adds the method-scoped CallerWakeTests exclusion for both native canary arguments.
     // CARD-2077 adds one Linux exclusion for the Windows Git UNC test. The native Windows test remains required.
-    public const string LegacyExclusionDigest = "0c988c578935eacffd7b7bf352d87c3db9af0ed34a3cbb109da772d636041c90";
+    // Unit 58 of the 2026-11-22 PowerShell-to-C# plan (W2 slice S22): the CARD-1545 LiveLaneIsolationTests record's reason
+    // names the live-lane-isolation-rows command (test-live-lane-isolation.ps1 was ported); the record is otherwise unchanged.
+    public const string LegacyExclusionDigest = "a53ee79416a846d6fc0694f0b185dcbbcd22c94954d37561a645c6f1b6fcf8d5";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";
