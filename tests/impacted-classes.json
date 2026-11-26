@@ -629,7 +629,7 @@
     {
       "id": "nightly-live-lane",
       "globs": [
-        "scripts/lib/nightly-*.ps1",
+        "scripts/lib/nightly-*",
         "scripts/lib/Antiphon.Nightly/**",
         "scripts/lib/Antiphon.LiveLane/**",
         "tests/test-execution-policy.json",
