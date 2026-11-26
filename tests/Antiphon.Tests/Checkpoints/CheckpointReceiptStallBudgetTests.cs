@@ -51,19 +51,15 @@ public sealed class CheckpointReceiptStallBudgetTests : CheckpointTestBase
     }
 
     // The child is the staged script harness host (checkpoint-pool-witness): it caps its own pool, which this
-    // shared test process must not do. embedded=true hands it the reader scripts/lib/checkpoint-file-reader.ps1
-    // embeds, compiled from that file's source; false, the library CheckpointFileReader.
+    // shared test process must not do. It reads with the library CheckpointFileReader. (Unit 62 of the 2026-11-22
+    // remaining-ps1 plan dropped the second arm, the copy scripts/lib/checkpoint-file-reader.ps1 embedded, with that file.)
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
     [NativeLinuxOnly("Linux scheduling witness; no native Windows qualification")]
-    public async Task healthy_receipts_complete_with_every_pool_worker_occupied(bool embedded)
+    public async Task healthy_receipts_complete_with_every_pool_worker_occupied()
     {
         if (!OperatingSystem.IsLinux()) Skip.Test("Linux scheduling witness; no native Windows qualification");
         var scratch = TempDir();
-        var (assembly, type) = embedded
-            ? (EmbeddedCheckpointReader.EmitTo(Path.Combine(scratch, "embedded-reader")), EmbeddedCheckpointReader.TypeName)
-            : (typeof(CheckpointFileReader).Assembly.Location, typeof(CheckpointFileReader).FullName!);
+        var (assembly, type) = (typeof(CheckpointFileReader).Assembly.Location, typeof(CheckpointFileReader).FullName!);
         var host = Path.Combine(AppContext.BaseDirectory, "script-harness-host", "Antiphon.ScriptHarnessHost.dll");
         File.Exists(host).ShouldBeTrue("the script harness host must be staged by the build");
         var psi = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };

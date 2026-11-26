@@ -117,11 +117,12 @@ public sealed class CheckpointReadStallWitnessTests
         native!.BaseType.ShouldBe(typeof(Stream));
         typeof(FileStream).IsAssignableFrom(native).ShouldBeFalse();
 
+        // One copy since unit 62 of the 2026-11-22 remaining-ps1 plan deleted scripts/lib/checkpoint-file-reader.ps1 and the
+        // reader it embedded.
         var root = CheckpointFixtures.RepoRoot;
         foreach (var relative in new[]
         {
             "src/Antiphon.HostCleanup/Checkpoints/CheckpointNativeIo.cs",
-            "scripts/lib/checkpoint-file-reader.ps1"
         })
         {
             var source = File.ReadAllText(Path.Combine(root, relative));
@@ -141,13 +142,9 @@ public sealed class CheckpointReadStallWitnessTests
         }
 
         var library = File.ReadAllText(Path.Combine(root, "src/Antiphon.HostCleanup/Checkpoints/CheckpointFileReader.cs"));
-        var script = File.ReadAllText(Path.Combine(root, "scripts/lib/checkpoint-file-reader.ps1"));
-        foreach (var source in new[] { library, script })
-        {
-            source.ShouldContain("read-truncated: ", Case.Sensitive);
-            source.ShouldContain("retained size ", Case.Sensitive);
-            source.ShouldContain("TimeSpan.FromMilliseconds(100)", Case.Sensitive);
-        }
+        library.ShouldContain("read-truncated: ", Case.Sensitive);
+        library.ShouldContain("retained size ", Case.Sensitive);
+        library.ShouldContain("TimeSpan.FromMilliseconds(100)", Case.Sensitive);
         CheckpointFileReader.StallDeadline.ShouldBe(TimeSpan.FromSeconds(3));
     }
 

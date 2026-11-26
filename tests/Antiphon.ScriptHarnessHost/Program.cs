@@ -344,8 +344,8 @@ static int CliEcho(string[] args)
 }
 
 // CARD-1601's pool witness for CheckpointReceiptStallBudgetTests: checkpoint-pool-witness <assembly> <type> <root>.
-// The reader type (the library CheckpointFileReader, or the ConfinedFileReader the test compiled from
-// scripts/lib/checkpoint-file-reader.ps1) is loaded from its file. This process caps its own thread pool at four
+// The reader type (the library CheckpointFileReader; until unit 62 of the 2026-11-22 remaining-ps1 plan also the
+// ConfinedFileReader the test compiled from scripts/lib/checkpoint-file-reader.ps1) is loaded from its file. This process caps its own thread pool at four
 // workers and occupies all four with healthy receipt reads, which must still complete: the reader waits on its
 // dedicated I/O thread, never on a pool worker. Its own process, because the cap is process-wide.
 static int CheckpointPoolWitness(string assemblyPath, string typeName, string root)
