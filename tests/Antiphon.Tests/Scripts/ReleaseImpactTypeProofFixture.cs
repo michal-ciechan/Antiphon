@@ -27,7 +27,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
 
     private static readonly Signature Author = new("fixture", "fixture@antiphon.test", DateTimeOffset.UnixEpoch);
     private static readonly Lazy<MethodInfo> ReleaseGraphEntryPoint = new(() =>
-        Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll"))
+        System.Reflection.Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll"))
             .EntryPoint ?? throw new InvalidOperationException("The staged release graph driver has no entry point."));
     private readonly ReportTempWorkspace _workspace = new();
     private readonly Repository _repository;
