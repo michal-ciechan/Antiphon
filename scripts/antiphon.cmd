@@ -8,7 +8,8 @@ rem ANTIPHON_CLI_CHECK set: one dotnet process, no msbuild. Before any command t
 rem they changed, builds and publishes the current one under the build lock and runs that instead (scripts/lib/Antiphon.CliLauncher).
 rem First run (nothing published): the launcher project is built into a fresh boot-<n> folder and publishes the CLI.
 rem cmd.exe parses the arguments before this runs: ^ % & | and inner quotes do not survive, and pwsh drops empty ones.
-rem Pass SHAs or HEAD~n (never HEAD^), or run scripts/antiphon from bash.
+rem Pass SHAs or HEAD~n (never HEAD^), or run scripts/antiphon from bash. From PowerShell scripts\antiphon.exe runs instead
+rem once the CLI has made it (generated, untracked; scripts/lib/Antiphon.CliLauncher/CliEntry.cs): no cmd.exe in between.
 setlocal
 for %%I in ("%~dp0..") do set "root=%%~fI"
 set "cache=%root%\bin-launcher\antiphon-scripts"

@@ -2,9 +2,13 @@
 // (antiphon-scripts, scripts/lib/Antiphon.Scripts) is the launchers' own. The checkpoints command publishes the checkpoint
 // tool (tools/Antiphon.Checkpoints) the same way (Antiphon.Nightly's CheckpointTool.Product): its inputs from its own
 // project graph, its cache bin-launcher/antiphon-checkpoints/ with the same pointer, lease, lock, incremental build and
-// pruning. A product's recipe is part of its identity, so two products never share a build. ASCII only.
+// pruning. A product's recipe is part of its identity, so two products never share a build. Unit 63: a product may name
+// its own dotnet arguments, output folder and main file (the PowerShell entry, CliEntry.Product, is a single-file publish);
+// the defaults are the build above. ASCII only.
 #nullable disable
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace Antiphon.CliLauncher
 {
@@ -18,7 +22,11 @@ namespace Antiphon.CliLauncher
         /// <param name="title">What the failure lines call it ("the CLI").</param>
         /// <param name="prefix">The failure lines' prefix ("antiphon-cli").</param>
         /// <param name="sweepsLegacyLauncher">Whether pruning also removes the old launcher's folders (the CLI only).</param>
-        public CliProduct(string cacheName, string project, string assembly, string title, string prefix, bool sweepsLegacyLauncher = false)
+        /// <param name="template">The dotnet arguments with CliPublisher.ProjectToken and ArtifactsToken; null: CliPublisher.BuildTemplate.</param>
+        /// <param name="output">The output folder the build leaves, relative to the artifacts path, '/' separators; null: bin/&lt;assembly&gt;/release.</param>
+        /// <param name="mainFile">The file a complete output holds and the publisher returns; null: &lt;assembly&gt;.dll.</param>
+        public CliProduct(string cacheName, string project, string assembly, string title, string prefix, bool sweepsLegacyLauncher = false,
+            IReadOnlyList<string> template = null, string output = null, string mainFile = null)
         {
             if (string.IsNullOrWhiteSpace(cacheName)) throw new ArgumentException("a cache name is required", nameof(cacheName));
             if (string.IsNullOrWhiteSpace(project)) throw new ArgumentException("a project is required", nameof(project));
@@ -29,7 +37,10 @@ namespace Antiphon.CliLauncher
             Title = title ?? assembly;
             Prefix = prefix ?? cacheName;
             SweepsLegacyLauncher = sweepsLegacyLauncher;
-            Recipe = "dotnet " + string.Join(" ", CliPublisher.BuildTemplate) + "; copy bin/" + assembly + "/release; environment without MSBuild*";
+            Template = Array.AsReadOnly((template ?? CliPublisher.BuildTemplate).ToArray());
+            Output = string.IsNullOrWhiteSpace(output) ? "bin/" + assembly + "/release" : output;
+            DllName = string.IsNullOrWhiteSpace(mainFile) ? assembly + ".dll" : mainFile;
+            Recipe = "dotnet " + string.Join(" ", Template) + "; copy " + Output + "; environment without MSBuild*";
         }
 
         /// <summary>antiphon-scripts, the CLI the launchers run.</summary>
@@ -44,8 +55,18 @@ namespace Antiphon.CliLauncher
         /// <summary>The project's assembly name.</summary>
         public string Assembly { get; }
 
-        /// <summary>The DLL in a published folder.</summary>
-        public string DllName => Assembly + ".dll";
+        /// <summary>The main file in a published folder (the DLL, or the entry's executable).</summary>
+        public string DllName { get; }
+
+        /// <summary>The dotnet arguments, with CliPublisher.ProjectToken and ArtifactsToken for the project and artifacts path.</summary>
+        public IReadOnlyList<string> Template { get; }
+
+        /// <summary>The build's output folder relative to the artifacts path, '/' separators.</summary>
+        public string Output { get; }
+
+        /// <summary>The dotnet arguments for a project and artifacts path.</summary>
+        public IReadOnlyList<string> Arguments(string project, string artifacts) =>
+            Template.Select(argument => argument == CliPublisher.ProjectToken ? project : argument == CliPublisher.ArtifactsToken ? artifacts : argument).ToArray();
 
         /// <summary>What the failure lines call it.</summary>
         public string Title { get; }

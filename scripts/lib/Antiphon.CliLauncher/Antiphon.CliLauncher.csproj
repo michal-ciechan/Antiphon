@@ -8,6 +8,8 @@
     Tiny on purpose: no ProjectReference and no PackageReference (the framework only), so a checkout with nothing published
     yet builds it in a few seconds. scripts/antiphon, scripts/antiphon.cmd and scripts/lib/antiphon-cli.ps1 build it into a
     fresh boot-<n> folder and run `Antiphon.CliLauncher publish <checkout>`, which builds the CLI under the build lock.
+    Unit 63: published as one framework-dependent file it is also scripts/antiphon.exe, the PowerShell entry (CliEntry.cs;
+    the single-file switches are on the publish command line, so the CLI's own build of this project is unchanged).
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

@@ -1,11 +1,12 @@
 // N0 (unit 57): the check antiphon-scripts makes before it dispatches a command, when a launcher asked for it.
 //
-// scripts/antiphon, scripts/antiphon.cmd and scripts/lib/antiphon-cli.ps1 run the published build that
-// bin-launcher/antiphon-scripts/current names, with ANTIPHON_CLI_CHECK set to the checkout: one dotnet process, no msbuild.
-// Enter, first in Main:
+// scripts/antiphon, scripts/antiphon.cmd, scripts/lib/antiphon-cli.ps1 and (unit 63) the generated scripts/antiphon.exe run
+// the published build that bin-launcher/antiphon-scripts/current names, with ANTIPHON_CLI_CHECK set to the checkout: one
+// dotnet process, no msbuild (two processes from the .exe). Enter, first in Main:
 //  - without the variable nothing is checked (a test, a child, a direct dotnet exec); the command runs here;
 //  - with it, the variable is removed from this process (its children never inherit it) and the checkout's inputs are
-//    compared with this build's manifest (CliIdentity.Matches). The same: the command runs here;
+//    compared with this build's manifest (CliIdentity.Matches). The same: the command runs here, after the context's
+//    Entry hook (production on Windows: CliEntry.Refresh keeps scripts/antiphon.exe current, once per published build);
 //  - different, or this is not a published build: CliPublisher.Ensure publishes the current inputs' build (or finds it)
 //    under the build lock, and this process runs it as a child with the same arguments, console, directory and
 //    environment, waits, and exits with its exit code. Interrupts are the child's: this process only waits.
@@ -43,12 +44,20 @@ namespace Antiphon.CliLauncher
         /// <summary>Holds the lease of the folder this process runs from.</summary>
         public Action<string> HoldLease { get; init; } = CliCache.HoldLease;
 
+        /// <summary>
+        /// Unit 63: called with the checkout and this build's folder when the command runs here from a current published
+        /// build; production keeps the PowerShell entry scripts/antiphon.exe current on Windows (CliEntry.Refresh). Nothing
+        /// by default.
+        /// </summary>
+        public Action<string, string> Entry { get; init; } = (_, _) => { };
+
         /// <summary>The real process: its environment, base directory, console and clock.</summary>
         public static CliGateContext Production() => new CliGateContext
         {
             Request = Environment.GetEnvironmentVariable(CliGate.Variable),
             ClearRequest = () => Environment.SetEnvironmentVariable(CliGate.Variable, null),
             BaseDirectory = AppContext.BaseDirectory,
+            Entry = OperatingSystem.IsWindows() ? (checkout, folder) => CliEntry.Refresh(checkout, folder, Console.Error) : (_, _) => { },
         };
     }
 
@@ -84,6 +93,7 @@ namespace Antiphon.CliLauncher
                 if (stamp != null && CliIdentity.Matches(CliInputs.Discover(checkout), stamp))
                 {
                     context.HoldLease(context.BaseDirectory);
+                    context.Entry(checkout, context.BaseDirectory);
                     return null;
                 }
             }
@@ -105,7 +115,12 @@ namespace Antiphon.CliLauncher
             if (!string.IsNullOrEmpty(context.BaseDirectory)
                 && string.Equals(Path.GetFullPath(Path.GetDirectoryName(dll)).TrimEnd('\\', '/'), Path.GetFullPath(context.BaseDirectory).TrimEnd('\\', '/'),
                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            {
+                context.Entry(checkout, context.BaseDirectory);
                 return null;
+            }
+            // The child runs unchecked, so its build's Entry hook runs here.
+            context.Entry(checkout, Path.GetDirectoryName(dll));
             try
             {
                 return context.RunChild(dll, args);
@@ -129,13 +144,20 @@ namespace Antiphon.CliLauncher
         /// Production's child: dotnet exec of the DLL with the arguments as given, on this console, in this directory and
         /// environment. This process ignores interrupts (the child gets them too) and, on Linux and macOS, passes SIGTERM on.
         /// </summary>
-        public static int RunChild(string dll, IReadOnlyList<string> args)
+        public static int RunChild(string dll, IReadOnlyList<string> args) => RunChild(dll, args, null);
+
+        /// <summary>
+        /// RunChild with the launch check asked for: the child gets ANTIPHON_CLI_CHECK=check (null: the variable is removed),
+        /// as the launchers start the CLI (unit 63: the PowerShell entry, CliEntry.Run).
+        /// </summary>
+        public static int RunChild(string dll, IReadOnlyList<string> args, string check)
         {
             var start = new ProcessStartInfo(CliPublisher.DotnetHost()) { UseShellExecute = false };
             start.ArgumentList.Add("exec");
             start.ArgumentList.Add(dll);
             foreach (var argument in args) start.ArgumentList.Add(argument);
-            start.Environment.Remove(Variable);
+            if (check == null) start.Environment.Remove(Variable);
+            else start.Environment[Variable] = check;
             Process child = null;
             // Ctrl+C and Ctrl+Break (SIGINT and SIGQUIT) reach the child as well; this process waits for its exit code.
             ConsoleCancelEventHandler interrupt = (_, e) => e.Cancel = true;

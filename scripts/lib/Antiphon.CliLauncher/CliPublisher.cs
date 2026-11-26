@@ -86,8 +86,11 @@ namespace Antiphon.CliLauncher
         /// <summary>Exit code when the CLI could not be built or started (the launchers' own).</summary>
         public const int Unavailable = 9;
 
-        private const string ProjectToken = "<project>";
-        private const string ArtifactsToken = "<artifacts>";
+        /// <summary>The project path in a product's dotnet arguments.</summary>
+        public const string ProjectToken = "<project>";
+
+        /// <summary>The artifacts path in a product's dotnet arguments.</summary>
+        public const string ArtifactsToken = "<artifacts>";
 
         /// <summary>The dotnet arguments of a build, with the project and artifacts path as tokens.</summary>
         public static readonly IReadOnlyList<string> BuildTemplate = Array.AsReadOnly(new[]
@@ -232,7 +235,7 @@ namespace Antiphon.CliLauncher
                     build = options.Build(new CliBuildRequest
                     {
                         Checkout = cache.Checkout, Project = project, Artifacts = cache.BuildDirectory,
-                        Arguments = BuildArguments(project, cache.BuildDirectory),
+                        Arguments = product.Arguments(project, cache.BuildDirectory),
                     });
                 }
                 catch (Exception e) when (e is Win32Exception || e is InvalidOperationException)

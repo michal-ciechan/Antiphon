@@ -1532,4 +1532,96 @@ public sealed class AntiphonCliLauncherTests
         missing.Run.Exit.ShouldBe(9, missing.Run.Stderr);
         missing.Run.Stdout.Trim().ShouldBeEmpty();
     }
+
+    // ---- unit 63 (N1): scripts/antiphon.exe, the PowerShell entry (Antiphon.CliLauncher's CliEntry). Production publishes it as one
+    // file; here the staged launcher's apphost and DLL stand in for it under the same name (the same Main and CliEntry.Run). The
+    // checkout's path holds a space and its published CLI is cli-echo. ----
+
+    private static NightlyFixture EntryCheckout(out string root)
+    {
+        var fixture = NightlyFixture.Create("cli-entry");
+        root = fixture.PathOf("a checkout (1)");
+        var scripts = Path.Combine(root, "scripts");
+        Directory.CreateDirectory(scripts);
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "antiphon.cmd"), Path.Combine(scripts, "antiphon.cmd"));
+        var staged = Path.GetDirectoryName(StagedCli)!;
+        File.Copy(Path.Combine(staged, "Antiphon.CliLauncher.exe"), Path.Combine(scripts, "antiphon.exe"));
+        foreach (var file in new[] { "Antiphon.CliLauncher.dll", "Antiphon.CliLauncher.runtimeconfig.json", "Antiphon.CliLauncher.deps.json" })
+            File.Copy(Path.Combine(staged, file), Path.Combine(scripts, file));
+        const string published = "0123456789abcdef01234567";
+        var folder = Path.Combine(root, "bin-launcher", "antiphon-scripts", published);
+        Directory.CreateDirectory(folder);
+        File.Copy(StagedEcho, Path.Combine(folder, "Antiphon.Scripts.dll"));
+        File.Copy(Path.Combine(Path.GetDirectoryName(StagedEcho)!, "Antiphon.ScriptHarnessHost.runtimeconfig.json"), Path.Combine(folder, "Antiphon.Scripts.runtimeconfig.json"));
+        File.WriteAllText(Path.Combine(root, "bin-launcher", "antiphon-scripts", "current"), published);
+        return fixture;
+    }
+
+    // What an agent types in PowerShell 7: scripts/antiphon resolves to the .exe ahead of the .cmd, and every shape cmd.exe broke
+    // (a `|` in both filter forms, an empty argument, inner quotes, cmd metacharacters) and a quoted -x:y after `--` reach the
+    // CLI unchanged, with the launch check, the caller's directory and the command's exit code.
+    [Test]
+    public async Task The_powershell_entry_hands_every_argument_shape_to_the_cli_and_returns_its_exit_code()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("scripts\\antiphon.exe is the Windows PowerShell entry");
+        var pwsh = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .Select(directory => Path.Combine(directory, "pwsh.exe")).FirstOrDefault(File.Exists);
+        if (pwsh == null) Skip.Test("PowerShell 7 (pwsh.exe) is not on PATH");
+        using var fixture = EntryCheckout(out var root);
+        const string script = """
+            (Get-Command scripts/antiphon).Source
+            scripts/antiphon cli-echo --treenode-filter "/*/*/(A*)|(B*)/*" --filter "FullyQualifiedName~A|B" "" 'say "hi"' 'C:\a b\' 'a&b' '%OS%' 'x^y' -- dotnet build '-m:2'
+            exit $LASTEXITCODE
+            """;
+        var start = new ProcessStartInfo(pwsh) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command", script }) start.ArgumentList.Add(argument);
+        start.Environment["CLI_ECHO_EXIT"] = "37";
+        start.Environment["CLI_ECHO_ENV"] = "ANTIPHON_CLI_CHECK";
+        start.Environment.Remove("ANTIPHON_CLI_CHECK");
+        var run = await Finish(Process.Start(start) ?? throw new InvalidOperationException("pwsh did not start"));
+
+        run.Exit.ShouldBe(37, run.Stderr);
+        run.Stdout.Split('\n')[0].Trim().ShouldBe(Path.Combine(root, "scripts", "antiphon.exe"), StringCompareShould.IgnoreCase);
+        var echo = run.Echo();
+        Arguments(echo).ShouldBe(["--treenode-filter", "/*/*/(A*)|(B*)/*", "--filter", "FullyQualifiedName~A|B", "", "say \"hi\"", @"C:\a b\", "a&b", "%OS%", "x^y",
+            "--", "dotnet", "build", "-m:2"]);
+        Folder(echo.GetProperty("environment").GetProperty("ANTIPHON_CLI_CHECK").GetString()).ShouldBe(Folder(root), StringCompareShould.IgnoreCase);
+        Folder(echo.GetProperty("workingDirectory").GetString()).ShouldBe(Folder(root), StringCompareShould.IgnoreCase);
+        run.Stderr.Trim().ShouldBeEmpty();
+    }
+
+    // A running entry cannot be replaced: Install renames it away (Windows renames a running program), puts the new one in its
+    // place and removes the old one once nothing runs it.
+    [Test]
+    public async Task Installing_over_a_running_entry_renames_it_away_and_removes_it_after_it_exits()
+    {
+        if (!OperatingSystem.IsWindows()) Skip.Test("scripts\\antiphon.exe is the Windows PowerShell entry");
+        using var fixture = EntryCheckout(out var root);
+        var exe = Path.Combine(root, "scripts", "antiphon.exe");
+        var cache = Path.Combine(root, "bin-launcher", "antiphon-entry");
+        Directory.CreateDirectory(cache);
+        var replacement = fixture.PathOf("published.exe");
+        File.WriteAllBytes(replacement, [1, 2, 3]);
+        var release = fixture.PathOf("release");
+        var start = new ProcessStartInfo(exe) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+        start.ArgumentList.Add("cli-echo");
+        start.Environment["CLI_ECHO_HOLD"] = release;
+        var result = fixture.PathOf("echo.json");
+        start.ArgumentList.Add("--result-file");
+        start.ArgumentList.Add(result);
+        var held = Process.Start(start) ?? throw new InvalidOperationException("the entry did not start");
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (!File.Exists(result) && DateTime.UtcNow < deadline) await Task.Delay(50);
+        File.Exists(result).ShouldBeTrue("the entry runs the CLI, which holds");
+
+        CliLauncher.CliEntry.Install(replacement, exe, cache).ShouldBeTrue();
+        File.ReadAllBytes(exe).ShouldBe([1, 2, 3]);
+        Directory.GetFiles(cache, "trash-*.exe").ShouldHaveSingleItem("the running entry was renamed away");
+
+        File.WriteAllText(release, "");
+        var run = await Finish(held);
+        run.Exit.ShouldBe(0, run.Stderr);
+        CliLauncher.CliEntry.Install(replacement, exe, cache).ShouldBeTrue();
+        Directory.GetFiles(cache, "*.exe").ShouldBeEmpty("the next install removes the old entry and leaves no temporary file");
+    }
 }

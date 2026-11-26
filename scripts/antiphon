@@ -2,7 +2,7 @@
 # antiphon <command> [arguments]: runs antiphon-scripts (scripts/lib/Antiphon.Scripts) from this checkout and passes the
 # arguments, stdin, stdout, stderr and exit code through untouched; exit 9 (one stderr line) when the CLI could not be
 # built or started. scripts/antiphon.cmd is the Windows twin, with the same cache and protocol (docs/testing-and-build.md,
-# "The CLI entry (cached launcher)").
+# "The CLI entry (cached launcher)"); from PowerShell the generated scripts/antiphon.exe (CliEntry) runs instead.
 # Warm: bin-launcher/antiphon-scripts/current names the published build of the CLI's inputs, and this execs it with
 # ANTIPHON_CLI_CHECK set: one dotnet process, no msbuild. Before any command the CLI checks its inputs' identity and, when
 # they changed, builds and publishes the current one under the build lock and runs that instead (scripts/lib/Antiphon.CliLauncher).

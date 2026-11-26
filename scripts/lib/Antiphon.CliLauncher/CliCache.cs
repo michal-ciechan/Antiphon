@@ -88,7 +88,7 @@ namespace Antiphon.CliLauncher
         public string BuildDirectory => Path.Combine(Root, "build");
 
         /// <summary>The shared build's output folder (the artifacts layout).</summary>
-        public string BuildOutput => Path.Combine(BuildDirectory, "bin", Product.Assembly, "release");
+        public string BuildOutput => Path.Combine(BuildDirectory, Product.Output.Replace('/', Path.DirectorySeparatorChar));
 
         /// <summary>The manifest of the inputs the shared build was last built from.</summary>
         public string RecordPath => Path.Combine(Root, "build.record");
