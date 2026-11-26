@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "900e9ea1124ef963669911fdd75849147fda16ee34e94b9028b5436aeb96c4dd",
+  "policyHash": "a3ca6bd9ad1afe0527091835b3ab273d68c5cda9a0f62a298e5c9bdd2e826fb5",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1745,6 +1745,18 @@
           "platform": "linux",
           "reason": "Windows ConPTY inbox delivery profile: PtyBackendPolicy resolves UnixPty off Windows and Windows backend selectors do not apply. These two methods assert InboxConhost and remain required on Windows. The other PtyDeliveryCeilingsTests methods stay required on both platforms.",
           "owner": "CARD-1938"
+        },
+        {
+          "suite": "antiphon",
+          "class": "SessionRunnerRuntimeTests",
+          "methods": [
+            "Session_id_can_be_relaunched_after_exit_but_not_while_running",
+            "Session_runner_starts_shell_accepts_input_and_keeps_buffer",
+            "StartAsync_that_fails_after_the_host_exists_leaves_no_pty_host"
+          ],
+          "platform": "linux",
+          "reason": "Windows PTY launcher witnesses require the system cmd.exe or synchronous rejection of a missing executable. The three methods remain required on Windows.",
+          "owner": "CARD-2068"
         },
         {
           "suite": "antiphon",

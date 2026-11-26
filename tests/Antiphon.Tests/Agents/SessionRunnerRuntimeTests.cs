@@ -1,11 +1,12 @@
 using System.Diagnostics;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Scripts;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
-using Antiphon.Tests.TestHelpers;
 
 namespace Antiphon.Tests.Agents;
 
@@ -46,6 +47,9 @@ public class SessionRunnerRuntimeTests
     [Test]
     public async Task Session_runner_starts_shell_accepts_input_and_keeps_buffer()
     {
+        WindowsUnitSkipRoster.SkipOnLinux(
+            nameof(SessionRunnerRuntimeTests), nameof(Session_runner_starts_shell_accepts_input_and_keeps_buffer));
+
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
         var runtime = new SessionRunnerRuntime(
@@ -92,6 +96,9 @@ public class SessionRunnerRuntimeTests
     [Test]
     public async Task Session_id_can_be_relaunched_after_exit_but_not_while_running()
     {
+        WindowsUnitSkipRoster.SkipOnLinux(
+            nameof(SessionRunnerRuntimeTests), nameof(Session_id_can_be_relaunched_after_exit_but_not_while_running));
+
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-relaunch-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
         var runtime = new SessionRunnerRuntime(
@@ -190,6 +197,9 @@ public class SessionRunnerRuntimeTests
     [Test]
     public async Task StartAsync_that_fails_after_the_host_exists_leaves_no_pty_host()
     {
+        WindowsUnitSkipRoster.SkipOnLinux(
+            nameof(SessionRunnerRuntimeTests), nameof(StartAsync_that_fails_after_the_host_exists_leaves_no_pty_host));
+
         var tempRoot = Path.Combine(Path.GetTempPath(), $"antiphon-session-runner-badexe-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempRoot);
         var runtime = new SessionRunnerRuntime(
