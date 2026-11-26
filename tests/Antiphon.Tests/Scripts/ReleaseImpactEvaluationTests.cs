@@ -140,6 +140,7 @@ public sealed class ReleaseImpactEvaluationTests
         await File.WriteAllBytesAsync(payload, Encoding.UTF8.GetBytes("global using Chosen = South.Probe;\n"), cancellationToken);
         Denied(sha, expected, "compiler-generated-source-unbound", "I.generated conflicting bytes");
         Store(generatorOutput);
+        File.Delete(obj);
         var referencePath = Path.Combine(authority, referenceDigest);
         await File.WriteAllBytesAsync(referencePath, generatorOutput, cancellationToken);
         Denied(sha, expected, "compiler-reference-unbound", "I.reference substituted bytes");
