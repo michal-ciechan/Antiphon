@@ -26,6 +26,8 @@ namespace Antiphon.Nightly
         /// <summary>The stable case keys of its expanded roster (the admission predicate requires each passed).</summary>
         public string[] Cases { get; set; } = Array.Empty<string>();
         [System.Text.Json.Serialization.JsonIgnore]
+        public string Suite { get; set; } = "";
+        [System.Text.Json.Serialization.JsonIgnore]
         public RcCaseIdentity[] CaseRoster { get; set; } = Array.Empty<RcCaseIdentity>();
     }
 

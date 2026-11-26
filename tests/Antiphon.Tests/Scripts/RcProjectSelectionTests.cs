@@ -74,7 +74,10 @@ public sealed class RcProjectSelectionTests
         chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "l1")];
         chunks[1].CaseRoster = [new("R", "R.RightTests", "M", "r1")];
         foreach (var chunk in chunks)
-            chunk.ContentDigest = RcChunkReceipt.ContentDigest("antiphon", "native", chunk.CaseRoster);
+        {
+            chunk.Suite = "antiphon";
+            chunk.ContentDigest = RcChunkReceipt.ContentDigest(chunk.Suite, "native", chunk.CaseRoster);
+        }
         foreach (var chunk in chunks)
             repo.Put(".antiphon/selector-replay/" + chunk.Id + ".trx",
                 $"""<TestRun><TestDefinitions><UnitTest id="{chunk.Cases.Single()}"><TestMethod className="{chunk.Classes.Single()}" name="M" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="{chunk.Cases.Single()}" outcome="Passed" /></Results></TestRun>""");
@@ -106,6 +109,9 @@ public sealed class RcProjectSelectionTests
         on.Proof.Removed.ShouldBe([new("A", south, "LeftTests"), new("B", south, "LeftTests")], "C.sides");
         Text(on.Of("left").Origin, "sha").ShouldBe(baseline, "C.origin");
         on.Of("right").Reasons.ShouldContain("project-closure:A:" + south, "C.right");
+        on.Of("right").Reasons.ShouldContain("release-relation-type:A:" + south, "C.sides candidate positive");
+        on.Of("right").Reasons.ShouldContain("release-relation-type:B:" + south, "C.sides baseline positive");
+        on.Of("left").Reasons.ShouldBeEmpty("C.delta left owes nothing");
         var reader = new RcReaderCensusEntry { Reader = "L.LeftTests", Globs = [south] };
         var owed = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [reader], Admit, proof);
         owed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed");
@@ -117,6 +123,11 @@ public sealed class RcProjectSelectionTests
         dirty["coverageComplete"] = false;
         RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
             .Of("left").Decision.ShouldBe("execute", "C.origin dirty");
+        dirty["coverageComplete"] = true;
+        dirty["sha"] = baseline;
+        dirty["result"] = "FAIL";
+        RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
+            .Of("left").Decision.ShouldBe("execute", "C.debt failed execution cannot be an origin");
 
         chunks[0].CaseRoster = [new("wrong-assembly", "L.LeftTests", "M", "l1")];
         RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof)
@@ -129,12 +140,33 @@ public sealed class RcProjectSelectionTests
         staleMethod.Of("left").Decision.ShouldBe("execute", "C.roster unbound method");
         staleMethod.Mode.ShouldBe("Full", "C.roster digest must bind the method");
         chunks[0].CaseRoster = [new("L", "L.LeftTests", "M", "l1")];
+        var duplicate = Chunk("duplicate-case", leftProject, "L.LeftTests");
+        duplicate.Suite = chunks[0].Suite;
+        duplicate.Cases = chunks[0].Cases;
+        duplicate.CaseRoster = chunks[0].CaseRoster;
+        duplicate.ContentDigest = chunks[0].ContentDigest;
+        var duplicateRoster = RcChunkSelection.Select(repo.Root, baseline, candidate, [..chunks, duplicate], receipts, [], Admit, proof);
+        duplicateRoster.Mode.ShouldBe("Full", "C.roster duplicate case");
+        duplicateRoster.Decisions.All(decision => decision.Decision == "execute").ShouldBeTrue("C.roster entire owed set");
+
+        var sameName = Chunk("same-name", rightProject, "R.LeftTests");
+        sameName.Suite = "antiphon";
+        sameName.Cases = ["same-name-case"];
+        sameName.CaseRoster = [new("R", "R.LeftTests", "M", "same-name-case")];
+        sameName.ContentDigest = RcChunkReceipt.ContentDigest(sameName.Suite, "native", sameName.CaseRoster);
+        var widened = RcChunkSelection.Select(repo.Root, baseline, candidate, [..chunks, sameName], receipts, [], Admit, proof);
+        widened.Of("left").Reasons.ShouldContain("index-edge:B:" + south, "C.legacy same short name left");
+        widened.Of("same-name").Reasons.ShouldContain("index-edge:B:" + south, "C.legacy same short name sibling");
+        widened.Decisions.All(decision => decision.Decision == "execute").ShouldBeTrue("C.legacy entire owed set");
         RcChunkSelection.Select(repo.Root, baseline, baseline, chunks, receipts, [], Admit, proof)
             .Mode.ShouldBe("Full", "C.stale endpoint");
 
         var newPolicy = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
             candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("changed-policy"));
         newPolicy.Identity.ShouldNotBe(proof.Identity, "C.identity");
+        RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
+            candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("different-algorithm"), Digest("fixture-policy"))
+            .Identity.ShouldNotBe(proof.Identity, "C.identity algorithm");
         var replacement = repo.PathOf(".antiphon", "selector-replay", "resealed.json");
         var proposed = File.ReadAllText(candidateArtifact.Path) + "\n";
         File.WriteAllText(replacement, proposed);
@@ -142,6 +174,46 @@ public sealed class RcProjectSelectionTests
         Should.Throw<InvalidDataException>(() => RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest,
             baseline, replacement, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("fixture-policy")),
             "C.reseal independent artifact pin");
+        var mismatchedTarget = System.Text.Json.Nodes.JsonNode.Parse(proposed)!;
+        foreach (var context in mismatchedTarget["compilerContexts"]!.AsArray())
+            context!["configuration"] = "Debug";
+        var targetBytes = mismatchedTarget.ToJsonString();
+        File.WriteAllText(replacement, targetBytes);
+        Should.Throw<InvalidDataException>(() => RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest,
+            baseline, replacement, Digest(targetBytes), candidate, Digest("fixture-algorithm"), Digest("fixture-policy")),
+            "C.identity a consistently resealed target mismatch is refused");
+        Should.Throw<FileNotFoundException>(() => RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest,
+            baseline, Path.Combine(Path.GetDirectoryName(replacement)!, "absent.json"), candidateArtifact.Digest,
+            candidate, Digest("fixture-algorithm"), Digest("fixture-policy")), "C.reseal missing endpoint artifact");
+
+        var originalIndex = files[index];
+        var changedIndex = System.Text.Json.Nodes.JsonNode.Parse(originalIndex)!;
+        var changedEdge = changedIndex["edges"]!.AsArray().Single(edge => (string?)edge!["path"] == south);
+        changedEdge!["classes"] = new System.Text.Json.Nodes.JsonArray("RightTests");
+        repo.Put(index, files[index] = changedIndex.ToJsonString());
+        var indexCandidate = repo.Commit();
+        var indexArtifact = await ProduceAsync(indexCandidate, "candidate-index");
+        var indexProof = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
+            indexArtifact.Path, indexArtifact.Digest, indexCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
+        var changed = RcChunkSelection.Select(repo.Root, baseline, indexCandidate, chunks, receipts, [], Admit, indexProof);
+        changed.Of("left").Reasons.ShouldContain("index-edge-changed:LeftTests", "C.index independent change");
+        changed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.index owed set");
+        repo.Git("checkout", "-q", "--detach", candidate);
+        files[index] = originalIndex;
+
+        files[south] = "namespace South; public class Probe {}\n";
+        files[leftProject] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><Compile Include=\"../R/B.cs\" Link=\"B.cs\" /></ItemGroup></Project>\n";
+        repo.Put(leftProject, files[leftProject]);
+        repo.Put(south, files[south]);
+        var linkedBaseline = repo.Commit();
+        contexts[0] = contexts[0] with { SourcePaths = [north, leftSource, south] };
+        var linkedArtifact = await ProduceAsync(linkedBaseline, "baseline-linked");
+        var linkProof = RcTypeProofComparison.Read(linkedArtifact.Path, linkedArtifact.Digest, linkedBaseline,
+            candidateArtifact.Path, candidateArtifact.Digest, candidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
+        var linked = RcChunkSelection.Select(repo.Root, linkedBaseline, candidate, chunks, receipts, [], Admit, linkProof);
+        linked.Of("left").Reasons.ShouldContain("project-closure:B:" + south, "C.sides B-only link");
+        linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
+        linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
 
         async Task<(string Path, string Digest)> ProduceAsync(string sha, string label)
         {

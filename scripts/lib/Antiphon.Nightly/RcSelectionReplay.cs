@@ -227,7 +227,7 @@ namespace Antiphon.Nightly
                 {
                     Id = c.Chunk, Project = c.Project, Classes = provenSubtraction
                         ? c.Members.Select(member => member.Class).Distinct(StringComparer.Ordinal).ToArray() : c.Classes,
-                    ContentDigest = c.ContentDigest, Cases = c.Cases, CaseRoster = c.Members,
+                    ContentDigest = c.ContentDigest, Cases = c.Cases, Suite = c.Suite, CaseRoster = c.Members,
                 }).ToArray();
                 RcReuse Admit(IDictionary row) => new RcReuse { Reusable = true };
                 var unpruned = RcChunkSelection.Select(repository, baseline.Sha, run.Sha, roster, priorRows, census, Admit);

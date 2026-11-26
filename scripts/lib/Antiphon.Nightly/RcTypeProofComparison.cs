@@ -56,7 +56,8 @@ namespace Antiphon.Nightly
             var keys = new HashSet<string>(StringComparer.Ordinal);
             foreach (var chunk in chunks)
             {
-                if (chunk.CaseRoster.Length == 0 || chunk.Cases.Length != chunk.CaseRoster.Length ||
+                if (chunk.CaseRoster is not { Length: > 0 } || chunk.CaseRoster.Any(member => member is null) ||
+                    chunk.Cases is null || chunk.Classes is null || chunk.Cases.Length != chunk.CaseRoster.Length ||
                     !chunk.Cases.ToHashSet(StringComparer.Ordinal).SetEquals(chunk.CaseRoster.Select(member => member.CaseKey)) ||
                     !chunk.Classes.ToHashSet(StringComparer.Ordinal).SetEquals(chunk.CaseRoster.Select(member => member.Class)))
                     return false;
@@ -64,6 +65,10 @@ namespace Antiphon.Nightly
                     if (string.IsNullOrWhiteSpace(member.Assembly) || string.IsNullOrWhiteSpace(member.Method) ||
                         string.IsNullOrWhiteSpace(member.Class) || string.IsNullOrWhiteSpace(member.CaseKey) || !keys.Add(member.CaseKey))
                         return false;
+                if (!RcChunkReceipt.IsDigest(chunk.ContentDigest) ||
+                    !string.Equals(chunk.ContentDigest, RcChunkReceipt.ContentDigest(chunk.Suite, "native", chunk.CaseRoster),
+                        StringComparison.Ordinal))
+                    return false;
             }
             return chunks.Count > 0;
         }
