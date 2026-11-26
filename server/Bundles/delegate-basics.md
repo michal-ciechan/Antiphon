@@ -59,16 +59,14 @@ work itself.
   own cold outputs; a custom output that is still required ends with a FORWARD slash.
 
 - BUILD AND TEST THROUGH THE HOST BUILD-SLOT GATE. `scripts/run-checkpoint.ps1` (run unchanged) takes a
-  slot itself; run any other build or test driver (`dotnet build`, `dotnet test`, `dotnet run --project
-  tests/...`) from bash or sh as `scripts/antiphon build-slot --label <what> -- <command>`, from
-  PowerShell as `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>`, quoting each
-  `-x:y` token after `--` (PowerShell splits it; there `scripts/antiphon` is cmd.exe, which breaks `|`
-  and drops empty arguments). The gate waits its turn, prints `BUILD SLOT` lines and applies the
-  host's `-maxcpucount`; a driver outside it is an unlisted run Review flags. Exit 4 is a slot
-  timeout: report the row as not run or end `blocked`, never to retry unleased or with `-NoSlot`
-  or `--no-slot` (CARD-0589). ONE LEASE PER BUILD: a loop of builds re-leases per build, never one
-  lease around the loop; a wrapped non-dotnet command gets no -maxcpucount, only a
-  `BUILD SLOT warning` (CARD-1627).
+  slot itself; run any other build or test driver (`dotnet build|test|run`) as
+  `scripts/antiphon build-slot --label <what> -- <command>` (bash/sh) or
+  `pwsh -NoProfile -File scripts/build-slot.ps1 -Label <what> -- <command>` (PowerShell; quote `-x:y`).
+  The gate waits its turn, prints `BUILD SLOT` lines and applies the host's `-maxcpucount`; a driver
+  outside it is an unlisted run Review flags. Exit 4 is a slot timeout: report the row as not run or
+  end `blocked`, never to retry unleased or with `-NoSlot` (CARD-0589). ONE LEASE PER BUILD: a loop
+  of builds re-leases per build, never one lease around the loop; a wrapped non-dotnet command is
+  not capped (CARD-1627).
 
 - VERIFY PRE-EXISTING RED BEFORE BLAMING YOURSELF: re-run the failure at the base commit. An
   inherited failure is a fact for your report; one you caused is yours to fix. Never quietly widen
