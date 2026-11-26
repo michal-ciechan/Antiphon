@@ -280,8 +280,7 @@ public class LandingGit : ILandingGit
         if (!InProcessGitReads.Enabled || !InProcessEligible() || arguments.Count == 0) return null;
         if (arguments[0] is "status" or "ls-files" or "-c")
             return AnswerWorkingTreeReadsInProcess
-                ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment,
-                    GitTreeVerdict.IsVerdictOnly(arguments)) : null;
+                ? InProcessGitStatus.TryAnswer(repository, arguments, _childEnvironment) : null;
         // remote get-url [--push] [--all] <name> reads config: judged against the child environment kept here, never this process's.
         if (InProcessGitReads.IsRemoteGetUrl(arguments))
             return AnswerRemoteUrlsInProcess && _childEnvironment is { } child

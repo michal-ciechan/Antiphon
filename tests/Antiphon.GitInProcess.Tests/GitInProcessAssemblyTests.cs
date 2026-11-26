@@ -60,7 +60,7 @@ public sealed class GitInProcessAssemblyTests
             File.ReadAllText(file).ShouldContain(ns);
         }
 
-        CountTestAttributes(mirror).ShouldBe(31 + 3 + 1 + 2 + 5 + 1); // + LibGit2VsGitDifferentialTests.For_each_ref_formats_match_git, Head_reads_match_git_when_unborn_detached_or_read_otherwise, Symlinked_refs_are_git_s_to_read; + the five Remote_get_url_* cases; + LibGit2VsGitWorkingTreeVerdictTests.The_status_view_stamps_its_files_without_opening_them
+        CountTestAttributes(mirror).ShouldBe(31 + 3 + 1 + 2 + 6 + 1); // + LibGit2VsGitDifferentialTests.For_each_ref_formats_match_git, Head_reads_match_git_when_unborn_detached_or_read_otherwise, Symlinked_refs_are_git_s_to_read; + the six Remote_get_url_* cases (Remote_get_url_options_match_git included); + LibGit2VsGitWorkingTreeVerdictTests.The_status_view_stamps_its_files_without_opening_them
     }
 
     [Test]

@@ -44,7 +44,8 @@ internal static class GitStatusConfigAgreement
 
     private sealed record ChildConfig(
         IReadOnlyDictionary<string, string> Inherited, IReadOnlyDictionary<string, string> Command,
-        (string Path, long Length, DateTime Written)[] Stamps, string? DefaultIgnore, string? DefaultAttributes);
+        (string Path, long Length, DateTime Written)[] Stamps, string? DefaultIgnore, string? DefaultAttributes,
+        string? SystemAttributes, bool SystemAttributesKnown);
 
     private static readonly ConcurrentDictionary<string, ChildConfig> Views = new(StringComparer.Ordinal);
     private const int ViewLimit = 256;
@@ -129,6 +130,19 @@ internal static class GitStatusConfigAgreement
         return (childFile is null || !File.Exists(childFile)) && !mine.Any(File.Exists);
     }
 
+    /// <summary>
+    /// The childs attribute files outside the repository: its system file (<c>git var GIT_ATTR_SYSTEM</c>, none under
+    /// GIT_ATTR_NOSYSTEM) and its default global file beside its XDG config. Null when git could not be asked
+    /// (<see cref="WorkTreeConversion"/> then leaves the status to git).
+    /// </summary>
+    internal static (string? System, string? DefaultGlobal)? AttributeFiles(IReadOnlyDictionary<string, string?>? childEnvironment)
+    {
+        string? Env(string name) => childEnvironment is null ? Environment.GetEnvironmentVariable(name)
+            : childEnvironment.TryGetValue(name, out var v) ? v : null;
+        if (View(Env) is not { SystemAttributesKnown: true } view) return null;
+        return (string.IsNullOrEmpty(Env("GIT_ATTR_NOSYSTEM")) ? view.SystemAttributes : null, view.DefaultAttributes);
+    }
+
     private static ChildConfig? View(Func<string, string?> env)
     {
         var signature = string.Join('\0', EnvironmentNames.Select(n => n + "=" + env(n)))
@@ -171,20 +185,13 @@ internal static class GitStatusConfigAgreement
         start.Environment["GIT_CEILING_DIRECTORIES"] = Path.GetDirectoryName(probeDirectory);
         foreach (var arg in new[] { "config", "--show-origin", "--show-scope", "-z", "--get-regexp", "^(core|index|extensions)\\." })
             start.ArgumentList.Add(arg);
-        string output;
-        int exit;
-        try
-        {
-            using var process = Process.Start(start)!;
-            process.StandardInput.Close();
-            var read = process.StandardOutput.ReadToEndAsync();
-            _ = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(30_000)) { try { process.Kill(); } catch (InvalidOperationException) { } return null; }
-            output = read.GetAwaiter().GetResult();
-            exit = process.ExitCode;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
-        if (exit is not (0 or 1)) return null;
+        if (Run(start) is not ({ } output, 0 or 1)) return null;
+        // The system attributes file (git 2.42+). An older git names none: then only the Linux default is known.
+        start.ArgumentList.Clear();
+        foreach (var arg in new[] { "var", "GIT_ATTR_SYSTEM" }) start.ArgumentList.Add(arg);
+        var (systemAttributes, systemKnown) = Run(start) is ({ } named, 0) && named.Trim() is { Length: > 0 } trimmed
+            ? (Path.GetFullPath(trimmed), true)
+            : OperatingSystem.IsWindows() ? (null, false) : ("/etc/gitattributes", true);
 
         var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var command = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -215,6 +222,21 @@ internal static class GitStatusConfigAgreement
             .Select(Stamp).ToArray();
         return new ChildConfig(inherited, command, stamps,
             xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "ignore")),
-            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "attributes")));
+            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "attributes")), systemAttributes, systemKnown);
+    }
+
+    /// <summary>gits stdout and exit code, or null when it could not start or ran past 30 seconds.</summary>
+    private static (string Output, int Exit)? Run(ProcessStartInfo start)
+    {
+        try
+        {
+            using var process = Process.Start(start)!;
+            process.StandardInput.Close();
+            var read = process.StandardOutput.ReadToEndAsync();
+            _ = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30_000)) { try { process.Kill(); } catch (InvalidOperationException) { } return null; }
+            return (read.GetAwaiter().GetResult(), process.ExitCode);
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
     }
 }

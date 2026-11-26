@@ -41,11 +41,11 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     ];
 
     /// <summary>
-    /// Which answers must stay with git: none; Walk, the ones that walk untracked or ignored files (status
-    /// with untracked or ignored files, ls-files --others); WorkTree, every status form and ls-files --others;
-    /// or every command.
+    /// Which answers must stay with git: none; Conversion, every status form (a work-tree conversion libgit2 lacks,
+    /// <see cref="WorkTreeConversion"/>; ls-files --others compares no content and stays); WorkTree, every status
+    /// form and ls-files --others; or every command.
     /// </summary>
-    private enum Falls { None, WorkTree, All, KnownRacyDivergence }
+    private enum Falls { None, Conversion, WorkTree, All, KnownRacyDivergence }
 
     private sealed record Scenario(string Name, Func<Repo, Task> Arrange, Falls Fallback = Falls.None, bool Linked = false);
 
@@ -171,6 +171,110 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             await r.CommitAllAsync();
             File.SetLastWriteTimeUtc(r.Full("mixed.txt"), DateTime.UtcNow.AddMinutes(5));
         }),
+        // Content conversions on a work-tree-only change (operator, 2026-11-25: a tracked file libgit2 reads
+        // differently from git is a wrong verdict, e.g. a false park_dirty). Each file is checked out clean, then its
+        // mtime is moved so both readers must hash the work-tree bytes through their own conversion.
+        new("filter-driver-touched", async r =>
+        {
+            // A clean/smudge driver (git-lfs is one): git runs it, libgit2 does not run external drivers.
+            await r.GitAsync("config", "filter.upper.clean", "tr a-z A-Z");
+            await r.GitAsync("config", "filter.upper.smudge", "tr A-Z a-z");
+            await r.WriteAsync(".gitattributes", "*.up filter=upper\n");
+            await r.WriteAsync("doc.up", "hello\n");
+            await r.CommitAllAsync();                                   // blob "HELLO", work tree "hello"
+            Touch(r, "doc.up");
+        }, Fallback: Falls.Conversion),                                 // libgit2 alone: " M doc.up", git: clean
+        new("filter-driver-added-after-commit", async r =>
+        {
+            // The false clean: blob and work tree both "hello", then a driver git applies; git cleans "hello" to
+            // "HELLO", which differs from the blob, while libgit2 compares the raw bytes and calls it clean.
+            await r.WriteAsync("doc.up", "hello\n");
+            await r.CommitAllAsync();
+            await r.GitAsync("config", "filter.upper.clean", "tr a-z A-Z");
+            await r.GitAsync("config", "filter.upper.smudge", "tr A-Z a-z");
+            await File.WriteAllTextAsync(Path.Combine(r.GitDir, "info", "attributes"), "*.up filter=upper\n");
+            Touch(r, "doc.up");
+        }, Fallback: Falls.Conversion),
+        new("filter-driver-configured-no-attribute", async r =>
+        {
+            // Git for Windows configures git-lfs system-wide: a driver no attribute names converts nothing, so the
+            // status stays libgit2s.
+            await r.GitAsync("config", "filter.lfs.clean", "git-lfs clean -- %f");
+            await r.GitAsync("config", "filter.lfs.smudge", "git-lfs smudge -- %f");
+            await r.GitAsync("config", "filter.lfs.required", "true");
+            await r.WriteAsync("a.txt", "changed\n");
+        }),
+        new("working-tree-encoding-touched", async r =>
+        {
+            // UTF-16 on disk, UTF-8 in the blob: git converts, libgit2 has no working-tree-encoding support.
+            await r.WriteAsync(".gitattributes", "*.u16 text working-tree-encoding=UTF-16LE-BOM eol=lf\n");
+            await File.WriteAllTextAsync(r.Full("wide.u16"), "wide\n", new UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+            await r.CommitAllAsync();
+            Touch(r, "wide.u16");
+        }, Fallback: Falls.Conversion),                                 // libgit2 alone: " M wide.u16", git: clean
+        new("working-tree-encoding-added-after-commit", async r =>
+        {
+            // The false clean: UTF-16 bytes committed as they are, then the attribute: git decodes the work tree and
+            // re-encodes UTF-8, which differs from the blob; libgit2 compares the raw bytes.
+            Directory.CreateDirectory(r.Full("sub"));
+            await File.WriteAllTextAsync(r.Full("sub/wide.u16"), "wide\n", new UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+            await r.CommitAllAsync();
+            await r.WriteAsync("sub/.gitattributes", "*.u16 text working-tree-encoding=UTF-16LE-BOM eol=lf\n");
+            await r.GitAsync("add", "sub/.gitattributes");
+            await r.GitAsync("commit", "-q", "-m", "attributes only");
+            Touch(r, "sub/wide.u16");
+        }, Fallback: Falls.Conversion),
+        new("ident-touched", async r =>
+        {
+            await r.WriteAsync(".gitattributes", "*.id ident\n");
+            await r.WriteAsync("ver.id", "$Id$\n");
+            await r.CommitAllAsync();
+            File.Delete(r.Full("ver.id"));
+            await r.GitAsync("checkout", "--", "ver.id");              // expanded to $Id: <blob> $
+            Touch(r, "ver.id");
+        }),
+        new("autocrlf-input-crlf-on-disk", async r =>
+        {
+            await r.GitAsync("config", "core.autocrlf", "input");
+            await r.WriteAsync("in.txt", "one\ntwo\n");
+            await r.CommitAllAsync();
+            await File.WriteAllTextAsync(r.Full("in.txt"), "one\r\ntwo\r\n");
+            Touch(r, "in.txt");
+        }),
+        new("eol-lf-attribute-crlf-on-disk", async r =>
+        {
+            await r.GitAsync("config", "core.autocrlf", "false");
+            await r.WriteAsync(".gitattributes", "*.txt text eol=lf\n");
+            await r.WriteAsync("lf.txt", "one\ntwo\n");
+            await r.CommitAllAsync();
+            await File.WriteAllTextAsync(r.Full("lf.txt"), "one\r\ntwo\r\n");
+            Touch(r, "lf.txt");
+        }),
+        new("text-auto-crlf-blob-touched", async r =>
+        {
+            // A CRLF blob committed before text=auto: git's "safer autocrlf" leaves a blob that already holds CRLF alone.
+            await r.GitAsync("config", "core.autocrlf", "true");
+            await r.GitAsync("config", "core.safecrlf", "false");
+            await r.WriteAsync(".gitattributes", "* text=auto\n");
+            await r.CommitAllAsync();
+            await File.WriteAllTextAsync(r.Full("raw.txt"), "one\r\ntwo\r\n");
+            var id = (await Repo.RunGitAsync(r.Root, "hash-object", "-w", "--no-filters", "raw.txt")).Output.Trim();
+            await r.GitAsync("update-index", "--add", "--cacheinfo", "100644," + id + ",raw.txt");
+            await r.GitAsync("commit", "-q", "-m", "crlf blob");
+            Touch(r, "raw.txt");
+        }),
+        new("symlinks-false-link-touched", async r =>
+        {
+            // core.symlinks=false (Git for Windows' default): a link checks out as a file holding its target.
+            await r.GitAsync("config", "core.symlinks", "false");
+            await File.WriteAllTextAsync(r.Full("target.txt"), "a.txt");
+            var link = (await Repo.RunGitAsync(r.Root, "hash-object", "-w", "target.txt")).Output.Trim();
+            File.Delete(r.Full("target.txt"));
+            await r.GitAsync("update-index", "--add", "--cacheinfo", "120000," + link + ",link");
+            await r.GitAsync("commit", "-q", "-m", "link");
+            await r.GitAsync("checkout", "--", "link");
+            Touch(r, "link");
+        }),
         new("chmod-in-index", r => r.GitAsync("update-index", "--chmod=+x", "a.txt")),
         new("filemode-false-chmod-on-disk", async r =>
         {
@@ -239,6 +343,10 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
 
     public static IEnumerable<string> ScenarioNames() => Scenarios.Select(s => s.Name);
 
+    /// <summary>Moves a file's mtime five minutes ahead: its index stat no longer matches, so both readers hash its bytes.</summary>
+    private static void Touch(Repo r, string relative) =>
+        File.SetLastWriteTimeUtc(r.Full(relative), DateTime.UtcNow.AddMinutes(5));
+
     // CARD-1830. MAX_PATH and NTFS index timestamps. Same early return as the other
     // Windows-only cases in this project: the method still runs on Linux, and these
     // three arguments still run on Windows.
@@ -260,9 +368,12 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         var checkout = repo.Root;
         var mismatches = new List<string>();
 
+        // The answers a git runner gets (libgit2 first: git's status may rewrite the index and settle an entry).
+        var answers = StatusForms.Select(f => f.Args).Concat(PlainStatusForms).Concat(OthersForms)
+            .Select(args => (Args: args, Mine: InProcessGitStatus.TryAnswer(checkout, args, ChildEnvironment()))).ToList();
         foreach (var (form, args, untracked, ignored) in StatusForms)
         {
-            var mine = InProcessGitStatus.StatusPaths(checkout, untracked, ignored);
+            var mine = InProcessGitStatus.StatusPaths(checkout, untracked, ignored, childEnvironment: ChildEnvironment());
             if (scenario.Fallback == Falls.KnownRacyDivergence)
             {
                 // libgit2 first: git's status rewrites the index and settles the entry.
@@ -272,13 +383,8 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
                 break;
             }
             var git = await Repo.RunGitAsync(checkout, args);
-            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree, "status " + form, mine, git, StatusPaths);
-            // A verdict caller's dirty answer (GitTreeVerdict): porcelain-shaped rows over the same paths, so
-            // emptiness is git's wherever the path set is.
-            // The verdict's in-process dirty answer must never call a git-clean tree dirty.
-            if (InProcessGitStatus.VerdictAnswersDirty(checkout, untracked, ignored) == true && git.Output.Length == 0)
-                mismatches.Add($"status {form}: VERDICT answered dirty in process, git clean");
-            var rows = InProcessGitStatus.StatusRows(checkout, untracked, ignored);
+            Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree or Falls.Conversion, "status " + form, mine, git, StatusPaths);
+            var rows = InProcessGitStatus.StatusRows(checkout, untracked, ignored, childEnvironment: ChildEnvironment());
             if (rows is null != mine is null) mismatches.Add($"status {form}: rows {(rows is null ? "fell back" : "answered")}, paths did not");
             else if (rows is not null && mine is not null)
             {
@@ -294,6 +400,17 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             var git = await Repo.RunGitAsync(checkout, args);
             Check(mismatches, scenario.Fallback is Falls.All or Falls.WorkTree, string.Join(' ', args), mine, git, Records);
         }
+        // Every listing a runner gets in process is git's bytes, clean or dirty (libgit2's codes, git's layout); the
+        // shapes whose rows git prints differently fall back, and only those.
+        if (scenario.Fallback != Falls.KnownRacyDivergence)
+            foreach (var (args, mine) in answers)
+            {
+                var status = args.Contains("status");
+                var falls = scenario.Fallback is Falls.All or Falls.WorkTree || (status && scenario.Fallback == Falls.Conversion)
+                    || (status && ListingFallbacks.Contains(name))
+                    || (status && !args.Contains("-z") && args.Contains("--untracked-files=all") && UnquotedFallbacks.Contains(name));
+                await SameBytesAsync(mismatches, checkout, args, mine, falls);
+            }
         {
             var mine = InProcessGitStatus.IndexTags(checkout);
             var git = await Repo.RunGitAsync(checkout, "ls-files", "-v", "-z");
@@ -329,6 +446,31 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
 
         mismatches.ShouldBeEmpty($"{name}:\n  " + string.Join("\n  ", mismatches));
     }
+
+    /// <summary>Status forms without -z (the session runner's park, verification and slot reads), compared as bytes.</summary>
+    private static readonly string[][] PlainStatusForms =
+    [
+        ["status", "--porcelain", "--untracked-files=all"],
+        ["status", "--porcelain", "--untracked-files=no"],
+        ["status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"],
+    ];
+
+    /// <summary>The ls-files --others listings (LandingGit, the runner's completed-card removal and retention).</summary>
+    private static readonly string[][] OthersForms =
+    [
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+    ];
+
+    /// <summary>Scenarios whose status rows git prints in a shape libgit2's listing does not have: git answers them.</summary>
+    private static readonly HashSet<string> ListingFallbacks = new(StringComparer.Ordinal)
+    {
+        "staged-rename",    // git pairs the added and deleted paths: R  new\0old
+        "unmerged-conflict", // git's two-letter unmerged code
+    };
+
+    /// <summary>Scenarios with a path git C-quotes without -z: git answers those forms.</summary>
+    private static readonly HashSet<string> UnquotedFallbacks = new(StringComparer.Ordinal) { "untracked-unicode-and-spaces" };
 
     /// <summary>The index listings GuardedWorktreeRemoval, GuardedVerificationRemoval and LandingGit run.</summary>
     private static readonly string[][] IndexForms = [["ls-files", "-z"], ["ls-files", "--stage", "-z"]];
@@ -680,7 +822,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     }
 
     [Test]
-    public async Task The_runner_answers_clean_and_empty_reads_with_git_bytes_and_leaves_dirty_ones_to_git()
+    public async Task The_runner_answers_clean_and_dirty_reads_with_git_bytes()
     {
         await using var repo = await Repo.CreateAsync(linked: false);
         string[][] forms =
@@ -703,17 +845,39 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         var tags = InProcessGitStatus.TryAnswer(repo.Root, ["ls-files", "-v", "-z"], ChildEnvironment()).ShouldNotBeNull();
         tags.Output.ShouldBe((await Repo.RunGitAsync(repo.Root, "ls-files", "-v", "-z")).Output);
 
+        // A tree with changes (operator, 2026-11-25): libgit2's listing in git's layout, the same bytes git prints.
         await repo.WriteAsync("a.txt", "dirty\n");
+        await repo.WriteAsync("b.txt", "staged\n");
+        await repo.GitAsync("add", "b.txt");
         await repo.WriteAsync("loose.txt", "u\n");
-        foreach (var args in forms.Where(f => f[0] is "status" or "-c" || f.Contains("--others") && !f.Contains("--ignored")))
-            InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldBeNull(string.Join(' ', args) + " on a dirty tree is git's");
+        foreach (var args in forms.Concat(PlainStatusForms))
+        {
+            var answer = InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment());
+            // Without -z git C-quotes "dír/naïve.txt" (staged above): those listings are git's.
+            if (!args.Contains("-z"))
+            {
+                answer.ShouldBeNull(string.Join(' ', args) + ": a path git quotes");
+                continue;
+            }
+            answer.ShouldNotBeNull(string.Join(' ', args) + " on a tree with changes");
+            var git = await Repo.RunGitAsync(repo.Root, args);
+            (answer.ExitCode, answer.Output).ShouldBe((git.ExitCode, git.Output), string.Join(' ', args));
+        }
+        // Plain paths only: the listings without -z are answered as well.
+        await repo.GitAsync("rm", "-q", "--cached", "dír/naïve.txt");
+        File.Delete(repo.Full("dír/naïve.txt"));
+        foreach (var args in PlainStatusForms)
+        {
+            var answer = InProcessGitStatus.TryAnswer(repo.Root, args, ChildEnvironment()).ShouldNotBeNull(string.Join(' ', args));
+            var git = await Repo.RunGitAsync(repo.Root, args);
+            (answer.ExitCode, answer.Output).ShouldBe((git.ExitCode, git.Output), string.Join(' ', args));
+        }
     }
 
     [Test]
-    public async Task A_verdict_caller_gets_a_dirty_tree_in_process_and_every_other_caller_gets_git()
+    public async Task Every_caller_gets_a_dirty_tree_in_process_unless_a_work_tree_conversion_could_differ()
     {
         await using var repo = await Repo.CreateAsync(linked: false);
-        // Certain entries: a staged change and an untracked file.
         await repo.WriteAsync("a.txt", "dirty\n");
         await repo.GitAsync("add", "a.txt");
         await repo.WriteAsync("loose.txt", "u\n");
@@ -721,7 +885,7 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         string[] status = ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"];
 
         var plain = await runner.RunAsync(repo.Root, status, CancellationToken.None);
-        runner.StatusSpawns.ShouldBe(1, "an unmarked dirty status is git's bytes");
+        runner.StatusSpawns.ShouldBe(0, "an ordinary caller gets libgit2's listing too");
         plain.Output.ShouldBe((await Repo.RunGitAsync(repo.Root, status)).Output);
 
         foreach (var args in StatusForms.Select(f => f.Args))
@@ -733,19 +897,31 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             var git = await Repo.RunGitAsync(repo.Root, args);
             (verdict.Output.Length != 0).ShouldBe(git.Output.Length != 0, string.Join(' ', args));
         }
-        // Only a work-tree edit of a tracked file: libgit2's reading of the bytes is not trusted, git runs.
+        // A work-tree edit of a tracked file, with no conversion libgit2 lacks: libgit2's reading, git's bytes.
         await repo.GitAsync("reset", "-q", "a.txt");
         File.Delete(repo.Full("loose.txt"));
-        var workTreeOnly = await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, status, CancellationToken.None);
-        runner.StatusSpawns.ShouldBe(2, "a work-tree-only modification is git's verdict");
+        var workTreeOnly = await runner.RunAsync(repo.Root, status, CancellationToken.None);
+        runner.StatusSpawns.ShouldBe(0, "a work-tree-only modification is libgit2's reading");
         workTreeOnly.Output.ShouldBe((await Repo.RunGitAsync(repo.Root, status)).Output);
-        // Clean again: the verdict is git's empty bytes.
+        // An attribute naming a filter driver where a tracked file could take it from: git's status, clean or not.
         await repo.GitAsync("checkout", "--", "a.txt");
-        (await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, status, CancellationToken.None)).Output.ShouldBe("");
-        // A shape libgit2 does not read (an unreadable-or-unusual tree is covered by the scenarios): git runs.
-        (await ((ILandingGit)runner).StatusVerdictAsync(repo.Root, ["status", "--porcelain", "--untracked-files=all"], CancellationToken.None))
-            .Succeeded.ShouldBeTrue();
-        runner.StatusSpawns.ShouldBe(3);
+        await repo.WriteAsync("docs/.gitattributes", "*.md filter=lfs\n");
+        await repo.WriteAsync("docs/readme.md", "r\n");
+        await repo.CommitAllAsync();
+        (await runner.RunAsync(repo.Root, status, CancellationToken.None)).Output.ShouldBe("");
+        runner.StatusSpawns.ShouldBe(1, "a filter= attribute leaves even a clean status to git");
+        // The same file deleted from the work tree but still staged: read from the staged blob.
+        File.Delete(repo.Full("docs/.gitattributes"));
+        await runner.RunAsync(repo.Root, status, CancellationToken.None);
+        runner.StatusSpawns.ShouldBe(2, "the staged .gitattributes still names the driver");
+        await repo.GitAsync("rm", "-q", "--cached", "docs/.gitattributes");
+        await repo.GitAsync("commit", "-q", "-m", "no attributes");
+        (await runner.RunAsync(repo.Root, status, CancellationToken.None)).Output.ShouldBe("");
+        runner.StatusSpawns.ShouldBe(2, "no attribute names a driver: libgit2's again");
+        // working-tree-encoding in info/attributes: git's.
+        await File.WriteAllTextAsync(Path.Combine(repo.GitDir, "info", "attributes"), "*.u16 working-tree-encoding=UTF-16LE-BOM\n");
+        await runner.RunAsync(repo.Root, status, CancellationToken.None);
+        runner.StatusSpawns.ShouldBe(3, "working-tree-encoding leaves the status to git");
     }
 
     [Test]

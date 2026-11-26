@@ -11,13 +11,17 @@ namespace Antiphon.GitInProcess;
 /// any index entry flagged. These are verdicts, not git's bytes: callers only test emptiness or compare
 /// path sets. Null means "ask git": every repository shape libgit2 might read differently falls back.
 /// <para>
-/// <see cref="TryAnswer"/> serves the server's <c>LandingGit</c>'s runner and keeps its contract of git's exact
-/// bytes or nothing: a status or ls-files --others/--unmerged is answered only when it is empty (a dirty
-/// tree still runs git, so every caller that reads the listing gets git's own), ls-files -v is
-/// rebuilt exactly, and ls-files -z and ls-files --stage -z are read byte for byte from the index file
-/// (<see cref="IndexListing"/>; they read no config, so need no agreement). A status-like answer also needs the
-/// config to agree with the git child's (<see cref="GitStatusConfigAgreement"/>). <c>LibGit2VsGitWorkingTreeVerdictTests</c> pins each
-/// verdict against the real CLI, across the repository shapes and argument forms the product uses.
+/// <see cref="TryAnswer"/> serves the git runners (LandingGit, the session runner, WorktreeManager, GitWorkspaceService)
+/// in git's own layout: a status (with or without -z) is libgit2's listing printed as git's porcelain v1, clean or
+/// with changes (operator, 2026-11-25: each row's code is libgit2's reading of the work tree); ls-files --others
+/// lists libgit2's path set in git's order; ls-files -v is rebuilt exactly; ls-files -z and ls-files --stage -z are
+/// read byte for byte from the index file (<see cref="IndexListing"/>; they read no config, so need no agreement).
+/// A status git prints in another shape is git's: a staged rename (git pairs it), a conflict, a path git orders or
+/// (without -z) quotes differently. A status-like answer also needs the config to agree with the git child's
+/// (<see cref="GitStatusConfigAgreement"/>), and a status needs no work-tree conversion libgit2 lacks
+/// (<see cref="WorkTreeConversion"/>: filter drivers, working-tree-encoding). <c>LibGit2VsGitWorkingTreeVerdictTests</c>
+/// pins every answer against the real CLI, byte for byte, across the repository shapes and argument forms the
+/// product uses, including the conversions that diverge.
 /// </para>
 /// <list type="bullet">
 /// <item>Index version 2 only. git writes version 3 as soon as any entry carries an extended flag
@@ -40,7 +44,7 @@ internal static class InProcessGitStatus
     /// child's environment (null: this process's), with which the status config must agree.
     /// </summary>
     public static LandingGitResult? TryAnswer(string checkout, IReadOnlyList<string> arguments,
-        IReadOnlyDictionary<string, string?>? childEnvironment, bool verdictOnly = false)
+        IReadOnlyDictionary<string, string?>? childEnvironment)
     {
         if (!InProcessGitReads.Enabled) return null;
         // A child pointed at another repository, work tree or index reads something else than this: git's to answer.
@@ -74,40 +78,85 @@ internal static class InProcessGitStatus
             return overrides.Count == 0 && HasUnmerged(checkout) == false ? Ok("") : null;
         Func<Configuration, bool> agrees = config => GitStatusConfigAgreement.Agrees(config, childEnvironment, overrides);
         if (a is ["ls-files", "--others", "--exclude-standard", "-z"] or ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"])
-            return OtherPaths(checkout, ignored: a.Length == 5, agrees) is { Count: 0 } ? Ok("") : null;
+        {
+            if (OtherPaths(checkout, ignored: a.Length == 5, agrees) is not { } others || others.Any(p => !GitOrdered(p))) return null;
+            var listing = new StringBuilder();
+            foreach (var path in others.Order(StringComparer.Ordinal)) listing.Append(path).Append('\0');
+            return Ok(listing.ToString());
+        }
         if (StatusForm(a) is { } form)
         {
-            if (StatusEntries(checkout, form.Untracked, form.Ignored, agrees) is not { } entries) return null;
+            if (StatusEntries(checkout, form.Untracked, form.Ignored, agrees, childEnvironment) is not { } entries) return null;
             if (entries.Count == 0) return Ok("");
-            // A dirty tree is answered only for a caller that asked for the verdict (GitTreeVerdict): it
-            // tests emptiness, so porcelain-shaped rows are enough. Every other caller still gets git's bytes.
-            // Only a certain entry decides it: a work-tree-only change to a tracked file is libgit2's own
-            // reading of the bytes (line-ending conversion, filters, racy stat), where git may still say clean.
-            if (!verdictOnly || !entries.Any(e => CertainlyDirty(e.State))) return null;
-            var output = new StringBuilder();
-            foreach (var (path, state) in entries) output.Append(Code(state)).Append(' ').Append(path).Append('\0');
-            return Ok(output.ToString());
+            // A tree with changes is libgit2's listing in git's porcelain v1 layout (operator, 2026-11-25): the
+            // same path set git lists (pinned by LibGit2VsGitWorkingTreeVerdictTests), each row's code from
+            // libgit2's own reading of the work tree, for every caller. A rename git would pair, a conflict
+            // (git's two-letter unmerged codes), or a path git would order or quote differently is git's.
+            return Porcelain(entries, form.Nul) is { } rows ? Ok(rows) : null;
         }
         return null;
     }
 
     /// <summary>
-    /// <c>status --porcelain[=v1] -z --untracked-files=(all|no) [--ignore-submodules=none] [--ignored]</c>.
+    /// libgit2's status entries as <c>git status --porcelain=v1</c> prints them: changed tracked paths, then
+    /// untracked (<c>??</c>), then ignored (<c>!!</c>), each group in path order; NUL-terminated with -z, else
+    /// LF-terminated. Null where git's rows could differ in shape: a conflict, a possible index rename (git
+    /// pairs an added and a deleted path as <c>R</c>), a path git orders differently, a state with no code, or,
+    /// without -z, a path git would C-quote.
+    /// </summary>
+    private static string? Porcelain(List<(string Path, FileStatus State)> entries, bool nul)
+    {
+        if (entries.Any(e => e.State.HasFlag(FileStatus.Conflicted))) return null;
+        if (entries.Any(e => e.State.HasFlag(FileStatus.NewInIndex)) && entries.Any(e => e.State.HasFlag(FileStatus.DeletedFromIndex)))
+            return null;
+        var rows = new List<(int Group, string Path, string Code)>();
+        foreach (var (path, state) in entries)
+        {
+            if (!GitOrdered(path) || (!nul && !PlainUnquoted(path))) return null;
+            // A path deleted from the index and present in the work tree is one libgit2 entry and two git rows:
+            // "D  path" with the changes, "?? path" with the untracked files.
+            var tracked = state;
+            if (state != FileStatus.NewInWorkdir && state.HasFlag(FileStatus.NewInWorkdir))
+            {
+                if (!state.HasFlag(FileStatus.DeletedFromIndex)) return null;
+                rows.Add((1, path, "??"));
+                tracked = state & ~FileStatus.NewInWorkdir;
+            }
+            if (Code(tracked) is not { } code) return null;
+            rows.Add((code == "??" ? 1 : code == "!!" ? 2 : 0, path, code));
+        }
+        var output = new StringBuilder();
+        foreach (var row in rows.OrderBy(r => r.Group).ThenBy(r => r.Path, StringComparer.Ordinal))
+            output.Append(row.Code).Append(' ').Append(row.Path).Append(nul ? '\0' : '\n');
+        return output.ToString();
+    }
+
+    /// <summary>Whether ordinal UTF-16 order is git's byte (UTF-8) order for this path: no surrogate or U+E000-U+FFFF char.</summary>
+    private static bool GitOrdered(string path) => !path.Any(c => c >= '\uD800');
+
+    /// <summary>Whether git prints this path as is in a listing without -z: printable ASCII, no space, quote or backslash.</summary>
+    private static bool PlainUnquoted(string path) => path.All(c => c is > ' ' and < '\x7f' and not '"' and not '\\');
+
+    /// <summary>
+    /// <c>status --porcelain[=v1] [-z] --untracked-files=(all|no) [--ignore-submodules=none] [--ignored]</c>.
     /// Without --ignore-submodules=none git applies submodule ignore config, but any gitlink falls back.
     /// </summary>
-    private static (bool Untracked, bool Ignored)? StatusForm(string[] a)
+    private static (bool Untracked, bool Ignored, bool Nul)? StatusForm(string[] a)
     {
-        if (a.Length < 4 || a[0] != "status" || a[1] is not ("--porcelain" or "--porcelain=v1") || a[2] != "-z") return null;
+        if (a.Length < 3 || a[0] != "status" || a[1] is not ("--porcelain" or "--porcelain=v1")) return null;
+        var nul = a[2] == "-z";
+        var at = nul ? 3 : 2;
+        if (a.Length <= at) return null;
         bool untracked;
-        if (a[3] == "--untracked-files=all") untracked = true;
-        else if (a[3] == "--untracked-files=no") untracked = false;
+        if (a[at] == "--untracked-files=all") untracked = true;
+        else if (a[at] == "--untracked-files=no") untracked = false;
         else return null;
         var ignored = false;
-        foreach (var extra in a.Skip(4))
+        foreach (var extra in a.Skip(at + 1))
             if (extra == "--ignore-submodules=none") continue;
             else if (extra == "--ignored" && untracked && !ignored) ignored = true;
             else return null;
-        return (untracked, ignored);
+        return (untracked, ignored, nul);
     }
 
     private static LandingGitResult Ok(string output) => new(0, output, "");
@@ -118,8 +167,8 @@ internal static class InProcessGitStatus
     /// Renames count as both paths.
     /// </summary>
     public static IReadOnlySet<string>? StatusPaths(string checkout, bool untracked, bool ignored = false,
-        Func<Configuration, bool>? agrees = null)
-        => StatusEntries(checkout, untracked, ignored, agrees) is { } entries
+        Func<Configuration, bool>? agrees = null, IReadOnlyDictionary<string, string?>? childEnvironment = null)
+        => StatusEntries(checkout, untracked, ignored, agrees, childEnvironment) is { } entries
             ? entries.Select(e => e.Path).ToHashSet(StringComparer.Ordinal)
             : null;
 
@@ -128,14 +177,19 @@ internal static class InProcessGitStatus
     /// The codes are libgit2's reading and renames are not paired.
     /// </summary>
     internal static IReadOnlyList<string>? StatusRows(string checkout, bool untracked, bool ignored = false,
-        Func<Configuration, bool>? agrees = null)
-        => StatusEntries(checkout, untracked, ignored, agrees) is { } entries
-            ? entries.Select(e => Code(e.State) + " " + e.Path).ToList()
+        Func<Configuration, bool>? agrees = null, IReadOnlyDictionary<string, string?>? childEnvironment = null)
+        => StatusEntries(checkout, untracked, ignored, agrees, childEnvironment) is { } entries
+            ? entries.Select(e => (Code(e.State) ?? " M") + " " + e.Path).ToList()
             : null;
 
+    /// <summary>
+    /// libgit2s status entries, or null (git answers) where its reading could differ from the git childs, including a
+    /// work-tree conversion it lacks (<see cref="WorkTreeConversion"/>, judged against <paramref name="childEnvironment"/>,
+    /// null: this processs).
+    /// </summary>
     private static List<(string Path, FileStatus State)>? StatusEntries(string checkout, bool untracked, bool ignored,
-        Func<Configuration, bool>? agrees)
-        => Read(checkout, agrees, repo =>
+        Func<Configuration, bool>? agrees, IReadOnlyDictionary<string, string?>? childEnvironment = null)
+        => Read(checkout, agrees, workTreeContent: true, childEnvironment: childEnvironment, answer: repo =>
         {
             var options = new StatusOptions
             {
@@ -160,21 +214,8 @@ internal static class InProcessGitStatus
             return entries.Select(e => (e.Key, e.Value)).ToList();
         });
 
-    /// <summary>
-    /// An entry git lists however it reads the work tree's bytes: untracked or ignored (the path sets are
-    /// pinned against git), a conflict, or an index that differs from HEAD (object ids, no filters).
-    /// A work-tree-only modification, type change or deletion of a tracked file is not.
-    /// </summary>
-    internal static bool CertainlyDirty(FileStatus state) =>
-        state is FileStatus.NewInWorkdir or FileStatus.Ignored
-        || (state & (FileStatus.Conflicted | FileStatus.NewInIndex | FileStatus.ModifiedInIndex
-            | FileStatus.DeletedFromIndex | FileStatus.RenamedInIndex | FileStatus.TypeChangeInIndex)) != 0;
-
-    /// <summary>Whether a verdict caller's dirty status is answered in process: some entry is certain.</summary>
-    internal static bool? VerdictAnswersDirty(string checkout, bool untracked, bool ignored = false)
-        => StatusEntries(checkout, untracked, ignored, null) is { } entries ? entries.Any(e => CertainlyDirty(e.State)) : null;
-
-    private static string Code(FileStatus state)
+    /// <summary>The porcelain v1 XY code of a libgit2 state; null for a state with no change git would show.</summary>
+    private static string? Code(FileStatus state)
     {
         if (state.HasFlag(FileStatus.Conflicted)) return "UU";
         if (state == FileStatus.Ignored) return "!!";
@@ -187,7 +228,7 @@ internal static class InProcessGitStatus
         var y = state.HasFlag(FileStatus.DeletedFromWorkdir) ? 'D'
             : state.HasFlag(FileStatus.TypeChangeInWorkdir) ? 'T'
             : state.HasFlag(FileStatus.ModifiedInWorkdir) || state.HasFlag(FileStatus.NewInWorkdir) ? 'M' : ' ';
-        return x == ' ' && y == ' ' ? " M" : $"{x}{y}";
+        return x == ' ' && y == ' ' ? null : $"{x}{y}";
     }
 
     /// <summary>
@@ -324,7 +365,8 @@ internal static class InProcessGitStatus
     }
 
     private static T? Read<T>(string checkout, Func<Configuration, bool>? agrees, Func<Repository, T?> answer,
-        bool indexOnly = false) where T : class
+        bool indexOnly = false, bool workTreeContent = false, IReadOnlyDictionary<string, string?>? childEnvironment = null)
+        where T : class
     {
         if (!InProcessGitReads.Enabled) return null;
         // A variable that moves git's objects, refs or history elsewhere (GIT_COMMON_DIR, an object store, shallow or
@@ -353,6 +395,7 @@ internal static class InProcessGitStatus
                 if (indexOnly && view.Config.Get<string>("core.worktree") is not null) return null;
                 if (repo.Index.Any(e => e.Mode == Mode.GitLink)) return null;
                 if (agrees is not null && !agrees(view.Config)) return null;
+                if (workTreeContent && WorkTreeConversion.GitOnly(repo, view.Config, childEnvironment) is not null) return null;
                 return answer(repo);
             }
             finally

@@ -3,9 +3,10 @@ using Antiphon.Server.Application.Dtos;
 namespace Antiphon.Server.Application.Interfaces;
 
 /// <summary>
-/// A <c>git status</c> whose caller tests the listing for emptiness. A verdict-only caller permits an
-/// in-process answer for a dirty tree. A caller that also checks Git's standard-error flag needs the
-/// actual command because the in-process listing can omit an unreadable directory silently.
+/// A <c>git status</c> whose caller tests the listing for emptiness. Every caller now gets libgit2's listing for a
+/// clean or dirty tree in git's layout (InProcessGitStatus, 2026-11-25), so the verdict-only mark no longer changes
+/// the answer. A caller that also checks Git's standard-error flag still needs the actual command because the
+/// in-process listing can omit an unreadable directory silently.
 /// Both requests use the ordinary <c>RunAsync</c> call with the original argument list, so overrides
 /// see the same command. The mark applies only to that argument list instance.
 /// </summary>
