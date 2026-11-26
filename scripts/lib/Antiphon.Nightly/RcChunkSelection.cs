@@ -25,6 +25,9 @@ namespace Antiphon.Nightly
         public string ContentDigest { get; set; } = "";
         /// <summary>The stable case keys of its expanded roster (the admission predicate requires each passed).</summary>
         public string[] Cases { get; set; } = Array.Empty<string>();
+
+        public bool RepositoryInvariant { get; set; }
+        public bool RequiresFreshInvariantExecution => RepositoryInvariant || Classes.Any(NightlyTestsPlan.IsInvariantClass);
     }
 
     /// <summary>A declared runtime reader (directory listing, fixture, assembled file name): its class and the path globs it reads.</summary>
@@ -165,6 +168,7 @@ namespace Antiphon.Nightly
             {
                 var reasons = hits[chunk.Id].Distinct(StringComparer.Ordinal).ToList();
                 if (result.Mode == "Full") reasons.Insert(0, "full");
+                if (chunk.RequiresFreshInvariantExecution) reasons.Add("repository-invariant-fresh-execution");
                 var match = carries[chunk.Id];
                 if (reasons.Count == 0 && match.Decision == "carry")
                     decisions.Add(new RcChunkDecision { Chunk = chunk.Id, Decision = "carry", Origin = match.Origin });

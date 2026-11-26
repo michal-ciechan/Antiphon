@@ -64,13 +64,15 @@ public sealed class RcProjectSelectionTests
             IncrementalOwedDigest = RcComparisonBaseline.OwedDigest(new Dictionary<string, string>()),
         };
         var attempt = fixture.PathOf("attempt");
-        var first = RcIncrementalCut.Execute(options, roster, attempt, chunk =>
+        IDictionary Launch(RcPlannedChunk chunk, string directory)
         {
-            var row = Receipt(chunk, Path.Combine(attempt, chunk.Id + ".trx"));
+            Directory.CreateDirectory(directory);
+            var row = Receipt(chunk, Path.Combine(directory, chunk.Id + ".trx"));
             row["runId"] = options.RunId;
             row["attempt"] = options.Attempt;
             return row;
-        }, "windows");
+        }
+        var first = RcIncrementalCut.Execute(options, roster, attempt, chunk => Launch(chunk, attempt), "windows");
         first.Launched.ShouldBe([invariant.Id]);
         first.Carried.Select(row => PsValue.Str(row["chunk"])).ShouldBe([ordinary.Id]);
         first.AllGreen.ShouldBeTrue(first.Refusal);
@@ -81,6 +83,58 @@ public sealed class RcProjectSelectionTests
         PsValue.Str(fresh["disposition"]).ShouldBe("executed");
         PsValue.Str(fresh["sha"]).ShouldBe(source);
         RcChunkReceipt.ReadTrx(PsValue.Str(fresh["trx"])).Select(test => test.CaseKey).ShouldBe([invariantCase]);
+
+        var completeResume = RcIncrementalCut.Execute(options, roster, attempt,
+            _ => throw new InvalidOperationException("a complete same-attempt invariant must already have a fresh receipt"), "windows");
+        completeResume.AllGreen.ShouldBeTrue(completeResume.Refusal);
+        completeResume.Launched.ShouldBeEmpty();
+
+        var journalPath = Path.Combine(attempt, "incremental-launches.jsonl");
+        var older = System.Text.Json.Nodes.JsonNode.Parse(File.ReadLines(journalPath).Single())!;
+        older["attempt"] = 1;
+        File.WriteAllText(journalPath, older.ToJsonString() + "\n");
+        var staleResume = RcIncrementalCut.Execute(options, roster, attempt, chunk => Launch(chunk, attempt), "windows");
+        staleResume.AllGreen.ShouldBeTrue(staleResume.Refusal);
+        staleResume.Launched.ShouldBe([invariant.Id]);
+
+        var variants = new (string Field, object Value, string Reason)[]
+        {
+            ("disposition", "carried", "not-executed"),
+            ("sha", new string('e', 40), "foreign-source"),
+            ("attempt", 1, "foreign-attempt"),
+            ("platform", "linux", "platform:linux"),
+            ("contentDigest", new string('f', 64), "foreign-content"),
+            ("trx", "", "no-trx"),
+        };
+        foreach (var (field, value, reason) in variants)
+        {
+            var forgedAttempt = fixture.PathOf("forged-" + field);
+            var failed = RcIncrementalCut.Execute(options, roster, forgedAttempt, chunk =>
+            {
+                var row = Launch(chunk, forgedAttempt);
+                row[field] = value;
+                if (field == "trx")
+                {
+                    var wrongTrx = Path.Combine(forgedAttempt, "incomplete.trx");
+                    WriteTrx(wrongTrx, ordinary);
+                    row[field] = wrongTrx;
+                }
+                return row;
+            }, "windows");
+            failed.AllGreen.ShouldBeFalse(field);
+            failed.Refusal.ShouldContain(field == "trx" ? "case-missing:" + invariantCase : reason, field);
+        }
+
+        var opaque = prior[0];
+        opaque["contentDigest"] = "";
+        var opaquePath = Path.Combine(baseline, "opaque.json");
+        options.IncrementalInventoryPath = opaquePath;
+        options.IncrementalInventoryDigest = RcChunkReceipt.Seal(opaquePath, source, 1, prior);
+        var fallback = fixture.PathOf("opaque-attempt");
+        var full = RcIncrementalCut.Execute(options, roster, fallback, chunk => Launch(chunk, fallback), "windows");
+        full.CoverageScope.ShouldBe("Full");
+        full.Launched.ShouldBe([invariant.Id, ordinary.Id]);
+        full.AllGreen.ShouldBeTrue(full.Refusal);
     }
 
     private static readonly OrderedDictionary Projects = new()

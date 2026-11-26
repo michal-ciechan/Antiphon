@@ -54,6 +54,7 @@ namespace Antiphon.Nightly
             public string[] Cases = Array.Empty<string>();
             public double? PriorWallSeconds;
             public string ContentDigest = "";
+            public bool RepositoryInvariant;
         }
 
         sealed class RunInput
@@ -205,7 +206,7 @@ namespace Antiphon.Nightly
                     { "contentDigest", c.ContentDigest }, { "sha", ledger[c.ContentDigest].Sha }, { "originRun", ledger[c.ContentDigest].RunId }, { "result", "pass" },
                 }).ToArray();
                 var selection = RcChunkSelection.Select(repository, baseline.Sha, run.Sha,
-                    plan.Select(c => new RcPlannedChunk { Id = c.Chunk, Project = c.Project, Classes = c.Classes, ContentDigest = c.ContentDigest }).ToArray(),
+                    plan.Select(c => new RcPlannedChunk { Id = c.Chunk, Project = c.Project, Classes = c.Classes, Cases = c.Cases, ContentDigest = c.ContentDigest, RepositoryInvariant = c.RepositoryInvariant }).ToArray(),
                     priorRows, census, row => new RcReuse { Reusable = true });
                 Phase("git");
                 var changed = TestSelectionGit.Run(repository, new[] { "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", baseline.Sha, run.Sha, "--" })
@@ -455,6 +456,7 @@ namespace Antiphon.Nightly
                     Suite = suite, Chunk = Str(c["chunk"]), Project = Str(c["project"]), Classes = Items(c["classes"]).Select(Str).ToArray(),
                     Consumes = Items(c["consumes"]).Select(Str).ToArray(), Cases = members.Select(m => m.CaseKey).ToArray(),
                     PriorWallSeconds = c["priorWallSeconds"] == null ? null : Convert.ToDouble(c["priorWallSeconds"], CultureInfo.InvariantCulture), ContentDigest = digest,
+                    RepositoryInvariant = members.Any(member => NightlyTestsPlan.IsInvariantClass(member.Class)),
                 });
             }
             if (chunks.Select(c => c.Chunk).Distinct(StringComparer.Ordinal).Count() != chunks.Count || chunks.Select(c => c.ContentDigest).Distinct(StringComparer.Ordinal).Count() != chunks.Count)

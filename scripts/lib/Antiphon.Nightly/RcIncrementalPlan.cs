@@ -168,6 +168,7 @@ namespace Antiphon.Nightly
                     if (fresh) reasons.Add("fresh-suite-adapter-required");
                     if (stable == false) reasons.Add("ambiguous-case");
                     if (S(c, "boundary") == "unassigned") reasons.Add("unassigned-boundary");
+                    if (NightlyTestsPlan.IsInvariantClass(S(c, "className"))) reasons.Add("repository-invariant-fresh-execution");
                     var row = new JsonObject
                     {
                         ["key"] = key, ["suite"] = suiteName, ["className"] = S(c, "className"), ["method"] = S(c, "method"), ["caseKey"] = S(c, "caseKey"),
@@ -193,7 +194,11 @@ namespace Antiphon.Nightly
                     if ((disposition != "Dirty" && disposition != "Sample" && disposition != "Carry") || !(F(decision, "reasons") is JsonArray decided)) throw Refuse("invalid-decision");
                     var decidedReasons = Strings(decided);
                     foreach (var r in decidedReasons) RcChunkDigest.AssertDigestText(r, "reason");
-                    if (disposition != "Dirty") row["origin"] = CopyOrigin(F(decision, "origin"), S(row, "suite"));
+                    if (disposition != "Dirty")
+                    {
+                        var origin = CopyOrigin(F(decision, "origin"), S(row, "suite"));
+                        if (!NightlyTestsPlan.IsInvariantClass(S(row, "className"))) row["origin"] = origin;
+                    }
                     if (Reasons(row).Length == 0) row["disposition"] = disposition;
                     row["reasons"] = SortedReasons(Reasons(row).Concat(decidedReasons));
                 }
