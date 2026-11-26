@@ -339,6 +339,11 @@ Rules:
   `live-lane-status.ps1`; the canonical JSON writer moves from PsJson into Antiphon.Nightly; CLI `live-lane-status`.
   Blocked: the fingerprint needs the rc-project-selection graph that CI-2 owns (wait for CI-2, or get the CI owner's
   agreement to reuse the graph walk in `Antiphon.Scripts/RcProjectSelection.cs`).
+  Note (unit 60, 2026-11-26): the isolation is finished. The lane's six live tests are one dedicated project,
+  `tests/Antiphon.LiveClaude.Tests`, which references only the product, so the fingerprint's repositoryClosure no longer
+  holds Antiphon.Nightly or Antiphon.Scripts; the runtime roots are only `tests/live-lane-checkpoints/` (no `scripts/`,
+  `.claude/` or `docker/`). The graph adapter stays outside the hash, its behaviour pinned by the parity, fingerprint and
+  status tests. The core roster, gate scan and manifest binding follow the project; the pin moved to `f6d19136`.
 - **S23-S25 live-lane-manifest (3 x 3 h).** S23 the gate scan (L1043-1667); S24 discovery, roster, export, receipt,
   scratch (L49-1042, L1643-1707); S25 the census (L1708-3046) and deletion of the file and its driver.
   `LiveClaudeInventoryTests` (Antiphon.Agents.Pty.Tests) gets a ProjectReference to Antiphon.Nightly.
