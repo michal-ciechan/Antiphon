@@ -231,7 +231,7 @@
     },
     {
       "path": "global.json",
-      "classes": 40,
+      "classes": 41,
       "reason": "allowlist"
     },
     {
@@ -2242,18 +2242,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 66,
+      "classes": 67,
       "reason": "cap",
-      "owed": 41,
+      "owed": 42,
       "first": [
+        "NightlyRunParityTests",
         "NightlyRunTests",
         "RcFailureHistoryTests",
         "TestTimingsTwinTests",
         "TestTraceSummaryTests",
         "ToolchainFloorWarningTests",
         "AwayDigestSendTests",
-        "C1744G3PhoneHomeSupervisionTests",
-        "C599SnapshotTests"
+        "C1744G3PhoneHomeSupervisionTests"
       ]
     },
     {
@@ -4595,6 +4595,7 @@
     {
       "path": "scripts/lib/Antiphon.Scripts/Antiphon.Scripts.csproj",
       "classes": [
+        "CliEntryTests",
         "CliLauncherTests",
         "LiveLaneProjectIsolationTests"
       ]
@@ -4622,6 +4623,7 @@
     {
       "path": "scripts/lib/Antiphon.Scripts/Program.cs",
       "classes": [
+        "CliEntryTests",
         "CliLauncherTests",
         "ReleaseImpactScriptTests"
       ]
@@ -26264,6 +26266,7 @@
         "BuildSlotScriptTests",
         "CheckpointToolCommandTests",
         "ClassCostMeasurementTests",
+        "CliEntryTests",
         "ClientChecksTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
@@ -26272,7 +26275,6 @@
         "NightlyExecutionDiagnosticTests",
         "NightlyHealthTests",
         "NightlyHostTests",
-        "NightlyRunParityTests",
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
