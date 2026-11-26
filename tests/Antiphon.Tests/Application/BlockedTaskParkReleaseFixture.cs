@@ -40,7 +40,8 @@ internal sealed partial class RunnerSeatReleaseFixture
     public TaskParkPublicationTests.ParkGit SourceGit =>
         (TaskParkPublicationTests.ParkGit)Harness.Provider.GetRequiredService<ITaskProgressGit>();
 
-    public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false, bool prePublished = false)
+    public async Task CreateSourceAsync(WorkspaceMode mode = WorkspaceMode.Worktree, bool remote = false, bool prePublished = false,
+        bool parkedTip = false)
     {
         var root = Path.Combine(Path.GetTempPath(), "c1065-release-" + Guid.NewGuid().ToString("N"));
         _roots.Add(root);
@@ -49,7 +50,7 @@ internal sealed partial class RunnerSeatReleaseFixture
         SourceOrigin = Path.Combine(root, "origin.git");
         SourcePath = Path.Combine(root, "task");
         var branch = RemoteWorkspaceService.OwnedBranch(TaskId);
-        var sha = await SourceTreeAsync(root, TaskId, remote, prePublished);
+        var sha = await SourceTreeAsync(root, TaskId, remote, prePublished, parkedTip);
         DesktopSourcePath = SourcePath;
         if (remote)
         {
@@ -139,18 +140,20 @@ internal sealed partial class RunnerSeatReleaseFixture
     /// <paramref name="prePublished"/> also puts the owned branch on origin at the baseline (its own template), for
     /// cases about release and delivery rather than the push itself (publication's push is TaskParkPublicationTests').
     /// </summary>
-    private async Task<string> SourceTreeAsync(string root, Guid taskId, bool remote, bool prePublished = false)
+    private async Task<string> SourceTreeAsync(string root, Guid taskId, bool remote, bool prePublished = false,
+        bool parkedTip = false)
     {
         var token = taskId.ToString("N")[..8];
         if (GitTreeTemplate.Enabled)
         {
             try
             {
-                var template = await GitTreeTemplate.BuildOnceAsync("c1065-park-source" + (remote ? "-remote" : "") + (prePublished ? "-published" : ""), ["task"],
+                var template = await GitTreeTemplate.BuildOnceAsync("c1065-park-source" + (remote ? "-remote" : "") + (prePublished ? "-published" : "")
+                    + (parkedTip ? "-parked" : ""), ["task"],
                     async (templateRoot, tokens) => new()
                     {
                         ["sha"] = await BuildSourceTreeAsync(templateRoot, "feat/card-task-" + tokens["task"],
-                            "task-" + tokens["task"], remote, prePublished),
+                            "task-" + tokens["task"], remote, prePublished, parkedTip),
                     }, tokenLength: 8);
                 var clone = template.CloneTo(root, new Dictionary<string, string> { ["task"] = token });
                 return clone.Map(template.Values["sha"]);
@@ -166,10 +169,11 @@ internal sealed partial class RunnerSeatReleaseFixture
             }
         }
         return await BuildSourceTreeAsync(root, RemoteWorkspaceService.OwnedBranch(taskId),
-            RemoteWorkspaceService.MirrorName(taskId), remote, prePublished);
+            RemoteWorkspaceService.MirrorName(taskId), remote, prePublished, parkedTip);
     }
 
-    private async Task<string> BuildSourceTreeAsync(string root, string branch, string mirror, bool remote, bool prePublished = false)
+    private async Task<string> BuildSourceTreeAsync(string root, string branch, string mirror, bool remote, bool prePublished = false,
+        bool parkedTip = false)
     {
         var origin = Path.Combine(root, "origin.git");
         var repository = Path.Combine(root, "repo");
@@ -193,6 +197,17 @@ internal sealed partial class RunnerSeatReleaseFixture
         await GitAsync(repository, prePublished ? ["push", "origin", "master", "HEAD:refs/heads/" + branch] : ["push", "origin", "master"]);
         var sha = await GitAsync(repository, "rev-parse", "HEAD");
         await GitAsync(repository, "worktree", "add", "-b", branch, Path.Combine(root, "task"), sha);
+        if (parkedTip)
+        {
+            // A delegate's parked tip, committed on the owned branch and already published to origin, for cases about
+            // the park's delivery, reply and resume rather than its push (that push is TaskParkPublicationTests').
+            if (remote) throw new NotSupportedException("a parked tip is a local source only");
+            var task = Path.Combine(root, "task");
+            await File.WriteAllTextAsync(Path.Combine(task, "parked-tip.txt"), "parked tip");
+            await GitAsync(task, "add", "parked-tip.txt");
+            await GitAsync(task, "commit", "-m", "parked tip");
+            await GitAsync(task, "push", "--no-follow-tags", "origin", "HEAD:refs/heads/" + branch);
+        }
         if (remote)
         {
             var runnerRepo = Path.Combine(root, "runner-repo");

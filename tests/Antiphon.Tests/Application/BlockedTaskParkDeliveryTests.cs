@@ -687,12 +687,9 @@ public sealed class BlockedTaskParkDeliveryTests
 
     internal static async Task<string> PublishAsync(RunnerSeatReleaseFixture f)
     {
-        await f.CreateSourceAsync();
-        var branch = (await f.TaskAsync()).WorktreeBranch.ShouldNotBeNull();
-        await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "parked-tip.txt"), "parked tip");
-        await f.GitAsync(f.SourcePath, "add", "parked-tip.txt");
-        await f.GitAsync(f.SourcePath, "commit", "-m", "parked tip");
-        await f.GitAsync(f.SourcePath, "push", "--no-follow-tags", "origin", $"HEAD:refs/heads/{branch}");
+        // The parked tip is committed on the owned branch and already on origin (cloned from its template), so Prepare's
+        // push is up to date; that push's own cases are TaskParkPublicationTests'.
+        await f.CreateSourceAsync(parkedTip: true);
         var tip = await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
         await f.EditAsync((task, _) => task.ResultFilePath = "report.md");
         using var scope = f.Harness.Provider.CreateScope();
