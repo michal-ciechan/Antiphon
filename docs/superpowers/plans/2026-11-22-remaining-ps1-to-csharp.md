@@ -55,6 +55,57 @@ that `verify-docker-stack` routes the real deploy, retire and runner-cache cases
 with the `c1008-host-proof.ps1` it loads. Finished card proofs become one-offs. The launchers and W1 libraries that a
 kept one-off still starts or loads stay with it.
 
+### Script shapes (2026-11-26)
+
+The owner asked for every script that runs another script, or that does more than invoke a single dotnet command. The
+answer covers the 76 tracked `.ps1` files at `e29e38e01`.
+
+**No entry point is a single dotnet command today.** `lib/antiphon-cli.ps1` (behind every launcher) and
+`scripts/antiphon` / `scripts\antiphon.cmd` all run `dotnet msbuild` (restore plus an up-to-date check) before
+`dotnet exec`. The launcher helper also copies the build output to `bin-launcher/run-<hash>/` first.
+
+Measured on the laptop, warm and unchanged:
+
+| Call | Time |
+|---|---|
+| `scripts\antiphon.cmd <cmd>` | about 1.95 s |
+| The `dotnet exec <dll>` inside it | about 70 ms |
+| Starting pwsh for a launcher (before any CLI work) | 3-5 s |
+
+So every agent `build-slot` or `run-checkpoint` call, and every watchdog tick, pays about 5 s before the C# runs. The
+cached launcher designed in section 2.2 of `2026-11-19-ps1-to-csharp-migration-plan.md` was never built. Both entry
+points still call themselves the "minimal form".
+
+| # | Shape | Files |
+|---|---|---|
+| N0 | Every CLI entry: msbuild, then exec | `lib/antiphon-cli.ps1`, `scripts/antiphon`, `scripts/antiphon.cmd`. Target: one `dotnet exec` (or exe) when the sources are unchanged. Build only when the content identity of the CLI's inputs changed, into a directory per identity, so a long-running nightly never blocks the next build. |
+| S1 | Pure launchers: map parameters, then one CLI call (19) | `apphost-watchdog-state-observer`, `autostart-apphost`, `autostart-session-runner`, `cleanup-build-junk` (also refuses `-CleanupContext`), `cleanup-claude-sessions`, `cleanup-codex-test-residue`, `github-sync`, `keep-six`, `postgres-snapshot`, `recover-repository-children`, `restart-apphost`, `run-checkpoint` and `validate-checkpoint-receipt` (both resolve relative paths), `run-daemon`, `set-apphost-maintenance`, `test-client` (flag translation), `watchdog-apphost` (refuses `-RestartScript`), `windmill/invoke-postgres-snapshot-stale` |
+| S2 | Launchers with logic around the call (6) | `nightly-run`, `release-cut` and `nightly-health`: refusals emitted before the call (seams path, blank arguments) and a `-PassThru` object read back from a result file, for the PowerShell callers in W2. `build-slot`: re-parses its own raw command line so that `-m:2` survives. `windmill/invoke-postgres-snapshot`: two calls, the job and the dot-sourced `Set-SnapshotTarget`. `verify-docker-stack`: the launcher plus the live server2 bridge (dot-sources `c590-command` and `c590-real`, manifest checks). |
+| S3 | PowerShell logic that starts other scripts (W8/W10 server2) | `deploy-server2` (`c590-real`, `c1609-read-packet`, `verify-docker-stack`, `server2-host-jq.sh`); `deploy-server2-server` (`restart-linux-server`); `c590-real` (`c1008-host-proof`, `c1609-host-proof`, `c849-import-saved-donor`, `test-client`, `verify-docker-stack`, remote `.sh`); `c1609-manual` (`c590-real`, `verify-docker-stack`); `c1008-host-proof` (`c1609-host-proof`); `retire-runner-volumes` (`c1609-manual`); `verify-card0849-caches` (`verify-docker-stack`); the drivers `test-deploy-server2`, `test-deploy-server2-jq` and `test-restart-linux-server`. |
+| S4 | PowerShell logic, no other script (W8/W10) | `restart-linux-server` (docker, HTTP), `deploy-server2-staging-server`, `c1609-host-proof`, `c1609-read-packet`, `c590-command`, `c849-import-saved-donor` |
+| S5 | One-offs, kept | `cutover-postgres-server2` (starts `restart-apphost`, `set-apphost-maintenance`, `keep-six`, `recover-repository-children`, `autostart-apphost` and `windmill/invoke-postgres-snapshot`) and its driver; `postgres-cutover-monitor`; master's `docs/superpowers/plans/2026-11-26-card-2082-export-windows-timing.ps1` |
+| S6 | W2 live lane (owner-gated, S21) | `run-live-lane` and `live-lane-status` (load `lib/live-lane-*`), plus the seven `test-live-lane-*` drivers |
+| S7 | Test fixtures | `fixtures/c589-slot-shim` (`build-slot`), `c727-fake-http`, `c727-fake-verify`, `c889-c578-observation`, `c913-receipts` (`verify-card0849-caches`), `cache-bridge-diagnostics` (`c590-real`), `deploy-server2-output-witness` (`deploy-server2`, `c590-real`, `c1609-read-packet`), and `tests/.../c997-import-saved-donor` |
+
+**The libraries that kept scripts still load.** None of them is loaded by a normal-operations launcher. Only W2, W8/W10
+and the fixtures load them.
+
+| Library | Code lines | Loaded by |
+|---|---:|---|
+| `lib/nightly-core.ps1` | 220 | `nightly-common`, `nightly-owned-process`, `live-lane-attestation`, `live-lane-fingerprint`, W2 drivers |
+| `lib/nightly-common.ps1` | 449 | `live-lane-run`, W2 drivers |
+| `lib/nightly-owned-process.ps1` | 45 | `live-lane-run` |
+| `lib/c487-harness.ps1` | 378 | W2 drivers (the old nightly test harness) |
+| `lib/c487-nightly-tests.ps1` | 228 | `c487-harness` |
+| `lib/checkpoint-process-runner.ps1` | 10 | `c487-harness`, `c487-nightly-tests`, `live-lane-fingerprint` |
+| `lib/checkpoint-file-reader.ps1` | 603 | `checkpoint-process-runner` |
+| `lib/build-driver-environment.ps1` | 30 | `nightly-owned-process`, `c487-nightly-tests` |
+| `lib/runner-operator-token.ps1` | 12 | `deploy-server2`, `c590-real`, `c1609-manual`, `retire-runner-volumes` |
+| `lib/live-lane-attestation`, `-fingerprint`, `-outcome`, `-receipt`, `-run` | 1,280 | `run-live-lane`, `live-lane-status`, W2 drivers |
+
+They fall with their loaders. The live-lane set and the nightly and c487 libraries go with W2 (S21). The runner-token
+library goes with W8's deploy-server2 family.
+
 ## What is left (2026-11-24, after unit 43)
 
 Snapshot: `wip/next` after units 1-54 (unit 20 and unit 45 by the owner's decisions), on master `350b6340b`. There are **75 tracked `.ps1` files**, from 356 on 2026-11-22. Master added `scripts/lib/desktop-postgres.ps1` (`ed338d6b2`, a W8 library for `deploy-local`, and for `pg-qps` until unit 46) after unit 20; unit 49 deleted it with `deploy-local.ps1`.
