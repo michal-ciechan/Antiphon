@@ -74,7 +74,8 @@ public sealed class PlanCheckpointClassSelectionGuardTests
             var migrated = cases.Where(test => test.Namespace + "." + test.TypeOrClass == type.FullName).ToArray();
             migrated.Length.ShouldBe(count, type.FullName);
             foreach (var test in migrated)
-                test.Categories.Order(StringComparer.Ordinal).ShouldBe(["Integration", "RepositoryInvariant", "Slow"], test.Uid);
+                test.Categories.Order(StringComparer.Ordinal).ToArray()
+                    .ShouldBe(["Integration", "RepositoryInvariant", "Slow"], customMessage: test.Uid);
         }
     }
 
