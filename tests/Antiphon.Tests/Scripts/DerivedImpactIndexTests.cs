@@ -219,55 +219,6 @@ public sealed class DerivedImpactIndexTests
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLink(string newPath, string oldPath, IntPtr reserved);
 
-    // CARD-1838. The Merge process names the regenerate command as the last step before
-    // DerivedImpactIndexTests and the push, and the Merge guard union names the two missed rows.
-    [Test]
-    public void merge_process_names_the_regenerate_step()
-    {
-        var root = RepoRoot();
-        var loop = File.ReadAllText(Path.Combine(root, "docs", "orchestration-loop.md"));
-        var guide = File.ReadAllText(Path.Combine(root, "docs", "testing-and-build.md"));
-        AssertRegenDocs(loop, guide);
-        File.Exists(Path.Combine(root, "scripts", "regenerate-derived-impact-index.ps1")).ShouldBeFalse("the regeneration is a command (unit 41)");
-
-        var blinded = loop.Replace(
-            RegenStep,
-            "The last step before the push is a hand edit of tests/derived-impact-index.json.",
-            StringComparison.Ordinal);
-        blinded.ShouldNotBe(loop);
-        Should.Throw<ShouldAssertException>(() => AssertRegenDocs(blinded, guide));
-
-        var guardBlind = guide.Replace(
-            "Resolve repository invariant checkpoint rows with",
-            "Omit the invariant selection",
-            StringComparison.Ordinal);
-        guardBlind.ShouldNotBe(guide);
-        Should.Throw<ShouldAssertException>(() => AssertRegenDocs(loop, guardBlind));
-    }
-
-    // rc run ae84478d g131. regenerate_command_reports_changed_then_unchanged runs the driver with
-    // --no-build. The qualification builds only Antiphon.sln, and the Merge step builds the driver
-    // itself, so only this read sees a driver that the solution build does not produce.
-    [Test]
-    public void solution_build_produces_the_regenerate_driver()
-    {
-        var solution = File.ReadAllText(Path.Combine(RepoRoot(), "Antiphon.sln"));
-        AssertSolutionBuildsDriver(solution);
-
-        var unbuilt = solution.Replace(".Debug|Any CPU.Build.0 = Debug|Any CPU", ".Debug|Any CPU.Skip = Debug|Any CPU", StringComparison.Ordinal);
-        unbuilt.ShouldNotBe(solution);
-        Should.Throw<ShouldAssertException>(() => AssertSolutionBuildsDriver(unbuilt));
-    }
-
-    private static void AssertSolutionBuildsDriver(string solution)
-    {
-        const string driver = "\"scripts\\regenerate-derived-impact-index\\Antiphon.DerivedImpactIndex.csproj\"";
-        var line = solution.Split('\n').SingleOrDefault(l => l.StartsWith("Project(", StringComparison.Ordinal) && l.Contains(driver, StringComparison.Ordinal));
-        line.ShouldNotBeNull("Antiphon.sln does not list the regenerate driver");
-        var guid = line.TrimEnd('\r').Split(", ")[^1].Trim('"');
-        solution.ShouldContain(guid + ".Debug|Any CPU.Build.0 = Debug|Any CPU", Case.Sensitive);
-    }
-
     private static void AssertChanged(string stdout)
     {
         stdout.ShouldContain("derived-impact-index changed", Case.Sensitive);
@@ -278,32 +229,6 @@ public sealed class DerivedImpactIndexTests
     {
         stdout.ShouldContain("derived-impact-index unchanged", Case.Sensitive);
         stdout.ShouldNotContain("derived-impact-index changed", Case.Sensitive);
-    }
-
-    // Unit 41: the step is the CLI command; scripts/regenerate-derived-impact-index.ps1 is gone.
-    private const string RegenStep =
-        "The last step before DerivedImpactIndexTests and the push is `scripts/antiphon regenerate-derived-impact-index`";
-
-    private static void AssertRegenDocs(string loop, string guide)
-    {
-        const string heading = "### Merge process (CARD-1783)";
-        var start = loop.IndexOf(heading, StringComparison.Ordinal);
-        start.ShouldBeGreaterThanOrEqualTo(0);
-        var end = loop.IndexOf("\n### ", start + heading.Length, StringComparison.Ordinal);
-        var section = end < 0 ? loop[start..] : loop[start..end];
-        section.ShouldContain(RegenStep, Case.Sensitive);
-        section.ShouldContain("DerivedImpactIndexBuilder.Build", Case.Sensitive);
-        section.ShouldContain("DerivedImpactIndexBuilder.Write", Case.Sensitive);
-        section.ShouldContain("commits nothing", Case.Sensitive);
-        section.ShouldContain(
-            "DerivedImpactIndexTests.committed_index_matches_the_builder keeps the full-byte compare",
-            Case.Sensitive);
-        section.ShouldContain("so a Merge that skips the command still fails", Case.Sensitive);
-
-        const string guard = "Resolve repository invariant checkpoint rows with";
-        guide.ShouldContain(guard, Case.Sensitive);
-        guide.ShouldContain("/*/*/C1514LandingSplitBudgetTests/C1584_E2EExpandedBudget*", Case.Sensitive);
-        guide.ShouldContain("(DerivedImpactIndexTests*)", Case.Sensitive);
     }
 
     [Test]
@@ -1199,18 +1124,15 @@ public sealed class DerivedImpactIndexTests
         foreach (var row in root.GetProperty(property).EnumerateArray())
         {
             var project = row.GetProperty("project").GetString() ?? "";
-            var body = (row.GetProperty("treenodeFilter").GetString() ?? "")["/*/*/".Length..];
-            var keys = new List<string>();
-            if (body.StartsWith('('))
-            {
-                body.EndsWith("/*", StringComparison.Ordinal).ShouldBeTrue(body);
-                keys.AddRange(body[..^2].Split('|').Select(part => part[1..^2]));
-            }
-            else
-            {
-                var slash = body.IndexOf('/');
-                keys.AddRange(body[(slash + 1)..].Split('|').Select(part => body[..slash] + "/" + part[1..^2]));
-            }
+            var filter = row.GetProperty("treenodeFilter").GetString() ?? "";
+            if (filter == Antiphon.Nightly.NightlyTestsPlan.RepositoryInvariantFilter) continue;
+            var segments = filter.Split('/');
+            segments.Length.ShouldBe(5, filter);
+            static IEnumerable<string> Operands(string segment) =>
+                segment.Split('|').Select(part => part.Trim('(', ')').TrimEnd('*'));
+            var classes = Operands(segments[3]);
+            var keys = segments[4] == "*" ? classes : classes.SelectMany(name =>
+                Operands(segments[4]).Select(method => name + "/" + method));
 
             foreach (var key in keys)
             {

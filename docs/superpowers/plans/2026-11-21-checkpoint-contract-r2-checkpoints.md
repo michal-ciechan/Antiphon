@@ -23,7 +23,7 @@ The charged estimates are 26 minutes across the closed rows, including one cold 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | index | tests/Antiphon.Tests -> bin-a320d237/ | project-contract | `/*/Antiphon.Tests.Invariants/CheckpointToolProjectContractTests/*` | V-1 | 0 failed, 0 skipped | 7 | 8 | true |
-| CP-2 | index | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | V-2 | 0 failed, 0 skipped | 27 | 2 | true |
+| CP-2 | index | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | V-2 | 0 failed, 0 skipped | 27 | 2 | true |
 | CP-3 | index | CP-1 | selector | `/*/Antiphon.Tests.Scripts/ImpactedClassesSelectorTests/*` | V-3 | 0 failed, 0 skipped | 31 | 5 | true |
 | CP-4 | index | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | V-4 | 0 failed, 0 skipped | 78 | 3 | true |
 | CP-5 | index | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-1 | exit 0 | n/a | 5 | true |

@@ -22,7 +22,7 @@ Not in this closed list, under the short-test bound (operator 2026-11-18): night
 |---|---|---|---|---|---|---|---:|---:|---|---|
 | CP-1 | all | `tests/Antiphon.Tests -> bin-irq-s5/` | tag-backing | `/*/*/RcTagBackingTests/*` | V-1 | all listed, 0 failed | 40 | 15 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-2 | all | CP-1 | policy | `/*/*/TestClassificationPolicyTests/*` | R-1 | all listed, 0 failed | 42 | 8 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
-| CP-3 | all | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed | 27 | 10 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-3 | all | CP-1 | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-2 | all listed, 0 failed | 27 | 10 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-4 | all | CP-1 | linux-guards | `/*/*/(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | R-3 | all listed, 0 failed | 39 | 10 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-5 | all | n/a | land-graph | `pwsh -NoProfile -File scripts/audit-land-verification-graph.ps1 -Check` | R-4 | exit 0 | n/a | 8 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-6 | all | n/a | evidence-diff | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -Repository . -BaseRef 9bcd61113f631ec58f158ff3fb637736fb786fd4 -HeadRef HEAD` | R-5 | exit 0 | n/a | 3 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |

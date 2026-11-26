@@ -65,7 +65,7 @@ build root because the stopped run retained its output. No inherited-red claim.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-7 | S7a | `tests/Antiphon.Tests -> bin-c1836-s7a-r2/` | baseline | `/*/*/RcReleaseBaselineTests/*` | V-7 | all 3 named methods, no failures/skips | 3 | 6 |
 | CP-90 | S7a | CP-7 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(WindowsUnitPlatformAdmissionTests*)\|(ProcessSpawnLimitTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | policy, layering, categories, spawn | every named class, no failures/skips | 79 | 4 |
-| CP-93 | S7a | CP-7 | index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | derived guard | all methods, no failures/skips | 27 | 5 |
+| CP-93 | S7a | CP-7 | index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | derived guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S7a | CP-7 | envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | adjacent envelope guard | all methods, no failures/skips | 4 | 1 |
 | CP-95 | S7a | CP-7 | admission | `/*/*/RcHistoricalAdmissionTests/*` | affected fixture consumer | all 7 methods, no failures/skips | 7 | 3 |
 | CP-91 | S7a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s7a-pty/` | pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 1 |

@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 380,
+      "classes": 382,
       "reason": "allowlist"
     },
     {
@@ -2194,13 +2194,13 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 62,
+      "classes": 64,
       "reason": "cap",
-      "owed": 37,
+      "owed": 39,
       "first": [
-        "GrokRunnerImageContractTests",
         "GrokSha256PinTests",
         "HangfireLeaseDocumentationTests",
+        "JqRunnerImageContractInvariantTests",
         "OsWitnessCheckInvariantTests",
         "PackageVersionPinContractTests",
         "PlanCheckpointClassSelectionGuardTests",
@@ -3137,6 +3137,7 @@
         "DockerStackContractTests",
         "GrokRunnerImageContractTests",
         "GrokSha256PinTests",
+        "JqRunnerImageContractInvariantTests",
         "JqRunnerImageContractTests",
         "SeedSmokeTargetingPackContractTests",
         "VerifyCodexImageCommandTests",
@@ -3180,6 +3181,7 @@
     {
       "path": "docker/session-runner-grok/dind-entrypoint.sh",
       "classes": [
+        "CodexRootExecContractInvariantTests",
         "CodexRootExecContractTests",
         "CustodyHelperContractTests",
         "DindRunnerContractTests",
@@ -3228,6 +3230,7 @@
       "classes": [
         "CodexRunnerImageContractTests",
         "GrokRunnerImageContractTests",
+        "JqRunnerImageContractInvariantTests",
         "JqRunnerImageContractTests",
         "SeedSmokeTargetingPackContractTests"
       ]
@@ -3365,7 +3368,7 @@
       "classes": [
         "C1818GcOwnerRobustnessTests",
         "ClaudeTokenRefreshOptInTests",
-        "CodexRootExecContractTests",
+        "CodexRootExecContractInvariantTests",
         "CodexRunnerImageContractTests",
         "DeployServer2ApiDefaultTests",
         "DockerStackContractTests",
@@ -3374,7 +3377,7 @@
         "HangfireLeaseDocumentationTests",
         "HangfirePostgreSqlStorageTests",
         "HangfireStorageSelectionTests",
-        "JqRunnerImageContractTests",
+        "JqRunnerImageContractInvariantTests",
         "RcBridgeProbePlatformTests",
         "RemoteScriptContractTests",
         "RunnerPushCredentialDocsTests",
@@ -4348,7 +4351,7 @@
     {
       "path": "scripts/lib/Antiphon.Nightly/PhoneHomeGrokVerify.cs",
       "classes": [
-        "CodexRootExecContractTests",
+        "CodexRootExecContractInvariantTests",
         "GrokRunnerImageContractTests"
       ]
     },
@@ -25669,16 +25672,16 @@
         "CheckpointToolProjectContractTests",
         "ClaudeTokenRefreshOptInTests",
         "CodexGpt62LadderTests",
-        "CodexRootExecContractTests",
+        "CodexRootExecContractInvariantTests",
         "CodexRunnerImageContractTests",
         "CustodyHelperContractTests",
         "DindRunnerContractTests",
         "DockerStackContractTests",
         "DockerStackDocumentationTests",
         "DotnetToolManifestContractTests",
+        "GrokRunnerImageContractTests",
         "HangfireStorageSelectionTests",
         "HostCleanupCheckpointExtractionTests",
-        "JqRunnerImageContractTests",
         "LandGraphAuditProjectInstanceTests",
         "PostgresPoolConfigurationTests",
         "RcBridgeProbePlatformTests",
@@ -25827,6 +25830,12 @@
       "path": "tests/Antiphon.Tests/Invariants/BuildOutputNestingTests.cs",
       "classes": [
         "PlanCheckpointClassSelectionGuardTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Invariants/C1514LandingSplitBudgetTests.cs",
+      "classes": [
+        "DerivedImpactIndexInvariantTests"
       ]
     },
     {
@@ -29462,7 +29471,7 @@
       "classes": [
         "NativeLinuxPolicyWitnessMutationTests",
         "NativeLinuxPolicyWitnessTests",
-        "WindowsUnitPlatformAdmissionInvariantTests"
+        "WindowsUnitPlatformAdmissionTests"
       ]
     },
     {

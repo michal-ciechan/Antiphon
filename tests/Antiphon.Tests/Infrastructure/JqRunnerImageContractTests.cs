@@ -1,4 +1,3 @@
-using Antiphon.Tests.Infrastructure;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Antiphon.Tests.TestHelpers;
@@ -6,41 +5,16 @@ using Shouldly;
 using TUnit.Core;
 using Antiphon.TestSupport;
 
-namespace Antiphon.Tests.Invariants;
+namespace Antiphon.Tests.Infrastructure;
 
-[Category("RepositoryInvariant")]
 [Timeout(600_000)]
 [Category("Unit")]
 public sealed class JqRunnerImageContractTests
 {
     internal const string NativeLinuxReason = "CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.";
 
-    private const string Version = "1.7.1";
-    private const string Sha256 = "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5";
-
-    [Test]
-    public void Pinned_download_is_verified_before_root_owned_install_in_every_runner_target()
-    {
-        var image = Read("docker/session-runner-grok/Dockerfile");
-        var stages = DockerStackDocuments.Stages(image);
-        var runtime = stages.Single(stage => stage.Name == "runtime-base").Body;
-        runtime.ShouldContain("ARG JQ_VERSION=" + Version + "\n");
-        runtime.ShouldContain("ARG JQ_SHA256=" + Sha256 + "\n");
-        var install = Regex.Match(runtime, @"(?ms)^RUN .*?jq-linux-amd64.*?(?=^\S|\z)").Value;
-        install.ShouldContain("https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-amd64");
-        install.ShouldContain("&& echo \"${JQ_SHA256}  /tmp/jq-download/jq\" | sha256sum -c -");
-        install.ShouldContain("&& install -o root -g root -m 0755 /tmp/jq-download/jq /usr/local/bin/jq");
-        install.IndexOf("sha256sum -c -", StringComparison.Ordinal).ShouldBeLessThan(
-            install.IndexOf("install -o root", StringComparison.Ordinal), "a failed digest must prevent installation");
-        install.ShouldContain("&& test \"$(/usr/local/bin/jq --version)\" = \"jq-${JQ_VERSION}\"");
-        install.ShouldContain("&& rm -rf /tmp/jq-download");
-        foreach (var stage in stages)
-            Regex.IsMatch(stage.Body, @"(?s)apt-get install[^\n]*(?:\\\n[^\n]*)*\bjq\b").ShouldBeFalse("no apt jq in " + stage.Name);
-        foreach (var target in new[] { "runtime", "receipt-probe", "session-testing" })
-            DockerStackDocuments.Closure(stages, target).ShouldContain("/tmp/jq-download/jq /usr/local/bin/jq");
-        Read("docs/docker-stack.md").ShouldContain("jq " + Version + " (static jq-linux-amd64, SHA-256 `" + Sha256
-            + "`, verified before installing root-owned mode 755 at `/usr/local/bin/jq`)");
-    }
+    internal const string Version = "1.7.1";
+    internal const string Sha256 = "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5";
 
     [Test]
     public void Qualification_grades_the_jq_row_for_both_targets()
@@ -56,7 +30,6 @@ public sealed class JqRunnerImageContractTests
             jq[Array.IndexOf(jq, "--user") + 1].ShouldBe("1654:1654", target);
             jq[^2..].ShouldBe(["/c660/verify-codex-image.sh", "jq-version"], target);
         }
-        Read("docker/session-runner-grok/verify-codex-image.sh").ShouldContain("JQ_VERSION=" + Version + "\n");
     }
 
     [NativeLinuxOnly("CARD-1210: jq image probes require native Linux (POSIX modes, symlinks and executable identity); Windows skips explicitly.")]
@@ -432,5 +405,5 @@ public sealed class JqRunnerImageContractTests
         public void Dispose() => Directory.Delete(Root, recursive: true);
     }
 
-    private static string Read(string path) => DockerStackDocuments.Read(path).Replace("\r\n", "\n");
+    internal static string Read(string path) => DockerStackDocuments.Read(path).Replace("\r\n", "\n");
 }

@@ -217,10 +217,12 @@ public sealed class MergeHighRadiusSubsetTests
         using (var broken = JsonDocument.Parse(dropped))
             Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(broken.RootElement));
 
-        var droppedLane = remote.RootElement.GetRawText()
-            .Replace("TestLaneCategoryGuardTests", "MissingLaneGuardTests", StringComparison.Ordinal);
-        droppedLane.ShouldNotBe(remote.RootElement.GetRawText());
-        using (var brokenLane = JsonDocument.Parse(droppedLane))
+        var droppedLane = System.Text.Json.Nodes.JsonNode.Parse(remote.RootElement.GetRawText())!.AsObject();
+        var filters = droppedLane["filters"]!.AsArray();
+        var guard = filters.Single(row => row!["project"]!.GetValue<string>() == "tests/Antiphon.Tests"
+            && row["treenodeFilter"]!.GetValue<string>() == Antiphon.Nightly.NightlyTestsPlan.RepositoryInvariantFilter);
+        filters.Remove(guard).ShouldBeTrue();
+        using (var brokenLane = JsonDocument.Parse(droppedLane.ToJsonString()))
             Should.Throw<ShouldAssertException>(() => AssertImpactedMethods(brokenLane.RootElement));
 
         var ran = await RunAsync(root, "--merge-subset", "--path", "server/Infrastructure/Git/ServerGitIdentity.cs", "--json");
@@ -486,6 +488,9 @@ public sealed class MergeHighRadiusSubsetTests
             ["remote-scripts", "test-fixture-cleanup", "test-lane-category", "timing-labels"],
             ignoreOrder: false);
         Filter(root, "CP-merge-subset-tests").ShouldBe(RemoteTestsFilter);
+        root.GetProperty("filters").EnumerateArray().ShouldContain(row =>
+            row.GetProperty("project").GetString() == "tests/Antiphon.Tests"
+            && row.GetProperty("treenodeFilter").GetString() == Antiphon.Nightly.NightlyTestsPlan.RepositoryInvariantFilter);
         var methods = Filter(root, "CP-merge-subset-RemoteScriptContractTests");
         methods.ShouldStartWith("/*/*/RemoteScriptContractTests/(", Case.Sensitive);
         methods.ShouldContain("(C849_Deploy_ordering_contract_is_pinned*)", Case.Sensitive);

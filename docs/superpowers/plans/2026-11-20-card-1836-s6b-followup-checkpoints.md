@@ -20,7 +20,7 @@ CP-12 includes the real nightly-run witness, about one minute per run after the 
 |---|---|---|---|---|---|---|---:|---:|
 | CP-12 | S6b-followup | `tests/Antiphon.Tests -> bin-c1836-s6bf/` | linux-run-evidence | `/*/*/(RcRunEvidenceTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-12, one-root witness, chunk outcome, torn revision, launch stamp, nightly core, live lane | all listed, 0 failed/skipped | 13 | 15 |
 | CP-20 | S6b-followup | `tests/Antiphon.Tests -> bin-c1836-s6bf-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)/*` | policy, categories, layering | all listed, 0 failed/skipped | 81 | 15 |
-| CP-21 | S6b-followup | `tests/Antiphon.Tests -> bin-c1836-s6bf-impact/` | derived-impact | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | committed derived-impact index | all listed, 0 failed/skipped | 27 | 15 |
+| CP-21 | S6b-followup | `tests/Antiphon.Tests -> bin-c1836-s6bf-impact/` | derived-impact | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | committed derived-impact index | all listed, 0 failed/skipped | 27 | 15 |
 
 ### Restart
 

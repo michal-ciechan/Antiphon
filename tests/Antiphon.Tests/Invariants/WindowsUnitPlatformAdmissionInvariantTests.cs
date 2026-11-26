@@ -22,7 +22,7 @@ public sealed class WindowsUnitPlatformAdmissionInvariantTests
     public void C1210_Native_linux_entries_guard_before_work()
     {
         var methods = SourceMethods();
-        var observed = WindowsShapedHostObservations();
+        var observed = WindowsUnitPlatformAdmissionTests.WindowsShapedHostObservations();
         WindowsUnitSkipRoster.Native.Length.ShouldBe(observed.Distinct(StringComparer.Ordinal).Count(), "c1210-native-identity-count");
         WindowsUnitSkipRoster.Native.Sum(entry => entry.Results).ShouldBe(observed.Length, "c1210-native-result-count");
         foreach (var entry in WindowsUnitSkipRoster.Native)
@@ -128,11 +128,13 @@ public sealed class WindowsUnitPlatformAdmissionInvariantTests
     private static MethodDeclarationSyntax[] SourceMethods() => SourceRoots()
         .SelectMany(root => root.DescendantNodes().OfType<MethodDeclarationSyntax>()).ToArray();
 
-    private static SyntaxNode[] SourceRoots() => Directory.EnumerateFiles(
+    private static SyntaxNode[] SourceRoots() => CheckoutSources.Value;
+
+    private static readonly Lazy<SyntaxNode[]> CheckoutSources = new(() => Directory.EnumerateFiles(
             Path.Combine(DelegateScriptRunner.RepoRoot, "tests/Antiphon.Tests"), "*.cs", SearchOption.AllDirectories)
         .Where(path => !Path.GetRelativePath(DelegateScriptRunner.RepoRoot, path).Split(Path.DirectorySeparatorChar)
             .Any(part => part == "obj" || part == "bin" || part.StartsWith("bin-", StringComparison.Ordinal)))
-        .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()).ToArray();
+        .Select(path => CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot()).ToArray());
 
     private static string Identity(MethodDeclarationSyntax method) =>
         (method.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().FirstOrDefault()?.Name.ToString() ?? "") + "."
@@ -144,7 +146,7 @@ public sealed class WindowsUnitPlatformAdmissionInvariantTests
         // The Windows child records [NativeLinuxOnly] skips for the classes its filter
         // selects. That observation is the host roster. A Linux-only class the filter
         // does not select is decided once by the shipped Windows exclusion, not by the roster.
-        var observed = WindowsShapedHostObservations();
+        var observed = WindowsUnitPlatformAdmissionTests.WindowsShapedHostObservations();
         var expected = WindowsUnitSkipRoster.Native
             .SelectMany(entry => Enumerable.Repeat(entry.Identity, entry.Results))
             .Order(StringComparer.Ordinal)
@@ -166,31 +168,6 @@ public sealed class WindowsUnitPlatformAdmissionInvariantTests
             rows.ShouldBe(1, "c1210-policy-decision: " + name);
             WindowsUnitSkipRoster.Native.Count(entry => entry.Class == name).ShouldBe(0, "c1210-host-roster: " + name);
         }
-    }
-
-    private static string[] WindowsShapedHostObservations()
-    {
-        var selected = new HashSet<string>(StringComparer.Ordinal);
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(WindowsUnitPlatformAdmissionTests.ChildFilter, @"\(([A-Za-z0-9_]+)\*\)"))
-            selected.Add(match.Groups[1].Value);
-        var observed = new List<string>();
-        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-        foreach (var type in typeof(WindowsUnitPlatformAdmissionTests).Assembly.GetTypes())
-        {
-            if (!selected.Contains(type.Name)) continue;
-            var classSkip = type.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;
-            foreach (var method in type.GetMethods(flags))
-            {
-                if (method.GetCustomAttributes(typeof(TestAttribute), inherit: false).Length == 0) continue;
-                var methodSkip = method.GetCustomAttributes(typeof(Antiphon.TestSupport.NativeLinuxOnlyAttribute), inherit: false).Length > 0;
-                if (!classSkip && !methodSkip) continue;
-                var cases = method.GetCustomAttributes(inherit: false).Count(attribute => attribute.GetType().Name == "ArgumentsAttribute");
-                if (cases == 0) cases = 1;
-                var identity = type.Namespace + "." + type.Name + "." + method.Name;
-                for (var index = 0; index < cases; index++) observed.Add(identity);
-            }
-        }
-        return observed.Order(StringComparer.Ordinal).ToArray();
     }
 
     [Test]

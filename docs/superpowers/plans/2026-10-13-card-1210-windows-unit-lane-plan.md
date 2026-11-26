@@ -384,9 +384,9 @@ as such and routes to `next: investigate` (D-11), never to a larger budget in th
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | EstimatedMinutesWindows | Serial |
 |---|---|---|---|---|---|---|---:|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1210-l-s1/` | linux-hostjq | `/*/*/HostJqPrerequisiteScriptTests/*` | V-1 | all 39 passed, 0 skipped | 39 | 15 | n/a | true |
-| CP-2 | S1 | CP-1 | linux-jq | `/*/*/JqRunnerImageContractTests/*` | V-1 | all 18 passed (12 Version_row arguments), 0 skipped | 18 | 3 | n/a | true |
+| CP-2 | S1 | CP-1 | linux-jq | `/*/*/(JqRunnerImageContractTests*)\|(JqRunnerImageContractInvariantTests*)/*` | V-1 | all 18 passed (12 Version_row arguments), 0 skipped | 18 | 3 | n/a | true |
 | CP-3 | S1 | CP-1 | linux-grok-sha | `/*/*/GrokSha256PinTests/*` | V-1 | all 11 passed, 0 skipped | 11 | 2 | n/a | true |
-| CP-4 | S1 | CP-1 | linux-codex-heal | `/*/*/CodexRootExecContractTests/*` | V-1 | all 4 passed, 0 skipped; `PREREQ` lines absent | 4 | 2 | n/a | true |
+| CP-4 | S1 | CP-1 | linux-codex-heal | `/*/*/(CodexRootExecContractTests*)\|(CodexRootExecContractInvariantTests*)/*` | V-1 | all 4 passed, 0 skipped; `PREREQ` lines absent | 4 | 2 | n/a | true |
 | CP-5 | S1 | CP-1 | linux-admission-static | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/(C1210_Guard_matches_native_platform*)\|(C1210_Native_linux_entries_guard_before_work*)\|(C1210_Roster_closure_matches_source_gates*)\|(C1210_Audit_rejects_empty_or_incomplete_outcomes*)` | V-2 | exactly 4 passed, 0 skipped | 4 | 2 | n/a | false |
 | CP-6 | S1 | CP-1 | linux-c1050-static | `/*/*/C1008PlatformContractTests/(C1050_Guard_matches_native_platform*)\|(C1050_Remote_entries_guard_before_work*)\|(C1050_Rolling_entries_guard_before_work*)\|(C1050_Audit_rejects_empty_or_incomplete_outcomes*)` | V-3 | exactly 4 passed, 0 skipped | 4 | 1 | n/a | false |
 | CP-7 | S2 | `tests/Antiphon.Tests -> bin-c1210-l-s2/` | linux-lf-contract | `/*/*/ShellFixtureLineEndingContractTests/*` | V-4 | exactly 2 passed | 2 | 6 | n/a | false |
@@ -397,7 +397,7 @@ as such and routes to `next: investigate` (D-11), never to a larger budget in th
 | CP-12 | S5 | `tests/Antiphon.Tests -> bin-c1210-l-s5/` | linux-timeout-policy | `/*/*/ProcessSpawnTimeoutPolicyTests/*` | V-9 | exactly 2 passed | 2 | 6 | n/a | false |
 | CP-13 | S5 | CP-12 | linux-spawn-limit | `/*/*/ProcessSpawnLimitTests/*` | R-1 | all listed, 0 failed | 1 | 1 | n/a | true |
 | CP-14 | S1 | `tests/Antiphon.Tests -> bin-c1210-w-s1/` | win-admission | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | V-1, V-2 | exactly 5 passed, 0 skipped; child audit prints 68 `NotExecuted` with roster reasons and 4 `Passed` | 5 | 10 | 10 | true |
-| CP-15 | S1 | CP-14 | win-portable-direct | `/*/*/(JqRunnerImageContractTests*)\|(CodexRootExecContractTests*)/*` | V-1 | 4 passed, 18 skipped with roster reasons, 0 failed; no zero-skip certificate claimed | 4 | 3 | 3 | true |
+| CP-15 | S1 | CP-14 | win-portable-direct | `/*/*/(JqRunnerImageContractTests*)\|(CodexRootExecContractTests*)\|(JqRunnerImageContractInvariantTests*)\|(CodexRootExecContractInvariantTests*)/*` | V-1 | 4 passed, 18 skipped with roster reasons, 0 failed; no zero-skip certificate claimed | 4 | 3 | 3 | true |
 | CP-16 | S1 | CP-14 | win-c1050-platform | `/*/*/C1008PlatformContractTests/*` | V-3, R-2 | all 6 passed, 0 skipped (default apphost) | 6 | 4 | 4 | true |
 | CP-17 | S2 | `tests/Antiphon.Tests -> bin-c1210-w-s2/` | win-lf-contract | `/*/*/ShellFixtureLineEndingContractTests/*` | V-4 | exactly 2 passed after the one-time re-checkout of `scripts/fixtures/*.sh` | 2 | 8 | 8 | false |
 | CP-18 | S2 | CP-17 | win-codex-image | `/*/*/CodexRunnerImageContractTests/*` | V-5 | all 13 passed, 0 skipped (WSL bash present) | 13 | 4 | 4 | true |

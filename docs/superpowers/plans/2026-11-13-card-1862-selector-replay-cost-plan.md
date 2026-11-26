@@ -16,14 +16,14 @@ checks are waived by the operator. No whole CARD-1860 rerun is authorized.
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---|---|
 | CP-0 | baseline | n/a | driver-prerequisite | `dotnet build scripts/regenerate-derived-impact-index/Antiphon.DerivedImpactIndex.csproj -p:UseAppHost=false -maxcpucount:1 --nologo` | real regeneration prerequisite | exit 0 | n/a | 6 |
-| CP-1 | baseline | `tests/Antiphon.Tests -> bin-c1862-base/` | replay-baseline | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | identical full roster, measured baseline | 27 passed | 27 | 10 |
+| CP-1 | baseline | `tests/Antiphon.Tests -> bin-c1862-base/` | replay-baseline | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | identical full roster, measured baseline | 27 passed | 27 | 10 |
 | CP-2 | red | n/a | census-red | `pwsh -NoProfile -File scripts/test-selector-census.ps1` | freshness and cost witnesses | expected cost assertion red | n/a | 1 |
 | CP-3 | green | n/a | census-green | `pwsh -NoProfile -File scripts/test-selector-census.ps1` | freshness and cost witnesses | all assertion groups pass | n/a | 1 |
-| CP-4 | green | `tests/Antiphon.Tests -> bin-c1862-after/` | replay-after | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | all original replay cases and assertions | 27 passed | 27 | 6 |
+| CP-4 | green | `tests/Antiphon.Tests -> bin-c1862-after/` | replay-after | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | all original replay cases and assertions | 27 passed | 27 | 6 |
 | CP-5 | final | n/a | census-final | `pwsh -NoProfile -File scripts/test-selector-census.ps1` | freshness, full-census differential, cost | 9 script groups pass | n/a | 1 |
-| CP-6 | final | `tests/Antiphon.Tests -> bin-c1862-final/` | replay-final | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | all original cases after parsing repair | 27 passed | 27 | 6 |
+| CP-6 | final | `tests/Antiphon.Tests -> bin-c1862-final/` | replay-final | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | all original cases after parsing repair | 27 passed | 27 | 6 |
 | CP-7 | hosted | n/a | hosted-freshness | `pwsh -NoProfile -File scripts/test-selector-census.ps1 -Hosted` | fresh request scopes, refusal recovery, lifecycle | 9 script groups; one joined host | n/a | 1 |
-| CP-8 | hosted | `tests/Antiphon.Tests -> bin-c1862-hosted/` | hosted-replay | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | unchanged 27 cases and assertions | 27 passed | 27 | 6 |
+| CP-8 | hosted | `tests/Antiphon.Tests -> bin-c1862-hosted/` | hosted-replay | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | unchanged 27 cases and assertions | 27 passed | 27 | 6 |
 | CP-9 | hosted | n/a | cold-freshness | `pwsh -NoProfile -File scripts/test-selector-census.ps1` | normal standalone CLI unchanged | 9 script groups | n/a | 1 |
 | CP-10 | hosted | CP-8 | limiter | `/*/*/ProcessSpawnLimitTests/*` | retained assembly-local lane | 2 passed | 2 | 1 |
 

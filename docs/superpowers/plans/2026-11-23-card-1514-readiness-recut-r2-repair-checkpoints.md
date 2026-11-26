@@ -13,7 +13,7 @@ Code task 74b3af9d repairs the two round 2 blockers of Review 5bfb258d on top of
 | CP-12 | r2 | CP-10 | timing | `/*/*/(ProjectReadinessCollationTests*)\|(TestTimingOperationLabelTests*)/*` | R-6 | all listed, 0 failed/skipped | 7 | 5 | true |
 | CP-15 | r2 | CP-10 | roster | `/*/*/(WindowsUnitPlatformAdmissionTests*)\|(WindowsUnitPlatformAdmissionInvariantTests*)/*` | R-7 | 0 failed; any skip is roster-listed | 5 | 4 | true |
 | CP-16 | r2 | CP-10 | exclusion | `/*/*/ReleaseGatePlatformTests/LinuxOnlyWindowsExclusionPolicy` | R-7 | 1 passed, 0 failed/skipped | 1 | 6 | true |
-| CP-17 | r2 | CP-10 | derived-index | `/*/*/(DerivedImpactIndexTests*)|(DerivedImpactIndexInvariantTests*)/*` | R-5 | 0 failed/skipped | 1 | 4 | true |
+| CP-17 | r2 | CP-10 | derived-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-5 | 0 failed/skipped | 1 | 4 | true |
 
 CP-10 and CP-15 may record roster-listed skips. Qualify them with `pwsh -NoProfile -File scripts/validate-checkpoint-receipt.ps1 -Evidence <report.json> -ExpectedSourceSha <tip>`. The checkpoint tool's `validate` verb refuses every skip, so rows with skips do not count for that verb.
 

@@ -168,5 +168,5 @@ checkpoint/import commands and count assumptions before handing off to Code.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1012-contract/` | image-contracts-unit-lane | `/*/*/(JqRunnerImageContractTests*)\|(DockerStackContractTests*)\|(CodexRunnerImageContractTests*)\|(GrokRunnerImageContractTests*)/*` | V-2 | all four full classes; >= 163 executed, zero failed/skipped | 163 | 3 | true |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c1012-contract/` | image-contracts-unit-lane | `/*/*/(JqRunnerImageContractTests*)\|(DockerStackContractTests*)\|(CodexRunnerImageContractTests*)\|(GrokRunnerImageContractTests*)\|(JqRunnerImageContractInvariantTests*)/*` | V-2 | all four full classes; >= 163 executed, zero failed/skipped | 163 | 3 | true |
 | CP-2 | S1 | CP-1 | unit-regression-lane | `/*/*/*/*[Category=Unit]` | R-1 | whole Unit lane, zero failed; actual count and inherited platform skips individually accounted | 2000 | 8 | true |

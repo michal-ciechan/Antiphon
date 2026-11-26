@@ -102,24 +102,27 @@ namespace Antiphon.Nightly
             var finishedPrefix = new HashSet<(string Suite, string Chunk)>();
             foreach (var suiteValue in selectedSuites)
             {
-                if (!state.NpmOk || state.LintBlocksPipeline || !state.DotnetOk) break;
                 var suiteId = PsValue.Str(suiteValue);
                 object suite;
-                try { suite = steps.Prepare(suiteId, needsDiscovery); }
-                catch (Exception)
+                try
                 {
-                    if (barrier) PartialSchedule(state, prepared, priorityMembers, unresolved, historyDigest);
+                    if (!state.NpmOk || state.LintBlocksPipeline || !state.DotnetOk)
+                    {
+                        if (state.RequiresInvariantPrefix) throw new NightlyRefusal("dispatch-preparation-blocked:" + suiteId);
+                        break;
+                    }
+                    suite = steps.Prepare(suiteId, needsDiscovery);
+                    if (suite == null && needsDiscovery)
+                        throw new NightlyRefusal("dispatch-preparation-incomplete:" + suiteId);
+                }
+                catch (Exception ex)
+                {
+                    if (needsDiscovery) PartialSchedule(state, prepared, priorityMembers, unresolved, historyDigest);
+                    if (state.RequiresInvariantPrefix)
+                        RecordIncompletePrefix(state, (suiteId, "discovery-pending"), ex.Message, finishedPrefix, selectedSuites);
                     throw;
                 }
-                if (suite == null)
-                {
-                    if (barrier)
-                    {
-                        PartialSchedule(state, prepared, priorityMembers, unresolved, historyDigest);
-                        throw new NightlyRefusal("dispatch-preparation-incomplete:" + suiteId);
-                    }
-                    continue;
-                }
+                if (suite == null) continue;
                 prepared.Add(suite);
                 if (barrier) continue;
                 if (state.RequiresInvariantPrefix)
@@ -265,26 +268,30 @@ namespace Antiphon.Nightly
             }
             catch (Exception ex)
             {
-                state.TestsPassed = false;
-                state.CoverageComplete = false;
-                state.OverallFailed = true;
-                state.Reasons.Add("repository-invariant-prefix-incomplete:" + id.Suite + "/" + id.Chunk);
-                var prepared = Each(PsValue.Prop(state.DispatchSchedule, "PreparedSuites"))
-                    .Select(s => PsValue.Str(PsValue.Prop(s, "id"))).ToHashSet(StringComparer.Ordinal);
-                var outstanding = Each(PsValue.Prop(state.DispatchSchedule, "entries"))
-                    .Select(entry => (Suite: PsValue.Str(PsValue.Prop(entry, "suite")), Chunk: PsValue.Str(PsValue.Prop(entry, "chunk"))))
-                    .Where(key => !finished.Contains(key))
-                    .Select(key => PsValue.Record(("suite", key.Suite), ("chunk", key.Chunk)))
-                    .Concat(selectedSuites.Select(PsValue.Str).Where(s => !prepared.Contains(s))
-                        .Select(s => PsValue.Record(("suite", s), ("chunk", "discovery-pending")))).ToArray();
-                if (state.DispatchSchedule != null)
-                {
-                    PsValue.AddMemberForce(state.DispatchSchedule, "invariantPrefix",
-                        PsValue.Record(("complete", false), ("suite", id.Suite), ("chunk", id.Chunk), ("detail", ex.Message), ("outstanding", outstanding)));
-                    WriteBestEffort(state, state.DispatchSchedule);
-                }
+                RecordIncompletePrefix(state, id, ex.Message, finished, selectedSuites);
                 throw;
             }
+        }
+
+        private static void RecordIncompletePrefix(NightlyRunState state, (string Suite, string Chunk) id, string detail,
+            HashSet<(string Suite, string Chunk)> finished, object[] selectedSuites)
+        {
+            state.TestsPassed = false;
+            state.CoverageComplete = false;
+            state.OverallFailed = true;
+            state.Reasons.Add("repository-invariant-prefix-incomplete:" + id.Suite + "/" + id.Chunk);
+            if (state.DispatchSchedule == null) return;
+            var prepared = Each(PsValue.Prop(state.DispatchSchedule, "PreparedSuites"))
+                .Select(s => PsValue.Str(PsValue.Prop(s, "id"))).ToHashSet(StringComparer.Ordinal);
+            var outstanding = Each(PsValue.Prop(state.DispatchSchedule, "entries"))
+                .Select(entry => (Suite: PsValue.Str(PsValue.Prop(entry, "suite")), Chunk: PsValue.Str(PsValue.Prop(entry, "chunk"))))
+                .Where(key => !finished.Contains(key))
+                .Select(key => PsValue.Record(("suite", key.Suite), ("chunk", key.Chunk)))
+                .Concat(selectedSuites.Select(PsValue.Str).Where(s => !prepared.Contains(s))
+                    .Select(s => PsValue.Record(("suite", s), ("chunk", "discovery-pending")))).ToArray();
+            PsValue.AddMemberForce(state.DispatchSchedule, "invariantPrefix",
+                PsValue.Record(("complete", false), ("suite", id.Suite), ("chunk", id.Chunk), ("detail", detail), ("outstanding", outstanding)));
+            WriteBestEffort(state, state.DispatchSchedule);
         }
 
         // ---- helpers ---------------------------------------------------------------------------------------------
