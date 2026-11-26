@@ -20,9 +20,10 @@ public sealed class HistoricalMigrationSeedCoverageTests
         "CardWorktreeCleanupEndpoints", "CardWorktreeCleanups", "CardWorktreeCleanupTargets",
         "ChannelOutboundDeliveries", "ChatChannels", "HostBudgets", "HostLoadSamples",
         "ModelAvailabilityHolds", "OutputDistillations", "PipelineDefinitionRevisions", "PipelineDefinitions",
-        "Projects", "ReviewThreads", "ReviewWorkflowRevisions", "RoutingPins", "RunnerRoutingSettings",
-        "SessionQueuedMessages", "StageOutcomes", "TaskWorktreeMirrorBindings", "TranscriptEntries",
-        "WorkflowTemplates", "Worktrees", "WorktreeResidueCandidateCursors", "WorktreeResidueRunCandidates", "WorktreeResidueRuns",
+        "Projects", "ReviewComments", "ReviewThreads", "ReviewWorkflowRevisions", "RoutingPins", "RunnerRoutingSettings",
+        "SessionQueuedMessages", "SessionRuntimeActions", "SessionTranscriptSummaries", "SessionTranscriptSummaryMaintenance",
+        "StageOutcomes", "TaskWorktreeMirrorBindings", "TranscriptEntries", "WorkflowTemplates", "Worktrees",
+        "WorktreeResidueCandidateCursors", "WorktreeResidueRunCandidates", "WorktreeResidueRuns",
     };
 
     // These nullable fields are excluded by the bound AgentTask context or by explicit SQL.
@@ -61,14 +62,15 @@ public sealed class HistoricalMigrationSeedCoverageTests
             before = after;
         }
 
-        // Test-only mutant simulates the Up of a later migration on this disposable database.
+        unreviewed.ShouldBeEmpty("Check the historical writers for each listed column and cover their seed compatibility.");
+
+        // Simulate a later handwritten Up against the same disposable PostgreSQL database.
         await db.Database.ExecuteSqlRawAsync("""
             ALTER TABLE "OutputDistillations"
             ADD COLUMN "HistoricalSeedRequiredProbe" integer NOT NULL DEFAULT 0
             """, ct);
-        unreviewed.AddRange(UnreviewedAdditions("synthetic migration", before, await ReadColumnsAsync(db, ct)));
-
-        unreviewed.ShouldBeEmpty("Check the historical writers for each listed column and cover their seed compatibility.");
+        UnreviewedAdditions("synthetic migration", before, await ReadColumnsAsync(db, ct))
+            .ShouldBe(["synthetic migration: OutputDistillations.HistoricalSeedRequiredProbe (required)"]);
     }
 
     private static IEnumerable<string> UnreviewedAdditions(string migration, List<SeedColumn> before, List<SeedColumn> after)
