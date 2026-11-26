@@ -24,7 +24,8 @@ internal static class RepositoryInvariantRosterAudit
                           where disposition is "MOVE" or "SPLIT"
                           select (Assembly: assembly, Name: assembly + "/" + type + "/" + method[0].GetString(), Disposition: disposition);
         var errors = new List<string>();
-        var byOwner = cases.ToLookup(test => test.Project + "/" + test.Namespace + "." + test.TypeOrClass + "/" + test.Method, StringComparer.Ordinal);
+        var byOwner = cases.ToLookup(test => test.Project + "/" + test.Namespace + "."
+            + NightlyCensus.BareClassIdentity(test.TypeOrClass) + "/" + test.Method, StringComparer.Ordinal);
 
         foreach (var (assembly, name, disposition) in obligations)
         {
@@ -57,9 +58,20 @@ internal static class RepositoryInvariantRosterAudit
                     if (entry.GetProperty("phase").GetString()?.EndsWith("/" + assembly, StringComparison.Ordinal) != true
                         || string.IsNullOrWhiteSpace(entry.GetProperty("reason").GetString()))
                         errors.Add(name + ": deferred disposition needs a phase and reason");
-                    var targets = entry.GetProperty("pendingOwners").EnumerateArray().SelectMany(target => byOwner[assembly + "/" + target.GetString()]);
-                    if (checkCases && original.Concat(targets).Any(Classified))
+                    var owners = entry.GetProperty("pendingOwners").EnumerateArray().Select(target => target.GetString()).ToArray();
+                    if (owners.Length == 0 || owners.Any(string.IsNullOrWhiteSpace))
+                        errors.Add(name + ": deferred disposition needs owner candidates");
+                    var bound = original.Concat(owners.SelectMany(owner => byOwner[assembly + "/" + owner])).ToArray();
+                    if (checkCases && bound.Length == 0)
+                        errors.Add(name + ": no compiled ordinary owner for deferred disposition");
+                    if (checkCases && bound.Any(test => Classified(test) || test.Namespace.EndsWith(".Invariants", StringComparison.Ordinal)))
                         errors.Add(name + ": deferred case is already compiled in the invariant lane");
+                    break;
+                case "retired":
+                    if (!entry.TryGetProperty("reason", out var reason) || string.IsNullOrWhiteSpace(reason.GetString()))
+                        errors.Add(name + ": retired disposition needs a reason");
+                    if (checkCases && original.Any())
+                        errors.Add(name + ": retired case still compiles");
                     break;
                 default:
                     errors.Add(name + ": unknown application status");

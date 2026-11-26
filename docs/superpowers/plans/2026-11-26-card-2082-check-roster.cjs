@@ -107,7 +107,8 @@ function checkImplementation(roster, caseFile, masterFile) {
     assert(!projectUids.has(qualified), 'Duplicate discovered UID ' + qualified);
     projectUids.add(qualified);
     projects.add(test.asm);
-    const name = test.asm + '/' + test.ns + '.' + test.type + '/' + test.method;
+    const type = test.type.endsWith(')') ? test.type.replace(/\(.+\)$/, '') : test.type;
+    const name = test.asm + '/' + test.ns + '.' + type + '/' + test.method;
     if (!keyed.has(name)) keyed.set(name, []);
     keyed.get(name).push(test);
   }
@@ -126,7 +127,7 @@ function checkImplementation(roster, caseFile, masterFile) {
   assert(statuses && typeof statuses === 'object', 'Missing application statuses');
   assert.deepEqual(Object.keys(statuses).sort(), [...obligations.keys()].sort(), 'Every MOVE and SPLIT needs a status');
   const isInvariant = test => test.ns.endsWith('.Invariants') && test.cats.includes('RepositoryInvariant');
-  let applied = 0, deferred = 0;
+  let applied = 0, deferred = 0, retired = 0;
   for (const [key, { project, disposition }] of obligations) {
     const entry = statuses[key];
     assert(projects.has(project), 'Missing compiled project ' + project);
@@ -143,13 +144,19 @@ function checkImplementation(roster, caseFile, masterFile) {
           key + ' lost its ordinary SPLIT cases');
       }
       applied++;
-    } else {
-      assert(entry.status === 'deferred' && entry.phase?.endsWith('/' + project) && entry.reason?.trim(),
+    } else if (entry.status === 'deferred') {
+      assert(entry.phase?.endsWith('/' + project) && entry.reason?.trim(),
         key + ' needs a phase and reason');
       assert(Array.isArray(entry.pendingOwners) && entry.pendingOwners.length > 0, key + ' needs the deferred owner candidates');
-      assert([...original, ...entry.pendingOwners.flatMap(owner => keyed.get(project + '/' + owner) ?? [])]
-        .every(test => !test.cats.includes('RepositoryInvariant')), key + ' is deferred but compiles as an invariant');
+      const observed = [...original, ...entry.pendingOwners.flatMap(owner => keyed.get(project + '/' + owner) ?? [])];
+      assert(observed.length > 0, key + ' has no compiled ordinary owner for deferred disposition');
+      assert(observed.every(test => !test.cats.includes('RepositoryInvariant') && !test.ns.endsWith('.Invariants')),
+        key + ' is deferred but compiles as an invariant');
       deferred++;
+    } else {
+      assert(entry.status === 'retired' && entry.reason?.trim(), key + ' needs an explicit retirement reason');
+      assert.equal(original.length, 0, key + ' is retired but still compiles');
+      retired++;
     }
   }
   const liveProject = 'Antiphon.LiveClaude.Tests';
@@ -166,7 +173,7 @@ function checkImplementation(roster, caseFile, masterFile) {
         row.key + '/' + method + ' is absent or entered the invariant lane');
     }
   }
-  console.log('compiled roster applied=' + applied + ' deferred=' + deferred + ' liveClaudeFixtures=' + liveRoster.length);
+  console.log('compiled roster applied=' + applied + ' deferred=' + deferred + ' retired=' + retired + ' liveClaudeFixtures=' + liveRoster.length);
 }
 
 function main(baseFile, integratedFile, mixedFile, caseFile, masterFile) {
