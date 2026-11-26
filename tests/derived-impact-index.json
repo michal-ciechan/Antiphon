@@ -4740,6 +4740,7 @@
     {
       "path": "scripts/release-cut.ps1",
       "classes": [
+        "ChangeAwareReleaseTests",
         "TestPhaseSummaryTests"
       ]
     },
@@ -26566,6 +26567,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseCutTests.cs",
       "classes": [
+        "ChangeAwareReleaseTests",
         "QualificationTimingTests"
       ]
     },
