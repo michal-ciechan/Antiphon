@@ -11,6 +11,7 @@ using Antiphon.PtyHost.Client;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
@@ -437,6 +438,7 @@ public sealed class Card2060PlacementHandshakeTests
             world.Attempt.Commit().ShouldNotBeNull();
         }
 
+        var clock = new FakeTimeProvider();
         (string Case, Action<byte[]> Mutate)[] cases =
         [
             ("challenge", frame => frame[0] ^= 0x01),
@@ -446,10 +448,17 @@ public sealed class Card2060PlacementHandshakeTests
             ("start ticks", frame => BinaryPrimitives.WriteUInt64BigEndian(frame.AsSpan(112), HostAttemptWorld.Ticks + 1)),
             ("boot", frame => frame[120] ^= 0x01),
             ("single v1 controller", frame => BinaryPrimitives.WriteUInt32BigEndian(frame.AsSpan(136), 1)),
+            ("delayed wrong challenge", frame =>
+            {
+                // PROVE has arrived and PLACED is still held by the peer. Cross the short
+                // timeout without exhausting the host's overall placement budget.
+                clock.Advance(TimeSpan.FromMilliseconds(2));
+                frame[0] ^= 0x01;
+            }),
         ];
         foreach (var (label, mutate) in cases)
         {
-            using var world = HostAttemptWorld.Start(Environment.ProcessId);
+            using var world = HostAttemptWorld.Start(Environment.ProcessId, clock);
             var exchange = world.ExchangeAsync(bound.Token);
             using var peer = world.Connect();
             var next = await world.ProveAndPlaceAsync(peer, mutate, bound.Token);
@@ -462,7 +471,7 @@ public sealed class Card2060PlacementHandshakeTests
         }
     }
 
-    // PC-22. GO may have started the payload, so a lost RELEASING keeps the launch, never the placement.
+    // PC-22. GO may have started the payload. Missing or mismatched RELEASING leaves placement uncommitted.
     [Test]
     [NativeLinuxOnly("Linux placement releases the stage over a Unix socket.")]
     public async Task LostAckRetainsLaunchedChild()
@@ -481,21 +490,29 @@ public sealed class Card2060PlacementHandshakeTests
             world.Attempt.Commit().ShouldNotBeNull();
         }
 
-        using (var world = HostAttemptWorld.Start(Environment.ProcessId))
+        foreach (var sendWrongChallenge in new[] { false, true })
         {
+            var label = sendWrongChallenge ? "wrong RELEASING challenge" : "missing RELEASING";
+            using var world = HostAttemptWorld.Start(Environment.ProcessId);
             var exchange = world.ExchangeAsync(bound.Token);
             using var peer = world.Connect();
             var go = await world.ProveAndPlaceAsync(peer, _ => { }, bound.Token);
             go.ShouldNotBeNull();
             go.Value.Kind.ShouldBe(GoKind);
+            if (sendWrongChallenge)
+            {
+                var wrongChallenge = go.Value.Body;
+                wrongChallenge[0] ^= 0x01;
+                await WriteFrameAsync(peer, ReleasingKind, wrongChallenge, bound.Token);
+            }
             peer.Dispose();
             // The launch reply stays LaunchedMessage: the exchange does not become a start failure.
-            await Should.NotThrowAsync(async () => await exchange);
-            world.Attempt.Commit().ShouldBeNull();
+            await Should.NotThrowAsync(async () => await exchange, label);
+            world.Attempt.Commit().ShouldBeNull(label);
         }
     }
 
-    // PC-4. Both v1 hierarchies must hold only the stage; a freezer-only extra member refuses.
+    // PC-4. Each v1 hierarchy independently refuses an extra member.
     [Test]
     [NativeLinuxOnly("The placement stage fixture uses Linux abstract sockets and procfs.")]
     public async Task MixedFreezerCannotAttest()
@@ -505,21 +522,25 @@ public sealed class Card2060PlacementHandshakeTests
 
         await using (var control = await StageDriver.StartAsync(bound.Token))
         {
-            await control.ProveAsync(freezerExtra: null, bound.Token);
+            await control.ProveAsync(bound.Token);
             await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
             control.Peer.Shutdown(SocketShutdown.Send);
             (await control.JoinAsync(bound.Token)).ExitCode.ShouldBe(3);
         }
 
-        await using var stage = await StageDriver.StartAsync(bound.Token);
-        await stage.ProveAsync(freezerExtra: Environment.ProcessId, bound.Token);
-        var reply = await ReadFrameAsync(stage.Peer, bound.Token);
-        stage.Peer.Shutdown(SocketShutdown.Send);
-        var joined = await stage.JoinAsync(bound.Token);
-        (reply is { Kind: PlacedKind }).ShouldBeFalse("a mixed freezer tree produced PLACED");
-        reply.ShouldBeNull();
-        joined.ExitCode.ShouldBe(3);
-        joined.Stderr.ShouldContain("C2060_CUSTODY_REFUSED PlacementExchange");
+        foreach (var controller in new[] { "freezer", "pids" })
+        {
+            await using var stage = await StageDriver.StartAsync(bound.Token);
+            await stage.ProveAsync(bound.Token, mixedController: controller);
+            var reply = await ReadFrameAsync(stage.Peer, bound.Token);
+            stage.Peer.Shutdown(SocketShutdown.Send);
+            var joined = await stage.JoinAsync(bound.Token);
+            (reply is { Kind: PlacedKind }).ShouldBeFalse($"a mixed {controller} tree produced PLACED");
+            reply.ShouldBeNull();
+            joined.ExitCode.ShouldBe(3);
+            joined.Exec.ShouldBeEmpty();
+            joined.Stderr.ShouldContain("C2060_CUSTODY_REFUSED PlacementExchange");
+        }
     }
 
     // PC-13. The stage holds the payload after PLACED until it reads GO.
@@ -533,7 +554,7 @@ public sealed class Card2060PlacementHandshakeTests
         // Decisive arm first: withhold GO while the stage holds the original PID.
         await using (var stage = await StageDriver.StartAsync(bound.Token))
         {
-            await stage.ProveAsync(freezerExtra: null, bound.Token);
+            await stage.ProveAsync(bound.Token);
             await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
             stage.Peer.Shutdown(SocketShutdown.Send);
             var after = await ReadUntilEofAsync(stage.Peer, bound.Token);
@@ -545,7 +566,7 @@ public sealed class Card2060PlacementHandshakeTests
 
         // Control: the same stage releases on a timely GO.
         await using var control = await StageDriver.StartAsync(bound.Token);
-        var challenge = await control.ProveAsync(freezerExtra: null, bound.Token);
+        var challenge = await control.ProveAsync(bound.Token);
         await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
         await WriteFrameAsync(control.Peer, GoKind, challenge, bound.Token);
         (await ExpectFrameAsync(control.Peer, ReleasingKind, bound.Token)).ShouldBe(challenge);
@@ -564,7 +585,7 @@ public sealed class Card2060PlacementHandshakeTests
 
         await using (var control = await StageDriver.StartAsync(bound.Token))
         {
-            var challenge = await control.ProveAsync(freezerExtra: null, bound.Token);
+            var challenge = await control.ProveAsync(bound.Token);
             await ExpectFrameAsync(control.Peer, PlacedKind, bound.Token);
             await WriteFrameAsync(control.Peer, GoKind, challenge, bound.Token);
             await ExpectFrameAsync(control.Peer, ReleasingKind, bound.Token);
@@ -572,7 +593,7 @@ public sealed class Card2060PlacementHandshakeTests
         }
 
         await using var stage = await StageDriver.StartAsync(bound.Token);
-        var go = await stage.ProveAsync(freezerExtra: null, bound.Token);
+        var go = await stage.ProveAsync(bound.Token);
         await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
         // Refuse only the stage's next write (EPIPE), then deliver a valid, timely GO.
         stage.Peer.Shutdown(SocketShutdown.Receive);
@@ -592,7 +613,7 @@ public sealed class Card2060PlacementHandshakeTests
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         string[] payload = ["/bin/echo", "--reuid=0", "-n", "--", "x"];
         await using var stage = await StageDriver.StartAsync(bound.Token, payload);
-        var challenge = await stage.ProveAsync(freezerExtra: null, bound.Token);
+        var challenge = await stage.ProveAsync(bound.Token);
         await ExpectFrameAsync(stage.Peer, PlacedKind, bound.Token);
         await WriteFrameAsync(stage.Peer, GoKind, challenge, bound.Token);
         await ExpectFrameAsync(stage.Peer, ReleasingKind, bound.Token);
@@ -620,12 +641,13 @@ public sealed class Card2060PlacementHandshakeTests
         public LinuxSpawnIdentity Root { get; }
         public LinuxPlacementAttempt Attempt { get; }
 
-        public static HostAttemptWorld Start(int rootPid)
+        public static HostAttemptWorld Start(int rootPid, TimeProvider? clock = null)
         {
+            clock ??= TimeProvider.System;
             var binding = new LinuxPlacementBinding(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
             var root = new LinuxSpawnIdentity(rootPid, Environment.ProcessId, Boot, Ticks, DateTime.UtcNow);
-            var deadline = Stopwatch.GetTimestamp() + 10 * Stopwatch.Frequency;
-            return new(binding, root, new LinuxPlacementAttempt(binding, deadline, CancellationToken.None)
+            var deadline = clock.GetTimestamp() + 10 * clock.TimestampFrequency;
+            return new(binding, root, new LinuxPlacementAttempt(binding, deadline, CancellationToken.None, clock)
             {
                 ExpectedPeerUid = GetUid(),
             });
@@ -737,11 +759,12 @@ public sealed class Card2060PlacementHandshakeTests
         }
 
         /// <summary>Publishes both memberships for the connected stage PID, then sends PROVE.</summary>
-        public async Task<byte[]> ProveAsync(int? freezerExtra, CancellationToken ct)
+        public async Task<byte[]> ProveAsync(CancellationToken ct, string? mixedController = null)
         {
             var stage = _stage.Id.ToString(CultureInfo.InvariantCulture) + "\n";
-            WriteMembers("pids", stage);
-            WriteMembers("freezer", freezerExtra is { } extra ? stage + extra.ToString(CultureInfo.InvariantCulture) + "\n" : stage);
+            var mixed = stage + Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + "\n";
+            WriteMembers("pids", mixedController == "pids" ? mixed : stage);
+            WriteMembers("freezer", mixedController == "freezer" ? mixed : stage);
             var challenge = RandomNumberGenerator.GetBytes(16);
             var binding = new LinuxPlacementBinding(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), _container, _namespace);
             await WriteFrameAsync(Peer, ProveKind, LinuxPlacementAttempt.BuildProveBody(binding, _deadline, challenge), ct);
