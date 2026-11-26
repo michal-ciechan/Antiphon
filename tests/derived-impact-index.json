@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 370,
+      "classes": 368,
       "reason": "allowlist"
     },
     {
@@ -2130,9 +2130,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 148,
+      "classes": 146,
       "reason": "cap",
-      "owed": 123,
+      "owed": 121,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
@@ -2146,9 +2146,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 84,
+      "classes": 83,
       "reason": "cap",
-      "owed": 59,
+      "owed": 58,
       "first": [
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
@@ -2162,9 +2162,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 87,
+      "classes": 86,
       "reason": "cap",
-      "owed": 62,
+      "owed": 61,
       "first": [
         "CheckpointManifestTests",
         "CheckpointOrFilterTests",
@@ -2178,9 +2178,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestSupport.cs",
-      "classes": 63,
+      "classes": 61,
       "reason": "cap",
-      "owed": 38,
+      "owed": 36,
       "first": [
         "TimingJournalTests",
         "CheckpointRecoveryWindowsTests",
@@ -2334,9 +2334,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 44,
+      "classes": 43,
       "reason": "cap",
-      "owed": 19,
+      "owed": 18,
       "first": [
         "CheckpointSourceGitBoundsTests",
         "CheckpointSourceStateTests",
@@ -2345,7 +2345,7 @@
         "CheckpointTempLifecycleTests",
         "CheckpointTempUsageTests",
         "CheckpointTrackedBaselineTests",
-        "CheckpointTypeCacheTests"
+        "CheckpointWarmBuildTests"
       ]
     },
     {
@@ -4676,31 +4676,9 @@
       "classes": [
         "AntiphonCliLauncherTests",
         "ReleaseImpactScriptTests",
-        "RunnerLinuxCompilerPolicyTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/build-driver-environment.ps1",
-      "classes": [
-        "BuildSlotScriptTests",
-        "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/c487-harness.ps1",
-      "classes": [
-        "C1677TempFamilyRegistryTests",
-        "C1677TempSweepNativeTests",
-        "C1677TempSweepTests",
-        "ReleaseImpactScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/checkpoint-file-reader.ps1",
-      "classes": [
-        "CheckpointReadStallWitnessTests",
-        "CheckpointReceiptStallBudgetTests",
-        "EmbeddedCheckpointReaderTests"
+        "RunnerLinuxCompilerPolicyTests",
+        "SourceRevisionStampContractTests",
+        "TestSelectionDependencyTests"
       ]
     },
     {
@@ -4709,21 +4687,6 @@
         "ClassCostMeasurementTests",
         "ExpectedDurationSyncTests",
         "TimeoutAuditTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/nightly-common.ps1",
-      "classes": [
-        "LiveLaneCensusTests",
-        "TestSelectionDependencyTests"
-      ]
-    },
-    {
-      "path": "scripts/lib/nightly-core.ps1",
-      "classes": [
-        "ImpactedClassesSelectorTests",
-        "ReleaseImpactScriptTests",
-        "SourceRevisionStampContractTests"
       ]
     },
     {
@@ -4809,12 +4772,6 @@
       "classes": [
         "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
-      "path": "scripts/run-checkpoint.ps1",
-      "classes": [
-        "EmbeddedCheckpointReaderTests"
       ]
     },
     {
@@ -25415,7 +25372,6 @@
         "CheckpointStepDeadlineTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTerminalReceiptTests",
-        "CheckpointTypeCacheTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "EvidenceFolderTests",
         "OutputCleanupTests",
@@ -25616,13 +25572,6 @@
       "classes": [
         "CheckpointRecoveryWindowsTests",
         "CheckpointRunOwnershipTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Checkpoints/EmbeddedCheckpointReader.cs",
-      "classes": [
-        "CheckpointReceiptStallBudgetTests",
-        "EmbeddedCheckpointReaderTests"
       ]
     },
     {
@@ -26459,6 +26408,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Nightly/SeamedNightlyRun.cs",
+      "classes": [
+        "RcFullTimingContractTests",
+        "RcManifestIntegrationTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/StoppedSeedCases.cs",
       "classes": [
         "RcStoppedRunSeedTests"
@@ -26842,10 +26798,8 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcessFixture.cs",
       "classes": [
-        "AstraFixesBTests",
         "ClaudeAdapterEffortPromptTests",
         "ClaudeEffortFixtureTraceTests",
-        "NightlyLockFormatTests",
         "RunnerProbePowerShellFixtureTests",
         "RunnerProcessProbeTests",
         "ScriptHarnessLinuxOwnershipTests",
@@ -26907,6 +26861,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/TestSelectionTests.cs",
       "classes": [
+        "ImpactedClassesSelectorTests",
         "TestSelectionCatalogTests",
         "TestSelectionDependencyTests",
         "TestSelectionExecutionTests"
@@ -27122,7 +27077,6 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/C1514Support.cs",
       "classes": [
-        "AstraFixesBTests",
         "C1677RetentionSettingsTests",
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
