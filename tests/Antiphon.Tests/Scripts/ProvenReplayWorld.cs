@@ -35,16 +35,7 @@ internal sealed class ProvenReplayWorld : IDisposable
         Git("init", "-q", "-b", "main");
         Git("config", "core.autocrlf", "false");
         using var pack = new ReleaseImpactTypeProofFixture();
-        const string attributes = """
-            namespace TUnit.Core;
-            public sealed class TestAttribute : System.Attribute {}
-            [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = true)]
-            public sealed class ArgumentsAttribute : System.Attribute
-            {
-                public ArgumentsAttribute(params object[] arguments) {}
-            }
-            """;
-        var tunit = pack.Emit("TUnit.Core", attributes, []);
+        var tunit = pack.Emit("TUnit.Core", ReleaseImpactTypeProofFixture.TUnitAttributes, []);
         const string left = """
             namespace L;
             public class LeftTests
@@ -111,7 +102,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             result.ExitCode.ShouldBe(0, result.Text);
             _graphs[run] = output;
         }
-        await ObserveLeftAsync([left, files[north], attributes], cancellationToken);
+        await ObserveLeftAsync([left, files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], cancellationToken);
     }
 
     private async Task ObserveLeftAsync(string[] sources, CancellationToken cancellationToken)

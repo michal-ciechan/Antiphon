@@ -33,14 +33,7 @@ public sealed class RcProjectSelectionTests
         const string index = "tests/derived-impact-index.json";
         using var repo = new Repo();
         using var pack = new ReleaseImpactTypeProofFixture();
-        var tunit = pack.Emit("TUnit.Core", """
-            namespace TUnit.Core;
-            public sealed class TestAttribute : System.Attribute {}
-            public sealed class ArgumentsAttribute : System.Attribute
-            {
-                public ArgumentsAttribute(params object[] arguments) {}
-            }
-            """, []);
+        var tunit = pack.Emit("TUnit.Core", ReleaseImpactTypeProofFixture.TUnitAttributes, []);
         var files = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [".gitignore"] = ".antiphon/selector-replay/\n",

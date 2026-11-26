@@ -12,6 +12,16 @@ namespace Antiphon.Tests.Scripts;
 
 internal sealed class ReleaseImpactTypeProofFixture : IDisposable
 {
+    internal const string TUnitAttributes = """
+        namespace TUnit.Core;
+        public sealed class TestAttribute : System.Attribute {}
+        [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = true)]
+        public sealed class ArgumentsAttribute : System.Attribute
+        {
+            public ArgumentsAttribute(params object[] arguments) {}
+        }
+        """;
+
     private static readonly Signature Author = new("fixture", "fixture@antiphon.test", DateTimeOffset.UnixEpoch);
     private readonly ReportTempWorkspace _workspace = new();
     private readonly Repository _repository;
