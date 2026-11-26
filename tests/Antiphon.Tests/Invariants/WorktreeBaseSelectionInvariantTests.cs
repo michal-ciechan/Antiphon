@@ -17,6 +17,8 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeBaseSelectionInvariantTests
 {
     [Test]

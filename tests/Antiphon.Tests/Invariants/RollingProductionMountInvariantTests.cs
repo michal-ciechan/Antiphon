@@ -40,6 +40,7 @@ public sealed class RollingProductionMountInvariantTests
         mount?["target"]?.GetValue<string>() == "/run/antiphon/github-token";
 
     [Test]
+    [ParallelLimiter<ScriptModelSpawnLimit>]
     public void Shipped_v218_compose_has_eleven_bind_entries()
     {
         var accept = C1008HostFixture.LoadComposeV218(DelegateScriptRunner.RepoRoot);

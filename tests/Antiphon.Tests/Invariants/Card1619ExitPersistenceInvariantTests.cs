@@ -25,6 +25,7 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class Card1619ExitPersistenceInvariantTests
 {
     [Test]

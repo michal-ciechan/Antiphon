@@ -28,6 +28,9 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
+[Timeout(90_000)]
 public sealed class DispatchBaseNotificationInvariantTests
 {
     [Test]

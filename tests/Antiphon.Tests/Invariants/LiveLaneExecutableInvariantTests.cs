@@ -5,6 +5,8 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Unit")]
 [Category("RepositoryInvariant")]
+[ParallelLimiter<Antiphon.Tests.TestHelpers.ProcessSpawnLimit>]
+[Timeout(30_000)]
 public sealed class LiveLaneExecutableInvariantTests
 {
     [Test]

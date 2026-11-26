@@ -7,6 +7,7 @@ namespace Antiphon.Agents.Pty.Tests.Invariants;
 
 [Category("Unit")]
 [Category("RepositoryInvariant")]
+[Timeout(30_000)]
 public sealed class LiveClaudeExecutableWiringInvariantTests
 {
     [Test]

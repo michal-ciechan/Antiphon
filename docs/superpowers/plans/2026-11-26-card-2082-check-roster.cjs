@@ -95,10 +95,15 @@ function checkEarlierMixed(mixed, census) {
     counts.MOVE + ' MOVE, ' + counts.SPLIT + ' SPLIT, ' + counts.STAY + ' STAY methods)');
 }
 
-function checkImplementation(roster, caseFile, masterFile) {
-  assert(caseFile && masterFile, 'Pass candidate compiled cases JSON and the replay-base detector JSONL');
+function checkImplementation(roster, caseFile, masterFile, limitsFile) {
+  assert(caseFile && masterFile && limitsFile, 'Pass candidate compiled cases JSON, the replay-base detector JSONL, and candidate execution metadata JSONL');
   const cases = JSON.parse(fs.readFileSync(caseFile, 'utf8'));
   const master = readCensus(masterFile);
+  const limits = new Map();
+  for (const { owner, attrs } of fs.readFileSync(limitsFile, 'utf8').trim().split(/\r?\n/).map(JSON.parse)) {
+    assert(owner && Array.isArray(attrs) && !limits.has(owner), 'Invalid execution metadata row ' + owner);
+    limits.set(owner, attrs);
+  }
   const keyed = new Map();
   const projectUids = new Set();
   const projects = new Set();
@@ -107,7 +112,7 @@ function checkImplementation(roster, caseFile, masterFile) {
     assert(!projectUids.has(qualified), 'Duplicate discovered UID ' + qualified);
     projectUids.add(qualified);
     projects.add(test.asm);
-    const type = test.type.endsWith(')') ? test.type.replace(/\(.+\)$/, '') : test.type;
+    const type = test.type.endsWith(')') ? test.type.replace(/\(.*\)$/, '') : test.type;
     const name = test.asm + '/' + test.ns + '.' + type + '/' + test.method;
     if (!keyed.has(name)) keyed.set(name, []);
     keyed.get(name).push(test);
@@ -133,7 +138,8 @@ function checkImplementation(roster, caseFile, masterFile) {
     assert(projects.has(project), 'Missing compiled project ' + project);
     const original = keyed.get(key) ?? [];
     if (entry.status === 'applied') {
-      const observed = keyed.get(project + '/' + entry.owner) ?? [];
+      const destination = project + '/' + entry.owner;
+      const observed = keyed.get(destination) ?? [];
       assert(observed.length > 0 && observed.every(isInvariant), key + ' has no classified compiled invariant owner');
       assert(Array.isArray(entry.uids) && entry.uids.length > 0, key + ' requires the expanded invariant UIDs');
       assert.deepEqual(observed.map(test => test.uid).sort(), entry.uids.slice().sort(), key + ' expanded arguments');
@@ -142,6 +148,19 @@ function checkImplementation(roster, caseFile, masterFile) {
       } else {
         assert(original.length > 0 && original.every(test => !test.cats.includes('RepositoryInvariant')),
           key + ' lost its ordinary SPLIT cases');
+        assert(limits.has(key) && limits.has(destination), key + ' -> ' + destination + ' needs both compiled metadata rows');
+        const missing = limits.get(key).filter(attribute => !limits.get(destination).includes(attribute));
+        assert.deepEqual(missing, [], key + ' -> ' + destination + ' lost execution attributes');
+        const categories = new Set(original.flatMap(test => test.cats));
+        if (key === 'Antiphon.E2E/Antiphon.E2E.Fixtures.AntiphonAppFixtureHostPathTests/Every_windows_path_setting_resolves_inside_the_fixture_workspace') {
+          // The retained host-provisioning case stays OptIn. The extracted tracked-input check enters the Unit lane.
+          assert.deepEqual([...categories], ['OptIn'], key + ' retained admission');
+          categories.delete('OptIn');
+          categories.add('Unit');
+        }
+        for (const test of observed)
+          assert.deepEqual(test.cats.filter(category => category !== 'RepositoryInvariant').sort(), [...categories].sort(),
+            destination + ' changed categories for ' + test.uid);
       }
       applied++;
     } else if (entry.status === 'deferred') {
@@ -176,10 +195,10 @@ function checkImplementation(roster, caseFile, masterFile) {
   console.log('compiled roster applied=' + applied + ' deferred=' + deferred + ' retired=' + retired + ' liveClaudeFixtures=' + liveRoster.length);
 }
 
-function main(baseFile, integratedFile, mixedFile, caseFile, masterFile) {
+function main(baseFile, integratedFile, mixedFile, caseFile, masterFile, limitsFile) {
   assert(baseFile && integratedFile, 'Pass the inventory-pin and integrated-pin census JSONL files');
   const roster = JSON.parse(fs.readFileSync(prefix + 'candidate-roster.json'));
-  checkImplementation(roster, caseFile, masterFile);
+  checkImplementation(roster, caseFile, masterFile, limitsFile);
   const original = readCensus(baseFile), integrated = readCensus(integratedFile);
   if (roster.earlierMixed) checkEarlierMixed(roster.earlierMixed, mixedFile && readCensus(mixedFile));
   const keys = new Set(originalCandidates());

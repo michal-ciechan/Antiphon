@@ -27,6 +27,7 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[NotInParallel]
 public sealed class ExpectationWatchdogJobInvariantTests
 {
     [Test]

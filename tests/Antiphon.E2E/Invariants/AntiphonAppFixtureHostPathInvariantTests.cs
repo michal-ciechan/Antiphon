@@ -6,6 +6,8 @@ namespace Antiphon.E2E.Invariants;
 
 [Category("Unit")]
 [Category("RepositoryInvariant")]
+[NotInParallel]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class AntiphonAppFixtureHostPathInvariantTests
 {
     [Test]

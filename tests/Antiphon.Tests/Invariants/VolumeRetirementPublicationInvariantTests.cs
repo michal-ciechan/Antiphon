@@ -9,6 +9,9 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
+[Timeout(420_000)]
 public sealed class VolumeRetirementPublicationInvariantTests
 {
     [Test]

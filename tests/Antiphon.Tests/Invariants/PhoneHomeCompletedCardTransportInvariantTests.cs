@@ -17,6 +17,9 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[Category("Slow")]
+[NotInParallel("SessionLiveness")]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class PhoneHomeCompletedCardTransportInvariantTests
 {
     [Test]

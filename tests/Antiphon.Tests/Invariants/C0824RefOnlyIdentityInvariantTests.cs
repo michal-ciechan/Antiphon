@@ -21,6 +21,9 @@ namespace Antiphon.Tests.Invariants;
 
 [Category("Integration")]
 [Category("RepositoryInvariant")]
+[Category("Slow")]
+[ParallelLimiter<ProcessSpawnLimit>]
+[Timeout(60_000)]
 public sealed class C0824RefOnlyIdentityInvariantTests
 {
     [Test]
