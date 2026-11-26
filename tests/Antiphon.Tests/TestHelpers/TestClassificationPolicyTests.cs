@@ -544,7 +544,7 @@ public sealed class TestClassificationPolicyTests
         fakeText.ShouldContain("Arguments(\"fakeclaude\")");
         fakeText.ShouldNotContain("Arguments(\"claude\")");
 
-        var live = Path.Combine(RepoRoot, "tests", "Antiphon.Agents.Pty.Tests", "ClaudeSubmitContractLiveTests.cs");
+        var live = Path.Combine(RepoRoot, "tests", "Antiphon.LiveClaude.Tests", "ClaudeSubmitContractLiveTests.cs");
         var liveText = File.ReadAllText(live);
         liveText.ShouldContain("[Category(\"OptIn\")]");
         liveText.ShouldContain("[Category(\"Headed\")]");

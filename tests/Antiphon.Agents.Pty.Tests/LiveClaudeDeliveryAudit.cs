@@ -8,9 +8,9 @@ namespace Antiphon.Agents.Pty.Tests;
 internal static class LiveClaudeDeliveryAudit
 {
     internal static readonly (string Path, string Method, string Verdict)[] Callers = [
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs", "Submitting_via_two_writes_completes_a_turn", "LiveClaudeDeliveryEvidence.RequireSubmit(request, rows);"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs", "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt", "LiveClaudeDeliveryEvidence.RequireMenu(request, rows, bridge, beforeEsc, afterEsc, afterSubmit);"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs", "SubmitClaudeAsync", "LiveClaudeDeliveryEvidence.RequireSubmit(request, rows);")
+        (LiveClaudeExecutableAudit.SubmitLivePath, "Submitting_via_two_writes_completes_a_turn", "LiveClaudeDeliveryEvidence.RequireSubmit(request, rows);"),
+        (LiveClaudeExecutableAudit.MenuPath, "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt", "LiveClaudeDeliveryEvidence.RequireMenu(request, rows, bridge, beforeEsc, afterEsc, afterSubmit);"),
+        (LiveClaudeExecutableAudit.SubmitHarnessPath, "SubmitClaudeAsync", "LiveClaudeDeliveryEvidence.RequireSubmit(request, rows);")
     ];
     internal static void Check(string source, string method, string verdict)
     {
@@ -86,7 +86,7 @@ internal static class LiveClaudeDeliveryAudit
             if (index <= last) throw new InvalidOperationException("C1545 delivery-audit/bridge-phase-order");
             last = index;
         }
-        var fake = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read(Callers[2].Path), "Text_and_CR_in_one_write_does_not_submit");
+        var fake = LiveClaudeStartupAudit.Method(LiveClaudeExecutableAudit.Read("tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs"), "Text_and_CR_in_one_write_does_not_submit");
         if (!fake.ToString().Contains("DonePattern.IsMatch", StringComparison.Ordinal))
             throw new InvalidOperationException("C1545 delivery-audit/fake-contract");
         LiveClaudeStartupAudit.Menu(LiveClaudeExecutableAudit.Read(Callers[1].Path));

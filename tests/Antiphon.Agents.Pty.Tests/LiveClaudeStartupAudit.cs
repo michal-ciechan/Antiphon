@@ -7,8 +7,8 @@ namespace Antiphon.Agents.Pty.Tests;
 
 internal static class LiveClaudeStartupAudit
 {
-    internal const string StartupPath="tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs";
-    internal const string MenuPath="tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs";
+    internal const string StartupPath=LiveClaudeExecutableAudit.StartupPath;
+    internal const string MenuPath=LiveClaudeExecutableAudit.MenuPath;
     internal static MethodDeclarationSyntax Method(string source,string name)
     {
         var tree=CSharpSyntaxTree.ParseText(source);

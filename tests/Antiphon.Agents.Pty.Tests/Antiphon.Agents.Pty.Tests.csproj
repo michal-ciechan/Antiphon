@@ -136,5 +136,8 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeProfilePaths.cs" Link="TestSupport/LiveClaude/LiveClaudeProfilePaths.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
+    <!-- Unit 60: the startup canary lives in the live Claude project; its seams (shared fixture, launch, paths, sandbox,
+         hook configuration) are compiled here for LiveClaudeIsolationWiringTests and LiveClaudeStartupCases. -->
+    <Compile Include="../Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.Launch.cs" Link="LiveClaude/ClaudeRemoteControlAtStartupCanaryTests.Launch.cs" />
   </ItemGroup>
 </Project>

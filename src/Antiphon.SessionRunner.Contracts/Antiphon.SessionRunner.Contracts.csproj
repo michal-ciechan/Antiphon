@@ -11,6 +11,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Antiphon.SessionRunner.Tests" />
     <InternalsVisibleTo Include="Antiphon.Tests" />
+    <InternalsVisibleTo Include="Antiphon.LiveClaude.Tests" />
   </ItemGroup>
 
 </Project>

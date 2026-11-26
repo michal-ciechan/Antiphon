@@ -20,7 +20,7 @@ namespace Antiphon.Tests.ApiKeys;
 /// asserting "nobody else has a key right now".</para>
 /// </summary>
 [Category("Integration")]
-public class ApiKeyStoreTests
+public partial class ApiKeyStoreTests
 {
     private static CancellationToken Ct => CancellationToken.None;
 
@@ -304,26 +304,6 @@ public class ApiKeyStoreTests
         db.Projects.Add(project);
         await db.SaveChangesAsync(Ct);
         return project;
-    }
-
-    /// <summary>Reversible stand-in for the real protector — the crypto itself has its own tests.</summary>
-    internal sealed class FakeApiKeyProtector : IApiKeyProtector
-    {
-        public string Protect(Guid keyId, string plaintext) =>
-            $"{keyId:N}:{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(plaintext))}";
-
-        public string Unprotect(Guid keyId, string protectedValue)
-        {
-            var prefix = $"{keyId:N}:";
-            if (!protectedValue.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                throw new System.Security.Cryptography.CryptographicException(
-                    "API key payload is invalid.");
-            }
-
-            return System.Text.Encoding.UTF8.GetString(
-                Convert.FromBase64String(protectedValue[prefix.Length..]));
-        }
     }
 
     private sealed class ThrowingApiKeyProtector : IApiKeyProtector

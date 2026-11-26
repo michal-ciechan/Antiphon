@@ -8,6 +8,7 @@ using Antiphon.Scripts;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport.LiveClaude;
+using Antiphon.LiveClaude.Tests;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.CodeAnalysis;
@@ -417,8 +418,9 @@ public class LiveLaneEvidenceTests
     private static void ProveDiagnosticMutants()
     {
         var repo = FindRepo();
-        var diagnostics = File.ReadAllText(Path.Combine(repo, "tests/Antiphon.Tests/Agents/ClaudeDialogCanaryDiagnostics.cs"));
-        var watchdog = File.ReadAllText(Path.Combine(repo, "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs"));
+        var diagnostics = File.ReadAllText(Path.Combine(repo, LiveClaudeExecutableAudit.C680DiagnosticsPath));
+        // The whole C680 class: its live test file and its launch builders (two partial files since unit 60).
+        var watchdog = LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.C680Path);
         if (RawSinks(diagnostics, watchdog) != 0
             || !diagnostics.Contains("LiveClaudeEvidence.WriteDiagnostic", StringComparison.Ordinal)
             || !diagnostics.Contains("LiveClaudeEvidence.AppendDiagnostic", StringComparison.Ordinal)

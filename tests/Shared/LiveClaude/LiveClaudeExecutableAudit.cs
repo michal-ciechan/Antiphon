@@ -13,7 +13,55 @@ internal static class LiveClaudeExecutableAudit
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Antiphon.sln"))) dir = dir.Parent;
         return dir?.FullName ?? throw new InvalidOperationException("C1545 source root missing");
     }
-    public static string Read(string relative) => File.ReadAllText(Path.Combine(Root(), relative));
+    /// <summary>
+    /// A source file under the repository root. A path of a split live canary (StartupPath, C680Path) reads the whole
+    /// partial class (ReadPartial), so every audit sees the class it audited when the class was one file; ReadFile reads
+    /// one file as it is.
+    /// </summary>
+    public static string Read(string relative) =>
+        relative == StartupPath ? ReadPartial(StartupPath, StartupLaunchPath)
+        : relative == C680Path ? ReadPartial(C680Path, C680LaunchPath)
+        : ReadFile(relative);
+
+    public static string ReadFile(string relative) => File.ReadAllText(Path.Combine(Root(), relative));
+
+    // The live Claude core lane's sources (unit 60 moved them into tests/Antiphon.LiveClaude.Tests). The startup and C680
+    // canaries are partial classes: the .Launch.cs half holds the seams the wiring tests call and is compiled into those
+    // test projects too, the other half holds the live tests and is compiled only into the live project. Whole literals, so
+    // the runtime-reader scan (rc-input-reader-census.json) sees each file these audits read.
+    public const string StartupPath = "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs";
+    public const string StartupLaunchPath = "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.Launch.cs";
+    public const string MenuPath = "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlMenuCanaryTests.cs";
+    public const string SubmitLivePath = "tests/Antiphon.LiveClaude.Tests/ClaudeSubmitContractLiveTests.cs";
+    public const string C680Path = "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.cs";
+    public const string C680LaunchPath = "tests/Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.Launch.cs";
+    public const string C680DiagnosticsPath = "tests/Antiphon.LiveClaude.Tests/ClaudeDialogCanaryDiagnostics.cs";
+    public const string SubmitHarnessPath = "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractHarness.cs";
+
+    /// <summary>
+    /// One partial class read from its files as a single compilation unit, so an audit that looks a member up by name or
+    /// patches a statement sees the class it audited when the class was one file: every file's using directives (first
+    /// seen first), the first file's namespace, the first file's class attributes, and every member of every file's
+    /// declaration of the class, each with its own text and trivia, in file order.
+    /// </summary>
+    public static string ReadPartial(params string[] relatives)
+    {
+        var usings = new List<string>();
+        string? ns = null;
+        string? header = null;
+        var members = new System.Text.StringBuilder();
+        foreach (var relative in relatives)
+        {
+            var root = CSharpSyntaxTree.ParseText(ReadFile(relative)).GetCompilationUnitRoot();
+            foreach (var u in root.Usings.Select(u => u.ToString())) if (!usings.Contains(u, StringComparer.Ordinal)) usings.Add(u);
+            var type = root.DescendantNodes().OfType<ClassDeclarationSyntax>().First(c => c.Parent is BaseNamespaceDeclarationSyntax);
+            ns ??= ((BaseNamespaceDeclarationSyntax)type.Parent!).Name.ToString();
+            if (header is null || (type.AttributeLists.Count > 0 && !header.Contains('[')))
+                header = string.Concat(type.AttributeLists.Select(a => a.ToString() + "\n")) + "public partial class " + type.Identifier.ValueText;
+            foreach (var member in type.Members) members.Append(member.ToFullString());
+        }
+        return string.Join("\n", usings) + "\n\nnamespace " + ns + ";\n\n" + header + "\n{\n" + members + "}\n";
+    }
 
     public static string NormalizeSourceNewlines(string? text)
     {

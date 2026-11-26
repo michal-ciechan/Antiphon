@@ -43,6 +43,7 @@
          it. Copying the composition into the test is what left the bundle->argv seam untested while
          a passing test sat one file away. -->
     <InternalsVisibleTo Include="Antiphon.Tests" />
+    <InternalsVisibleTo Include="Antiphon.LiveClaude.Tests" />
   </ItemGroup>
 
 </Project>

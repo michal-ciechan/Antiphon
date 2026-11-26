@@ -1,12 +1,15 @@
-// The live-lane core rosters of live-lane-manifest.ps1 (CARD-1545 S1a, V-1 and V-2), compiled in W2-nightly S24. Each
-// test project checks its own compiled discovery against the six core identities (LiveLaneContract.Core) and the
-// manifest's bound core rows: Antiphon.Tests the whole six-entry manifest and its local C680 node, the PTY project its
-// five expanded identities. The matrix also refuses a five-entry manifest, a duplicate, a renamed method, an
-// unexpected, unbound or foreign row, an extra [Arguments] expansion, a wrong assembly or hash, a non-zero or
-// diagnostic-less listing, a run instead of a list, and every incomplete or foreign CP-25 export.
+// The live-lane core roster of live-lane-manifest.ps1 (CARD-1545 S1a, V-1 and V-2), compiled in W2-nightly S24. The six
+// core identities (LiveLaneContract.Core) live in one project since unit 60 of the remaining-ps1 plan,
+// tests/Antiphon.LiveClaude.Tests: its compiled discovery is checked against them and the manifest's bound core rows
+// (the whole six-entry manifest, each identity local, the C680 node and the submit expansion). The matrix also refuses
+// a five-entry manifest, a duplicate, a renamed method, an unexpected, unbound or foreign row, an extra [Arguments]
+// expansion, a wrong assembly or hash, a non-zero or diagnostic-less listing, a run instead of a list, and every
+// incomplete or foreign producer export. Any other project (Antiphon.Tests, the PTY project: the two that held the
+// identities before) must discover none of the core classes' tests.
 //
 // RunCase is the old ExactCoreRoster / ExactPtyCoreRoster case of scripts/test-live-lane-manifest.ps1:
-// LiveLaneInventoryTests.ExactCoreRoster and LiveClaudeInventoryTests.ExactPtyCoreRoster call it in-process, and
+// LiveLaneInventoryTests.ExactCoreRoster (the live project's staged assembly) and LiveClaudeInventoryTests.ExactPtyCoreRoster
+// (the PTY assembly, which must carry none) call it in-process, and
 // "antiphon-scripts live-lane-roster" prints its result line. Text compares as PowerShell's -eq did (the invariant
 // culture, ignoring case); arguments and categories compare ordinally. Plain C#. ASCII-only.
 using System;
@@ -103,10 +106,11 @@ namespace Antiphon.Nightly
     {
         public const string TestsProject = "Antiphon.Tests";
         public const string PtyProject = "Antiphon.Agents.Pty.Tests";
-        private const string SubmitMethod = "Submitting_via_two_writes_completes_a_turn";
 
-        private static readonly LiveLaneIdentity C680 = new LiveLaneIdentity(TestsProject, "Antiphon.Tests.Agents", "ClaudeDialogWatchdogCanaryTests",
-            "C680_LiveNudgeRefusesPermissionAndQuestionDialogs");
+        /// <summary>The live Claude core lane's project: every core identity, and its namespace (unit 60).</summary>
+        public const string LiveClaudeProject = "Antiphon.LiveClaude.Tests";
+        private const string SubmitMethod = "Submitting_via_two_writes_completes_a_turn";
+        private const string C680Method = "C680_LiveNudgeRefusesPermissionAndQuestionDialogs";
 
         /// <summary>Copy-LiveLaneEntries of the manifest's core rows.</summary>
         public static List<LiveLaneEntry> Entries(JsonElement manifest)
@@ -303,10 +307,12 @@ namespace Antiphon.Nightly
         };
 
         /// <summary>
-        /// Invoke-LiveLaneRosterMatrix: the failed checks of the project's roster ("C1545 V-1/..." for Antiphon.Tests,
-        /// "C1545 V-2/..." for the PTY project); none when it is exact and every refusal holds. context: the portable
-        /// context (null: none); in candidate export mode Antiphon.Tests also consumes the completed CP-25 export.
-        /// launchCount: the transport's admitted launches (the run-not-list probe must not add one).
+        /// Invoke-LiveLaneRosterMatrix: the failed checks of the project's roster; none when it is exact and every refusal
+        /// holds. For the live Claude project: the manifest, duplicate, rename, unexpected, unbound, foreign and export
+        /// checks ("C1545 V-1/...") and the expansion, assembly, listing and producer checks ("C1545 V-2/..."), which were
+        /// the Antiphon.Tests and PTY rosters while the identities lived there. For any other project: "C1545
+        /// V-2/moved-core" when its discovery still has a test of a core class. context: the portable context (null:
+        /// none). launchCount: the transport's admitted launches (the run-not-list probe must not add one).
         /// </summary>
         public static List<string> Matrix(string project, IReadOnlyList<LiveLaneNode> nodes, IReadOnlyList<LiveLaneEntry> manifestCore, LiveLaneContext context,
             string assemblyHash, string assemblyPath, Func<int> launchCount = null)
@@ -315,12 +321,19 @@ namespace Antiphon.Nightly
             assemblyHash ??= "";
             assemblyPath ??= "";
             var failures = new List<string>();
-            var tests = LiveLaneJson.Same(project, TestsProject);
-            var prefix = tests ? "V-1" : "V-2";
-            var full = tests;
+            if (!LiveLaneJson.Same(project, LiveClaudeProject))
+            {
+                var moved = nodes.Where(n => LiveLaneContract.Core.Any(c => LiveLaneJson.Same(c.Class, n.TypeOrClass) && LiveLaneJson.Same(c.Method, n.Method)))
+                    .Select(n => n.Uid).ToList();
+                if (moved.Count > 0) failures.Add("C1545 V-2/moved-core " + string.Join(",", moved));
+                return failures;
+            }
+            // The whole manifest is this project's: every core identity is local.
+            const string prefix = "V-1";
+            const bool full = true;
             var core = (manifestCore ?? new LiveLaneEntry[0]).Select(e => e.Copy()).ToList();
             var projectCore = core.Where(e => LiveLaneJson.Same(e.Project, project)).ToList();
-            var pool = full ? core : projectCore;
+            var pool = core;
             List<LiveLaneEntry> CopyPool() => pool.Select(e => e.Copy()).ToList();
             var eval = Accepted(pool, nodes, project, full);
             if (!eval.Accepted)
@@ -338,7 +351,7 @@ namespace Antiphon.Nightly
 
             var five = pool.Take(Math.Max(0, pool.Count - 1)).ToList();
             var fiveEval = Accepted(five, nodes, project, full);
-            var expectedCount = full ? 6 : 5;
+            var expectedCount = LiveLaneContract.Core.Count;
             if (fiveEval.Accepted || fiveEval.Count == expectedCount) failures.Add("C1545 " + prefix + "/five manifest.count == " + expectedCount);
 
             var dup = CopyPool();
@@ -347,14 +360,13 @@ namespace Antiphon.Nightly
 
             var renamed = CopyPool();
             if (renamed.Count > 0) renamed[0].Method = renamed[0].Method + "_renamed";
-            int localC680;
-            if (tests) localC680 = MatchingNodes(nodes, C680).Count;
-            else localC680 = MatchingNodes(nodes, LiveLaneContract.Core.First(c => LiveLaneJson.Same(c.Method, SubmitMethod))).Count;
-            if (tests && localC680 != 1) failures.Add("C1545 V-1/renamed localC680Matches == 1");
-            if (!tests && localC680 != 1) failures.Add("C1545 V-2/renamed localPtyCoreSet == expectedFive");
+            if (MatchingNodes(nodes, LiveLaneContract.Core.First(c => LiveLaneJson.Same(c.Method, C680Method))).Count != 1)
+                failures.Add("C1545 V-1/renamed localC680Matches == 1");
+            if (MatchingNodes(nodes, LiveLaneContract.Core.First(c => LiveLaneJson.Same(c.Method, SubmitMethod))).Count != 1)
+                failures.Add("C1545 V-2/renamed localSubmitMatches == 1");
             if (Accepted(renamed, nodes, project, full).Accepted) failures.Add("C1545 " + prefix + "/renamed exact-set");
 
-            if (tests)
+            // The manifest refusals (the Antiphon.Tests roster's V-1 cases).
             {
                 var unexpected = CopyPool();
                 unexpected.Add(new LiveLaneEntry { Project = project, Namespace = "Antiphon.Tests.Scripts", Class = "NotALiveLane", Method = "Unexpected", Uid = "unexpected", Bound = true });
@@ -368,14 +380,14 @@ namespace Antiphon.Nightly
                 if (foreign.Count > 0) foreign[0].Project = "Foreign.Tests";
                 if (Accepted(foreign, nodes, project, true).Accepted) failures.Add("C1545 V-1/foreign-project exact-set");
             }
-            else
+            // The expansion, assembly, listing and producer refusals (the PTY roster's V-2 cases).
             {
                 if (!SubmitExtraExpansion(project, nodes, projectCore)) failures.Add("C1545 V-2/extra-argument expandedUidSet has no extra argument");
 
                 var wrong = projectCore.Select(e => e.Copy()).ToList();
                 foreach (var row in wrong) row.Project = "Wrong.Assembly";
                 var wrongEval = Accepted(wrong, nodes, project, false);
-                if (wrongEval.Accepted || LocalCoreCount(nodes, project) != 5) failures.Add("C1545 V-2/wrong-assembly localPtyCoreSet == expectedFive");
+                if (wrongEval.Accepted || LocalCoreCount(nodes, project) != LiveLaneContract.Core.Count) failures.Add("C1545 V-2/wrong-assembly localCoreSet == expectedSix");
 
                 var hashProbe = DiscoveryAdmission(0, true, new string('0', 64), assemblyHash, nodes.Count);
                 if (hashProbe.Accepted || hashProbe.Observed == hashProbe.Bound) failures.Add("C1545 V-2/wrong-assembly-hash observedAssemblyHash == boundBuildAssemblyHash");
@@ -392,8 +404,8 @@ namespace Antiphon.Nightly
                 if (partial.Accepted || partial.Reason != "producer-incomplete") failures.Add("C1545 V-2/partial-export producerAccepted == false");
             }
 
+            // The export refusals, against an export of this project.
             var exportRequired = context != null && context.ExportRequired;
-            if (tests)
             {
                 var source = "local-source";
                 var run = "local-run";
@@ -404,29 +416,24 @@ namespace Antiphon.Nightly
                     run = context.RunId;
                 }
                 var healthyNodes = nodes.Take(1).ToList();
-                var healthy = LiveLaneExports.Check(Export(PtyProject, source, run, hash, true, healthyNodes), source, run, hash, PtyProject, false);
+                var healthy = LiveLaneExports.Check(Export(project, source, run, hash, true, healthyNodes), source, run, hash, project, false);
                 if (!healthy.Accepted) failures.Add("C1545 V-1/valid exportAccepted");
                 var pairs = new (string Id, LiveLaneExport Export, string Reason)[]
                 {
                     ("missing", null, "producer-incomplete"),
-                    ("partial", Export(PtyProject, source, run, hash, true, new LiveLaneNode[0]), "producer-incomplete"),
-                    ("pending", Export(PtyProject, source, run, hash, false, healthyNodes), "producer-incomplete"),
-                    ("wrong-source", Export(PtyProject, "other-source", run, hash, true, healthyNodes), "source-mismatch"),
-                    ("wrong-build", Export(PtyProject, source, run, new string('f', 64), true, healthyNodes), "build-mismatch"),
-                    ("wrong-run", Export(PtyProject, source, "other-run", hash, true, healthyNodes), "run-mismatch"),
+                    ("partial", Export(project, source, run, hash, true, new LiveLaneNode[0]), "producer-incomplete"),
+                    ("pending", Export(project, source, run, hash, false, healthyNodes), "producer-incomplete"),
+                    ("wrong-source", Export(project, "other-source", run, hash, true, healthyNodes), "source-mismatch"),
+                    ("wrong-build", Export(project, source, run, new string('f', 64), true, healthyNodes), "build-mismatch"),
+                    ("wrong-run", Export(project, source, "other-run", hash, true, healthyNodes), "run-mismatch"),
                 };
                 foreach (var pair in pairs)
                 {
-                    var probe = LiveLaneExports.Check(pair.Export, source, run, hash, PtyProject, false);
+                    var probe = LiveLaneExports.Check(pair.Export, source, run, hash, project, false);
                     if (probe.Accepted || probe.Reason != pair.Reason) failures.Add("C1545 V-1/" + pair.Id + " exportAccepted == false; reason=" + pair.Reason);
                 }
-                // Baseline and ordinary mode do not consume an absent CP-25 file.
-                if (exportRequired)
-                {
-                    var loaded = LiveLaneExports.Read(context.Cp25Export);
-                    var real = LiveLaneExports.Check(loaded, source, run, loaded?.AssemblyHash ?? "", PtyProject, true, loaded?.AssemblyPath ?? "");
-                    if (loaded == null || !real.Accepted) failures.Add("C1545 V-1/valid exportAccepted");
-                }
+                // The roster that writes the core export (RunCase, candidate mode) cannot also consume it: it is pending
+                // until this matrix is clean. The two-producer consumption ended when the identities moved into one project.
             }
             return failures;
         }
@@ -466,6 +473,7 @@ namespace Antiphon.Nightly
             if (context != null && LiveLaneJson.Same(context.Mode, "candidate") && context.ExportRequired)
             {
                 var pty = LiveLaneJson.Same(project, PtyProject);
+                // The live project's roster is LiveLaneInventoryTests.ExactCoreRoster, the CP-1 row; the PTY one stays CP-25.
                 var exportPath = pty ? context.Cp25Export : context.Cp1Export;
                 if (!string.IsNullOrWhiteSpace(exportPath))
                 {
@@ -518,22 +526,22 @@ namespace Antiphon.Nightly
         public static IReadOnlyList<string> ExtraArgumentDecoyFirstWitness(string repoRoot)
         {
             var failures = new List<string>();
-            var entries = Entries(repoRoot).Where(e => LiveLaneJson.Same(e.Project, PtyProject)).ToList();
+            var entries = Entries(repoRoot).Where(e => LiveLaneJson.Same(e.Project, LiveClaudeProject)).ToList();
             var nodes = new[]
             {
                 new LiveLaneNode
                 {
-                    Project = PtyProject, Uid = "decoy-submit", Namespace = PtyProject, Type = "ClaudeSubmitContractTests", Method = SubmitMethod,
+                    Project = LiveClaudeProject, Uid = "decoy-submit", Namespace = LiveClaudeProject, Type = "ClaudeSubmitContractTests", Method = SubmitMethod,
                     DisplayName = SubmitMethod + "(fakeclaude)", Arguments = new[] { "fakeclaude" }, Categories = new[] { "Pty" },
                 },
                 new LiveLaneNode
                 {
-                    Project = PtyProject, Uid = "live-submit", Namespace = PtyProject, Type = "ClaudeSubmitContractLiveTests", Method = SubmitMethod,
+                    Project = LiveClaudeProject, Uid = "live-submit", Namespace = LiveClaudeProject, Type = "ClaudeSubmitContractLiveTests", Method = SubmitMethod,
                     DisplayName = SubmitMethod + "(claude)", Arguments = new[] { "claude" }, Categories = new[] { "Pty" },
                 },
             };
-            if (!SubmitExtraExpansion(PtyProject, nodes, entries)) failures.Add("C1545 V-2/extra-argument expandedUidSet has no extra argument");
-            if (SubmitExtraExpansion(PtyProject, nodes, entries, new[] { "claude" })) failures.Add("C1545 V-2/extra-argument same argument still expanded");
+            if (!SubmitExtraExpansion(LiveClaudeProject, nodes, entries)) failures.Add("C1545 V-2/extra-argument expandedUidSet has no extra argument");
+            if (SubmitExtraExpansion(LiveClaudeProject, nodes, entries, new[] { "claude" })) failures.Add("C1545 V-2/extra-argument same argument still expanded");
 
             var scratch = new LiveLaneScratch();
             try

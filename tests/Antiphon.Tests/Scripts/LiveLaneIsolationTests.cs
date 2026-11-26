@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport.LiveClaude;
+using Antiphon.LiveClaude.Tests;
 using Microsoft.Extensions.Logging.Abstractions;
 using Antiphon.Tests.Agents;
 using Antiphon.Server.Application.Dtos;

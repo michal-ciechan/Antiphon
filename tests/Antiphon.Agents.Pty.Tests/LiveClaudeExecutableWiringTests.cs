@@ -50,18 +50,17 @@ public class LiveClaudeExecutableWiringTests
 
     private static void AuditPtyCallers()
     {
-        var prefix = "tests/Antiphon.Agents.Pty.Tests/";
         var cases = new[]
         {
-            ("ClaudeSubmitContractLiveTests.cs", "Submitting_via_two_writes_completes_a_turn", "Submit", "ClaudeSubmitContractHarness.LaunchReadyAsync", "PC-2", 1),
-            ("ClaudeRemoteControlAtStartupCanaryTests.cs", "Control_auto_connects_a_bridge_session_before_the_first_user", "Control", "LaunchUntilReadyAsync", "PC-4", 0),
-            ("ClaudeRemoteControlAtStartupCanaryTests.cs", "Settings_file_prevents_auto_connect_and_keeps_startup_records", "Off", "LaunchUntilReadyAsync", "PC-5", 0),
-            ("ClaudeRemoteControlAtStartupCanaryTests.cs", "Remote_control_slash_command_still_arms_after_settings_off", "Slash", "LaunchUntilReadyAsync", "PC-6", 0),
-            ("ClaudeRemoteControlMenuCanaryTests.cs", "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt", "Menu", "ClSession.BuildCoreLaunch", "PC-7", 0)
+            (LiveClaudeExecutableAudit.SubmitLivePath, "Submitting_via_two_writes_completes_a_turn", "Submit", "ClaudeSubmitContractHarness.LaunchReadyAsync", "PC-2", 1),
+            (LiveClaudeExecutableAudit.StartupPath, "Control_auto_connects_a_bridge_session_before_the_first_user", "Control", "LaunchUntilReadyAsync", "PC-4", 0),
+            (LiveClaudeExecutableAudit.StartupPath, "Settings_file_prevents_auto_connect_and_keeps_startup_records", "Off", "LaunchUntilReadyAsync", "PC-5", 0),
+            (LiveClaudeExecutableAudit.StartupPath, "Remote_control_slash_command_still_arms_after_settings_off", "Slash", "LaunchUntilReadyAsync", "PC-6", 0),
+            (LiveClaudeExecutableAudit.MenuPath, "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt", "Menu", "ClSession.BuildCoreLaunch", "PC-7", 0)
         };
         foreach (var (file, method, id, consume, pc, argumentIndex) in cases)
         {
-            var source = LiveClaudeExecutableAudit.Read(prefix + file);
+            var source = LiveClaudeExecutableAudit.Read(file);
             void Audit(string s) => LiveClaudeExecutableAudit.Core(s, method, id, consume, argumentIndex: argumentIndex);
             var call = $"var executable = ClSession.RequireCore(LiveClaudeCore.{id});";
             LiveClaudeExecutableAudit.Reject(Audit, source, call, "var executable = ClSession.PrepareCore(\"non-core-manual\");", pc);
@@ -69,9 +68,9 @@ public class LiveClaudeExecutableWiringTests
                 LiveClaudeExecutableAudit.Reject(Audit, source, call, replacement, pc + "-syntax");
         }
         RejectBareDelegation();
-        LiveClaudeExecutableAudit.Launch(LiveClaudeExecutableAudit.Read(prefix + "ClaudeRemoteControlAtStartupCanaryTests.cs"), "LaunchUntilReadyAsync");
-        LiveClaudeExecutableAudit.Launch(LiveClaudeExecutableAudit.Read(prefix + "ClaudeRemoteControlMenuCanaryTests.cs"), "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt");
-        var harness = LiveClaudeExecutableAudit.Read(prefix + "ClaudeSubmitContractTests.cs");
+        LiveClaudeExecutableAudit.Launch(LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.StartupPath), "LaunchUntilReadyAsync");
+        LiveClaudeExecutableAudit.Launch(LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.MenuPath), "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt");
+        var harness = LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.SubmitHarnessPath);
         LiveClaudeExecutableAudit.Reject(LiveClaudeExecutableAudit.Harness, harness,
             "var executable = coreExecutable ?? ClSession.RequireCore(LiveClaudeCore.Submit);",
             "var executable = ClSession.PrepareCore(\"non-core-manual\");", "PC-3");

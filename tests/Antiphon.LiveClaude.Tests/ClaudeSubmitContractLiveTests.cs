@@ -2,12 +2,13 @@ using Antiphon.TestSupport.LiveClaude;
 using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
+using Antiphon.Agents.Pty.Tests;
 
-namespace Antiphon.Agents.Pty.Tests;
+namespace Antiphon.LiveClaude.Tests;
 
 /// <summary>
 /// Live Claude submit-contract canary. Inventoried separately from the unattended
-/// fakeclaude cases in <see cref="ClaudeSubmitContractTests"/>.
+/// fakeclaude cases in Antiphon.Agents.Pty.Tests.ClaudeSubmitContractTests.
 /// </summary>
 [NotInParallel("Headed")]
 [Category("Pty")]

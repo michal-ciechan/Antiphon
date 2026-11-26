@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.LiveLane;
 using Antiphon.TestSupport.LiveClaude;
+using Antiphon.LiveClaude.Tests;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using TUnit.Core;
@@ -14,7 +15,7 @@ public class LiveLaneExecutableTests
 {
     private static LiveClaudeExecutableCases Fixture()
         => new(LiveClaudeCore.C680, (_, r, c, l) => ClaudeDialogWatchdogCanaryTests.PrepareExecutable(r, c, l), "claude.exe");
-    private const string Caller = "tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs";
+    private const string Caller = LiveClaudeExecutableAudit.C680Path;
 
     [Test]
     public void C680UsesAttestedExecutable()

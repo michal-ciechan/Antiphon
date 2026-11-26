@@ -6,8 +6,7 @@ namespace Antiphon.TestSupport.LiveClaude;
 
 internal static class LiveClaudeProfileAudit
 {
-    private const string Pty = "tests/Antiphon.Agents.Pty.Tests/";
-    private const string Startup = Pty + "ClaudeRemoteControlAtStartupCanaryTests.cs";
+    private const string Startup = LiveClaudeExecutableAudit.StartupPath;
     private static MethodDeclarationSyntax Method(string source,string name)
     {
         var tree=CSharpSyntaxTree.ParseText(source);
@@ -73,7 +72,7 @@ internal static class LiveClaudeProfileAudit
             "Settings_file_prevents_auto_connect_and_keeps_startup_records",
             "Remote_control_slash_command_still_arms_after_settings_off"
         }) RequireSetupFilter(startup, name);
-        RequireSetupFilter(LiveClaudeExecutableAudit.Read(Pty + "ClaudeRemoteControlMenuCanaryTests.cs"),
+        RequireSetupFilter(LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.MenuPath),
             "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt");
     }
     private static void RequireSetupFilter(string source, string name)
@@ -124,7 +123,7 @@ internal static class LiveClaudeProfileAudit
         Reject(Paths,source,"profile.Paths.GlobalState","\"ambient-config\"","PC-31");
         Reject(Paths,source,"paths.FindSessionJsonl(sessionId)","paths.FindSessionJsonl(Guid.Empty.ToString())","PC-32");
         Reject(Paths,source,"paths.ReadSessionFile(sessionId, cwd)","paths.ReadSessionFile(Guid.Empty.ToString(), cwd)","PC-33");
-        var harness=LiveClaudeExecutableAudit.Read(Pty+"ClaudeSubmitContractTests.cs");
+        var harness=LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.SubmitHarnessPath);
         void Harness(string s)
         {
             var m=Method(s,"LaunchReadyAsync");
@@ -137,10 +136,10 @@ internal static class LiveClaudeProfileAudit
         }
         Harness(harness);
         Reject(Harness,harness,"cwd: launch.Cwd","cwd: null","PC-40");
-        var submit=LiveClaudeExecutableAudit.Read(Pty+"ClaudeSubmitContractLiveTests.cs");
+        var submit=LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.SubmitLivePath);
         Statement(submit,"Submitting_via_two_writes_completes_a_turn","using var profile = ClSession.RequireProfile(executable);");
         Statement(submit,"Submitting_via_two_writes_completes_a_turn","await using var runner = await ClaudeSubmitContractHarness.LaunchReadyAsync(backend, executable, profile, sessionId);");
-        var menu=LiveClaudeExecutableAudit.Read(Pty+"ClaudeRemoteControlMenuCanaryTests.cs");
+        var menu=LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.MenuPath);
         void Menu(string s)
         {
             Statement(s,"C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt","using var profile = ClSession.RequireProfile(executable);");
@@ -172,7 +171,7 @@ internal static class LiveClaudeProfileAudit
     }
     public static void C680Callers(LiveClaudeProfileCases.Builder? build = null, LiveClaudeProfileCases.Projector? project = null)
     {
-        var source=LiveClaudeExecutableAudit.Read("tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs");
+        var source=LiveClaudeExecutableAudit.Read(LiveClaudeExecutableAudit.C680Path);
         C680(source);
         Reject(C680,source,"launch.Env, launch.Cwd","new Dictionary<string, string>(), launch.Cwd","PC-38");
         var selected=Environment.GetEnvironmentVariable("C1545_PROFILE_CONTROLS");
@@ -228,9 +227,11 @@ internal static class LiveClaudeProfileAudit
         catch(InvalidOperationException e) when(e.Message.StartsWith("C1545 profile-audit/"))
         {
             audit(healthy);
-            var path=pc switch {"PC-40"=>Pty+"ClaudeSubmitContractTests.cs","PC-44"=>Pty+"ClaudeRemoteControlMenuCanaryTests.cs",
-                "PC-38" or "PC-39" or "PC-45" or "PC-56" or "PC-73" or "PC-74"=>"tests/Antiphon.Tests/Agents/ClaudeDialogWatchdogCanaryTests.cs",_=>Startup};
-            var raw=LiveClaudeExecutableAudit.Read(path);
+            // The file that holds the patched site: the startup and C680 canaries are two partial files each.
+            var path=pc switch {"PC-40"=>LiveClaudeExecutableAudit.SubmitHarnessPath,"PC-44"=>LiveClaudeExecutableAudit.MenuPath,
+                "PC-39" or "PC-45"=>LiveClaudeExecutableAudit.C680Path,"PC-38" or "PC-56" or "PC-73" or "PC-74"=>LiveClaudeExecutableAudit.C680LaunchPath,
+                "PC-31" or "PC-32" or "PC-33"=>LiveClaudeExecutableAudit.StartupLaunchPath,_=>Startup};
+            var raw=LiveClaudeExecutableAudit.ReadFile(path);
             var site=raw.IndexOf(from,StringComparison.Ordinal);
             if(site<0) Fail(pc+"-binding");
             var line=raw[..site].Count(c=>c=='\n')+1;

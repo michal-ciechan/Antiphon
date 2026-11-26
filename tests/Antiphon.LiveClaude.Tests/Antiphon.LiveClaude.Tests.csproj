@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The live Claude core lane (CARD-1545, tests/live-lanes.json "core"): the six tests that drive a real Claude, and only
+    the helpers they need. The owner (2026-11-26): "the source files for this digest should all be in an isolated project
+    dedicated to running real Claude". No nightly or rc suite runs this assembly (test-execution-policy.json lists it as a
+    child of Antiphon.Tests, which stages it only to list its discovery for the core roster); the live lane is its runner,
+    and every test here still skips without the lane's admitted context. Nothing under scripts/ is referenced.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Antiphon.LiveClaude.Tests</RootNamespace>
+    <AssemblyName>Antiphon.LiveClaude.Tests</AssemblyName>
+    <EnableMicrosoftTestingPlatformRunner>true</EnableMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.44.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.21" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\server\Antiphon.Server.csproj" Aliases="global,server" />
+    <ProjectReference Include="..\..\src\Antiphon.SessionRunner\Antiphon.SessionRunner.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.SessionRunner.Contracts\Antiphon.SessionRunner.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Agents.Pty\Antiphon.Agents.Pty.csproj" />
+    <ProjectReference Include="..\..\src\Antiphon.Messaging.Client.Testing\Antiphon.Messaging.Client.Testing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- C680 (ClaudeDialogWatchdogCanaryTests): the real nudge delivery around a direct session runner. -->
+    <Compile Include="..\Antiphon.Tests\Application\ExpectationDeliveryFixture.cs" Link="Linked\Antiphon.Tests\ExpectationDeliveryFixture.cs" />
+    <Compile Include="..\Antiphon.Tests\Application\ExpectationTestWorld.cs" Link="Linked\Antiphon.Tests\ExpectationTestWorld.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\BridgeQueueHarness.cs" Link="Linked\Antiphon.Tests\BridgeQueueHarness.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\DirectSessionRunnerClient.cs" Link="Linked\Antiphon.Tests\DirectSessionRunnerClient.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestOwnedPtyHost.cs" Link="Linked\Antiphon.Tests\TestOwnedPtyHost.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\ProductionRunnerGuard.cs" Link="Linked\Antiphon.Tests\ProductionRunnerGuard.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\PtyBackendEnvGuard.cs" Link="Linked\Antiphon.Tests\PtyBackendEnvGuard.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\RequestedModelAliasSchema.cs" Link="Linked\Antiphon.Tests\RequestedModelAliasSchema.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\SharedStoreWarmup.cs" Link="Linked\Antiphon.Tests\SharedStoreWarmup.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbBakedImages.cs" Link="Linked\Antiphon.Tests\TestDbBakedImages.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbClonePool.cs" Link="Linked\Antiphon.Tests\TestDbClonePool.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbContainerOwnership.cs" Link="Linked\Antiphon.Tests\TestDbContainerOwnership.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbFailureEvidence.cs" Link="Linked\Antiphon.Tests\TestDbFailureEvidence.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbFixture.cs" Link="Linked\Antiphon.Tests\TestDbFixture.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbFixtureLifecycle.cs" Link="Linked\Antiphon.Tests\TestDbFixtureLifecycle.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestDbServerSettings.cs" Link="Linked\Antiphon.Tests\TestDbServerSettings.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestMigrationFingerprint.cs" Link="Linked\Antiphon.Tests\TestMigrationFingerprint.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\TestSchemaCache.cs" Link="Linked\Antiphon.Tests\TestSchemaCache.cs" />
+    <Compile Include="..\Antiphon.Tests\Agents\FakeAgentProtocolAdapter.cs" Link="Linked\Antiphon.Tests\FakeAgentProtocolAdapter.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\MockEventBus.cs" Link="Linked\Antiphon.Tests\MockEventBus.cs" />
+    <Compile Include="..\Antiphon.Tests\ApiKeys\ApiKeyStoreTests.FakeApiKeyProtector.cs" Link="Linked\Antiphon.Tests\ApiKeyStoreTests.FakeApiKeyProtector.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\ChannelOutboundTestDriver.cs" Link="Linked\Antiphon.Tests\ChannelOutboundTestDriver.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\RecordingSessionStopper.cs" Link="Linked\Antiphon.Tests\RecordingSessionStopper.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\ScaledTimeProvider.cs" Link="Linked\Antiphon.Tests\ScaledTimeProvider.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\StoreAwareTranscript.cs" Link="Linked\Antiphon.Tests\StoreAwareTranscript.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\ClaudeDialogFixture.cs" Link="Linked\Antiphon.Tests\ClaudeDialogFixture.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\DelegationTestServices.cs" Link="Linked\Antiphon.Tests\DelegationTestServices.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\PhoneHomeTestHost.cs" Link="Linked\Antiphon.Tests\PhoneHomeTestHost.cs" />
+    <Compile Include="..\Antiphon.Tests\TestHelpers\PhoneHomeReceiveControl.cs" Link="Linked\Antiphon.Tests\PhoneHomeReceiveControl.cs" />
+    <!-- The PTY canaries: launch, submit, delivery and startup evidence. -->
+    <Compile Include="..\Antiphon.Agents.Pty.Tests\ClSession.cs" Link="Linked\Antiphon.Agents.Pty.Tests\ClSession.cs" />
+    <Compile Include="..\Antiphon.Agents.Pty.Tests\ClaudeSubmitContractHarness.cs" Link="Linked\Antiphon.Agents.Pty.Tests\ClaudeSubmitContractHarness.cs" />
+    <Compile Include="..\Antiphon.Agents.Pty.Tests\LiveClaudeDeliverySession.cs" Link="Linked\Antiphon.Agents.Pty.Tests\LiveClaudeDeliverySession.cs" />
+    <Compile Include="..\Antiphon.Agents.Pty.Tests\LiveClaudeStartupEvidence.cs" Link="Linked\Antiphon.Agents.Pty.Tests\LiveClaudeStartupEvidence.cs" />
+    <!-- The live-Claude admission, profile and evidence seams every core test binds. -->
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeArgvCapture.cs" Link="Linked\Shared\LiveClaudeArgvCapture.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeDeliveryEvidence.cs" Link="Linked\Shared\LiveClaudeDeliveryEvidence.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeEvidenceSanitizer.cs" Link="Linked\Shared\LiveClaudeEvidenceSanitizer.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeExecutable.cs" Link="Linked\Shared\LiveClaudeExecutable.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeLaunchContext.cs" Link="Linked\Shared\LiveClaudeLaunchContext.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeOutcome.cs" Link="Linked\Shared\LiveClaudeOutcome.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeProfile.cs" Link="Linked\Shared\LiveClaudeProfile.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeProfilePaths.cs" Link="Linked\Shared\LiveClaudeProfilePaths.cs" />
+    <Compile Include="..\Shared\LiveClaude\LiveClaudeSettingsProjection.cs" Link="Linked\Shared\LiveClaudeSettingsProjection.cs" />
+    <Compile Include="..\Shared\TestTiming.cs" Link="Linked\Shared\TestTiming.cs" />
+    <Compile Include="..\Shared\TestTrace.cs" Link="Linked\Shared\TestTrace.cs" />
+  </ItemGroup>
+</Project>

@@ -7,6 +7,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 
 namespace Antiphon.Nightly
@@ -16,7 +17,10 @@ namespace Antiphon.Nightly
         /// <summary>The census fixture ($script:LiveLaneFixtureRel).</summary>
         public const string FixtureRel = "tests/fixtures/live-lanes/full-discovery-before.json";
 
-        /// <summary>The two roster projects and the S1a capture rows that discover them (CP-27, CP-28).</summary>
+        /// <summary>
+        /// The two projects whose captures (CP-27, CP-28) produced the S1a census fixture, which is frozen at the pre-S1
+        /// seed. The core rows bind to the captures of the projects they name (BindManifest).
+        /// </summary>
         private static readonly (string Project, string Cp)[] Captures =
         {
             (LiveLaneRoster.TestsProject, "CP-27"),
@@ -28,8 +32,9 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Update-LiveLaneManifestBindings: rewrites tests/live-lanes.json (or a non-blank outputPath) with each core row bound to its
-        /// one discovered node in the captures (uid and categories, bound true); gates and additiveContract are carried as
-        /// read. Refuses capture-missing &lt;project&gt; and bind-miss &lt;method&gt; count=&lt;n&gt; before writing. Returns the path written.
+        /// one discovered node in the capture of the project the row names (uid and categories, bound true); gates and
+        /// additiveContract are carried as read. Refuses capture-missing &lt;project&gt; and bind-miss &lt;method&gt; count=&lt;n&gt;
+        /// before writing. Returns the path written.
         /// </summary>
         public static string BindManifest(string repoRoot, string captureDir = null, string outputPath = null)
         {
@@ -37,7 +42,13 @@ namespace Antiphon.Nightly
             var capture = string.IsNullOrWhiteSpace(captureDir) ? DefaultCaptureDir(repoRoot) : captureDir;
             using var manifest = LiveLaneGateScan.ReadManifest(repoRoot);
             var byProject = new Dictionary<string, List<LiveLaneNode>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (project, _) in Captures)
+            var named = new List<string>();
+            foreach (var row in LiveLaneJson.Rows(manifest.RootElement, "core"))
+            {
+                var name = LiveLaneEntry.FromJson(row).Project;
+                if (!named.Contains(name, StringComparer.OrdinalIgnoreCase)) named.Add(name);
+            }
+            foreach (var project in named)
             {
                 var path = Path.Combine(capture, project + ".discovery.json");
                 if (!File.Exists(path)) throw new InvalidOperationException("capture-missing " + project);

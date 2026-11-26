@@ -17,13 +17,13 @@ public class LiveClaudeEvidenceWiringTests
 {
     private static readonly (string Path, string Method)[] Callers =
     [
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs", "Control_auto_connects_a_bridge_session_before_the_first_user"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs", "Settings_file_prevents_auto_connect_and_keeps_startup_records"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs", "Remote_control_slash_command_still_arms_after_settings_off"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs", "Submitting_via_two_writes_completes_a_turn"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractTests.cs", "SubmitClaudeAsync"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs", "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt"),
-        ("tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs", "One_Esc_dismisses_the_remote_control_management_menu")
+        (LiveClaudeExecutableAudit.StartupPath, "Control_auto_connects_a_bridge_session_before_the_first_user"),
+        (LiveClaudeExecutableAudit.StartupPath, "Settings_file_prevents_auto_connect_and_keeps_startup_records"),
+        (LiveClaudeExecutableAudit.StartupPath, "Remote_control_slash_command_still_arms_after_settings_off"),
+        (LiveClaudeExecutableAudit.SubmitLivePath, "Submitting_via_two_writes_completes_a_turn"),
+        (LiveClaudeExecutableAudit.SubmitHarnessPath, "SubmitClaudeAsync"),
+        (LiveClaudeExecutableAudit.MenuPath, "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt"),
+        (LiveClaudeExecutableAudit.MenuPath, "One_Esc_dismisses_the_remote_control_management_menu")
     ];
 
     private static readonly string[] Families = ["control", "off", "slash", "submit", "c514"];

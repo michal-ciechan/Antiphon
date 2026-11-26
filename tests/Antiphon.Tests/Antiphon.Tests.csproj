@@ -116,6 +116,9 @@
     <ProjectReference Include="..\Antiphon.TestTiming.Probe\Antiphon.TestTiming.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.NativeLinuxPolicy.Probe\Antiphon.NativeLinuxPolicy.Probe.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.HostLoad.Probe\Antiphon.HostLoad.Probe.csproj" ReferenceOutputAssembly="false" />
+    <!-- Unit 60: the live Claude core lane's project, built and staged (never referenced or run) so LiveLaneInventoryTests
+         can list its discovery for the core roster. -->
+    <ProjectReference Include="..\Antiphon.LiveClaude.Tests\Antiphon.LiveClaude.Tests.csproj" ReferenceOutputAssembly="false" Private="false" />
     <!-- CARD-1483: net10.0 is this tool's own framework (the SDK MSBuild runtime). It is
          single-targeted, so skipping the test project's framework leaves that framework in
          place. SetTargetFramework would be a second global-property set beside the solution. -->
@@ -145,6 +148,7 @@
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ScriptHarnessHost\Antiphon.ScriptHarnessHost.csproj" Folder="script-harness-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.ChannelOutbound.Probe\Antiphon.ChannelOutbound.Probe.csproj" Folder="channel-outbound-probe" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.HostLoad.Probe\Antiphon.HostLoad.Probe.csproj" Folder="host-load-probe" Glob="**\*" />
+    <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.LiveClaude.Tests\Antiphon.LiveClaude.Tests.csproj" Folder="live-claude-tests" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.LifecycleHost\Antiphon.Checkpoints.LifecycleHost.csproj" Folder="checkpoint-lifecycle-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.FilterHost\Antiphon.Checkpoints.FilterHost.csproj" Folder="checkpoint-filter-host" Glob="**\*" />
     <StagedHelper Include="$(MSBuildThisFileDirectory)..\Antiphon.Checkpoints.RepeatHost\Antiphon.Checkpoints.RepeatHost.csproj" Folder="checkpoint-repeat-host" Glob="**\*" />
@@ -283,6 +287,10 @@
     <Compile Include="../Shared/LiveClaude/LiveClaudeProfilePaths.cs" Link="TestSupport/LiveClaude/LiveClaudeProfilePaths.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSettingsProjection.cs" Link="TestSupport/LiveClaude/LiveClaudeSettingsProjection.cs" />
     <Compile Include="../Shared/LiveClaude/LiveClaudeSinkAudit.cs" Link="TestSupport/LiveClaude/LiveClaudeSinkAudit.cs" />
+    <!-- Unit 60: the C680 canary lives in the live Claude project; its launch builders and diagnostics are compiled here for
+         LiveLaneExecutableTests, LiveLaneIsolationTests and LiveLaneEvidenceTests. -->
+    <Compile Include="../Antiphon.LiveClaude.Tests/ClaudeDialogWatchdogCanaryTests.Launch.cs" Link="LiveClaude/ClaudeDialogWatchdogCanaryTests.Launch.cs" />
+    <Compile Include="../Antiphon.LiveClaude.Tests/ClaudeDialogCanaryDiagnostics.cs" Link="LiveClaude/ClaudeDialogCanaryDiagnostics.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneEvidence.cs" Link="Scripts/LiveLaneEvidence.cs" />
     <!-- The CLI's census read for the live lane's input pin (LiveLaneRunnerTests); the CLI binds the same reader. -->
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneInputCensusReader.cs" Link="Scripts/LiveLaneInputCensusReader.cs" />

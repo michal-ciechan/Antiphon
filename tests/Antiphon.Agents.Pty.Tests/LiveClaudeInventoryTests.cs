@@ -6,7 +6,9 @@ using TUnit.Core;
 namespace Antiphon.Agents.Pty.Tests;
 
 /// <summary>
-/// CARD-1545 S1a. Ordinary Unit roster for the five compiled PTY live identities.
+/// CARD-1545 S1a. Ordinary Unit roster of this assembly. The five PTY live identities it held moved into
+/// tests/Antiphon.LiveClaude.Tests in unit 60 (LiveLaneInventoryTests.ExactCoreRoster rosters them there), so this roster
+/// now refuses any test of a core class still discovered here (C1545 V-2/moved-core).
 /// Classification is Unit, not Integration. The method does not launch ConPTY or Claude.
 /// The roster runs in-process (W2-nightly S24, LiveLaneRoster.cs in scripts/lib/Antiphon.Nightly); it still lists this
 /// assembly's tests in a child (dotnet exec --list-tests) under the listing's own watchdog (160 s).

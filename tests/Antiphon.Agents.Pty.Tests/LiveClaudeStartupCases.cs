@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Antiphon.TestSupport.LiveClaude;
+using Antiphon.LiveClaude.Tests;
 
 namespace Antiphon.Agents.Pty.Tests;
 

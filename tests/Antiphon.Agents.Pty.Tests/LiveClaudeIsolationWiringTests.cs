@@ -1,4 +1,5 @@
 using Antiphon.TestSupport.LiveClaude;
+using Antiphon.LiveClaude.Tests;
 using TUnit.Core;
 
 namespace Antiphon.Agents.Pty.Tests;

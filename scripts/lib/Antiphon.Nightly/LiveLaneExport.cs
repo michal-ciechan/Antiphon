@@ -194,7 +194,7 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Test-LiveLaneExportDocument: producer-incomplete for a missing, pending or empty export (and, with requireCore,
-        /// one without exactly one node per PTY core identity), source-mismatch for another project or source,
+        /// one without exactly one node per core identity of the expected project), source-mismatch for another project or source,
         /// run-mismatch, and build-mismatch for another assembly hash or, with assemblyPath, a kept assembly that is
         /// missing or hashes otherwise. Text compares as PowerShell's -ne did (ignoring case); hashes ignore case.
         /// </summary>
@@ -218,7 +218,7 @@ namespace Antiphon.Nightly
             {
                 foreach (var want in LiveLaneContract.Core)
                 {
-                    if (!LiveLaneJson.Same(want.Project, "Antiphon.Agents.Pty.Tests")) continue;
+                    if (!LiveLaneJson.Same(want.Project, expectedProject)) continue;
                     if (LiveLaneRoster.MatchingNodes(export.Nodes, want).Count != 1) return LiveLaneVerdict.No("producer-incomplete");
                 }
             }

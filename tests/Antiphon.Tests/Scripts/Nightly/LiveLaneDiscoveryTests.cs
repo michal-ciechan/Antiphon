@@ -10,7 +10,8 @@ namespace Antiphon.Tests.Scripts.Nightly;
 /// W2-nightly S24. The live-lane discovery, roster, export, receipt and scratch of the old live-lane-manifest.ps1, compiled
 /// (scripts/lib/Antiphon.Nightly/LiveLane*.cs): the old ExtraArgumentDecoyFirst, ExportPending, ProducerReceipt,
 /// ScratchResidue, BindManifest and WriteFixture cases of the old driver (scripts/test-live-lane-manifest.ps1), in-process. The
-/// roster rows themselves are LiveLaneInventoryTests.ExactCoreRoster and LiveClaudeInventoryTests.ExactPtyCoreRoster.
+/// roster rows themselves are LiveLaneInventoryTests.ExactCoreRoster (the live Claude project, unit 60) and
+/// LiveClaudeInventoryTests.ExactPtyCoreRoster.
 /// Scratch lives under .antiphon/live-lane-capture and is removed.
 /// </summary>
 [Category("Unit")]
@@ -75,24 +76,24 @@ public sealed class LiveLaneDiscoveryTests
                 Arguments = row.GetProperty("arguments").EnumerateArray().Select(a => a.GetString()!).ToArray(),
                 Categories = row.GetProperty("categories").EnumerateArray().Select(a => a.GetString()!).ToArray(),
             }).ToList();
-            var tests = Nodes(LiveLaneRoster.TestsProject);
-            var pty = Nodes(LiveLaneRoster.PtyProject);
+            // Every core row names the live Claude project (unit 60): one capture binds them all.
+            core.ShouldAllBe(row => row.GetProperty("project").GetString() == LiveLaneRoster.LiveClaudeProject);
+            var live = Nodes(LiveLaneRoster.LiveClaudeProject);
             // A decoy of the same method under another argument is not a second hit.
-            var submit = pty.Single(n => n.Method == "Submitting_via_two_writes_completes_a_turn");
-            pty.Insert(0, new LiveLaneNode { Project = submit.Project, Uid = "decoy", Namespace = submit.Namespace, Type = submit.Type, Method = submit.Method, Arguments = ["fakeclaude"] });
-            WriteCapture(capture, LiveLaneRoster.TestsProject, tests);
-            WriteCapture(capture, LiveLaneRoster.PtyProject, pty);
+            var submit = live.Single(n => n.Method == "Submitting_via_two_writes_completes_a_turn");
+            live.Insert(0, new LiveLaneNode { Project = submit.Project, Uid = "decoy", Namespace = submit.Namespace, Type = submit.Type, Method = submit.Method, Arguments = ["fakeclaude"] });
+            WriteCapture(capture, LiveLaneRoster.LiveClaudeProject, live);
 
             var output = Path.Combine(capture, "live-lanes.json");
             LiveLaneManifestFiles.BindManifest(repo, capture, output).ShouldBe(output);
             File.ReadAllText(output).ReplaceLineEndings("\n").ShouldBe(File.ReadAllText(committedPath).ReplaceLineEndings("\n"));
 
-            WriteCapture(capture, LiveLaneRoster.PtyProject, pty.Where(n => n.Uid != submit.Uid).ToList());
+            WriteCapture(capture, LiveLaneRoster.LiveClaudeProject, live.Where(n => n.Uid != submit.Uid).ToList());
             Refusal(() => LiveLaneManifestFiles.BindManifest(repo, capture, output)).ShouldBe("bind-miss Submitting_via_two_writes_completes_a_turn count=0");
-            WriteCapture(capture, LiveLaneRoster.PtyProject, pty.Concat([submit]).ToList());
+            WriteCapture(capture, LiveLaneRoster.LiveClaudeProject, live.Concat([submit]).ToList());
             Refusal(() => LiveLaneManifestFiles.BindManifest(repo, capture, output)).ShouldBe("bind-miss Submitting_via_two_writes_completes_a_turn count=2");
-            File.Delete(Path.Combine(capture, LiveLaneRoster.PtyProject + ".discovery.json"));
-            Refusal(() => LiveLaneManifestFiles.BindManifest(repo, capture, output)).ShouldBe("capture-missing Antiphon.Agents.Pty.Tests");
+            File.Delete(Path.Combine(capture, LiveLaneRoster.LiveClaudeProject + ".discovery.json"));
+            Refusal(() => LiveLaneManifestFiles.BindManifest(repo, capture, output)).ShouldBe("capture-missing Antiphon.LiveClaude.Tests");
         }
         finally
         {

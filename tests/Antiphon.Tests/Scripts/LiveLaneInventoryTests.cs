@@ -7,7 +7,8 @@ using TUnit.Core;
 namespace Antiphon.Tests.Scripts;
 
 /// <summary>
-/// CARD-1545 S1a. Ordinary Unit roster for the six live identities.
+/// CARD-1545 S1a. Ordinary Unit roster for the six live identities. Since unit 60 they live in tests/Antiphon.LiveClaude.Tests,
+/// which this project builds and stages (live-claude-tests/) only so the roster can list its discovery; nothing here runs it.
 /// Classification is Unit, not Integration: the method is parameterless inventory
 /// and does not host a session. Matrices stay inside this one method.
 /// The gate matrix (W2-nightly S23, LiveLaneGateScan.cs), the roster (W2-nightly S24, LiveLaneRoster.cs) and the
@@ -21,7 +22,7 @@ public sealed class LiveLaneInventoryTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void ExactCoreRoster()
     {
-        var result = LiveLaneProcess.Roster("ExactCoreRoster", LiveLaneRoster.TestsProject, typeof(LiveLaneInventoryTests).Assembly.Location);
+        var result = LiveLaneProcess.Roster("ExactCoreRoster", LiveLaneRoster.LiveClaudeProject, LiveClaudeAssembly);
         result.Failures.ShouldBeEmpty(string.Join('\n', result.Failures));
     }
 
@@ -66,6 +67,9 @@ public sealed class LiveLaneInventoryTests
         var failures = LiveLaneCensus.TargetScopeWitness(LiveLaneProcess.FindRepo());
         failures.ShouldBeEmpty(string.Join('\n', failures));
     }
+
+    /// <summary>The live Claude project's assembly as Antiphon.Tests stages it (StagedHelper live-claude-tests).</summary>
+    internal static string LiveClaudeAssembly => Path.Combine(AppContext.BaseDirectory, "live-claude-tests", "Antiphon.LiveClaude.Tests.dll");
 
     internal static class LiveLaneProcess
     {

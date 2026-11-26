@@ -3,8 +3,9 @@ using Antiphon.Agents.Pty;
 using Shouldly;
 using TUnit.Core;
 using TUnit.Core.Exceptions;
+using Antiphon.Agents.Pty.Tests;
 
-namespace Antiphon.Agents.Pty.Tests;
+namespace Antiphon.LiveClaude.Tests;
 
 /// <summary>
 /// CARD-0292 S6: headed canary pinning the real Claude /remote-control MANAGEMENT MENU literals

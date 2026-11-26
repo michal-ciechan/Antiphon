@@ -1,5 +1,6 @@
 // The live-lane gate scan of live-lane-manifest.ps1 (CARD-1545 S1a, V-3), compiled in W2-nightly S23. A gate is a
-// test in tests/Antiphon.Tests or tests/Antiphon.Agents.Pty.Tests that is kept off the ordinary rosters: an
+// test in tests/Antiphon.Tests, tests/Antiphon.Agents.Pty.Tests or tests/Antiphon.LiveClaude.Tests (the live Claude
+// core lane's own project since unit 60 of the remaining-ps1 plan) that is kept off the ordinary rosters: an
 // [Explicit] class or method, or a body that reads ANTIPHON_HEADED_TESTS, calls SkipIfNotEligible or uses
 // RealCliStub. The catalog in tests/live-lanes.json gives every gate a disposition (core, policy-excluded or
 // diagnostic), an owner and a reason; Matrix checks it (LiveLaneInventoryTests.EveryLiveGateHasDisposition) and
@@ -53,17 +54,21 @@ namespace Antiphon.Nightly
         public string Key => LiveLaneGateScan.IdentityKey(Project, Namespace, Class, Method, Arguments);
     }
 
-    /// <summary>Get-LiveLaneContract: the six live-claude core identities.</summary>
+    /// <summary>
+    /// Get-LiveLaneContract: the six live-claude core identities. Unit 60 moved them from Antiphon.Tests and
+    /// Antiphon.Agents.Pty.Tests into Antiphon.LiveClaude.Tests (one project, one namespace), so the lane's fingerprint
+    /// closes over that project alone.
+    /// </summary>
     public static class LiveLaneContract
     {
         public static IReadOnlyList<LiveLaneIdentity> Core { get; } = new[]
         {
-            new LiveLaneIdentity("Antiphon.Tests", "Antiphon.Tests.Agents", "ClaudeDialogWatchdogCanaryTests", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs"),
-            new LiveLaneIdentity("Antiphon.Agents.Pty.Tests", "Antiphon.Agents.Pty.Tests", "ClaudeSubmitContractLiveTests", "Submitting_via_two_writes_completes_a_turn", "claude"),
-            new LiveLaneIdentity("Antiphon.Agents.Pty.Tests", "Antiphon.Agents.Pty.Tests", "ClaudeRemoteControlAtStartupCanaryTests", "Control_auto_connects_a_bridge_session_before_the_first_user"),
-            new LiveLaneIdentity("Antiphon.Agents.Pty.Tests", "Antiphon.Agents.Pty.Tests", "ClaudeRemoteControlAtStartupCanaryTests", "Settings_file_prevents_auto_connect_and_keeps_startup_records"),
-            new LiveLaneIdentity("Antiphon.Agents.Pty.Tests", "Antiphon.Agents.Pty.Tests", "ClaudeRemoteControlAtStartupCanaryTests", "Remote_control_slash_command_still_arms_after_settings_off"),
-            new LiveLaneIdentity("Antiphon.Agents.Pty.Tests", "Antiphon.Agents.Pty.Tests", "ClaudeRemoteControlMenuCanaryTests", "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt"),
+            new LiveLaneIdentity(LiveLaneRoster.LiveClaudeProject, LiveLaneRoster.LiveClaudeProject, "ClaudeDialogWatchdogCanaryTests", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs"),
+            new LiveLaneIdentity(LiveLaneRoster.LiveClaudeProject, LiveLaneRoster.LiveClaudeProject, "ClaudeSubmitContractLiveTests", "Submitting_via_two_writes_completes_a_turn", "claude"),
+            new LiveLaneIdentity(LiveLaneRoster.LiveClaudeProject, LiveLaneRoster.LiveClaudeProject, "ClaudeRemoteControlAtStartupCanaryTests", "Control_auto_connects_a_bridge_session_before_the_first_user"),
+            new LiveLaneIdentity(LiveLaneRoster.LiveClaudeProject, LiveLaneRoster.LiveClaudeProject, "ClaudeRemoteControlAtStartupCanaryTests", "Settings_file_prevents_auto_connect_and_keeps_startup_records"),
+            new LiveLaneIdentity(LiveLaneRoster.LiveClaudeProject, LiveLaneRoster.LiveClaudeProject, "ClaudeRemoteControlAtStartupCanaryTests", "Remote_control_slash_command_still_arms_after_settings_off"),
+            new LiveLaneIdentity(LiveLaneRoster.LiveClaudeProject, LiveLaneRoster.LiveClaudeProject, "ClaudeRemoteControlMenuCanaryTests", "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt"),
         };
     }
 
@@ -145,7 +150,7 @@ namespace Antiphon.Nightly
     public static class LiveLaneGateScan
     {
         // The scanned projects, in scan order.
-        private static readonly string[] Projects = { "Antiphon.Tests", "Antiphon.Agents.Pty.Tests" };
+        private static readonly string[] Projects = { "Antiphon.Tests", "Antiphon.Agents.Pty.Tests", LiveLaneRoster.LiveClaudeProject };
         private const string HeadedFlag = "ANTIPHON_HEADED_TESTS";
 
         // A file is read only when its raw text names a shape (-notmatch: ignoring case).
@@ -164,6 +169,7 @@ namespace Antiphon.Nightly
         private static readonly Regex TestsPath = new Regex(@"tests[/\\]Antiphon\.Tests[/\\]", RegexOptions.IgnoreCase);
         private static readonly Regex TestsName = new Regex(@"Antiphon\.Tests", RegexOptions.IgnoreCase);
         private static readonly Regex PtyName = new Regex(@"Antiphon\.Agents\.Pty\.Tests", RegexOptions.IgnoreCase);
+        private static readonly Regex LiveClaudeName = new Regex(@"tests[/\\]Antiphon\.LiveClaude\.Tests[/\\]", RegexOptions.IgnoreCase);
 
         // Get-ChildItem's listing: Win32 wildcards ignoring case, nothing skipped by the enumerator (hidden entries are
         // left out below), an unreadable directory throws.
@@ -188,7 +194,7 @@ namespace Antiphon.Nightly
         // ---- the scan ----------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Invoke-LiveLaneGateScan: every gate in the two test projects' sources, then in the extra files that exist
+        /// Invoke-LiveLaneGateScan: every gate in the three test projects' sources, then in the extra files that exist
         /// (outside a project: project ""), and the unresolved count.
         /// </summary>
         public static LiveLaneGateScanResult Scan(string repoRoot, params string[] extraFiles) => ScanFiles(Files(repoRoot, extraFiles));
@@ -238,6 +244,7 @@ namespace Antiphon.Nightly
             var project = "";
             if (TestsPath.IsMatch(path) || TestsName.IsMatch(path)) project = PtyName.IsMatch(path) ? "Antiphon.Agents.Pty.Tests" : "Antiphon.Tests";
             if (PtyName.IsMatch(path)) project = "Antiphon.Agents.Pty.Tests";
+            if (LiveClaudeName.IsMatch(path)) project = LiveLaneRoster.LiveClaudeProject;
             var raw = File.ReadAllText(path);
             if (!Candidate.IsMatch(raw)) return;
             var text = LiveLaneSource.Strip(raw);

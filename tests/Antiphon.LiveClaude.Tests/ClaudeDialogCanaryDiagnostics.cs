@@ -5,7 +5,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 
-namespace Antiphon.Tests.Agents;
+namespace Antiphon.LiveClaude.Tests;
 
 /// <summary>Opt-in local evidence for the live canary; no input or admission authority.</summary>
 internal sealed class ClaudeDialogCanaryDiagnostics
