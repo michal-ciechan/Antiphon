@@ -1,3 +1,4 @@
+using Shouldly;
 using System.Collections;
 using System.Collections.Specialized;
 using System.Text;
@@ -19,6 +20,69 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class RcProjectSelectionTests
 {
+    [Test]
+    public void C2082_Incremental_requires_fresh_invariant_receipts()
+    {
+        using var fixture = new Repo();
+        fixture.Baseline();
+        fixture.Put("tests/derived-impact-index.json", """
+            {"schema":1,"cap":25,"allowlist":[],"windowsOnly":[],"linuxOnly":[],"capped":[],"edges":[]}
+            """);
+        var source = fixture.Commit();
+        var baseline = fixture.PathOf("prior");
+        Directory.CreateDirectory(baseline);
+        const string invariantCase = "5ecf7638-f9dd-469a-8310-25788f4a6210";
+        const string ordinaryCase = "757cfbd1-0c82-4da5-9c08-752f82d6ed51";
+        var invariant = new RcPlannedChunk { Id = "invariants", Project = "tests/Runner/Runner.csproj",
+            Classes = ["Fixture.Invariants.GuardTests"], ContentDigest = new string('a', 64), Cases = [invariantCase] };
+        var ordinary = new RcPlannedChunk { Id = "ordinary", Project = "tests/Runner/Runner.csproj",
+            Classes = ["Fixture.Product.OrdinaryTests"], ContentDigest = new string('b', 64), Cases = [ordinaryCase] };
+        var roster = new[] { invariant, ordinary };
+        var scope = new RcReceiptScope { Platform = "windows", Architecture = RcReceiptScope.CurrentArchitecture(), Profile = "rc" };
+        static void WriteTrx(string path, RcPlannedChunk chunk) => File.WriteAllText(path,
+            $"<TestRun><Results><UnitTestResult testId=\"{chunk.Cases[0]}\" outcome=\"Passed\" /></Results></TestRun>");
+        IDictionary Receipt(RcPlannedChunk chunk, string path)
+        {
+            WriteTrx(path, chunk);
+            var row = new OrderedDictionary { ["id"] = "runner", ["chunk"] = chunk.Id, ["result"] = "pass",
+                ["exitCode"] = 0, ["trx"] = path };
+            RcChunkReceipt.Stamp(row, source, chunk.ContentDigest, scope);
+            return row;
+        }
+        var prior = roster.Select(chunk => Receipt(chunk, Path.Combine(baseline, chunk.Id + ".trx"))).ToArray();
+        var shadow = RcChunkSelection.Select(fixture.Root, source, source, roster, prior, [],
+            row => RcChunkReceipt.Reusable(row, RcChunkReceipt.ReadTrx(PsValue.Str(row["trx"])),
+                roster.Single(chunk => chunk.Id == PsValue.Str(row["chunk"])).Cases, scope));
+        shadow.Of(invariant.Id).Decision.ShouldBe("execute");
+        shadow.Of(ordinary.Id).Decision.ShouldBe("carry");
+        var inventory = Path.Combine(baseline, "inventory.json");
+        var digest = RcChunkReceipt.Seal(inventory, source, 1, prior);
+        var options = new NightlyRunOptions
+        {
+            RunId = "candidate", Attempt = 2, RequestedSelectionMode = "Incremental", SelectionMode = "Full", ExpectedSha = source, Profile = "rc",
+            IncrementalBaselineSha = source, IncrementalInventoryPath = inventory, IncrementalInventoryDigest = digest,
+            IncrementalOwedDigest = RcComparisonBaseline.OwedDigest(new Dictionary<string, string>()),
+        };
+        var attempt = fixture.PathOf("attempt");
+        var first = RcIncrementalCut.Execute(options, roster, attempt, chunk =>
+        {
+            var row = Receipt(chunk, Path.Combine(attempt, chunk.Id + ".trx"));
+            row["runId"] = options.RunId;
+            row["attempt"] = options.Attempt;
+            return row;
+        }, "windows");
+        first.Launched.ShouldBe([invariant.Id]);
+        first.Carried.Select(row => PsValue.Str(row["chunk"])).ShouldBe([ordinary.Id]);
+        first.AllGreen.ShouldBeTrue(first.Refusal);
+        var inventoryPath = Path.Combine(attempt, "rc-chunk-receipts.json");
+        var sealedResult = RcChunkReceipt.Read(inventoryPath, first.LedgerDigest);
+        sealedResult.Refusal.ShouldBeEmpty();
+        var fresh = sealedResult.Rows.Single(row => PsValue.Str(row["chunk"]) == invariant.Id);
+        PsValue.Str(fresh["disposition"]).ShouldBe("executed");
+        PsValue.Str(fresh["sha"]).ShouldBe(source);
+        RcChunkReceipt.ReadTrx(PsValue.Str(fresh["trx"])).Select(test => test.CaseKey).ShouldBe([invariantCase]);
+    }
+
     private static readonly OrderedDictionary Projects = new()
     {
         ["src/Messaging/Messaging.csproj"] = new[] { "messaging" },

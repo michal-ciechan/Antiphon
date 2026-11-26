@@ -15,6 +15,38 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class MergeHighRadiusSubsetTests
 {
+    [Test]
+    public async Task C2082_Merge_executes_invariants_on_empty_and_unrelated_diffs()
+    {
+        const string category = "/*/*/*/*[Category=RepositoryInvariant]";
+        var root = Root();
+        string[] expectedOwners = ["tests/Antiphon.Tests", "tests/Antiphon.Messaging.Tests", "tests/Antiphon.Agents.Pty.Tests"];
+        foreach (var range in new[] { "HEAD..HEAD", QuietRange, RemoteScriptsRange })
+        {
+            using var result = await SelectMergeAsync(root, range);
+            var payload = result.RootElement;
+            var filters = payload.GetProperty("filters").EnumerateArray().ToArray();
+            var owners = filters.Where(row => row.GetProperty("treenodeFilter").GetString() == category)
+                .Select(row => row.GetProperty("project").GetString()).ToArray();
+            foreach (var owner in expectedOwners)
+                owners.Count(p => p == owner).ShouldBe(1, range + " " + owner);
+            var ordinary = filters.Where(row => row.GetProperty("treenodeFilter").GetString() != category)
+                .Select(row => row.GetProperty("treenodeFilter").GetString()).ToArray();
+            ordinary.ShouldContain(filter => filter!.Contains("CheckpointReceiptSafetyTests", StringComparison.Ordinal));
+            ordinary.ShouldAllBe(filter => !filter!.Contains("AppDbContextModelTests", StringComparison.Ordinal));
+            var markdown = """
+                ### Checkpoints
+
+                | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
+                |---|---|---|---|---|---|---|---|---|
+                """;
+            foreach (var (owner, index) in expectedOwners.Select((owner, index) => (owner, index)))
+                markdown += $"\n| CP-{index + 1} | S3 | {owner} -> bin-c2082-fixture-{index}/ | invariants | {category} | V-4 | green | 1 | 2 |";
+            var imported = PlanTableImporter.ImportMarkdown(markdown);
+            imported.ExitCode.ShouldBe(0);
+        }
+    }
+
     private const string MigrationRange =
         "ff7cceaf4f65bed039f5b7f11dd726d27e762607^..ff7cceaf4f65bed039f5b7f11dd726d27e762607";
 
