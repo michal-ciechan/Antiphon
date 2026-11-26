@@ -347,10 +347,18 @@ public class DispatchSiblingInspectionTests
     [Arguments("unresolved StartRef")]
     [Arguments("abbreviated StartRef")]
     [Arguments("uppercase StartRef")]
+    [Arguments("64-hex branch in SHA-1 repo")]
     public async Task C1349_PendingLandSurvivesLimits(string scenario)
     {
         using var repo = new ScratchGitRepo("c1349-pending");
         await repo.CommitFileAsync("seed.txt", "seed");
+        var sha256LookingBranch = new string('a', 64);
+        if (scenario == "64-hex branch in SHA-1 repo")
+        {
+            await repo.GitAsync("branch", sha256LookingBranch, "master");
+            var branchTip = await repo.GitReadAsync("rev-parse", "--verify", $"{sha256LookingBranch}^{{commit}}");
+            branchTip.Trim().Length.ShouldBe(40);
+        }
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var db = Context(schema);
         var card = await CardAsync(db);
@@ -382,6 +390,7 @@ public class DispatchSiblingInspectionTests
             "unresolved StartRef" => "missing-ref",
             "abbreviated StartRef" => (await repo.GitReadAsync("rev-parse", "--short=12", "master")).Trim(),
             "uppercase StartRef" => (await repo.GitReadAsync("rev-parse", "master")).Trim().ToUpperInvariant(),
+            "64-hex branch in SHA-1 repo" => sha256LookingBranch,
             _ => null,
         };
         foreach (var mode in new[] { RequestedWorktreeBaseMode.Auto, RequestedWorktreeBaseMode.Task, RequestedWorktreeBaseMode.Target })
@@ -426,8 +435,8 @@ public class DispatchSiblingInspectionTests
                 observed.WorktreePath.ShouldBeNull();
                 observed.AgentSessionId.ShouldBeNull();
                 var holds = fresh.AgentTaskEvents.Where(e => e.AgentTaskId == request.Id && e.Type == AgentTaskEventType.Held);
-                if (scenario == "abbreviated StartRef")
-                    (await holds.AnyAsync(e => e.Detail!.Contains("is landing and is not yet in"))).ShouldBeTrue();
+                if (scenario is "abbreviated StartRef" or "64-hex branch in SHA-1 repo")
+                    (await holds.AnyAsync(e => e.Detail!.Contains("is landing and is not yet in " + startRef))).ShouldBeTrue();
                 else
                     (await holds.AnyAsync()).ShouldBeTrue();
             }
