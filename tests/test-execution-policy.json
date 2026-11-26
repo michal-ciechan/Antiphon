@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "a1cdf496adcca811837864b374295f1df2074b80a9ea9354a9cadd60d62370ef",
+  "policyHash": "1c09ba49adfe8c7e34c33f2f3841223577de220173d46288b96b6729234c2a10",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1615,7 +1615,7 @@
           "methods": [
             "StartupArgvMatchesProductionApplyOff"
           ],
-          "reason": "Separate CARD-1545 producer/consumer parity workflow: exact-filter consumer requires an owned portable context and source/run/build-bound PTY producer capture receipt; commissioned via scripts/test-live-lane-isolation.ps1, never the RC wildcard.",
+          "reason": "Separate CARD-1545 producer/consumer parity workflow: exact-filter consumer requires an owned portable context and source/run/build-bound PTY producer capture receipt; commissioned via the live-lane-isolation-rows command, never the RC wildcard.",
           "owner": "CARD-1545"
         },
         {
