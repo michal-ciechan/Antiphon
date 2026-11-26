@@ -123,6 +123,7 @@ Hosts:
    - Generate the password into the file, e.g. `umask 077; printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" >> postgres.env`. Never echo it.
 4. **S, preview:** `pwsh -NoProfile -File scripts/deploy-server2-postgres.ps1 -WhatIf -EnvFile /home/mc/antiphon-server2/postgres.env -ComposeFile /home/mc/antiphon-server2/postgres/docker-compose.server2-postgres.yml`.
    - Expected (measured here without an env file): `docker compose --env-file … -p antiphon-server2-postgres up -d`, then `SERVER2-POSTGRES plan exit=0 reason=ok`.
+   - Note (2026-11-26, unit 54 of `docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md`): `scripts/deploy-server2-postgres.ps1` is deleted; it is the `deploy-server2-postgres` command now. The preview is `scripts/antiphon deploy-server2-postgres --what-if --env-file /home/mc/antiphon-server2/postgres.env --compose-file /home/mc/antiphon-server2/postgres/docker-compose.server2-postgres.yml` from a host checkout, and step 5 is the same with `--execute`. Steps, refusals, lines and exit codes are the script's. The host needs the .NET SDK for `scripts/antiphon` where the script needed `pwsh`; without it, run the printed `docker compose` line by hand as step 5 says. The `scripts/deploy-server2-postgres.ps1:<line>` references in this runbook name the deleted file.
 5. **S, execute:** the same command with `-Execute` instead of `-WhatIf`.
    - Requires `pwsh` on the host, the host lane, and a bind equal to `tailscale ip -4` (`:444-459`).
    - Expected `SERVER2-POSTGRES ok exit=0 reason=ok`.
