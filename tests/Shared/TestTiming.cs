@@ -799,6 +799,7 @@ public sealed class TestTimingSession : IDisposable
         "shared-broker-probe",
         "compose-fixture-delete",
         "raw-reflog-fault", "source-snapshot",
+        "p2-contract-admission", "p2-fixture-setup", "p2-fixture-teardown",
         "historical migration database",
         "C-locale readiness database",
         "C-locale readiness database tip",
