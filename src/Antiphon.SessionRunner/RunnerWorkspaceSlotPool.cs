@@ -567,9 +567,12 @@ public sealed class RunnerWorkspaceSlotPool
     }
 
     /// <summary>
-    /// Aborts, then quits, each sequencer whose state is in the slot's admin directory (as LandWorkspace does): a
-    /// verb with no marker has nothing to abort, so it starts no git process. The checkout, clean and admin-file
-    /// sweep that follow clear whatever an abort leaves.
+    /// Aborts, then quits, each sequencer whose own state is in the slot's admin directory: a verb with no marker
+    /// has nothing to abort and starts no git process, so a clean slot (nearly every reset) starts none. Whatever
+    /// sequencer state is still there afterwards (a shape the table does not name, a git am session, a verb whose
+    /// abort failed) gets the full sweep every reset used to run: each verb's --abort, then each --quit. The
+    /// forced checkout, clean and admin-file sweep that follow clear the rest; VerifyLeaseAsync still refuses a
+    /// slot that keeps a marker.
     /// </summary>
     private async Task AbortSequencersAsync(Owned owned, CancellationToken ct)
     {
@@ -580,6 +583,11 @@ public sealed class RunnerWorkspaceSlotPool
             if (markers.Any(m => Path.Exists(owned.AdminDir + "/" + m)))
                 await SlotGitAsync(owned.Path, ct, verb, "--quit");
         }
+        if (!SweepMarkers.Any(m => Path.Exists(owned.AdminDir + "/" + m))) return;
+        foreach (var verb in SweepVerbs)
+            await SlotGitAsync(owned.Path, ct, verb, "--abort");
+        foreach (var verb in SweepVerbs)
+            await SlotGitAsync(owned.Path, ct, verb, "--quit");
     }
 
     private static readonly (string Verb, string[] Markers)[] Sequencers =
@@ -587,8 +595,14 @@ public sealed class RunnerWorkspaceSlotPool
         ("rebase", ["rebase-merge", "rebase-apply"]),
         ("cherry-pick", ["CHERRY_PICK_HEAD", "sequencer"]),
         ("revert", ["REVERT_HEAD", "sequencer"]),
-        ("merge", ["MERGE_HEAD", "MERGE_MSG", "MERGE_MODE"]),
+        ("merge", ["MERGE_HEAD"]),
     ];
+
+    private static readonly string[] SweepVerbs = ["rebase", "am", "cherry-pick", "revert", "merge"];
+
+    // The lease check's sequencer markers (BISECT_LOG and the rest of bisect go with the admin-file sweep).
+    private static readonly string[] SweepMarkers =
+        [.. WorkspaceSlotResetPolicy.SequencerMarkers.Where(m => m != "BISECT_LOG")];
 
     private async Task ClearWorktreeStateAsync(Owned owned, CancellationToken ct)
     {
