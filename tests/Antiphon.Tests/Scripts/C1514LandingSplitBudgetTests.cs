@@ -547,7 +547,9 @@ public sealed class C1514LandingSplitBudgetTests
             // Unit 20 of the 2026-11-22 plan: +30 s. The rc Windows rows of three deleted Linux-only classes left the policy
             // (CheckpointFixtureRoutingTests 4, CheckpointInheritedFileTests 4, CheckpointVerifierBoundsTests 2 listing nodes,
             // Slow in a Check type: 3 s each), so the fixed listing's nodes for them now count.
-            if (Math.Abs(suiteSeconds - 106373.8397645542) > 0.11) reasons.Add("suite-hours");
+            // Unit 51: +1.5 s. RefreshGithubTokenRemoteCommandTests' rc Windows row left with that class (its cases run in process
+            // in RefreshGithubTokenScriptTests), so the fixed listing's three nodes for it (not Slow: 0.5 s each) now count.
+            if (Math.Abs(suiteSeconds - 106375.3397645542) > 0.11) reasons.Add("suite-hours");
             if (maxSeconds >= watchdogSeconds) reasons.Add("watchdog-budget");
             if (overTarget.Count != 0) reasons.Add("target");
             if (missing != 0 || doubled != 0 || extra != 0) reasons.Add("census");

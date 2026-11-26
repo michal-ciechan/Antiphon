@@ -23,7 +23,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class WindowsUnitPlatformAdmissionTests
 {
     private static readonly XNamespace Trx = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
-    private const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)|(RefreshGithubTokenRemoteCommandTests*)/*";
+    private const string ChildFilter = "/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)/*";
 
     [Test]
     public void C1210_Guard_matches_native_platform()
@@ -261,7 +261,7 @@ public sealed class WindowsUnitPlatformAdmissionTests
         WindowsUnitSkipRoster.Conditional.ShouldBe(capabilities, "c1210-conditional-roster: frozen identities and reasons");
         WindowsUnitSkipRoster.StoragePortable.ShouldBe(storagePortable, "c1210-portable-roster: frozen storage identities");
         FileLink.PrivilegeReason.ShouldBe(capabilities[0].Reason, "c1210-filelink-exact-reason");
-        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)|(RefreshGithubTokenRemoteCommandTests*)/*",
+        ChildFilter.ShouldBe("/*/*/(HostJqPrerequisiteScriptTests*)|(JqRunnerImageContractTests*)|(GrokSha256PinTests*)|(CodexRootExecContractTests*)|(GitMinimumVersionGuardTests*)|(ChannelOutboundStorageTests*)/*",
             "c1210-child-storage-selection");
         foreach (var (conditional, skipped) in new[] { (Array.Empty<Entry>(), false), (capabilities, false), (capabilities, true) })
         {

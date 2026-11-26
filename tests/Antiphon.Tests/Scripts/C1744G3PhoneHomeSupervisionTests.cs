@@ -358,7 +358,7 @@ public sealed class C1744G3PhoneHomeSupervisionTests
     [Test]
     public void Supervision_scripts_stay_ascii_and_51_compatible()
     {
-        string[] files = ["scripts/autostart-session-runner.ps1", "scripts/lib/windows-phone-home-env.ps1", "scripts/restart-apphost.ps1",
+        string[] files = ["scripts/autostart-session-runner.ps1", "scripts/restart-apphost.ps1",
             "scripts/lib/Antiphon.Nightly/WindowsPhoneHome.cs", "scripts/lib/Antiphon.Nightly/SessionRunnerAutostart.cs"];
         foreach (var file in files)
         {
@@ -367,6 +367,8 @@ public sealed class C1744G3PhoneHomeSupervisionTests
             File.ReadAllText(path).ShouldNotContain("#requires -Version 7", Case.Insensitive, file + " compat.no-requires-7");
         }
         File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "autostart-session-runner.ps1")).ShouldStartWith("#requires -Version 5.1");
+        // Unit 51 deleted scripts/lib/windows-phone-home-env.ps1 with desktop-win-phase1-secrets.ps1, its last loader (twin WindowsPhoneHome.ChildPath).
+        File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "windows-phone-home-env.ps1")).ShouldBeFalse("compat.phone-home-library-gone");
     }
 
     // ---- no-build-stamp: the start command with --no-build on an unstamped runner ----

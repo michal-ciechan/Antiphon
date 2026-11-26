@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "1819d4f4aefb0c30baf6f64f0c7728743047de178fcea3a1452881d34a410d6f",
+  "policyHash": "56e362c9fb71ee703e2995a601edef5fd5f15578c69e562492c1fbcb05e89c05",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -819,13 +819,6 @@
           "platform": "windows",
           "reason": "Linux-only by construction: procfs, setsid and POSIX signals. The case remains required on Linux.",
           "owner": "CARD-0590"
-        },
-        {
-          "suite": "antiphon",
-          "class": "RefreshGithubTokenRemoteCommandTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: POSIX sh executables. The case remains required on Linux.",
-          "owner": "CARD-1245"
         },
         {
           "suite": "antiphon",

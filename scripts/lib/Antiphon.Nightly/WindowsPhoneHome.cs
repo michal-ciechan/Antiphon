@@ -1,8 +1,9 @@
 // CARD-1744 S4, CARD-0716, CARD-1221: the Windows phone-home runner's configuration and environment rules (unit 36 of
 // docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md; it replaced scripts/lib/windows-phone-home-env.ps1's
-// functions). The rules are pure: no file IO and no process lookup. The callers (the autostart-session-runner and
-// start-windows-phone-home-runner commands, and restart-apphost's launch refusal) read the configuration file, test the
-// secret path and resolve pwsh and the agent executables.
+// functions; unit 51 deleted the library with desktop-win-phase1-secrets.ps1, its last loader). The rules are pure: no file IO
+// and no process lookup. The callers (the autostart-session-runner and start-windows-phone-home-runner commands, restart-apphost's
+// launch refusal, and the desktop-win-phase1-secrets command's provider homes through ChildPath) read the configuration file, test
+// the secret path and resolve pwsh and the agent executables.
 //
 //   ParseConfig      ConvertFrom-WindowsPhoneHomeConfig: the phone-home.json text, refused by its first broken rule
 //   RunnerEnvironment New-WindowsPhoneHomeRunnerEnv: the runner's variables, in their order

@@ -184,7 +184,7 @@ public sealed class ReleasePublishTests
     private static List<(string Pattern, int Line)> CredentialFindings(string notes)
     {
         // A token label may be underscore-delimited (GITHUB_TOKEN/access_token). An embedded word in a test class, such as
-        // RefreshGithubTokenRemoteCommandTests, is not a credential label. Case-insensitive, as PowerShell -match.
+        // RefreshGithubTokenScriptTests, is not a credential label. Case-insensitive, as PowerShell -match.
         var patterns = new (string Name, string Pattern)[] { ("bearer", "Bearer "), ("token", "(?<![a-z0-9])token(?![a-z0-9])") };
         var findings = new List<(string, int)>();
         var lines = Regex.Split(notes, "\r?\n");
@@ -205,10 +205,12 @@ public sealed class ReleasePublishTests
         fx.Publish();
         var notes = File.ReadAllText(fx.NotesPath);
         var findings = CredentialFindings(notes);
-        rows.Check(notes.Contains("RefreshGithubTokenRemoteCommandTests"), "C599 NotesCredentialScan generator preserves the Windows exclusion class");
+        // Unit 51 (2026-11-22 PowerShell-to-C# plan) removed RefreshGithubTokenRemoteCommandTests' Windows row with that class; a frozen
+        // Linux-only row stands in for it, and the benign identifier below keeps an embedded "Token".
+        rows.Check(notes.Contains("ScriptHarnessLinuxOwnershipTests"), "C599 NotesCredentialScan generator preserves the Windows exclusion class");
         rows.Check(findings.Count == 0, "C599 NotesCredentialScan generated Windows exclusions are not credentials", Format(findings));
 
-        var benign = @"C:\Antiphon\releases\checkout user=fixture machine=fixture-host" + "\r\n" + new string('a', 40) + "\r\n" + new string('b', 64) + "\r\nRefreshGithubTokenRemoteCommandTests";
+        var benign = @"C:\Antiphon\releases\checkout user=fixture machine=fixture-host" + "\r\n" + new string('a', 40) + "\r\n" + new string('b', 64) + "\r\nRefreshGithubTokenScriptTests";
         findings = CredentialFindings(benign);
         rows.Check(findings.Count == 0, "C599 NotesCredentialScan Windows paths CRLF hashes and identifiers are not credentials", Format(findings));
 

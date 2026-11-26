@@ -1140,7 +1140,7 @@ public sealed class AntiphonCliLauncherTests
     {
         if (shell == "powershell.exe" && !OperatingSystem.IsWindows())
             Skip.Test("CARD-1669: Windows PowerShell 5.1 (powershell.exe) exists only on Windows");
-        string[] files = ["scripts/run-daemon.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1", "scripts/lib/windows-phone-home-env.ps1",
+        string[] files = ["scripts/run-daemon.ps1", "scripts/test-client.ps1", "scripts/autostart-session-runner.ps1", "scripts/lib/antiphon-cli.ps1",
             "scripts/restart-apphost.ps1", "scripts/set-apphost-maintenance.ps1",
             "scripts/watchdog-apphost.ps1", "scripts/apphost-watchdog-state-observer.ps1", "scripts/autostart-apphost.ps1"];
         foreach (var file in files)
@@ -1253,6 +1253,20 @@ public sealed class AntiphonCliLauncherTests
 
     // Unit 48: nothing started the CARD-0660 image qualification by path, so the verify-card0660-codex-image command has no
     // launcher, and its W10 fixture went with it (the owner's approval); its checks run in process (CodexRunnerImageContractTests).
+    // Unit 51: the W8 operator tools are commands. Nothing started them by path, so none keeps a launcher, and the phone-home
+    // library went with its last loader (its Join-PhoneHomeChild is WindowsPhoneHome.ChildPath). The flags are the scripts'
+    // parameters in kebab case.
+    [Test]
+    public void Operator_tools_and_the_phone_home_library_are_gone_and_the_commands_take_their_flags()
+    {
+        foreach (var gone in new[] { "refresh-server2-github-token.ps1", "desktop-slot-provision.ps1", "desktop-win-phase1-secrets.ps1", Path.Combine("lib", "windows-phone-home-env.ps1") })
+            File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", gone)).ShouldBeFalse(gone);
+        GithubTokenRefreshOptions.Parse(["--server", "mc@server2"], "home").Server.ShouldBe("mc@server2");
+        var slots = DesktopSlotProvisionOptions.Parse(["--root", "C:\\Antiphon\\slots", "--execute", "--what-if", "--remove-empty", "--disk-budget-gib", "32"]);
+        (slots.Execute, slots.WhatIf, slots.RemoveEmpty, slots.DiskBudgetGiB).ShouldBe((true, true, true, 32));
+        var secrets = DesktopWinPhase1Options.Parse(["--execute", "--rotate", "--what-if", "--sweep-stranded", "--sweep-backups"], "home", "scripts");
+        (secrets.Execute, secrets.Rotate, secrets.WhatIf, secrets.SweepStranded, secrets.SweepBackups).ShouldBe((true, true, true, true, true));
+    }
     [Test]
     public void Codex_image_verifier_and_its_fixture_are_gone()
     {

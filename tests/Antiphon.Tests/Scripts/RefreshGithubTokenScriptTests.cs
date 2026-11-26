@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.Infrastructure;
 using Shouldly;
@@ -6,61 +7,121 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+/// <summary>
+/// CARD-0817: the server2 GitHub token refresh. Unit 51 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md ported
+/// scripts/refresh-server2-github-token.ps1 to the refresh-server2-github-token command (Antiphon.Nightly.GithubTokenRefresh); these
+/// cases run it in process against fake bw and ssh (FakeOperatorTools) and a test environment, where they read the script's text.
+/// The token is synthetic; no vault, relay, server2 or real environment variable is read.
+/// </summary>
 [Category("Unit")]
-public sealed class RefreshGithubTokenScriptTests
+public sealed partial class RefreshGithubTokenScriptTests
 {
+    private const string Token = "ghp_C0817SyntheticTokenNeverReal0123456789";
+    private const string Session = "c0817-fake-session";
+
     [Test]
     public void Refresh_script_streams_the_token_over_stdin_and_never_prints_it()
     {
-        var text = Script();
-        text.All(c => c <= 127).ShouldBeTrue("PowerShell scripts must remain ASCII");
-        text.ShouldContain("$vaultItem = '97819ca3-710f-43f8-99ce-b4da013e32c1'");
-        text.ShouldContain("$token = (& bw get password $vaultItem --nointeraction 2>$null | Out-String).Trim()");
-        text.ShouldContain("$output = @($token | & ssh -o BatchMode=yes -o ConnectTimeout=30 $Server $remote 2>&1)");
-        text.ShouldContain("$detail = Get-RemoteStderr $output $token\n    $token = ''");
-        text.ShouldContain("if ($Secret) { $text = $text.Replace($Secret, '[redacted]') }");
-        text.ShouldContain("sudo -n sh -c");
-        text.ShouldContain("mktemp \"$d/token.tmp.XXXXXXXX\"");
-        text.ShouldContain("cat > \"$tmp\" && test -s \"$tmp\" && chown 1654:1654 \"$tmp\" && chmod 0400 \"$tmp\" && mv -f \"$tmp\" \"$d/token\"");
-        text.ShouldContain("trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM");
-        text.ShouldContain("finally {\n    $token = ''\n    $env:BW_SESSION = $previous");
-        foreach (var line in text.Split('\n'))
+        using var world = World();
+        world.Variables["BW_SESSION"] = Session;
+        var exit = Run(world);
+
+        exit.ShouldBe(GithubTokenRefresh.Refreshed, world.Out);
+        world.Out.ShouldBe("1654:1654 400\npresent=true\n", "only the two validated metadata lines reach stdout");
+        world.Error.ShouldBeEmpty();
+        var calls = world.Tools.Calls;
+        calls.Count.ShouldBe(3);
+        calls[0].FileName.ShouldBe("/fake/bw");
+        calls[0].Arguments.ShouldBe(["get", "password", GithubTokenRefresh.VaultItem, "--nointeraction"]);
+        calls[0].Environment.ShouldNotBeNull().ShouldBe(new Dictionary<string, string> { ["BW_SESSION"] = Session }, "the relay session reaches bw alone");
+        calls[0].Input.ShouldBeNull();
+        foreach (var ssh in calls.Skip(1))
         {
-            Regex.IsMatch(line, @"(?i)\b(Write-Host|Write-Output|Write-Warning|Write-Verbose|Write-Debug|Write-Information)\b.*\$token\b")
-                .ShouldBeFalse("no token printing: " + line);
-            Regex.IsMatch(line, @"(?i)\bssh\b.*\$token\b").ShouldBeFalse("no token in SSH argv");
-            Regex.IsMatch(line, @"(?i)\$env:[\w]+\s*=\s*\$token\b").ShouldBeFalse("no token in environment");
-            Regex.IsMatch(line, @"(?i)\b(Set-Content|Out-File|WriteAllText|WriteAllBytes)\b").ShouldBeFalse("no desktop credential file");
+            ssh.FileName.ShouldBe("/fake/ssh");
+            ssh.Arguments.Take(5).ShouldBe(["-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "mc@server2"]);
+            ssh.Arguments.Count.ShouldBe(6);
+            ssh.Environment.ShouldBeNull("ssh gets no extra variable: neither the session nor the token");
         }
-        text.ShouldNotContain("Write-Warning $_");
-        text.ShouldNotContain("https://x-access-token:");
+        calls[1].Arguments[5].ShouldBe(GithubTokenRefresh.RemoteCommand(GithubTokenRefresh.UploadPayload));
+        calls[1].Input.ShouldBe(Token + Environment.NewLine, "the token travels on the upload's stdin only");
+        calls[2].Arguments[5].ShouldBe(GithubTokenRefresh.RemoteCommand(GithubTokenRefresh.VerifyPayload));
+        calls[2].Input.ShouldBeNull("the verification sends nothing");
+        foreach (var call in calls)
+        {
+            call.Arguments.ShouldAllBe(argument => !argument.Contains(Token), "no token in argv");
+            (call.Environment ?? new Dictionary<string, string>()).Values.ShouldAllBe(value => !value.Contains(Token), "no token in the environment");
+        }
+        (world.Out + world.Error).ShouldNotContain(Token);
+
+        var upload = calls[1].Arguments[5];
+        upload.ShouldStartWith("sudo -n sh -c 'set -eu\n");
+        upload.ShouldContain("mktemp \"$d/token.tmp.XXXXXXXX\"");
+        upload.ShouldContain("cat > \"$tmp\" && test -s \"$tmp\" && chown 1654:1654 \"$tmp\" && chmod 0400 \"$tmp\" && mv -f \"$tmp\" \"$d/token\"");
+        GithubTokenRefresh.UploadPayload.ShouldContain("trap 'rm -f -- \"$tmp\"' EXIT HUP INT TERM");
+        upload.ShouldContain("trap '\\''rm -f -- \"$tmp\"'\\'' EXIT HUP INT TERM", Case.Sensitive, "the payload's quotes are escaped for sh -c");
+        upload.ShouldNotContain("https://x-access-token:");
     }
 
     [Test]
     public void Refresh_script_skips_without_a_relay_session_and_reports_mode_only()
     {
-        var text = Script();
-        text.ShouldContain("[string]$Server = 'mc@server2'");
-        text.ShouldContain("$previous = $env:BW_SESSION");
-        text.ShouldContain("Join-Path $HOME '.bw-session'");
-        text.ShouldContain("if (Test-Path -LiteralPath $pickup)");
-        var guard = text.IndexOf("if (-not $session -or", StringComparison.Ordinal);
-        guard.ShouldBeGreaterThan(0);
-        var skip = text.IndexOf("exit 2", guard, StringComparison.Ordinal);
-        skip.ShouldBeGreaterThan(guard);
-        skip.ShouldBeLessThan(text.IndexOf("$token = (& bw", StringComparison.Ordinal));
-        skip.ShouldBeLessThan(text.IndexOf("$token | & ssh", StringComparison.Ordinal));
-        text.ShouldContain("refresh skipped, previous file unchanged");
-        text.ShouldContain("$LASTEXITCODE -ne 0 -or -not $token");
-        text.ShouldContain("stat -c '%u:%g %a' \"$d/token\"");
-        text.ShouldContain("printf 'present=true\\n'");
-        text.ShouldContain("$metadata[0] -cne '1654:1654 400'");
-        text.ShouldContain("$metadata[1] -cne 'present=true'");
-        text.ShouldContain("Write-Output $metadata");
-        var verify = text[(text.IndexOf("$verify = @'", StringComparison.Ordinal))..];
-        verify.ShouldNotContain("cat ");
-        verify.ShouldNotContain("sha256sum");
-        verify.ShouldNotContain("Get-Content");
+        // No BW_SESSION and no ~/.bw-session: the skipped warning, exit 2, and nothing is run.
+        using (var world = World())
+        {
+            Run(world).ShouldBe(GithubTokenRefresh.Skipped);
+            world.Out.ShouldBe("WARNING: " + GithubTokenRefresh.SkippedWarning + "\n");
+            world.Out.ShouldContain("refresh skipped, previous file unchanged");
+            world.Tools.Calls.ShouldBeEmpty();
+        }
+
+        // ~/.bw-session, trimmed, when BW_SESSION is absent.
+        using (var world = World())
+        {
+            File.WriteAllText(world.PathOf(".bw-session"), "  " + Session + "\r\n");
+            Run(world).ShouldBe(GithubTokenRefresh.Refreshed, world.Out);
+            world.Tools.Calls[0].Environment!["BW_SESSION"].ShouldBe(Session);
+        }
+
+        // Without bw or without ssh on PATH: skipped before the vault is read.
+        foreach (var missing in new[] { "bw", "ssh" })
+        {
+            using var world = World();
+            world.Variables["BW_SESSION"] = Session;
+            world.Tools.Found.Remove(missing);
+            Run(world).ShouldBe(GithubTokenRefresh.Skipped, missing);
+            world.Tools.Calls.ShouldBeEmpty(missing);
+            world.Out.ShouldContain(GithubTokenRefresh.SkippedWarning);
+        }
+
+        // A failed read, an empty value or one holding whitespace: skipped, and ssh never starts.
+        foreach (var (exitCode, output) in new[] { (1, new[] { Token }), (0, Array.Empty<string>()), (0, new[] { "  " }), (0, new[] { "ghp_a b" }), (0, new[] { "ghp_a", "ghp_b" }) })
+        {
+            using var world = World(bwExit: exitCode, bwOutput: output);
+            world.Variables["BW_SESSION"] = Session;
+            Run(world).ShouldBe(GithubTokenRefresh.Skipped, string.Join("|", output));
+            world.Tools.Calls.Count.ShouldBe(1, "only bw ran");
+        }
+
+        // The verification reads metadata only and accepts exactly the two lines.
+        GithubTokenRefresh.VerifyPayload.ShouldContain("stat -c '%u:%g %a' \"$d/token\"");
+        GithubTokenRefresh.VerifyPayload.ShouldContain("printf 'present=true\\n'");
+        GithubTokenRefresh.VerifyPayload.ShouldNotContain("cat ");
+        GithubTokenRefresh.VerifyPayload.ShouldNotContain("sha256sum");
+        foreach (var metadata in new[] { new[] { "1654:1654 600", "present=true" }, new[] { "1654:1654 400", "present=false" }, new[] { "1654:1654 400" },
+                     new[] { "1654:1654 400", "present=true", "extra" } })
+        {
+            using var world = World(verifyOutput: metadata);
+            world.Variables["BW_SESSION"] = Session;
+            Run(world).ShouldBe(GithubTokenRefresh.NotConfirmed, string.Join("|", metadata));
+            world.Out.ShouldBe("WARNING: " + GithubTokenRefresh.VerifyWarning + "\n", "no metadata line after a failed verification");
+        }
+
+        // The server defaults to mc@server2 and must be [user@]host (the script's ValidatePattern).
+        GithubTokenRefreshOptions.Parse([], "home").Server.ShouldBe("mc@server2");
+        GithubTokenRefreshOptions.Parse(["--server", "ops@server2-temp.local"], "home").Server.ShouldBe("ops@server2-temp.local");
+        foreach (var bad in new[] { "", "-oProxyCommand=x", "mc@", "mc@server2;id", "@server2" })
+            Should.Throw<NightlyUsageException>(() => GithubTokenRefreshOptions.Parse(["--server", bad], "home"), bad);
+        Should.Throw<NightlyUsageException>(() => GithubTokenRefreshOptions.Parse(["-Server", "mc@server2"], "home"));
     }
 
     // CARD-1245. Without -i, docker exec gives the inner `sh -s` an empty stdin: the heredoc is
@@ -101,5 +162,22 @@ public sealed class RefreshGithubTokenScriptTests
             .Any(token => token == "--interactive" || Regex.IsMatch(token, "^-[A-Za-z]*i[A-Za-z]*$"));
     }
 
-    private static string Script() => DockerStackDocuments.Read("scripts/refresh-server2-github-token.ps1").Replace("\r\n", "\n");
+    /// <summary>A world with bw and ssh on PATH: bw answers the token, ssh accepts the upload and answers the verification.</summary>
+    internal static OperatorToolWorld World(int bwExit = 0, string[]? bwOutput = null, string[]? verifyOutput = null)
+    {
+        var world = new OperatorToolWorld("c0817");
+        world.Tools.Found["bw"] = "/fake/bw";
+        world.Tools.Found["ssh"] = "/fake/ssh";
+        var ssh = 0;
+        world.Tools.Behaviour = call =>
+        {
+            if (call.FileName == "/fake/bw") return OperatorToolResult.Of(bwExit, bwOutput ?? [Token], ["bw: diagnostic"]);
+            ssh++;
+            return ssh == 1 ? OperatorToolResult.Of(0) : OperatorToolResult.Of(0, verifyOutput ?? ["1654:1654 400", "present=true"]);
+        };
+        return world;
+    }
+
+    internal static int Run(OperatorToolWorld world, params string[] arguments) =>
+        GithubTokenRefresh.Run(GithubTokenRefreshOptions.Parse(arguments, world.Root), world.Host(), new System.IO.Abstractions.FileSystem(), world.Tools);
 }

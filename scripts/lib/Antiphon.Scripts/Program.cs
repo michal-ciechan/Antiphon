@@ -330,6 +330,12 @@ namespace Antiphon.Scripts
             [PostgresSnapshotCommands.TargetName] = PostgresSnapshotCommands.RunTarget,
             [PostgresSnapshotCommands.JobStatusName] = PostgresSnapshotCommands.RunJobStatus,
             [PostgresSnapshotCommands.RegisterName] = PostgresSnapshotCommands.RunRegister,
+            // The W8 operator tools answer every input themselves (unit 51). refresh-server2-github-token: exit 0 refreshed, 1 not
+            // confirmed, 2 skipped (nothing sent). desktop-slot-provision: 0 done or the dry run, 2 refused. desktop-win-phase1-secrets:
+            // 0 done or the dry run, 2 refused, 1 an unexpected error before the apply. Usage is 2 for each.
+            [OperatorToolCommands.RefreshServer2GithubToken] = OperatorToolCommands.RunRefreshServer2GithubToken,
+            [OperatorToolCommands.DesktopSlotProvisionName] = OperatorToolCommands.RunDesktopSlotProvision,
+            [OperatorToolCommands.DesktopWinPhase1SecretsName] = OperatorToolCommands.RunDesktopWinPhase1Secrets,
         };
 
         public static int Main(string[] args)
@@ -371,7 +377,8 @@ namespace Antiphon.Scripts
                 + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
                 + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage
-                + " | " + Server2RepositoryMirrorsCommand.Usage + " | " + PostgresSnapshotCommands.Usage);
+                + " | " + Server2RepositoryMirrorsCommand.Usage + " | " + PostgresSnapshotCommands.Usage
+                + " | " + OperatorToolCommands.Usage);
             return Usage;
         }
 

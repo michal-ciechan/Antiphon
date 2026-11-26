@@ -38,7 +38,6 @@ public sealed partial class ImpactedClassesSelectorTests
 
     [Test]
     [Arguments("e983d6fe263af623a3da186a2260575f60cc4c5f", "scripts/restart-apphost.ps1")]
-    [Arguments("aab91e4aa86208526e31db85677376d0670497be", "scripts/lib/windows-phone-home-env.ps1")]
     public async Task Graceful_stop_script_changes_select_shutdown_and_resume_tests(string commit, string path)
     {
         var root = Root();
@@ -53,6 +52,20 @@ public sealed partial class ImpactedClassesSelectorTests
         filter.ShouldContain("(PhoneHomeRestartResumeTests*)", Case.Sensitive, path);
     }
 
+    // Unit 51 deleted scripts/lib/windows-phone-home-env.ps1, the subject of this test's other row (aab91e4aa touched only that
+    // file); a change to its C# twin selects the same shutdown and resume witnesses.
+    [Test]
+    public async Task Graceful_stop_phone_home_twin_changes_select_shutdown_and_resume_tests()
+    {
+        const string path = "scripts/lib/Antiphon.Nightly/WindowsPhoneHome.cs";
+        var selected = await RunAsync(Root(), "--path", path, "--json");
+        selected.Exit.ShouldBe(0, selected.Text);
+        using var json = JsonDocument.Parse(selected.Stdout);
+        Strings(json.RootElement, "kinds").ShouldContain("apphost-graceful-stop", path);
+        var filter = FilterRows(json.RootElement, "filters").Single(row => row.Project == "tests/Antiphon.Tests").Filter;
+        filter.ShouldContain("(OperatorShutdownEndpointTests*)", Case.Sensitive, path);
+        filter.ShouldContain("(PhoneHomeRestartResumeTests*)", Case.Sensitive, path);
+    }
     [Test]
     [Arguments("server/Application/Exceptions/InputDeliveryUncertainException.cs")]
     [Arguments("server/Application/Services/SessionMessageQueueService.cs")]

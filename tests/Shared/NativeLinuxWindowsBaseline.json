@@ -1021,33 +1021,6 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Declaring": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Signature": "Crlf_checkout_sends_carriage_return_free_remote_commands()",
-      "RowClass": "RefreshGithubTokenRemoteCommandTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Crlf_checkout_sends_carriage_return_free_remote_commands()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Declaring": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Signature": "Upload_failure_surfaces_remote_stderr_without_the_token()",
-      "RowClass": "RefreshGithubTokenRemoteCommandTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Upload_failure_surfaces_remote_stderr_without_the_token()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Declaring": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Signature": "Verify_failure_surfaces_remote_stderr()",
-      "RowClass": "RefreshGithubTokenRemoteCommandTests",
-      "RowMethods": [],
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Verify_failure_surfaces_remote_stderr()"
-    },
-    {
-      "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Scripts.NightlyProbeSupervisorTests",
       "Declaring": "Antiphon.Tests.Scripts.NightlyProbeSupervisorTests",
       "Signature": "C1375_DeadlineKillsAndJoinsTree()",
@@ -5616,42 +5589,6 @@
     },
     {
       "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Declaring": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Signature": "Crlf_checkout_sends_carriage_return_free_remote_commands()",
-      "Reason": "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.",
-      "ReasonSha256": "cf49159d1274b65ec8a1345a63abd81128fa634abaa8d5eb14a974a11b7c3b87",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
-      "Via": "Crlf_checkout_sends_carriage_return_free_remote_commands \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Crlf_checkout_sends_carriage_return_free_remote_commands()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Declaring": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Signature": "Upload_failure_surfaces_remote_stderr_without_the_token()",
-      "Reason": "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.",
-      "ReasonSha256": "cf49159d1274b65ec8a1345a63abd81128fa634abaa8d5eb14a974a11b7c3b87",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
-      "Via": "Upload_failure_surfaces_remote_stderr_without_the_token \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Upload_failure_surfaces_remote_stderr_without_the_token()"
-    },
-    {
-      "Suite": "antiphon",
-      "Concrete": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Declaring": "Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests",
-      "Signature": "Verify_failure_surfaces_remote_stderr()",
-      "Reason": "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.",
-      "ReasonSha256": "cf49159d1274b65ec8a1345a63abd81128fa634abaa8d5eb14a974a11b7c3b87",
-      "WindowsOutcomeAtGate": "NotExecuted",
-      "Site": "tests/Antiphon.Tests/TestHelpers/NativeLinuxGate.cs:8",
-      "Via": "Verify_failure_surfaces_remote_stderr \u003E NativeLinuxGate.Require",
-      "Identity": "antiphon|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Antiphon.Tests.Scripts.RefreshGithubTokenRemoteCommandTests|Verify_failure_surfaces_remote_stderr()"
-    },
-    {
-      "Suite": "antiphon",
       "Concrete": "Antiphon.Tests.Scripts.NightlyProbeSupervisorTests",
       "Declaring": "Antiphon.Tests.Scripts.NightlyProbeSupervisorTests",
       "Signature": "C1375_DeadlineKillsAndJoinsTree()",
@@ -7363,14 +7300,6 @@
       "Placement": "class",
       "Reason": "Native Linux process-group ownership qualification requires Linux (procfs, setsid and POSIX signals).",
       "Proved": 21
-    },
-    {
-      "Suite": "antiphon",
-      "Class": "RefreshGithubTokenRemoteCommandTests",
-      "Methods": [],
-      "Placement": "class",
-      "Reason": "CARD-1245: the fake bw/ssh are POSIX sh executables; Windows skips explicitly.",
-      "Proved": 3
     },
     {
       "Suite": "antiphon",

@@ -170,8 +170,7 @@
       "globs": [
         "scripts/restart-apphost.ps1",
         "scripts/lib/Antiphon.Nightly/AppHost*.cs",
-        "scripts/lib/Antiphon.Nightly/WindowsPhoneHome.cs",
-        "scripts/lib/windows-phone-home-env.ps1"
+        "scripts/lib/Antiphon.Nightly/WindowsPhoneHome.cs"
       ],
       "classes": [
         "AppHostRestartTests",

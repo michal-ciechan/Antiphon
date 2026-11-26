@@ -372,7 +372,7 @@ is named `releases` and expects exit 2 and no directory created. A second
 case uses a short fixture root and expects `core.longpaths=true` on a
 fixture git dir the test creates.
 
-Rollback: `desktop-slot-provision.ps1 -Root C:\Antiphon\slots -RemoveEmpty`
+Rollback: `scripts\antiphon.cmd desktop-slot-provision --root C:\Antiphon\slots --execute --remove-empty`
 removes the four directories only when the ledger is absent and
 `worktrees` has no children. A ledger or a child refuses.
 
@@ -446,8 +446,8 @@ No product code. Operator steps, in order:
 1. Confirm `GET /api/session-runners` contains `desktop-win`, platform
    windows, `dispatchEligible=true`. If it does not, stop. CARD-1744 S4 is
    the missing piece. Do not retarget the `desktop` row.
-2. Run S2's script for real: `powershell.exe -NoProfile -File
-   scripts\desktop-slot-provision.ps1 -Root C:\Antiphon\slots -Execute`.
+2. Run S2's provision for real: `scripts\antiphon.cmd desktop-slot-provision
+   --root C:\Antiphon\slots --execute` (the command since unit 51 of the 2026-11-22 PowerShell-to-C# plan).
 3. Set the runner env `PhoneHome__AllowedCwd=C:/Antiphon/slots`,
    `PhoneHome__RunnerRepository=C:/Antiphon/slots/repos/antiphon`,
    `PhoneHome__WorkspaceSlots__Enabled=true`,

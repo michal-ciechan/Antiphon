@@ -93,7 +93,6 @@ public static class NativeLinuxPolicyWitness
         "antiphon\nRetiredTempContainerHostTests\n",
         "antiphon\nHostJqPrerequisiteScriptTests\n",
         "antiphon\nScriptHarnessLinuxOwnershipTests\n",
-        "antiphon\nRefreshGithubTokenRemoteCommandTests\n",
         "antiphon\nNightlyProbeSupervisorTests\n",
         "antiphon\nRetiredTempContainerDockerTests\n",
         "antiphon\nRollingVolumeRecycleDockerTests\n",
@@ -210,8 +209,10 @@ public static class NativeLinuxPolicyWitness
         var witnessed = new HashSet<string>(WitnessedRowKeys, StringComparer.Ordinal);
         // Unit 20 of the 2026-11-22 PowerShell-to-C# plan: 45 to 42. The frozen keys of CheckpointVerifierBoundsTests,
         // CheckpointFixtureRoutingTests and CheckpointInheritedFileTests left with those classes (their subjects, the usage
-        // verifiers and test-run-checkpoint.ps1, were deleted) and with their execution-policy rows.
-        if (witnessed.Count != 42)
+        // verifiers and test-run-checkpoint.ps1, were deleted) and with their execution-policy rows. Unit 51: 42 to 41. The
+        // frozen key of RefreshGithubTokenRemoteCommandTests left with that class (its subject, refresh-server2-github-token.ps1,
+        // became a command whose cases run in process on every platform, in RefreshGithubTokenScriptTests) and with its row.
+        if (witnessed.Count != 41)
             diagnostics.Add(Diag("witness-key-count", "", "", "", "", "", witnessed.Count.ToString()));
 
         JsonDocument policy;

@@ -101,8 +101,8 @@ must be healthy on 17204. [RC activation gates](../../release-gates.md)
    invocation or its apply.
 
    ```powershell
-   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1
-   pwsh -NoProfile -File scripts/desktop-win-phase1-secrets.ps1 -Execute
+   scripts\antiphon.cmd desktop-win-phase1-secrets
+   scripts\antiphon.cmd desktop-win-phase1-secrets --execute
    ```
 
 2. After a successful apply, verify the matched owner-only file
