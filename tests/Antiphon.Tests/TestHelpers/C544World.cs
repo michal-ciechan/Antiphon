@@ -167,7 +167,9 @@ internal sealed class C544World : IAsyncDisposable
         BuildServices();
         await SeedBoardAsync(cardAllowsInterim);
 
-        await using var db = CreateContext();
+        await using var db = reversibleTip
+            ? MigrationTestDatabase.CreateReversibleTipSeedContext(Schema)
+            : CreateContext();
         await SeedOwnerAsync(db, Clock.GetUtcNow().UtcDateTime);
     }
 

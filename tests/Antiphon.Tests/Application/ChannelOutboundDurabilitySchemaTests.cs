@@ -26,6 +26,7 @@ public sealed class ChannelOutboundDurabilitySchemaTests
 
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = CreateContext(schema);
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations,
             m => m.EndsWith("_ExtendChannelOutboundRecovery", StringComparison.Ordinal));
@@ -38,10 +39,10 @@ public sealed class ChannelOutboundDurabilitySchemaTests
         var channel = NewChannel(now);
         channel.LastReplyAt = now.AddMinutes(-1);
         channel.LastReplyPreview = "historical accepted preview";
-        db.ChatChannels.Add(channel);
+        seed.ChatChannels.Add(channel);
         var session = new AgentSession { Id = Guid.NewGuid(), CreatedAt = now,
             StartedAt = now, LastSeenAt = now, Cwd = Path.GetTempPath() };
-        db.AgentSessions.Add(session);
+        seed.AgentSessions.Add(session);
         var legacy = Enumerable.Range(0, 8).Select(ordinal => NewDelivery(channel.Id, session.Id,
             10 + ordinal, (ChannelOutboundDeliveryState)ordinal, capture: null)).ToArray();
         foreach (var delivery in legacy)
@@ -58,8 +59,8 @@ public sealed class ChannelOutboundDurabilitySchemaTests
         var publishedWithoutTimestamp = NewDelivery(channel.Id, session.Id, 99,
             ChannelOutboundDeliveryState.Published, capture: null);
         publishedWithoutTimestamp.CreatedAt = now;
-        db.ChannelOutboundDeliveries.AddRange(legacy);
-        db.ChannelOutboundDeliveries.Add(publishedWithoutTimestamp);
+        seed.ChannelOutboundDeliveries.AddRange(legacy);
+        seed.ChannelOutboundDeliveries.Add(publishedWithoutTimestamp);
         var settled = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = session.Id,
             Body = "old settled channel", Sequence = 1, Status = QueuedMessageStatus.Sent,
             Origin = QueuedMessageOrigin.Channel, CreatedAt = now, SentAt = now,
@@ -67,13 +68,13 @@ public sealed class ChannelOutboundDurabilitySchemaTests
         var open = new SessionQueuedMessage { Id = Guid.NewGuid(), AgentSessionId = session.Id,
             Body = "old open machine", Sequence = 2, Status = QueuedMessageStatus.Sent,
             Origin = QueuedMessageOrigin.Delegation, CreatedAt = now, SentAt = now };
-        db.SessionQueuedMessages.AddRange(settled, open);
+        seed.SessionQueuedMessages.AddRange(settled, open);
         var task = new AgentTask { Id = Guid.NewGuid(), Title = "historical bundle",
             Goal = "original goal", WorkingDirectory = Path.GetTempPath(), CreatedAt = now,
             DeliverableDeliveredAt = channel.LastReplyAt };
         task.RootTaskId = task.Id;
-        db.AgentTasks.Add(task);
-        await db.SaveChangesAsync();
+        seed.AgentTasks.Add(task);
+        await seed.SaveChangesAsync();
         await migrator.MigrateAsync(migrations[position - 1]);
         db.ChangeTracker.Clear();
         await migrator.MigrateAsync();

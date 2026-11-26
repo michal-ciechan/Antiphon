@@ -327,24 +327,6 @@ public sealed class CardCleanupSchedulingSchemaTests
         };
         historical.RevisionCount = 1;
         var taskId = Guid.NewGuid();
-        var task = new AgentTask
-        {
-            Id = taskId,
-            RootTaskId = taskId,
-            CardId = historical.Id,
-            Title = "historical",
-            Goal = "historical",
-            Role = AgentTaskRole.Code,
-            Kind = AgentTaskKind.Worker,
-            Workspace = WorkspaceMode.Worktree,
-            WorkingDirectory = "/tmp/c1033-historical",
-            RepoPath = "/tmp/c1033-repo",
-            Status = AgentTaskStatus.Succeeded,
-            ReplyTo = AgentTaskReplyTo.None,
-            Attempt = 1,
-            CreatedAt = now.AddDays(-3),
-            CompletedAt = now.AddDays(-2),
-        };
         var cleanup = new CardWorktreeCleanup
         {
             Id = Guid.NewGuid(),
@@ -451,9 +433,25 @@ public sealed class CardCleanupSchedulingSchemaTests
             LastEvaluatedAt = now.AddHours(-4),
             NotBefore = now.AddHours(20),
         };
-        db.AddRange(project, board, activeColumn, doneColumn, canceledColumn, active, historical, archived, canceled,
-            revision, task, cleanup, target, binding, endpoint, run, candidate, cursor);
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        db.AddRange(project, board, activeColumn, doneColumn, canceledColumn, active, historical, archived,
+            canceled, revision);
         await db.SaveChangesAsync();
+        // The historical task table lacks columns mapped by the current AgentTask model.
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AgentTasks" ("Id", "RootTaskId", "CardId", "Depth", "Title", "Goal", "Kind", "Role",
+                "AgentKind", "ModelLevel", "Attempt", "MaxAttempts", "Workspace", "WorkingDirectory", "RepoPath",
+                "Ephemeral", "Status", "ReplyTo", "ConcurrencyToken", "CreatedAt", "CompletedAt",
+                "TokensIn", "TokensOut", "CostUsd")
+            VALUES ({taskId}, {taskId}, {historical.Id}, 0, 'historical', 'historical', {(int)AgentTaskKind.Worker},
+                {(int)AgentTaskRole.Code}, {(int)AgentKind.ClaudeCode}, {(int)AgentModelLevel.High}, 1, 2,
+                {(int)WorkspaceMode.Worktree}, '/tmp/c1033-historical', '/tmp/c1033-repo', false,
+                {(int)AgentTaskStatus.Succeeded}, {(int)AgentTaskReplyTo.None}, {Guid.NewGuid()},
+                {now.AddDays(-3)}, {now.AddDays(-2)}, 0, 0, 0)
+            """);
+        db.AddRange(cleanup, target, binding, endpoint, run, candidate, cursor);
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return new Seed(active.Id, historical.Id, archived.Id, canceled.Id, revision.Id, taskId, run.Id,
             candidate.Id, endpoint.Id, target.Id, binding.Id, cursor.Id, operationId, preparationId, bindingKey,
             endpointToken, retirementId, landingOperationId, landRequestId, new string('d', 64), command, receipt);

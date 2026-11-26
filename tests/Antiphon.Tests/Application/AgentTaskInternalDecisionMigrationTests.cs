@@ -28,9 +28,10 @@ public class AgentTaskInternalDecisionMigrationTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "legacy", Goal = "legacy",
             Kind = AgentTaskKind.Worker, Role = AgentTaskRole.Code,
@@ -38,7 +39,7 @@ public class AgentTaskInternalDecisionMigrationTests
             WorkingDirectory = Path.GetTempPath(), Status = AgentTaskStatus.Succeeded,
             CreatedAt = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var index = Array.FindIndex(migrations, m => m.EndsWith(DispatchEvidenceMigrationSuffix,
             StringComparison.Ordinal));
@@ -67,10 +68,11 @@ public class AgentTaskInternalDecisionMigrationTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
 
         var now = DateTime.UtcNow;
         var taskId = Guid.NewGuid();
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId,
             RootTaskId = taskId,
@@ -86,13 +88,13 @@ public class AgentTaskInternalDecisionMigrationTests
             StandingAuthority = "land the remaining slices",
             AutoContinueOnWait = true,
             CreatedAt = now,
-            // Written at head so the downgrade has something to drop: a row that merely never had
+            // Written before the rewind so the downgrade has something to drop: a row that merely never had
             // a policy could not tell a real column drop from a no-op.
             InternalDecisionPolicyJson = """{"version":1,"grants":[]}""",
             InternalDecisionPolicyHash = new string('a', 64),
             InternalDecisionAuditBaselineJson = """{"head":"deadbeef"}""",
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
 
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var first = Array.FindIndex(migrations, m => m.EndsWith(FirstMigrationSuffix, StringComparison.Ordinal));

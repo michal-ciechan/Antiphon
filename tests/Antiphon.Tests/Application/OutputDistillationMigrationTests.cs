@@ -19,14 +19,15 @@ public class OutputDistillationMigrationTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var id = Guid.NewGuid();
-        db.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, Title = "legacy", Goal = "legacy",
+        seed.AgentTasks.Add(new AgentTask { Id = id, RootTaskId = id, Title = "legacy", Goal = "legacy",
             WorkingDirectory = Path.GetTempPath(), CreatedAt = DateTime.UtcNow, Result = "raw authoritative report" });
         for (var n = 0; n < 12; n++)
-            db.OutputDistillations.Add(new OutputDistillationRecord { Id = Guid.NewGuid(), TaskId = id,
+            seed.OutputDistillations.Add(new OutputDistillationRecord { Id = Guid.NewGuid(), TaskId = id,
                 Outcome = (DistillationOutcome)n, Mode = OutputDistillerMode.Shadow, CostUsd = 0.001m,
                 CreatedAt = DateTime.UtcNow, FeedbackNote = "original" });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations, m => m.EndsWith("_AddDistillationDeadlines", StringComparison.Ordinal));
         position.ShouldBeGreaterThan(0);

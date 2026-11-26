@@ -20,16 +20,17 @@ public sealed class ChannelOutboundMigrationTests
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var taskId = Guid.NewGuid();
         var channelId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "legacy", Goal = "original goal",
             WorkingDirectory = Path.GetTempPath(), CreatedAt = now,
             Result = "historical report", Status = AgentTaskStatus.Succeeded,
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
 
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations,

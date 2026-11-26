@@ -21,13 +21,14 @@ public class AgentTaskWorktreeBaseMigrationTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var historicalSha = new string('a', 40);
         var historical = TaskRow("historical");
         historical.WorktreeBranch = "feat/card-task-historical";
         historical.WorktreeBaseSha = historicalSha;
         historical.MergeTargetRef = "release";
-        db.AgentTasks.Add(historical);
-        await db.SaveChangesAsync();
+        seed.AgentTasks.Add(historical);
+        await seed.SaveChangesAsync();
 
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var currentIndex = Array.FindIndex(migrations,
