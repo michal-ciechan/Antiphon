@@ -1,10 +1,9 @@
-using Antiphon.Tests.Infrastructure;
 using System.Xml.Linq;
 using Antiphon.Server.Application.Services;
 using Shouldly;
 using TUnit.Core;
 
-namespace Antiphon.Server.Git.Tests.Invariants;
+namespace Antiphon.Tests.Infrastructure.Invariants;
 
 /// <summary>
 /// CARD-1546 (V-1, V-2, V-3). <c>ServerGitProcess</c> is declared by
