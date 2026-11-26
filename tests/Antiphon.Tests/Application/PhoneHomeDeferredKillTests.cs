@@ -30,6 +30,37 @@ namespace Antiphon.Tests.Application;
 public class PhoneHomeDeferredKillTests
 {
     [Test]
+    public async Task C2078_Deferred_kill_retries_share_one_intent_per_runner_and_generation()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
+        var sessionId = Guid.NewGuid();
+        var generation = new DateTime(2026, 11, 26, 9, 0, 0, DateTimeKind.Utc);
+
+        var retries = await Task.WhenAll(
+            RecordAsync("server2", generation),
+            RecordAsync("server2", generation),
+            RecordAsync("server2", generation));
+        var shared = retries.Distinct().ShouldHaveSingleItem();
+        var replacement = await RecordAsync("server2", generation.AddMinutes(1));
+        var moved = await RecordAsync("server2-temp", generation);
+
+        await using var verify = new AppDbContext(options);
+        var rows = await verify.AgentIncidents.Where(i => i.SessionId == sessionId
+                && i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent)
+            .Select(i => i.Id).ToListAsync();
+        rows.ShouldBe([shared, replacement, moved], ignoreOrder: true);
+        rows.Distinct().Count().ShouldBe(3);
+
+        async Task<Guid> RecordAsync(string runnerId, DateTime startedAt)
+        {
+            await using var db = new AppDbContext(options);
+            return await RunnerSlotService.RecordDeferredKillAsync(
+                db, runnerId, sessionId, startedAt, "runner did not confirm the stop", CancellationToken.None);
+        }
+    }
+
+    [Test]
     public async Task Kill_with_no_eligible_connection_records_a_generation_kill_intent()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

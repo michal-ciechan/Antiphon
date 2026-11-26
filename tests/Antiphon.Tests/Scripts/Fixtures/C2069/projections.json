@@ -1,0 +1,437 @@
+{
+  "target": {
+    "os": "linux",
+    "architecture": "architecture-2",
+    "profile": "profile-3",
+    "tfm": "tfm-4",
+    "rid": "rid-5",
+    "configuration": "configuration-6",
+    "foldedPaths": true,
+    "buildProperties": [
+      {
+        "name": "é",
+        "value": "late"
+      },
+      {
+        "name": "Z",
+        "value": "early"
+      }
+    ],
+    "argv": [
+      "--two",
+      "--one"
+    ],
+    "observed": [
+      {
+        "side": "B",
+        "chunk": "chunk-11",
+        "role": "role-12",
+        "digest": "7e0983ec1e93106905faa21b40eaf49c1b613eb82662bec7e8aeef1564a2eb21",
+        "provenanceDigest": "8744f32a5210b36418c0602468eb51030bea6309a340463b78cd133977a300da",
+        "sourceSha": "093c5ef4b978bb3c0efde8e4929d8a34962c753e"
+      }
+    ]
+  },
+  "algorithm": {
+    "rawClosureDigest": "4670032c9d21324de6521eb6393ebe385e0503fad795869a3096fc0c37ac4fe6",
+    "p2Codec": "antiphon-p2-integrity-v1",
+    "evaluator": "evaluator-3",
+    "graph": "graph-4",
+    "extractor": "extractor-5",
+    "replaySelector": "fe8e54a308d9d3bb20e1f19c1cf18ab33ccc400308b81ebd255cb9a18a9147bf",
+    "sources": [
+      {
+        "path": "dir/path-7",
+        "gitMode": "100644",
+        "blobId": "3d7c3f7a5a65017f81aa48dca8a97b00659f597b",
+        "rawByteCount": 4294967306,
+        "rawSha256": "e3929faa6461b246dd2a2c013a0fc785892bc680a86694d4fd5d7a689afdd31a"
+      }
+    ]
+  },
+  "baselineManifest": [
+    {
+      "path": "dir/path-1",
+      "gitMode": "100644",
+      "blobId": "68b9353d35334b12db89db97fe6773a37058926d",
+      "rawByteCount": 4294967300,
+      "rawSha256": "1a7532442198e49cdafd466514681f7faf7321dfd38bcaec1bc67890ee540cac"
+    }
+  ],
+  "candidateManifest": [
+    {
+      "path": "dir/path-1",
+      "gitMode": "100644",
+      "blobId": "68b9353d35334b12db89db97fe6773a37058926d",
+      "rawByteCount": 4294967300,
+      "rawSha256": "1a7532442198e49cdafd466514681f7faf7321dfd38bcaec1bc67890ee540cac"
+    }
+  ],
+  "compatibility": {
+    "baseline": {
+      "catalogHash": "120916045f8d5843cd0e1f9554017b87a66b2a46a89957f8a036a1b662d47b08",
+      "policyHash": "a1e1939d4e7b50899dc48f9d4ed481dc132996a7d98b207515d2b31802915883",
+      "runtimeHash": "58693e649ae7f6c28d42c476e59be75bf4fc6ea977247f59de68d09606be382d",
+      "selectorHash": "624e7714c8db46acdbac740c04c13ab5b582d38c2d1684d5ec6b18c313b72391"
+    },
+    "candidate": {
+      "catalogHash": "8e94fee647cfd529bc700d5eb1518e274129778e3fb6bba0e6497108d1ed2fa5",
+      "policyHash": "a69ceabcab57506314bd6d6a4541aa6b29446b0ec13f5ccd70f447debca5c189",
+      "runtimeHash": "dc71890f67974960ec6c90a684088f7709d0ff166962c7b64bfa74af4c6e05b1",
+      "selectorHash": "b689a7c9f45be7d1a7022f3433ed96b2b3c3d798596265a219102ed56d6bb54e"
+    },
+    "scoped": [
+      {
+        "name": "name-9",
+        "value": "value-10"
+      }
+    ],
+    "globalReasons": [
+      "globalReasons-11"
+    ]
+  },
+  "baselineIndex": {
+    "side": "B",
+    "commit": "8bb1fbdcac2d1482c14e85248edf0c9970ab313f",
+    "path": "dir/path-3",
+    "blobId": "b6406b296d562bcd852614ff77d2a2a815cd636f",
+    "rawByteCount": 4294967301,
+    "rawSha256": "5b78a7b33b8634b7e244c11d86b24664d786b740fca9cc6e26f9e703d2eede7c",
+    "schema": 263,
+    "builderDigest": "2c9e1dacc094bb15343b254094aa9085330e76d2aca45573458def8daa182098",
+    "builderInputs": [
+      {
+        "path": "dir/path-9",
+        "gitMode": "100644",
+        "blobId": "6c7444c5f1485913918d8a87fe66d2e464a4573b",
+        "rawByteCount": 4294967308,
+        "rawSha256": "8e0b8a6dba5fb8ded3e809f622e2935c0662b8c45f3e47330857d846eb385c05"
+      }
+    ],
+    "metadata": [
+      {
+        "name": "name-14",
+        "digest": "960f00af1366055444efebbbbce05e1c9d2dcc20b8c520084b5a10a10e99ca20"
+      }
+    ],
+    "edges": [
+      {
+        "path": "dir/path-16",
+        "class": "class-17"
+      }
+    ],
+    "cappedPaths": [
+      "dir/cappedPaths-18"
+    ]
+  },
+  "candidateIndex": {
+    "side": "A",
+    "commit": "8bb1fbdcac2d1482c14e85248edf0c9970ab313f",
+    "path": "dir/path-3",
+    "blobId": "b6406b296d562bcd852614ff77d2a2a815cd636f",
+    "rawByteCount": 4294967301,
+    "rawSha256": "5b78a7b33b8634b7e244c11d86b24664d786b740fca9cc6e26f9e703d2eede7c",
+    "schema": 263,
+    "builderDigest": "2c9e1dacc094bb15343b254094aa9085330e76d2aca45573458def8daa182098",
+    "builderInputs": [
+      {
+        "path": "dir/path-9",
+        "gitMode": "100644",
+        "blobId": "6c7444c5f1485913918d8a87fe66d2e464a4573b",
+        "rawByteCount": 4294967308,
+        "rawSha256": "8e0b8a6dba5fb8ded3e809f622e2935c0662b8c45f3e47330857d846eb385c05"
+      }
+    ],
+    "metadata": [
+      {
+        "name": "name-14",
+        "digest": "960f00af1366055444efebbbbce05e1c9d2dcc20b8c520084b5a10a10e99ca20"
+      }
+    ],
+    "edges": [
+      {
+        "path": "dir/path-16",
+        "class": "class-17"
+      }
+    ],
+    "cappedPaths": [
+      "dir/cappedPaths-18"
+    ]
+  },
+  "baselineGraph": [
+    {
+      "kind": "derived",
+      "source": "dir/source-2",
+      "destination": "dir/destination-3",
+      "class": "class-4"
+    }
+  ],
+  "candidateGraph": [
+    {
+      "kind": "derived",
+      "source": "dir/source-2",
+      "destination": "dir/destination-3",
+      "class": "class-4"
+    }
+  ],
+  "diff": [
+    {
+      "path": "dir/path-1",
+      "status": "M",
+      "side": "B"
+    }
+  ],
+  "universe": [
+    {
+      "project": "dir/project-1",
+      "assembly": "assembly-2",
+      "class": "class-3",
+      "method": "method-4",
+      "caseUid": "caseUid-5"
+    }
+  ],
+  "roster": [
+    {
+      "chunk": "chunk-1",
+      "suite": "suite-2",
+      "executionKind": "executionKind-3",
+      "project": "dir/project-4",
+      "contentDigest": "0cfed90178c38d9c5f42797bde2f20682b3968ff63ce2bf8f97287faa7c937b3",
+      "baselineInputDigest": "6d34feb335f1f3c6bceac5518f73af2891246ec32e6ee1aa921d5991d4903982",
+      "candidateInputDigest": "49eb03aff23a364edfffad5da60b95a8323e186d62b0dd09278ee6a1d5a403c1",
+      "cases": [
+        {
+          "project": "dir/project-8",
+          "assembly": "assembly-9",
+          "class": "class-10",
+          "method": "method-11",
+          "caseUid": "caseUid-12"
+        }
+      ]
+    }
+  ],
+  "inventory": {
+    "format": "antiphon-rc-chunk-inventory-v2",
+    "runId": "runId-2",
+    "attempt": 259,
+    "revision": 260,
+    "sha": "b00b982c7beb3fea8fdc60cfa0d010b6a70b024f",
+    "rawByteCount": 4294967302,
+    "rawSha256": "259ad6c7b981acdd0ed42698e3e258146a18b1cd957fc8879d5fdeb276527025"
+  },
+  "receipts": [
+    {
+      "chunk": "chunk-1",
+      "disposition": "executed",
+      "origin": {
+        "sha": "daf9a2535d77050e336037438a6ffa730612c6ae",
+        "runId": "runId-4",
+        "attempt": 261,
+        "inventorySeal": "7409bec2a17e7f2e039d1ce0418fd1974328b02773a6f5dbc527e56c5d0ae963",
+        "evidenceId": "dir/evidenceId-7",
+        "evidenceDigest": "8f9f4fdbc9ea83aef3216d02f0c0eee92f1c08358dd1d62c771c0bc799351371"
+      },
+      "platform": "platform-9",
+      "architecture": "architecture-10",
+      "profile": "profile-11",
+      "contentDigest": "7b94b8b876540c7ea72fe80d27c09b6caaa175ba9b24026ff2092f1496941793",
+      "inputDigest": "37494e5935acfd2678ac28e0ea764cba0011b5cf0610be1553179153e686daf4",
+      "result": "result-14",
+      "exitCode": 271,
+      "skipped": false,
+      "timedOut": true,
+      "tolerated": false,
+      "expectedCases": [
+        {
+          "project": "dir/project-19",
+          "assembly": "assembly-20",
+          "class": "class-21",
+          "method": "method-22",
+          "caseUid": "caseUid-23"
+        }
+      ],
+      "observedCount": 280,
+      "observedCases": [
+        {
+          "caseUid": "caseUid-25",
+          "class": "class-26",
+          "method": "method-27",
+          "outcome": "outcome-28"
+        }
+      ],
+      "evidenceKind": "trx",
+      "reason": "reason-30"
+    }
+  ],
+  "obligations": {
+    "watermark": "watermark-1",
+    "observedAt": "observedAt-2",
+    "approved": true,
+    "withdrawn": false,
+    "history": [
+      {
+        "ordinal": 10,
+        "sha": "2daeda214e21840791d0e615cee516781e5d0255",
+        "runId": "runId-7",
+        "attempt": 264,
+        "revision": 265,
+        "chunk": "chunk-10",
+        "status": "open",
+        "reason": "reason-12"
+      },
+      {
+        "ordinal": 2,
+        "sha": "2daeda214e21840791d0e615cee516781e5d0255",
+        "runId": "runId-7",
+        "attempt": 264,
+        "revision": 265,
+        "chunk": "chunk-10",
+        "status": "open",
+        "reason": "earlier"
+      }
+    ],
+    "owed": [
+      {
+        "chunk": "chunk-13",
+        "reason": "reason-14"
+      }
+    ]
+  },
+  "trust": {
+    "format": "antiphon-rc-trusted-projects-v1",
+    "baselinePolicy": {
+      "path": "dir/path-2",
+      "gitMode": "100644",
+      "blobId": "b6406b296d562bcd852614ff77d2a2a815cd636f",
+      "rawByteCount": 4294967301,
+      "rawSha256": "5b78a7b33b8634b7e244c11d86b24664d786b740fca9cc6e26f9e703d2eede7c"
+    },
+    "candidatePolicy": {
+      "path": "dir/path-7",
+      "gitMode": "100644",
+      "blobId": "3d7c3f7a5a65017f81aa48dca8a97b00659f597b",
+      "rawByteCount": 4294967306,
+      "rawSha256": "e3929faa6461b246dd2a2c013a0fc785892bc680a86694d4fd5d7a689afdd31a"
+    },
+    "baselinePolicyDigest": "5f1bf032d01d00b89ccad6fc8b76e2499a141092ab41cc4e0b65995107c226c6",
+    "candidatePolicyDigest": "1af2b9f4609db58ed620b3abd76c71df1478c4cea46dff7bd929d3b86e01e3a9",
+    "grants": [
+      {
+        "project": "dir/project-14",
+        "configurations": [
+          "configurations-15"
+        ],
+        "downstream": [
+          "dir/downstream-16"
+        ],
+        "owned": [
+          {
+            "chunk": "chunk-17",
+            "cases": [
+              "cases-18"
+            ]
+          }
+        ],
+        "contractProducer": "contractProducer-19"
+      }
+    ],
+    "contracts": [
+      {
+        "project": "dir/project-20",
+        "side": "B",
+        "sha": "54b389b613862e536ebbd0da3d0bd4826721ec4e",
+        "extractor": "extractor-23",
+        "contractHash": "bc7c6fa4035e9a4c430b7b26f306007c4a734851b678428fb233b3eb07ddeba1",
+        "evidenceDigest": "ac7578f532584783a91ca64e101738fea79756213432c833bd67437b9b061cc3"
+      }
+    ],
+    "ownExecutions": [
+      {
+        "chunk": "chunk-26",
+        "disposition": "executed",
+        "origin": {
+          "sha": "f1fa07a1133eac275070c1c502c496cd73197a2e",
+          "runId": "runId-29",
+          "attempt": 286,
+          "inventorySeal": "b9221861c30b74a8e4a5c1ea08c64d928d3dffbc3f5e308d682603cf8ede6c6f",
+          "evidenceId": "dir/evidenceId-32",
+          "evidenceDigest": "02e3c93c061d083d892cc86ce23baeaee7b271e30e1b5f31062b078097588a32"
+        },
+        "platform": "platform-34",
+        "architecture": "architecture-35",
+        "profile": "profile-36",
+        "contentDigest": "8fec89433975db36a426f490f9d1ecd4eacb6a24be9f462ff1f7152d208c9a9d",
+        "inputDigest": "36dcdce4295e29a31f6c33fc0d6bbd6174b588cc48fd16feb6e342f48b41b9e7",
+        "result": "result-39",
+        "exitCode": 296,
+        "skipped": true,
+        "timedOut": false,
+        "tolerated": true,
+        "expectedCases": [
+          {
+            "project": "dir/project-44",
+            "assembly": "assembly-45",
+            "class": "class-46",
+            "method": "method-47",
+            "caseUid": "caseUid-48"
+          }
+        ],
+        "observedCount": 305,
+        "observedCases": [
+          {
+            "caseUid": "caseUid-50",
+            "class": "class-51",
+            "method": "method-52",
+            "outcome": "outcome-53"
+          }
+        ],
+        "evidenceKind": "trx",
+        "reason": "reason-55"
+      }
+    ],
+    "reasons": [
+      "reasons-56"
+    ]
+  },
+  "selection": {
+    "complete": true,
+    "fallback": "Scoped",
+    "globalReasons": [
+      "globalReasons-3"
+    ],
+    "incompleteReasons": [
+      "incompleteReasons-4"
+    ],
+    "classes": [
+      {
+        "project": "dir/project-5",
+        "class": "class-6"
+      }
+    ],
+    "decisions": [
+      {
+        "chunk": "chunk-7",
+        "disposition": "execute",
+        "origin": {
+          "sha": "e3b9eebf6997d7665b3685e630dd648eec40b3e4",
+          "runId": "runId-10",
+          "attempt": 267,
+          "inventorySeal": "b9cdbe70964b105b9f2569504a246fca55fbc614ca7838130b594ee61cf5fef1",
+          "evidenceId": "dir/evidenceId-13",
+          "evidenceDigest": "5dd9f0125e24949f4101eddc888727eee2eae1cf2b4f36ca8a37573317c621be"
+        },
+        "reasons": [
+          {
+            "kind": "project-closure",
+            "path": "dir/path-16",
+            "side": "B",
+            "chain": [
+              "z-step",
+              "a-step"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

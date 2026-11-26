@@ -360,9 +360,22 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             {
                 fixture.HostCountBeforeLaunch = fixture.OwnedHosts().Length;
                 await File.WriteAllTextAsync(script, body);
-                var started = await runtime.StartAsync(request, CancellationToken.None);
-                fixture.RootPid = started.Pid ?? 0;
-                fixture.HostPid = started.HostPid ?? 0;
+                try
+                {
+                    var started = await runtime.StartAsync(request, CancellationToken.None);
+                    fixture.RootPid = started.Pid ?? 0;
+                    fixture.HostPid = started.HostPid ?? 0;
+                }
+                finally
+                {
+                    if (Environment.GetEnvironmentVariable("ANTIPHON_TEST_LINUX_PLACEMENT_TIMING") == "1")
+                    {
+                        var log = Path.Combine(settings.PtyHostLogDir, $"{request.SessionId:N}.log");
+                        if (File.Exists(log))
+                            foreach (var line in File.ReadLines(log).Where(line => line.Contains("[INF] Linux placement outcome=")))
+                                Console.WriteLine(line);
+                    }
+                }
             }
             catch (Exception launchError)
             {

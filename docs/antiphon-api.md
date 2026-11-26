@@ -637,10 +637,15 @@ GET    /api/hosts                                     local and configured runne
 PUT    /api/hosts/{hostId}/budget                     maxInFlight (0–512 or null to clear), reason (required)
 GET    /api/session-runners/{runnerId}/capacity       declared capacity, server bound, effective limit and occupancy
 PUT    /api/session-runners/{runnerId}/capacity       capacity, reason (required); live runner push
+GET    /api/session-runners/slots/release-intents?runnerId=&sessionId=&after=&limit=  pending intent page (operator token)
+GET    /api/session-runners/slots/release-intents/{intentId}        incident history (operator token)
+POST   /api/session-runners/slots/release-intents/{intentId}/close  RunnerSlotIntentCloseRequest (operator token)
 GET    /api/hosts/stats                               latest per-host sample, rollups, state, Antiphon counts
 GET    /api/hosts/{hostId}/stats/series?metric=cpu&window=30m
 GET    /api/hosts/{hostId}/occupancy-samples?from=&to=&limit=   read-only occupancy audit, newest first (CARD-1079)
 ```
+
+For the release intent closure procedure, see [Close a runner slot release intent](ops-http.md#close-a-runner-slot-release-intent-card-2078).
 
 Dispatch concurrency routes (CARD-0505; Settings → Concurrency UI, CARD-0506, in
 [orchestration-loop.md](orchestration-loop.md#concurrency-settings-tab-card-0506)). Each row states

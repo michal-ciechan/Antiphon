@@ -58,7 +58,8 @@ public static class NativeLinuxPolicyWitness
     // CARD-2068 adds one Linux exclusion record for the three Windows session launcher tests.
     // All prior exclusions are byte-for-byte unchanged; Windows CP-8 remains required.
     // Full group 141 adds the method-scoped CallerWakeTests exclusion for both native canary arguments.
-    public const string LegacyExclusionDigest = "4ef5f04ec6660f2b5e735d53ea41ea46bc30a2d71eb0f1c1fa5ba7550a3fa464";
+    // CARD-2077 adds one Linux exclusion for the Windows Git UNC test. The native Windows test remains required.
+    public const string LegacyExclusionDigest = "0c988c578935eacffd7b7bf352d87c3db9af0ed34a3cbb109da772d636041c90";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";

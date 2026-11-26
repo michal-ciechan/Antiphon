@@ -69,9 +69,14 @@ public static class RunnerSlotService
         CancellationToken ct, ICollection<Guid>? intents = null)
     {
         var text = RequireReason(reason);
-        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, fromOrphanSweep: false, intents, ct);
+        await ReleaseOneAsync(directory, db, runnerId, sessionId, text, automatic: false, intents, ct);
         return new RunnerSlotReleaseDto(1, [sessionId]);
     }
+
+    internal static Task ReleaseForGhostSweepAsync(
+        ISessionRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
+        CancellationToken ct) =>
+        ReleaseOneAsync(directory, db, runnerId, sessionId, reason, automatic: true, intents: null, ct);
 
     public static async Task<RunnerSlotReleaseDto> ReleaseOrphansAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, string runnerId, string? reason, CancellationToken ct,
@@ -100,10 +105,7 @@ public static class RunnerSlotService
     public static async Task<IReadOnlyList<Guid>> ReconcilePendingReleasesAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct)
     {
-        var pending = await db.AgentIncidents.AsNoTracking()
-            .Where(incident => incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
-                && incident.FailureReason != null
-                && incident.FailureReason.StartsWith(PendingPrefix))
+        var pending = await PendingIntents(db)
             .OrderBy(incident => incident.CreatedAt)
             .Select(incident => new { incident.Id, incident.SessionId, incident.FailureReason, incident.Message })
             .ToListAsync(ct);
@@ -155,7 +157,7 @@ public static class RunnerSlotService
 
     /// <summary>
     /// Where each of the given intents stands: <c>released</c> once audited, <c>failed</c> when
-    /// refused or claimed, <c>pending</c> while the outcome is still unknown.
+    /// refused or claimed, <c>closed</c> after an operator closes it, or <c>pending</c>.
     /// </summary>
     public static async Task<IReadOnlyList<RunnerSlotIntentOutcomeDto>> IntentOutcomesAsync(
         AppDbContext db, IReadOnlyCollection<Guid> intentIds, CancellationToken ct)
@@ -172,7 +174,63 @@ public static class RunnerSlotService
             row.SessionId ?? Guid.Empty,
             row.FailureReason == ReconciledMarker ? "released"
                 : row.FailureReason?.StartsWith(FailedPrefix, StringComparison.Ordinal) == true ? "failed"
+                : row.FailureReason?.StartsWith(ClosedPrefix, StringComparison.Ordinal) == true ? "closed"
                 : "pending")).ToArray();
+    }
+
+    public static async Task<RunnerSlotIntentHistoryDto> GetIntentAsync(
+        AppDbContext db, Guid intentId, CancellationToken ct) =>
+        await db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Id == intentId && i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent)
+            .Select(i => new RunnerSlotIntentHistoryDto(i.Id, i.SessionId, i.Message, i.FailureReason, i.CreatedAt))
+            .SingleOrDefaultAsync(ct)
+        ?? throw new NotFoundException("Runner slot release intent", intentId);
+
+    internal static IQueryable<AgentIncident> PendingIntents(AppDbContext db) =>
+        db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                && i.FailureReason != null && i.FailureReason.StartsWith(PendingPrefix));
+
+    internal static async Task<RunnerSlotPendingIntentsPageDto> ListPendingIntentsAsync(
+        AppDbContext db, string? runnerId, Guid? sessionId, Guid? after, int limit, CancellationToken ct)
+    {
+        var query = PendingIntents(db);
+        if (runnerId is { Length: > 0 })
+        {
+            var direct = PendingPrefix + runnerId;
+            var orphan = PendingPrefix + OrphanMarker + runnerId;
+            var kill = PendingKillGenerationPrefix + runnerId + ":";
+            query = query.Where(i => i.FailureReason == direct || i.FailureReason == orphan
+                || (i.FailureReason!.StartsWith(kill) && !i.FailureReason.Substring(kill.Length).Contains(":")));
+        }
+        if (sessionId is Guid session)
+            query = query.Where(i => i.SessionId == session);
+        if (after is Guid cursor)
+            query = query.Where(i => i.Id.CompareTo(cursor) > 0);
+        var intents = await query.OrderBy(i => i.Id).Take(limit + 1)
+            .Select(i => new RunnerSlotIntentHistoryDto(i.Id, i.SessionId, i.Message, i.FailureReason, i.CreatedAt))
+            .ToListAsync(ct);
+        if (intents.Count <= limit)
+            return new(intents, null);
+        intents.RemoveAt(limit);
+        return new(intents, intents[^1].IntentId);
+    }
+
+    public static async Task<RunnerSlotIntentHistoryDto> CloseIntentAsync(
+        AppDbContext db, Guid intentId, string requester, string evidence, TimeProvider clock, CancellationToken ct)
+    {
+        var intent = await GetIntentAsync(db, intentId, ct);
+        if (intent.FailureReason?.StartsWith(PendingPrefix, StringComparison.Ordinal) == true)
+        {
+            var outcome = $"{ClosedPrefix}{clock.GetUtcNow():O} by {requester}: {evidence}";
+            var originalState = $" (was {intent.FailureReason})";
+            if (outcome.Length + originalState.Length <= AgentIncident.FailureReasonMaxLength)
+                outcome += originalState;
+            if (await MarkAsync(db, intentId, outcome, ct) == 1)
+                return intent with { FailureReason = outcome };
+        }
+
+        throw new ConflictException("The runner slot release intent has already settled.", "runner_slot_intent_settled");
     }
 
     /// <summary>
@@ -188,26 +246,15 @@ public static class RunnerSlotService
         var message = string.IsNullOrWhiteSpace(reason) ? "deferred kill after a failed remote launch" : reason.Trim();
         if (message.Length > AgentIncident.MessageMaxLength)
             message = message[..AgentIncident.MessageMaxLength];
-        var intent = new AgentIncident
-        {
-            Id = Guid.NewGuid(),
-            SessionId = sessionId,
-            Kind = AgentIncidentKind.RunnerSlotReleaseIntent,
-            Severity = AlertSeverity.Warning,
-            Message = message,
-            FailureReason = PendingPrefix + KillGenerationMarker + runnerId + ":" + acceptedGeneration.Ticks,
-            CreatedAt = DateTime.UtcNow,
-        };
-        db.AgentIncidents.Add(intent);
-        await db.SaveChangesAsync(ct);
-        return intent.Id;
+        var reasonKey = PendingKillGenerationPrefix + runnerId + ":" + acceptedGeneration.Ticks;
+        return await RecordPendingOnceAsync(db, NewIntent(sessionId, message, reasonKey), ct);
     }
 
     private static bool TryParseKillGeneration(string failureReason, out string runnerId, out DateTime generation)
     {
         runnerId = "";
         generation = default;
-        var prefix = PendingPrefix + KillGenerationMarker;
+        const string prefix = PendingKillGenerationPrefix;
         if (!failureReason.StartsWith(prefix, StringComparison.Ordinal))
             return false;
         var rest = failureReason[prefix.Length..];
@@ -229,21 +276,28 @@ public static class RunnerSlotService
         PhoneHomeRunnerDirectory directory, AppDbContext db, Guid intentId, string runnerId, Guid sessionId,
         DateTime generation, string? reason, CancellationToken ct)
     {
-        var result = await directory.Resolve(runnerId).KillGenerationAsync(sessionId, generation, ct);
+        var runner = directory.Resolve(runnerId);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        // The scan may have read this intent before an operator closed it. Lock and reread
+        // before dispatch, and hold the lock through the bounded runner call and terminal write.
+        var current = await db.AgentIncidents
+            .FromSqlInterpolated($"SELECT * FROM \"AgentIncidents\" WHERE \"Id\" = {intentId} FOR UPDATE SKIP LOCKED")
+            .AsNoTracking()
+            .SingleOrDefaultAsync(ct);
+        if (current is null || current.Kind != AgentIncidentKind.RunnerSlotReleaseIntent
+            || current.FailureReason?.StartsWith(PendingPrefix, StringComparison.Ordinal) != true)
+            return false;
+
+        var result = await runner.KillGenerationAsync(sessionId, generation, ct);
         if (result.Outcome == KillGenerationOutcomes.Mismatch)
         {
             await MarkAsync(db, intentId,
                 FailedPrefix + $"runner holds session {sessionId:D} under another generation; nothing killed", ct);
+            await transaction.CommitAsync(ct);
             return false;
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var claimed = await db.AgentIncidents
-            .Where(incident => incident.Id == intentId && incident.FailureReason != null
-                && incident.FailureReason.StartsWith(PendingPrefix))
-            .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, ReconciledMarker), ct);
-        if (claimed == 0)
-            return false;
+        await MarkAsync(db, intentId, ReconciledMarker, ct);
         var message = $"Runner '{runnerId}' session {sessionId:D} generation {generation:O} deferred kill: "
             + $"{result.Outcome} ({reason})";
         if (message.Length > AgentIncident.MessageMaxLength)
@@ -264,11 +318,12 @@ public static class RunnerSlotService
 
     private const string PendingPrefix = "pending:";
 
-    /// <summary>The <c>FailureReason</c> prefix of an intent the reconcile still owes (CARD-2074 prune exemption).</summary>
+    /// <summary>The <c>FailureReason</c> prefix of an intent the reconcile still owes.</summary>
     internal const string PendingIntentPrefix = PendingPrefix;
-    private const string KillGenerationMarker = "kill-generation:";
+    internal const string PendingKillGenerationPrefix = PendingPrefix + "kill-generation:";
     private const string OrphanMarker = "orphan:";
     private const string FailedPrefix = "failed:";
+    private const string ClosedPrefix = "closed:";
     private const string ReconciledMarker = "reconciled";
 
     private static (string RunnerId, bool FromOrphanSweep) ParsePending(string failureReason)
@@ -281,24 +336,37 @@ public static class RunnerSlotService
 
     private static async Task ReleaseOneAsync(
         ISessionRunnerDirectory directory, AppDbContext db, string runnerId, Guid sessionId, string reason,
-        bool fromOrphanSweep, ICollection<Guid>? intents, CancellationToken ct)
+        bool automatic, ICollection<Guid>? intents, CancellationToken ct)
     {
-        var intent = NewIntent(runnerId, sessionId, reason, fromOrphanSweep);
-        db.AgentIncidents.Add(intent);
-        await db.SaveChangesAsync(ct);
-        intents?.Add(intent.Id);
+        // If the automatic sweep cannot resolve the runner, no command could have been sent.
+        // Leave any earlier lost-response obligation alone and let the next sweep retry.
+        var runner = automatic ? directory.Resolve(runnerId) : null;
+        var intent = NewIntent(sessionId, reason, PendingPrefix + runnerId);
+        Guid intentId;
+        if (automatic)
+        {
+            intentId = await RecordPendingOnceAsync(db, intent, ct);
+        }
+        else
+        {
+            db.AgentIncidents.Add(intent);
+            await db.SaveChangesAsync(ct);
+            intentId = intent.Id;
+        }
+        intents?.Add(intentId);
         try
         {
-            await directory.Resolve(runnerId).ReleaseSlotAsync(sessionId, reason, ct);
+            await (runner ?? directory.Resolve(runnerId)).ReleaseSlotAsync(sessionId, reason, ct);
         }
         catch (Exception ex) when (ex is ConflictException or RunnerProblemException)
         {
-            // The runner answered and refused: nothing was released, so the intent is final.
-            // A lost answer (transport, timeout, unavailable) stays pending for the reconcile.
+            // A refusal settles this attempt. A reused intent can still owe an audit for
+            // an earlier command whose answer was lost.
             var detail = FailedPrefix + ex.Message;
             if (detail.Length > AgentIncident.FailureReasonMaxLength)
                 detail = detail[..AgentIncident.FailureReasonMaxLength];
-            await MarkAsync(db, intent.Id, detail, CancellationToken.None);
+            if (intentId == intent.Id)
+                await MarkAsync(db, intentId, detail, CancellationToken.None);
             throw;
         }
 
@@ -331,18 +399,39 @@ public static class RunnerSlotService
 
     private static Task<int> MarkAsync(AppDbContext db, Guid intentId, string failureReason, CancellationToken ct) =>
         db.AgentIncidents
-            .Where(incident => incident.Id == intentId && incident.FailureReason != null
+            .Where(incident => incident.Id == intentId && incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                && incident.FailureReason != null
                 && incident.FailureReason.StartsWith(PendingPrefix))
             .ExecuteUpdateAsync(set => set.SetProperty(incident => incident.FailureReason, failureReason), ct);
 
-    private static AgentIncident NewIntent(string runnerId, Guid sessionId, string reason, bool fromOrphanSweep) => new()
+    private static async Task<Guid> RecordPendingOnceAsync(AppDbContext db, AgentIncident intent, CancellationToken ct)
+    {
+        // Serialize producers of this obligation across sweeps and server instances. Keep the
+        // original creation time for attention, and release the lock before any runner call.
+        await using var transaction = db.Database.CurrentTransaction is null
+            ? await db.Database.BeginTransactionAsync(ct) : null;
+        var lockKey = $"runner-slot-release:{intent.SessionId:D}:{intent.FailureReason}";
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))", ct);
+        var existing = await db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent && i.SessionId == intent.SessionId
+                && i.FailureReason == intent.FailureReason)
+            .OrderBy(i => i.CreatedAt).ThenBy(i => i.Id).Select(i => (Guid?)i.Id).FirstOrDefaultAsync(ct);
+        if (existing is null)
+            db.AgentIncidents.Add(intent);
+        await db.SaveChangesAsync(ct);
+        if (transaction is not null)
+            await transaction.CommitAsync(ct);
+        return existing ?? intent.Id;
+    }
+
+    private static AgentIncident NewIntent(Guid sessionId, string reason, string pendingReason) => new()
     {
         Id = Guid.NewGuid(),
         SessionId = sessionId,
         Kind = AgentIncidentKind.RunnerSlotReleaseIntent,
         Severity = AlertSeverity.Warning,
         Message = reason,
-        FailureReason = PendingPrefix + (fromOrphanSweep ? OrphanMarker : "") + runnerId,
+        FailureReason = pendingReason,
         CreatedAt = DateTime.UtcNow,
     };
 
