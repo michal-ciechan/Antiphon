@@ -23,7 +23,7 @@ internal sealed class ProvenReplayWorld : IDisposable
     private readonly string[] _shas = new string[6];
     private readonly string[] _graphs = new string[6];
     private readonly Dictionary<int, (string Sha, string Graph)> _heldEndpoints = [];
-    private (string Sha, string Graph) _renameEndpoint;
+    private (string Sha, string Graph)? _renameEndpoint;
     private readonly HashSet<string> _observedFailures = new(StringComparer.Ordinal);
     private readonly bool _alias;
     private readonly string[] _historicalGraphs = new string[6];
@@ -35,8 +35,10 @@ internal sealed class ProvenReplayWorld : IDisposable
     internal string Sha(int run) => _shas[run];
     internal static string RunId(int run) => $"run-{RunKey(run)}-attempt";
 
-    internal async Task InitializeAsync(CancellationToken cancellationToken)
+    internal async Task InitializeAsync(CancellationToken cancellationToken, bool includeGateEndpoints = false,
+        bool includeRenameEndpoint = false)
     {
+        var clock = Stopwatch.StartNew();
         const string north = "tests/L/A.cs";
         const string leftUse = "tests/L/Use.cs";
         const string rightUse = "tests/R/Use.cs";
@@ -121,22 +123,28 @@ internal sealed class ProvenReplayWorld : IDisposable
             if (_alias) _historicalGraphs[run] = PreserveHistoricalRule(_graphs[run], north);
         }
         await ObserveLeftAsync([files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
-        if (_alias) return;
-        Git("checkout", "--detach", _shas[3]);
-        Put("Directory.Build.props", files["Directory.Build.props"] = "<Project><!-- hold baseline --></Project>\n");
-        Put(Left, files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../R/R.csproj\" /></ItemGroup></Project>\n");
-        Put(Changed, files[Changed] = "namespace South; public class Probe {}\n");
-        _heldEndpoints.Add(4, await CommitEndpointAsync());
-        Put(Changed, files[Changed] = "namespace South; public class Probe { private int GateValue; }\n");
-        _heldEndpoints.Add(5, await CommitEndpointAsync());
-        Git("checkout", "--detach", _shas[3]);
-        files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
-        files["Directory.Build.props"] = "<Project><!-- run 2 --></Project>\n";
-        files[Changed] = "namespace South; public class Probe { public int Value; }\n";
-        File.Move(Path.Combine(Repository, RenamedFrom), Path.Combine(Repository, RenamedTo));
-        files[RenamedTo] = files[RenamedFrom];
-        files.Remove(RenamedFrom);
-        _renameEndpoint = await CommitEndpointAsync();
+        if (includeGateEndpoints)
+        {
+            Git("checkout", "--detach", _shas[3]);
+            Put("Directory.Build.props", files["Directory.Build.props"] = "<Project><!-- hold baseline --></Project>\n");
+            Put(Left, files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../R/R.csproj\" /></ItemGroup></Project>\n");
+            Put(Changed, files[Changed] = "namespace South; public class Probe {}\n");
+            _heldEndpoints.Add(4, await CommitEndpointAsync());
+            Put(Changed, files[Changed] = "namespace South; public class Probe { private int GateValue; }\n");
+            _heldEndpoints.Add(5, await CommitEndpointAsync());
+        }
+        if (includeRenameEndpoint)
+        {
+            Git("checkout", "--detach", _shas[3]);
+            files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
+            files["Directory.Build.props"] = "<Project><!-- run 2 --></Project>\n";
+            files[Changed] = "namespace South; public class Probe { public int Value; }\n";
+            File.Move(Path.Combine(Repository, RenamedFrom), Path.Combine(Repository, RenamedTo));
+            files[RenamedTo] = files[RenamedFrom];
+            files.Remove(RenamedFrom);
+            _renameEndpoint = await CommitEndpointAsync();
+        }
+        Console.WriteLine($"C2076 replay fixture=setup alias={_alias} gate={includeGateEndpoints} rename={includeRenameEndpoint} elapsedMs={clock.ElapsedMilliseconds}");
 
         string RightSource(bool changed) => _alias
             ? "namespace South; public class Probe { public const int Value = " + (changed ? "1" : "0") + "; }\n"
@@ -339,8 +347,8 @@ internal sealed class ProvenReplayWorld : IDisposable
 
         (string Sha, string Graph) Endpoint(int run)
         {
-            if (held && _heldEndpoints.TryGetValue(run, out var endpoint)) return endpoint;
-            if (rename && run == 3) return _renameEndpoint;
+            if (held && run is 4 or 5) return _heldEndpoints[run];
+            if (rename && run == 3) return _renameEndpoint ?? throw new InvalidOperationException("Rename endpoint was not initialized.");
             return (_shas[run], historical ? _historicalGraphs[run] : _graphs[run]);
         }
     }

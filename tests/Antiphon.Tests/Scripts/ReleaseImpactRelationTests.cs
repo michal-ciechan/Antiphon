@@ -16,7 +16,6 @@ public sealed class ReleaseImpactRelationTests
     [Timeout(30_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributions(CancellationToken cancellationToken)
     {
-        const string project = "tests/T/T.csproj";
         const string north = "tests/T/A.cs";
         const string south = "tests/T/B.cs";
         const string use = "tests/T/Use.cs";
@@ -71,6 +70,23 @@ public sealed class ReleaseImpactRelationTests
         var members = Check("P.consumer", partial, [north, south, generatedPath], generated: generated);
         Consumer(members.Refined, part, "Cases.SpecTests").Kinds.ShouldBe(["declaration"]);
 
+        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
+            string[]? before = null, Dictionary<string, string>? generated = null,
+            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
+            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
+            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
+                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+    }
+
+    [Test, Timeout(30_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners(CancellationToken cancellationToken)
+    {
+        const string project = "tests/T/T.csproj";
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
+
         var globals = World("", "_ = typeof(Probe);");
         globals["tests/T/One.cs"] = "global using North;\n";
         Check("GU.import", globals, [north]);
@@ -79,7 +95,6 @@ public sealed class ReleaseImpactRelationTests
         var globalAlias = World("", "_ = typeof(P);");
         globalAlias["tests/T/One.cs"] = "global using P = North.Probe;\n";
         Check("GU.alias", globalAlias, [north]);
-
 
         const string otherProject = "tests/U/U.csproj";
         var linked = World("", "_ = typeof(Probe);");
@@ -123,6 +138,22 @@ public sealed class ReleaseImpactRelationTests
             refusal: "compiler-diagnostics");
         externs[use] = ConsumerSource("extern alias R;", "_ = typeof(R::Ident.Probe);");
         Check("EX.right", externs, [twoSource], contexts: ExternContexts(refOne));
+
+        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
+            string[]? before = null, Dictionary<string, string>? generated = null,
+            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
+            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
+            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
+                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+    }
+
+    [Test, Timeout(30_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsThroughForwarders(CancellationToken cancellationToken)
+    {
+        const string project = "tests/T/T.csproj";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
 
         const string facadeProject = "src/Facade/Facade.csproj";
         const string facadePath = "src/Facade/F.cs";
@@ -197,6 +228,22 @@ public sealed class ReleaseImpactRelationTests
         var unmapped = Check("FW.owner", forwardSources, [destinationPath, apiPath, south],
             contexts: ForwardContexts([fixture.Core, library, facade with { Project = libraryProject }, destination]));
         unmapped.Sites.Single(site => site.Origin.Name == "Probe").Rule.ShouldBe("compiler-forwarder-unbound", "FW.owner");
+
+        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
+            string[]? before = null, Dictionary<string, string>? generated = null,
+            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
+            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
+            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
+                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+    }
+
+    [Test, Timeout(30_000)]
+    public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds(CancellationToken cancellationToken)
+    {
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
 
         foreach (var (kind, declaration, reference) in new[]
         {
@@ -290,6 +337,23 @@ public sealed class ReleaseImpactRelationTests
         [
             new(project, "T", [north, south, receiver, use], [], [fixture.Core, runtimeBinder]),
         ]);
+
+        ReleaseImpactTypeProof Check(string label, Dictionary<string, string> files, string[] expected,
+            string[]? before = null, Dictionary<string, string>? generated = null,
+            ReleaseImpactTypeProofFixture.Context[]? contexts = null, string? refusal = null,
+            Func<ReleaseCompilerManifest, ReleaseCompilerManifest>? proposal = null, int maximumCandidates = 4096,
+            string? unavailableGenerated = null) => CheckTypeProof(fixture, cancellationToken, label, files, expected, before,
+                generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
+    }
+
+    [Test, Timeout(30_000)]
+    public void ConfiguredBindingsPreserveEveryAmbiguousCandidate(CancellationToken cancellationToken)
+    {
+        const string project = "tests/T/T.csproj";
+        const string north = "tests/T/A.cs";
+        const string south = "tests/T/B.cs";
+        const string use = "tests/T/Use.cs";
+        using var fixture = new ReleaseImpactTypeProofFixture();
 
         var shadowMembers = new[]
         {
