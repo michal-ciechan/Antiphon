@@ -392,9 +392,10 @@ public sealed class ReleaseImpactRelationTests
                 .ShouldBe(ReleaseImpactGraphBuilder.Serialize(proof with { ManifestDigest = null }), label + " reordered graph bytes");
             var orderedSites = proof.Sites.Select(site => (site.Origin.Consumer.Project, site.Origin.Consumer.FullName,
                 site.Origin.Source, site.Origin.Start, site.ContextDigest)).ToArray();
-            orderedSites.ShouldBe(orderedSites.Distinct().OrderBy(site => site.Project, StringComparer.Ordinal)
+            orderedSites.SequenceEqual(orderedSites.Distinct().OrderBy(site => site.Project, StringComparer.Ordinal)
                 .ThenBy(site => site.FullName, StringComparer.Ordinal).ThenBy(site => site.Source, StringComparer.Ordinal)
-                .ThenBy(site => site.Start).ThenBy(site => site.ContextDigest, StringComparer.Ordinal), label + " stored site order");
+                .ThenBy(site => site.Start).ThenBy(site => site.ContextDigest, StringComparer.Ordinal))
+                .ShouldBeTrue(label + " stored site order");
             foreach (var site in proof.Sites.Where(site => site.Rule == "unique-source-type"))
             {
                 var source = generated.TryGetValue(site.Origin.Source, out var emitted) ? emitted : files[site.Origin.Source];

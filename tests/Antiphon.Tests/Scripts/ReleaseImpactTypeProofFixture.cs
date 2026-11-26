@@ -110,7 +110,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
         result.ExitCode.ShouldBe(0, "IU SDK generation: " + result.Text);
 
         var pack = Directory.EnumerateDirectories(Path.Combine(_dotnetRoot, "packs", "Microsoft.NETCore.App.Ref"))
-            .Select(directory => (Directory: directory, Version: Version.TryParse(Path.GetFileName(directory), out var version) ? version : null))
+            .Select(directory => (Directory: directory, Version: System.Version.TryParse(Path.GetFileName(directory), out var version) ? version : null))
             .Where(entry => entry.Version?.Major == 9).MaxBy(entry => entry.Version).Directory;
         var references = new[] { "System.Runtime", "System.Collections", "System.IO", "System.Linq", "System.Net.Http",
             "System.Threading", "System.Threading.Tasks" }.Select(name =>
