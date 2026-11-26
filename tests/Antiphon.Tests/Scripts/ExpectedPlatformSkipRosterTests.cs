@@ -49,6 +49,23 @@ public sealed class ExpectedPlatformSkipRosterTests
     private static string Joined(object? values) => string.Join(",", PsValue.AsArray(values!).Select(PsValue.Str));
 
     [Test]
+    public void Windows_qualification_tolerates_the_three_linux_only_witnesses()
+    {
+        const string handleProbe = "Antiphon.Tests.Scripts.ScriptHarnessHandleProbeTests.Early_exit_reports_process_and_receipt_evidence";
+        var verdict = Verdict([
+            Row(handleProbe, "NotExecuted", "Skipped: This fake child uses a Linux shell."),
+            Row(handleProbe, "NotExecuted", "Skipped: This fake child uses a Linux shell."),
+            Row("Antiphon.Tests.Checkpoints.EvidenceFolderTests.generated_replay_preserves_native_property_arguments",
+                "NotExecuted", "Skipped: Native Linux shell argument witness."),
+            Row("Antiphon.Tests.Checkpoints.CheckpointWarmBuildTests.fifo_seal_falls_back_cold_without_hanging",
+                "NotExecuted", "Skipped: FIFO seal requires Linux mkfifo"),
+        ]);
+
+        Flag(verdict, "coverageComplete").ShouldBeTrue(Joined(verdict["reasons"]));
+        PsValue.AsArray(verdict["toleratedSkips"]).Length.ShouldBe(4);
+    }
+
+    [Test]
     public void Verdict_accepts_only_rostered_skips()
     {
         var rows = new NightlyCaseRows();
