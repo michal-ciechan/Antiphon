@@ -65,6 +65,7 @@ public sealed class MergeHighRadiusSubsetTests
         }
         File.ReadAllText(Path.Combine(root, "docs/testing-and-build.md")).ShouldContain(category);
         File.ReadAllText(Path.Combine(root, "docs/testing-and-build.md")).ShouldContain("impacted-classes --repository-invariants --json");
+        File.ReadAllText(Path.Combine(root, "docs/orchestration-loop.md")).ShouldContain("--require-windows-host");
 
         using var native = Antiphon.Tests.Scripts.Nightly.NightlyFixture.Create("c2082-native-receipt");
         var receipt = Antiphon.Tests.Checkpoints.CheckpointSourceExecutionTests.CountReport();
