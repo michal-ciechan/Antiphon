@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The cached CLI launcher (N0 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, unit 57): the content
+    identity of antiphon-scripts' build inputs, the per-identity cache under bin-launcher/antiphon-scripts/, the build lock,
+    the atomic publish, the pruning, and the check the CLI makes before it dispatches a command when a launcher asked for it.
+    Antiphon.Scripts references this project and calls CliGate first thing in Main.
+
+    Tiny on purpose: no ProjectReference and no PackageReference (the framework only), so a checkout with nothing published
+    yet builds it in a few seconds. scripts/antiphon, scripts/antiphon.cmd and scripts/lib/antiphon-cli.ps1 build it into a
+    fresh boot-<n> folder and run `Antiphon.CliLauncher publish <checkout>`, which builds the CLI under the build lock.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Antiphon.CliLauncher</RootNamespace>
+    <AssemblyName>Antiphon.CliLauncher</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

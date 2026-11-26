@@ -1,8 +1,8 @@
 // antiphon-scripts <command> [arguments]. Every command answers every input itself: exit 0 handled (the command wrote
 // its answer), 2 usage, and each command's own refusal codes below. The NotHandled exit (10) that sent a caller back to
 // its PowerShell path went with select-release, the last command that used it (2026-11-22 plan, unit 8).
-// Exit 9 is reserved for the launchers (scripts/antiphon, scripts/antiphon.cmd, scripts/lib/antiphon-cli.ps1): the
-// CLI could not be built or started.
+// Exit 9 is reserved for the launchers (scripts/antiphon, scripts/antiphon.cmd, scripts/lib/antiphon-cli.ps1) and the
+// launch check in Main (Antiphon.CliLauncher.CliGate): the CLI could not be built or started.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -350,6 +350,10 @@ namespace Antiphon.Scripts
 
         public static int Main(string[] args)
         {
+            // N0 (unit 57): when a launcher asked (ANTIPHON_CLI_CHECK), this build is first checked against the checkout's
+            // inputs; a stale one publishes the current build and runs it as a child, whose exit code this is.
+            var launched = Antiphon.CliLauncher.CliGate.Enter(args);
+            if (launched.HasValue) return launched.Value;
             // One process answers one request: the filter/textconv driver settings are asked of git once.
             CheckpointProcessRunner.DriverSettingsCacheMilliseconds = 60000;
             if (args.Length == 0 || !Commands.TryGetValue(args[0], out var command)) return WriteUsage();

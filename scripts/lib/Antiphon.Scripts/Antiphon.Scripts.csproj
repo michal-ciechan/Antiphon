@@ -26,5 +26,7 @@
     <ProjectReference Include="../Antiphon.Nightly/Antiphon.Nightly.csproj" />
     <!-- The live lane's isolated project (W2 slice S21): its commands bind its seams here; it references nothing back. -->
     <ProjectReference Include="../Antiphon.LiveLane/Antiphon.LiveLane.csproj" />
+    <!-- The cached launcher (N0, unit 57): Main's identity check (CliGate) and the per-identity cache it publishes into. -->
+    <ProjectReference Include="../Antiphon.CliLauncher/Antiphon.CliLauncher.csproj" />
   </ItemGroup>
 </Project>

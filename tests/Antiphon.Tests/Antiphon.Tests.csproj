@@ -92,6 +92,8 @@
     <ProjectReference Include="..\..\scripts\lib\Antiphon.Nightly\Antiphon.Nightly.csproj" />
     <!-- The live lane's isolated project (W2 slice S21), called in-process: the run, the outcome and the input pin. -->
     <ProjectReference Include="..\..\scripts\lib\Antiphon.LiveLane\Antiphon.LiveLane.csproj" />
+    <!-- The cached CLI launcher (N0, unit 57), called in-process: the identity, the cache, the publish and the launch check. -->
+    <ProjectReference Include="..\..\scripts\lib\Antiphon.CliLauncher\Antiphon.CliLauncher.csproj" />
     <ProjectReference Include="..\..\src\Antiphon.HostCleanup\Antiphon.HostCleanup.csproj" />
     <ProjectReference Include="../Antiphon.FileUseTestChild/Antiphon.FileUseTestChild.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Antiphon.DockerStack.Fixture\Antiphon.DockerStack.Fixture.csproj" />
