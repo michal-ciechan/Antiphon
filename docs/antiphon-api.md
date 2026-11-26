@@ -637,6 +637,7 @@ GET    /api/hosts                                     local and configured runne
 PUT    /api/hosts/{hostId}/budget                     maxInFlight (0–512 or null to clear), reason (required)
 GET    /api/session-runners/{runnerId}/capacity       declared capacity, server bound, effective limit and occupancy
 PUT    /api/session-runners/{runnerId}/capacity       capacity, reason (required); live runner push
+GET    /api/session-runners/slots/release-intents?runnerId=&sessionId=&after=&limit=  pending intent page (operator token)
 GET    /api/session-runners/slots/release-intents/{intentId}        incident history (operator token)
 POST   /api/session-runners/slots/release-intents/{intentId}/close  RunnerSlotIntentCloseRequest (operator token)
 GET    /api/hosts/stats                               latest per-host sample, rollups, state, Antiphon counts

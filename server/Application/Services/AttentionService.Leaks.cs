@@ -162,12 +162,20 @@ public sealed partial class AttentionService
         HashSet<Guid> remoteLive, HashSet<Guid> remoteUnknown, CancellationToken ct)
     {
         var cutoff = now.AddMinutes(-5);
-        var pending = await _db.AgentIncidents.AsNoTracking()
-            .Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent && i.SessionId != null
-                && i.FailureReason != null && i.FailureReason.StartsWith("pending:kill-generation:")
-                && i.CreatedAt < cutoff)
-            .OrderBy(i => i.CreatedAt).ToListAsync(ct);
-        var pendingIds = pending.Select(i => i.SessionId!.Value).Distinct().ToList();
+        // A pre-fix outage can leave many pending rows for one session. Keep the feed bounded
+        // per session, with the complete inventory available through the operator route.
+        var pending = await RunnerSlotService.PendingIntents(_db)
+            .Where(i => i.SessionId != null && i.CreatedAt < cutoff)
+            .GroupBy(i => i.SessionId!.Value)
+            .Select(g => new
+            {
+                SessionId = g.Key,
+                Count = g.Count(),
+                Kills = g.Count(i => i.FailureReason!.StartsWith(RunnerSlotService.PendingKillGenerationPrefix)),
+                Oldest = g.OrderBy(i => i.CreatedAt).ThenBy(i => i.Id).First(),
+            })
+            .ToDictionaryAsync(g => g.SessionId, ct);
+        var pendingIds = pending.Keys.ToList();
         var sessions = await _db.AgentSessions.AsNoTracking()
             .Where(s => (s.Status == SessionStatus.Stopping && s.LastSeenAt < cutoff) || pendingIds.Contains(s.Id))
             .ToDictionaryAsync(s => s.Id, ct);
@@ -175,12 +183,11 @@ public sealed partial class AttentionService
         var owners = (await _db.Agents.AsNoTracking().Where(a => a.PersistentSessionId != null)
                 .Select(a => new { a.Id, a.PersistentSessionId }).ToListAsync(ct))
             .ToLookup(a => ParseSessionId(a.PersistentSessionId));
-        var intents = pending.ToLookup(i => i.SessionId!.Value);
         var items = new List<AttentionItemDto>();
         foreach (var id in sessions.Keys.Concat(pendingIds).Distinct())
         {
             sessions.TryGetValue(id, out var session);
-            var debt = intents[id].ToList();
+            var debt = pending.GetValueOrDefault(id);
             var owner = owners[id].FirstOrDefault();
             var liveness = session is null ? "unknown (no session row)"
                 : session.RunnerId is not null
@@ -191,12 +198,19 @@ public sealed partial class AttentionService
                     : localInventory is null ? "unknown (local runner not consulted)"
                         : localInventory.Any(s => s.SessionId == id && s.Status == RunnerRunningStatus)
                             ? "confirmed live (local runner list)" : "not running in local runner list";
-            var since = debt.Count > 0 ? debt[0].CreatedAt : session!.LastSeenAt;
+            var since = debt?.Oldest.CreatedAt ?? session!.LastSeenAt;
             if (session?.Status == SessionStatus.Stopping && session.LastSeenAt < since) since = session.LastSeenAt;
+            const string intentsPath = "/api/session-runners/slots/release-intents";
+            var intentEvidence = debt is null ? ""
+                : $"{debt.Oldest.FailureReason}: {Excerpt(debt.Oldest.Message)}. "
+                    + $"After verifying the outcome, POST {intentsPath}/{debt.Oldest.Id:D}/close with requester and evidence. "
+                    + $"For all open intents for this session, GET {intentsPath}?sessionId={id:D}.";
             items.Add(new AttentionItemDto(
                 AttentionKind.SessionStopStuck, AlertSeverity.Error, null, id, owner?.Id, null,
                 $"Session {id.ToString("N")[..8]}",
-                debt.Count > 0 ? $"Deferred kill still pending ({debt.Count} intent(s))." : "Session has been Stopping for over five minutes.",
+                debt is null ? "Session has been Stopping for over five minutes."
+                    : debt.Kills == debt.Count ? $"Deferred kill still pending ({debt.Count} intent(s))."
+                    : $"Runner slot release still pending ({debt.Count} intent(s)).",
                 $"Runner liveness: {liveness}; runner={session?.RunnerId ?? "local/unknown"}; "
                     + $"AgentKind={session?.AgentKind.ToString() ?? "unknown"}. "
                     + $"{Excerpt(session?.FailureReason)} "
@@ -204,9 +218,7 @@ public sealed partial class AttentionService
                         ? "Antiphon stop requested; signal unknown; exit unobserved. "
                         : SessionExitPolicy.Describe(session.ExitCode, session.ExitSignal,
                             session.TerminationSource, SessionExitEvidence.ReadIntent(session.ExitStopIntentJson)) + ". ")
-                    + string.Join("; ", debt.Take(5).Select(i => $"{i.FailureReason}: {Excerpt(i.Message)}. "
-                        + "After verifying the outcome, POST "
-                        + $"/api/session-runners/slots/release-intents/{i.Id:D}/close with requester and evidence")),
+                    + intentEvidence,
                 since, null, owner is null ? [AttentionAction.OpenDrawer] : [AttentionAction.OpenAgent, AttentionAction.OpenDrawer],
                 ModelKind: session?.AgentKind.ToString(), ConditionKey: $"session-stop-stuck:{id:N}"));
         }

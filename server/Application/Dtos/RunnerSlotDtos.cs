@@ -36,6 +36,9 @@ public sealed record RunnerSlotIntentCloseRequest(string? Requester, string? Evi
 public sealed record RunnerSlotIntentHistoryDto(
     Guid IntentId, Guid? SessionId, string Message, string? FailureReason, DateTime CreatedAt);
 
+public sealed record RunnerSlotPendingIntentsPageDto(
+    IReadOnlyList<RunnerSlotIntentHistoryDto> Intents, Guid? NextAfter);
+
 /// <summary>
 /// <see cref="Intents"/> is set when a failed request was finished by reconciliation: each intent
 /// this request recorded, with <c>released</c>, <c>failed</c> or <c>pending</c>.

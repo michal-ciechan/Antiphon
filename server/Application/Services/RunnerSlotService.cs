@@ -105,10 +105,7 @@ public static class RunnerSlotService
     public static async Task<IReadOnlyList<Guid>> ReconcilePendingReleasesAsync(
         PhoneHomeRunnerDirectory directory, AppDbContext db, CancellationToken ct)
     {
-        var pending = await db.AgentIncidents.AsNoTracking()
-            .Where(incident => incident.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
-                && incident.FailureReason != null
-                && incident.FailureReason.StartsWith(PendingPrefix))
+        var pending = await PendingIntents(db)
             .OrderBy(incident => incident.CreatedAt)
             .Select(incident => new { incident.Id, incident.SessionId, incident.FailureReason, incident.Message })
             .ToListAsync(ct);
@@ -189,6 +186,36 @@ public static class RunnerSlotService
             .SingleOrDefaultAsync(ct)
         ?? throw new NotFoundException("Runner slot release intent", intentId);
 
+    internal static IQueryable<AgentIncident> PendingIntents(AppDbContext db) =>
+        db.AgentIncidents.AsNoTracking()
+            .Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                && i.FailureReason != null && i.FailureReason.StartsWith(PendingPrefix));
+
+    internal static async Task<RunnerSlotPendingIntentsPageDto> ListPendingIntentsAsync(
+        AppDbContext db, string? runnerId, Guid? sessionId, Guid? after, int limit, CancellationToken ct)
+    {
+        var query = PendingIntents(db);
+        if (runnerId is { Length: > 0 })
+        {
+            var direct = PendingPrefix + runnerId;
+            var orphan = PendingPrefix + OrphanMarker + runnerId;
+            var kill = PendingKillGenerationPrefix + runnerId + ":";
+            query = query.Where(i => i.FailureReason == direct || i.FailureReason == orphan
+                || (i.FailureReason!.StartsWith(kill) && !i.FailureReason.Substring(kill.Length).Contains(":")));
+        }
+        if (sessionId is Guid session)
+            query = query.Where(i => i.SessionId == session);
+        if (after is Guid cursor)
+            query = query.Where(i => i.Id.CompareTo(cursor) > 0);
+        var intents = await query.OrderBy(i => i.Id).Take(limit + 1)
+            .Select(i => new RunnerSlotIntentHistoryDto(i.Id, i.SessionId, i.Message, i.FailureReason, i.CreatedAt))
+            .ToListAsync(ct);
+        if (intents.Count <= limit)
+            return new(intents, null);
+        intents.RemoveAt(limit);
+        return new(intents, intents[^1].IntentId);
+    }
+
     public static async Task<RunnerSlotIntentHistoryDto> CloseIntentAsync(
         AppDbContext db, Guid intentId, string requester, string evidence, TimeProvider clock, CancellationToken ct)
     {
@@ -219,7 +246,7 @@ public static class RunnerSlotService
         var message = string.IsNullOrWhiteSpace(reason) ? "deferred kill after a failed remote launch" : reason.Trim();
         if (message.Length > AgentIncident.MessageMaxLength)
             message = message[..AgentIncident.MessageMaxLength];
-        var reasonKey = PendingPrefix + KillGenerationMarker + runnerId + ":" + acceptedGeneration.Ticks;
+        var reasonKey = PendingKillGenerationPrefix + runnerId + ":" + acceptedGeneration.Ticks;
         return await RecordPendingOnceAsync(db, NewIntent(sessionId, message, reasonKey), ct);
     }
 
@@ -227,7 +254,7 @@ public static class RunnerSlotService
     {
         runnerId = "";
         generation = default;
-        var prefix = PendingPrefix + KillGenerationMarker;
+        const string prefix = PendingKillGenerationPrefix;
         if (!failureReason.StartsWith(prefix, StringComparison.Ordinal))
             return false;
         var rest = failureReason[prefix.Length..];
@@ -293,7 +320,7 @@ public static class RunnerSlotService
 
     /// <summary>The <c>FailureReason</c> prefix of an intent the reconcile still owes.</summary>
     internal const string PendingIntentPrefix = PendingPrefix;
-    private const string KillGenerationMarker = "kill-generation:";
+    internal const string PendingKillGenerationPrefix = PendingPrefix + "kill-generation:";
     private const string OrphanMarker = "orphan:";
     private const string FailedPrefix = "failed:";
     private const string ClosedPrefix = "closed:";

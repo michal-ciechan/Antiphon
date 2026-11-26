@@ -628,10 +628,10 @@ transcript-confirmed `UserPrompt` evidence — not a screen redraw — as the de
 
 - `PoolDelegateUnreleased` (44, Error): a live pool delegate with no open task, past twice
   `Delegation:PoolReleaseGraceSeconds`. Warm, standing, sourced and mid-turn owners are excluded.
-- `SessionStopStuck` (45, Error): Stopping unchanged for five minutes, or an unresolved
-  generation-conditional deferred kill older than five minutes, even for a terminal session row.
-  Evidence distinguishes confirmed live, confirmed absent and unknown. It includes the
-  operator close path for each displayed pending intent.
+- `SessionStopStuck` (45, Error) covers a session unchanged in Stopping for five minutes
+  or any pending runner slot release intent older than five minutes, including when the session
+  row is terminal or missing. Evidence distinguishes confirmed live, confirmed absent and unknown.
+  It shows the oldest intent's close path and the operator list for the session.
 - `SessionUnowned` (46, Warning): a live session older than ten minutes with no card,
   current agent pointer or open task. A historical `StandingAgentId` is evidence only,
   not current ownership. Remote sessions require confirmed live inventory; an unknown
@@ -664,19 +664,42 @@ agent (CARD-0221). A stalled session is a detection and decision state, never an
 
 ### Close a runner slot release intent (CARD-2078)
 
-Copy the intent ID from the `SessionStopStuck` evidence. After verifying the outcome,
+Find the oldest intent ID in the `SessionStopStuck` evidence, or page through
+`GET /api/session-runners/slots/release-intents`. The list includes all open direct releases,
+legacy orphan sweeps and generation-conditional deferred kills, at any age. To narrow the list
+use `runnerId` (exact, including retired runners) or `sessionId`. `limit` defaults to 100 and
+accepts 1–200. Pass the returned `nextAfter` as `after` with the same filters until it is null.
+
+After verifying the outcome,
 send `POST /api/session-runners/slots/release-intents/{intentId}/close` with
 `{ "requester": "your name or operator handle", "evidence": "what you verified" }`.
 Both fields are required, and evidence can be up to 2,000 characters.
 `GET /api/session-runners/slots/release-intents/{intentId}` reads the same incident history.
-Both routes require `X-Antiphon-Operator-Token`.
+All three routes require `X-Antiphon-Operator-Token`.
 
 Closing records the supplied requester, server time and evidence in the incident's terminal
 `failureReason`. It sends no runner command. A kill already sent may finish, and a terminal intent
-returns 409 `runner_slot_intent_settled` on close. The pending-kill condition clears on the next
-attention read once its pending intents settle. An independent Stopping condition can persist.
+returns 409 `runner_slot_intent_settled` on close. The pending-intent condition clears on the
+next attention read once its aged pending intents settle. An independent Stopping condition can persist.
 Pending intents survive both retention sweeps. Terminal history follows the age and count limits,
 so an intent created over 30 days ago becomes eligible for deletion on the next sweep after close.
+
+#### Bulk close after verifying runner retirement
+
+After the fixed producer is active, confirm the runner's exact identity and record the retirement
+or teardown evidence that proves the listed obligations ended. A temporary outage supplies no
+closure evidence. Preview all pages for that exact `runnerId` and save the approved intent IDs,
+session IDs, and state markers as a manifest. For backlog specifically from the ghost sweep, select
+the direct `pending:<runner>` rows whose message starts with `Failed task ` and contains
+`mirror clean and equal to origin, idle since`. Review generation-conditional kills and other
+rows against their own evidence before including them.
+
+For each approved ID, POST to its close path using the operator handle and a reason identifying
+the retirement record and what it proves. Save the closure responses alongside the manifest
+before pruning can remove them. A 409 means reconciliation or another operator settled that
+intent first. Check its history and record that outcome. Stop the batch on other errors and
+restart from the reviewed manifest after resolving them. Re-list the runner afterward to account
+for every remaining open row.
 
 ## Not here
 

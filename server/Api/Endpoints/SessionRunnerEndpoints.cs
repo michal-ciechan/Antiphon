@@ -273,7 +273,18 @@ public static class SessionRunnerEndpoints
             Results.Ok(await RunnerSlotService.ListAsync(directory, db, runnerId, ct)))
             .WithTags("SessionRunners");
 
-        const string releaseIntentPath = "/api/session-runners/slots/release-intents/{intentId:guid}";
+        const string releaseIntentsPath = "/api/session-runners/slots/release-intents";
+        app.MapGet(releaseIntentsPath, async (
+            HttpContext http, string? runnerId, Guid? sessionId, Guid? after, int? limit,
+            IOptions<PhoneHomeRunnerSettings> settings, [FromServices] AppDbContext db, CancellationToken ct) =>
+        {
+            OperatorCredential.Require(http, settings.Value, "Listing pending release intents requires the operator token.");
+            if (limit is < 1 or > 200)
+                throw new ValidationException("limit", "Give a page limit between 1 and 200.");
+            return Results.Ok(await RunnerSlotService.ListPendingIntentsAsync(db, runnerId, sessionId, after, limit ?? 100, ct));
+        }).WithTags("SessionRunners");
+
+        const string releaseIntentPath = releaseIntentsPath + "/{intentId:guid}";
         app.MapGet(releaseIntentPath, async (
             HttpContext http, Guid intentId, IOptions<PhoneHomeRunnerSettings> settings,
             [FromServices] AppDbContext db, CancellationToken ct) =>
