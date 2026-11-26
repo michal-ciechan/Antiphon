@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
+using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 
 namespace Antiphon.PtyHost;
@@ -43,7 +44,14 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
             || store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null)
             throw new VerificationCustodyException("verification_custody_sealed_or_missing_intent");
         using var host = Process.GetCurrentProcess();
-        Identity = new(store.StoreId, hostInstanceId, Guid.NewGuid(), host.Id, host.StartTime.ToUniversalTime());
+        var linuxIdentity = binding.Backend == VerificationCustodyBackends.LinuxCgroup
+            ? LinuxProcessIdentity.TryRead(host.Id)
+                ?? throw new VerificationCustodyException("verification_custody_identity_mismatch")
+            : null;
+        Identity = new(store.StoreId, hostInstanceId, Guid.NewGuid(), host.Id, host.StartTime.ToUniversalTime())
+        {
+            LinuxIdentity = linuxIdentity,
+        };
         // A second host cannot replace a former host/job, even if its root or manifest disappeared.
         store.WriteRecord(binding, "host-identity.json", Identity);
         store.WriteRecord(binding, "linux-namespace.json",

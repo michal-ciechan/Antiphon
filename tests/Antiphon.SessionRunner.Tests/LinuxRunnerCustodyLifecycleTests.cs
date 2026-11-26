@@ -167,11 +167,45 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             if (status.Receipt is null)
                 await Task.Delay(100, timeout.Token);
         } while (status.Receipt is null);
-        var receipt = fx.Store.ValidateReceipt(status.Receipt, fx.Binding, status.Host!);
+        var host = status.Host!;
+        var runnerHost = fx.Store.ReadRecord<RunnerHostIdentity>(fx.Binding, "runner-host.json")!;
+        host.LinuxIdentity.ShouldNotBeNull();
+        runnerHost.LinuxIdentity.ShouldBe(host.LinuxIdentity);
+        var receipt = fx.Store.ValidateReceipt(status.Receipt, fx.Binding, host);
+        fx.Store.ReadReceipt(fx.Binding, host, accepted: false).ShouldBe(status.Receipt);
+        fx.Store.ReadReceipt(fx.Binding, host, accepted: true).ShouldBe(status.Receipt);
         receipt.Disposition.ShouldBe(VerificationCustodyState.Exited);
         receipt.ActiveProcesses.ShouldBe(0u);
         receipt.TerminationSucceeded.ShouldBeNull();
         await fx.Runtime.SessionForTests(fx.Binding.Generation.SessionId).ShutdownForTests();
+    }
+
+    [Test]
+    public void C2067_Host_match_requires_exact_kernel_generation()
+    {
+        const string backend = VerificationCustodyBackends.LinuxCgroup;
+        var start = new DateTime(2026, 11, 26, 0, 0, 0, DateTimeKind.Utc);
+        var identity = new LinuxProcessIdentity(Guid.NewGuid().ToString("D"), 100);
+        var runner = new RunnerHostIdentity(Guid.NewGuid(), 42, start) { LinuxIdentity = identity };
+        var host = new VerificationHostIdentity(Guid.NewGuid(), runner.HostInstanceId, Guid.NewGuid(), runner.HostPid, start)
+        {
+            LinuxIdentity = identity,
+        };
+
+        runner.Matches(host with { HostStartTimeUtc = start.AddMilliseconds(1.5) }, backend).ShouldBeTrue();
+        runner.Matches(host with { LinuxIdentity = identity with { StartTicks = 101 } }, backend).ShouldBeFalse();
+        runner.Matches(host with { LinuxIdentity = identity with { BootId = Guid.NewGuid().ToString("D") } }, backend).ShouldBeFalse();
+        runner.Matches(host with { HostInstanceId = Guid.NewGuid() }, backend).ShouldBeFalse();
+        runner.Matches(host with { HostPid = runner.HostPid + 1 }, backend).ShouldBeFalse();
+        runner.Matches(host with { LinuxIdentity = null }, backend).ShouldBeFalse();
+
+        var legacyRunner = runner with { LinuxIdentity = null };
+        var legacyHost = host with { LinuxIdentity = null };
+        legacyRunner.Matches(host, backend).ShouldBeFalse();
+        legacyRunner.Matches(legacyHost, backend).ShouldBeTrue();
+        legacyRunner.Matches(legacyHost with { HostStartTimeUtc = start.AddTicks(1) }, backend).ShouldBeFalse();
+        runner.Matches(host, VerificationCustodyBackends.WindowsJob).ShouldBeFalse();
+        legacyRunner.Matches(legacyHost, VerificationCustodyBackends.WindowsJob).ShouldBeTrue();
     }
 
     [Test]

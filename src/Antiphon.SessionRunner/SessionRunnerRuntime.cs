@@ -3578,6 +3578,10 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
                 using (var host = System.Diagnostics.Process.GetProcessById(_hostPid))
                     _hostStartTimeUtc = host.StartTime.ToUniversalTime();
+                var linuxCustodyHost = VerificationBinding?.Backend == VerificationCustodyBackends.LinuxCgroup
+                    ? LinuxProcessIdentity.TryRead(_hostPid)
+                        ?? throw new VerificationCustodyException("verification_custody_identity_mismatch")
+                    : null;
                 if (_pwshCache is { } pwshCache)
                     Antiphon.Hosting.PwshPrivateCache.AssignOwner(pwshCache, _hostPid, _hostStartTimeUtc);
                 // CARD-1653 S2: the peer must be the host this launch spawned (proven by spawn), so a
@@ -3618,7 +3622,10 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                             _client.Hello.Features?.Contains(LinuxPlacementLaunch.Feature) != true))
                         throw new VerificationCustodyException("verification_custody_unsupported_backend");
                     _custodyLedger!.RecordConnectedHost(binding,
-                        new(hostInstance, _hostPid, hostProcess.StartTime.ToUniversalTime()));
+                        new(hostInstance, _hostPid, hostProcess.StartTime.ToUniversalTime())
+                        {
+                            LinuxIdentity = linuxCustodyHost,
+                        });
                 }
 
                 _linuxTrackedLaunchMayHaveBeenSent = OperatingSystem.IsLinux() &&

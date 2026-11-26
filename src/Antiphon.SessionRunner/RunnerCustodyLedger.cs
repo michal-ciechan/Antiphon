@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
@@ -185,7 +186,7 @@ public sealed class RunnerCustodyLedger
     {
         var acceptedHost = Store.ReadRecord<RunnerHostIdentity>(binding, "runner-host.json");
         if (host.RunnerStoreId != Store.StoreId || host.ContainerId == Guid.Empty
-            || acceptedHost != new RunnerHostIdentity(host.HostInstanceId, host.HostPid, host.HostStartTimeUtc)
+            || acceptedHost?.Matches(host, binding.Backend) != true
             || Store.ReadRecord<VerificationHostIdentity>(binding, "host-identity.json") != host)
             throw new VerificationCustodyException("verification_custody_identity_mismatch");
     }
@@ -385,4 +386,22 @@ public sealed class RunnerCustodyLedger
     }
 }
 
-public sealed record RunnerHostIdentity(Guid HostInstanceId, int HostPid, DateTime HostStartTimeUtc);
+public sealed record RunnerHostIdentity(Guid HostInstanceId, int HostPid, DateTime HostStartTimeUtc)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LinuxProcessIdentity? LinuxIdentity { get; init; }
+
+    internal bool Matches(VerificationHostIdentity host, string backend)
+    {
+        if (HostInstanceId != host.HostInstanceId || HostPid != host.HostPid)
+            return false;
+        if (LinuxIdentity is null && host.LinuxIdentity is null)
+            return HostStartTimeUtc == host.HostStartTimeUtc;
+
+        // Linux Process.StartTime projects the same kernel tick against a per-process boot
+        // time estimate. Match the kernel generation and refuse a pair with only one proof.
+        return backend == VerificationCustodyBackends.LinuxCgroup
+            && LinuxIdentity is { StartTicks: >= 0 } linux && linux == host.LinuxIdentity
+            && Guid.TryParseExact(linux.BootId, "D", out var bootId) && bootId != Guid.Empty;
+    }
+}
