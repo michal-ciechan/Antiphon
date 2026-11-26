@@ -246,6 +246,17 @@ public sealed class IncrementalSelectionSoundnessTests
         repairRevision.RootElement.GetProperty("disposition").GetProperty("attribution").GetString().ShouldBe("absent-reader");
         File.ReadAllBytes(Path.Combine(output, firstPath)).ShouldBe(firstBytes, "P.revision repaired output preserves original");
 
+        var withDecoy = world.Input("repaired-decoy", fails: true, extraDecoy: true);
+        Overlay(withDecoy, "r3000000/logs/groups-planned.json", doc => doc["census"] = JsonSerializer.SerializeToNode(
+            new[] { new { reader = "L.LeftTests", globs = new[] { ProvenReplayWorld.Changed } } }));
+        var decoyOutput = world.Output("repaired-decoy");
+        Replay(withDecoy, decoyOutput, true).ShouldBe(0, "P.absent-reader fixed with one genuine safe carry");
+        using var decoyVerdict = Read(decoyOutput, "verdict.json");
+        var decoyScore = decoyVerdict.RootElement.GetProperty("runs")[2].GetProperty("matrix");
+        decoyScore.GetProperty("carry/clean").GetInt32().ShouldBe(1, "P.absent-reader unaffected decoy carries");
+        decoyScore.GetProperty("run/FAIL").GetInt32().ShouldBe(1, "P.absent-reader damaged consumer executes");
+        decoyVerdict.RootElement.GetProperty("proofDependentCarries").GetInt32().ShouldBe(1);
+
         var renamedOutput = world.Output("rename");
         Replay(world.Input("rename", fails: true, rename: true), renamedOutput, true).ShouldBe(1, "P.evidence rename carry remains unsafe");
         using var renamedVerdict = Read(renamedOutput, "verdict.json");

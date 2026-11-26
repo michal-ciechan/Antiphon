@@ -80,7 +80,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             [north] = _alias ? "namespace North; public class Probe { public const int Value = 0; }\n" : "namespace North; public class Probe {}\n",
             [Changed] = RightSource(false),
             [RenamedFrom] = "fixture payload retained across rename\n",
-            [leftUse] = left + "\n",
+            [leftUse] = left + "\npublic class DecoyTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"d1\")] public void M(string key) { _ = typeof(North.Probe); } }\n",
             [rightUse] = "namespace R; public class RightTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"r1\")] public void M(string key) { _ = typeof(South.Probe); } }\n",
         };
         foreach (var (path, text) in files) Put(path, text);
@@ -103,7 +103,7 @@ internal sealed class ProvenReplayWorld : IDisposable
         Write("tests/derived-impact-index.json", new
         {
             schema = 1, cap = 25, cappedPaths = Array.Empty<object>(),
-            edges = new[] { north, Changed }.Select(path => new { path, classes = new[] { "LeftTests", "RightTests" } }),
+            edges = new[] { north, Changed }.Select(path => new { path, classes = new[] { "DecoyTests", "LeftTests", "RightTests" } }),
         });
         ReleaseImpactTypeProofFixture.Context[] contexts =
         [
@@ -120,7 +120,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             (_shas[run], _graphs[run]) = await CommitEndpointAsync();
             if (_alias) _historicalGraphs[run] = PreserveHistoricalRule(_graphs[run], north);
         }
-        await ObserveLeftAsync([left, files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
+        await ObserveLeftAsync([files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
         if (_alias) return;
         Git("checkout", "--detach", _shas[3]);
         Put("Directory.Build.props", files["Directory.Build.props"] = "<Project><!-- hold baseline --></Project>\n");
@@ -210,7 +210,11 @@ internal sealed class ProvenReplayWorld : IDisposable
                     var failures = 0;
                     for (var index = 0; index < args.Length; index++)
                     {
-                        try { new L.LeftTests().M(args[index]); }
+                        try
+                        {
+                            if (args[index] == "d1") new L.DecoyTests().M(args[index]);
+                            else new L.LeftTests().M(args[index]);
+                        }
                         catch (System.Exception failure)
                         {
                             if (failure.Message != args[index]) return 42;
@@ -238,7 +242,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             var actual = Git("show", _shas[run] + ":" + Changed);
             await File.WriteAllTextAsync(changedPath, actual, cancellationToken);
             if (_alias) Emit([core, pack.Open(pack.Emit("R", actual, []))]);
-            string[] keys = ["l1", "l2"];
+            string[] keys = ["l1", "l2", "d1"];
             var execution = await C1514Support.RunProcess(new ProcessStartInfo("dotnet", [entry, ..keys])
                 { WorkingDirectory = output }, cancellationToken);
             execution.ExitCode.ShouldBe(run == 3 ? 3 : 0, $"P.absent-reader run {run}: {execution.Text}");
@@ -257,9 +261,22 @@ internal sealed class ProvenReplayWorld : IDisposable
     }
 
     internal string Input(string name, bool fails, bool carryHasEvidence = true, bool held = false, bool gateRed = false,
-        bool direct = false, bool rename = false, bool historical = false)
+        bool direct = false, bool rename = false, bool historical = false, bool extraDecoy = false)
     {
         var root = _fixture.PathOf("input-" + name);
+        var members = new List<(string Chunk, string Project, string Assembly, string Class, string[] Keys)>
+        {
+            ("left", Left, "L", "L.LeftTests", ["l1", "l2"]),
+            ("right", Right, "R", "R.RightTests", ["r1"]),
+        };
+        if (extraDecoy) members.Add(("decoy", Left, "L", "L.DecoyTests", ["d1"]));
+        var expectedContents = new List<string>
+        {
+            RcChunkReceipt.ContentDigest("antiphon", "native", [new("L", "L.LeftTests", "M", "l1"), new("L", "L.LeftTests", "M", "l2")]),
+            RcChunkReceipt.ContentDigest("antiphon", "native", [new("R", "R.RightTests", "M", "r1")]),
+        };
+        if (extraDecoy)
+            expectedContents.Add(RcChunkReceipt.ContentDigest("antiphon", "native", [new("L", "L.DecoyTests", "M", "d1")]));
         for (var run = 0; run < _shas.Length; run++)
         {
             var (sha, sourceGraph) = Endpoint(run);
@@ -270,16 +287,12 @@ internal sealed class ProvenReplayWorld : IDisposable
             var logs = Path.Combine(directory, "logs");
             var rows = new List<object>();
             var chunks = new List<object>();
-            foreach (var (side, project, assembly, type, keys) in new[]
+            foreach (var (side, project, assembly, type, keys) in members)
             {
-                ("left", Left, "L", "L.LeftTests", new[] { "l1", "l2" }),
-                ("right", Right, "R", "R.RightTests", new[] { "r1" }),
-            })
-            {
-                var members = keys.Select(key => new { assembly, @class = type, method = "M", @case = key }).ToArray();
+                var roster = keys.Select(key => new { assembly, @class = type, method = "M", @case = key }).ToArray();
                 var content = RcChunkReceipt.ContentDigest("antiphon", "native",
                     keys.Select(key => new RcCaseIdentity(assembly, type, "M", key)).ToArray());
-                chunks.Add(new { suite = "antiphon", chunk = side, project, classes = new[] { type }, members,
+                chunks.Add(new { suite = "antiphon", chunk = side, project, classes = new[] { type }, members = roster,
                     consumes = held && run >= 4 && side == "left" ? new[] { Right } : Array.Empty<string>() });
                 var hit = run == 3 && side == "left";
                 if (hit && !carryHasEvidence) continue;
@@ -318,11 +331,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             rosters = Enumerable.Range(0, _shas.Length).Select(run => new
             {
                 run = RunId(run), attempt = RunId(run), sha = Endpoint(run).Sha,
-                contents = new[]
-                {
-                    RcChunkReceipt.ContentDigest("antiphon", "native", [new("L", "L.LeftTests", "M", "l1"), new("L", "L.LeftTests", "M", "l2")]),
-                    RcChunkReceipt.ContentDigest("antiphon", "native", [new("R", "R.RightTests", "M", "r1")]),
-                },
+                contents = expectedContents,
             }),
         });
         Seal(root);
