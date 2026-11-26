@@ -12,7 +12,11 @@
 //   boot-<n>/      a launcher's first-run build of scripts/lib/Antiphon.CliLauncher (see scripts/antiphon)
 // A process running a published build holds its cli-inuse open (shared); pruning opens it exclusively and skips the
 // folder when that fails, so a nightly that holds its build for hours keeps it. On Linux the share modes are .NET's
-// advisory flock (shared and exclusive). ASCII only.
+// advisory flock (shared and exclusive). Unit 59: another product (CliProduct) has the same layout under
+// bin-launcher/<its cache name>/ (the checkpoint tool's antiphon-checkpoints/, whose runs the checkpoints command leases
+// while its child runs: OpenLease); only the CLI's pruning sweeps the old launcher's folders. A 24-hex folder without a
+// manifest (the checkpoint tool's builds before unit 59, named by a source hash) is kept until it is untouched for 7 days.
+// ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -47,13 +51,20 @@ namespace Antiphon.CliLauncher
         private static readonly Regex Published = new Regex("^[0-9a-f]{24}$", RegexOptions.CultureInvariant);
         private static FileStream _lease;
 
-        /// <summary>The cache of a checkout.</summary>
-        public CliCache(string checkout)
+        /// <summary>The CLI's cache of a checkout.</summary>
+        public CliCache(string checkout) : this(checkout, CliProduct.Cli) { }
+
+        /// <summary>A product's cache of a checkout: &lt;checkout&gt;/bin-launcher/&lt;product.CacheName&gt;.</summary>
+        public CliCache(string checkout, CliProduct product)
         {
+            Product = product ?? throw new ArgumentNullException(nameof(product));
             Checkout = Path.GetFullPath(checkout).TrimEnd('\\', '/');
             Launcher = Path.Combine(Checkout, "bin-launcher");
-            Root = Path.Combine(Launcher, "antiphon-scripts");
+            Root = Path.Combine(Launcher, product.CacheName);
         }
+
+        /// <summary>What this cache publishes.</summary>
+        public CliProduct Product { get; }
 
         /// <summary>The checkout.</summary>
         public string Checkout { get; }
@@ -77,7 +88,7 @@ namespace Antiphon.CliLauncher
         public string BuildDirectory => Path.Combine(Root, "build");
 
         /// <summary>The shared build's output folder (the artifacts layout).</summary>
-        public string BuildOutput => Path.Combine(BuildDirectory, "bin", "Antiphon.Scripts", "release");
+        public string BuildOutput => Path.Combine(BuildDirectory, "bin", Product.Assembly, "release");
 
         /// <summary>The manifest of the inputs the shared build was last built from.</summary>
         public string RecordPath => Path.Combine(Root, "build.record");
@@ -130,10 +141,13 @@ namespace Antiphon.CliLauncher
         public static CliManifest Stamp(string folder) => CliManifest.Read(Path.Combine(folder, StampName));
 
         /// <summary>Whether a folder is a complete published build of the identity.</summary>
-        public static bool IsPublished(string folder, string identity)
+        public static bool IsPublished(string folder, string identity) => IsPublished(folder, identity, DllName);
+
+        /// <summary>Whether a folder is a complete published build of the identity, with the product's DLL.</summary>
+        public static bool IsPublished(string folder, string identity, string dllName)
         {
             var stamp = Stamp(folder);
-            return stamp != null && string.Equals(stamp.Identity, identity, StringComparison.Ordinal) && File.Exists(Path.Combine(folder, DllName));
+            return stamp != null && string.Equals(stamp.Identity, identity, StringComparison.Ordinal) && File.Exists(Path.Combine(folder, dllName));
         }
 
         /// <summary>
@@ -145,6 +159,17 @@ namespace Antiphon.CliLauncher
             if (_lease != null || string.IsNullOrEmpty(folder)) return;
             try { _lease = new FileStream(Path.Combine(folder, LeaseName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
+        }
+
+        /// <summary>
+        /// A lease on a published folder for a child this process runs from it (the checkpoints command's tool): shared, held
+        /// until disposed. Null for a folder without a lease file.
+        /// </summary>
+        public static IDisposable OpenLease(string folder)
+        {
+            if (string.IsNullOrEmpty(folder)) return null;
+            try { return new FileStream(Path.Combine(folder, LeaseName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { return null; }
         }
 
         /// <summary>Whether a process holds the folder's lease (an exclusive open fails). A folder without a lease is not in use.</summary>
@@ -164,8 +189,9 @@ namespace Antiphon.CliLauncher
         /// Best effort, under the build lock: keeps the current folder and the newest others up to keep in all (by their
         /// manifest's time) and every folder in use, and removes the rest; then leftover tmp-* and trash-* folders, boot-*
         /// folders untouched for an hour, and the old launcher's folders untouched for 7 days (bin-launcher/run-*, tmp-*,
-        /// trash-*, and the in-place build's bin and obj here). A folder is renamed before it is deleted, so a half-deleted
-        /// one never keeps a published name.
+        /// trash-*, and the in-place build's bin and obj here; the CLI's cache only). A 24-hex folder without a manifest
+        /// (an older build, unleased) goes when untouched for 7 days. A folder is renamed before it is deleted, so a
+        /// half-deleted one never keeps a published name.
         /// </summary>
         public void Prune(string current, int keep, DateTime nowUtc)
         {
@@ -178,7 +204,12 @@ namespace Antiphon.CliLauncher
             var kept = 1;
             foreach (var (folder, time) in published)
             {
-                if (kept < keep && time != DateTime.MinValue)
+                if (time == DateTime.MinValue)
+                {
+                    if (Untouched(folder, nowUtc, LegacyRetention)) Discard(folder);
+                    continue;
+                }
+                if (kept < keep)
                 {
                     kept++;
                     continue;
@@ -191,9 +222,9 @@ namespace Antiphon.CliLauncher
                 var name = Path.GetFileName(folder);
                 if (name.StartsWith("tmp-", StringComparison.Ordinal) || name.StartsWith("trash-", StringComparison.Ordinal)) Discard(folder);
                 else if (name.StartsWith("boot-", StringComparison.Ordinal) && Untouched(folder, nowUtc, BootRetention)) Discard(folder);
-                else if ((name == "bin" || name == "obj") && Untouched(folder, nowUtc, LegacyRetention)) Discard(folder);
+                else if (Product.SweepsLegacyLauncher && (name == "bin" || name == "obj") && Untouched(folder, nowUtc, LegacyRetention)) Discard(folder);
             }
-            if (!Directory.Exists(Launcher)) return;
+            if (!Product.SweepsLegacyLauncher || !Directory.Exists(Launcher)) return;
             foreach (var folder in Directory.GetDirectories(Launcher))
             {
                 var name = Path.GetFileName(folder);

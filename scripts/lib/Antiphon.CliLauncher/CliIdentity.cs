@@ -1,9 +1,9 @@
 // N0 (unit 57): the content identity of antiphon-scripts' build inputs (CliInputs) and the manifest that records it.
 //
 // Identity: SHA-256 (64 lower-case hex) over the format line, the operating system, the build recipe
-// (CliPublisher.Recipe) and, in ordinal name order, each input's name and the SHA-256 of its bytes. A published build's
-// folder is named by its first 24 characters and holds the manifest (cli-identity): the identity and, per input, the hash,
-// size and last write time the hash was taken at.
+// (CliPublisher.Recipe; unit 59: or another product's CliProduct.Recipe) and, in ordinal name order, each input's name
+// and the SHA-256 of its bytes. A published build's folder is named by its first 24 characters and holds the manifest
+// (cli-identity): the identity and, per input, the hash, size and last write time the hash was taken at.
 //
 // Check (Matches): the same format, system and recipe, the same names, and per input the recorded size and time (the fast
 // path); where either differs, the bytes are hashed and compared (the content fallback). A time recorded within RacyWindow
@@ -137,10 +137,15 @@ namespace Antiphon.CliLauncher
         /// The manifest of the inputs as they are now. An input whose size and time match a trusted entry of known keeps that
         /// entry's hash; every other input is hashed. nowUtc is taken before any hashing.
         /// </summary>
-        public static CliManifest Compute(IReadOnlyList<CliInput> inputs, CliManifest known, DateTime nowUtc)
+        public static CliManifest Compute(IReadOnlyList<CliInput> inputs, CliManifest known, DateTime nowUtc) =>
+            Compute(inputs, known, nowUtc, CliPublisher.Recipe);
+
+        /// <summary>Compute for a product's recipe (CliProduct.Recipe).</summary>
+        public static CliManifest Compute(IReadOnlyList<CliInput> inputs, CliManifest known, DateTime nowUtc, string recipe)
         {
             if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            var trusted = known != null && known.Os == Os && known.Recipe == CliPublisher.Recipe ? known.Files : null;
+            if (recipe == null) throw new ArgumentNullException(nameof(recipe));
+            var trusted = known != null && known.Os == Os && known.Recipe == recipe ? known.Files : null;
             var files = new SortedDictionary<string, CliManifestEntry>(StringComparer.Ordinal);
             var limit = (nowUtc - RacyWindow).Ticks;
             foreach (var input in inputs)
@@ -151,17 +156,20 @@ namespace Antiphon.CliLauncher
                 hash ??= HashFile(input.FullPath);
                 files[input.Name] = new CliManifestEntry(hash, input.Size, input.Ticks < limit ? input.Ticks : 0);
             }
-            return new CliManifest { Identity = Of(files), Os = Os, Recipe = CliPublisher.Recipe, Hashed = nowUtc.Ticks, Files = files };
+            return new CliManifest { Identity = Of(files, recipe), Os = Os, Recipe = recipe, Hashed = nowUtc.Ticks, Files = files };
         }
 
         /// <summary>
         /// Whether the inputs are the ones the stamp records: the same format, system and recipe and the same names, each with
         /// the recorded size and time, or else the recorded bytes.
         /// </summary>
-        public static bool Matches(IReadOnlyList<CliInput> inputs, CliManifest stamp)
+        public static bool Matches(IReadOnlyList<CliInput> inputs, CliManifest stamp) => Matches(inputs, stamp, CliPublisher.Recipe);
+
+        /// <summary>Matches for a product's recipe (CliProduct.Recipe).</summary>
+        public static bool Matches(IReadOnlyList<CliInput> inputs, CliManifest stamp, string recipe)
         {
             if (inputs == null) throw new ArgumentNullException(nameof(inputs));
-            if (stamp == null || stamp.Os != Os || stamp.Recipe != CliPublisher.Recipe || stamp.Files.Count != inputs.Count) return false;
+            if (stamp == null || stamp.Os != Os || stamp.Recipe != recipe || stamp.Files.Count != inputs.Count) return false;
             foreach (var input in inputs)
             {
                 if (!stamp.Files.TryGetValue(input.Name, out var entry) || entry.Size != input.Size) return false;
@@ -176,10 +184,13 @@ namespace Antiphon.CliLauncher
         }
 
         /// <summary>The identity of name and hash pairs (ordinal name order).</summary>
-        public static string Of(IReadOnlyDictionary<string, CliManifestEntry> files)
+        public static string Of(IReadOnlyDictionary<string, CliManifestEntry> files) => Of(files, CliPublisher.Recipe);
+
+        /// <summary>Of for a product's recipe (CliProduct.Recipe).</summary>
+        public static string Of(IReadOnlyDictionary<string, CliManifestEntry> files, string recipe)
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            hash.AppendData(Encoding.UTF8.GetBytes(CliManifest.Format + "\nos " + Os + "\nrecipe " + CliPublisher.Recipe + "\n"));
+            hash.AppendData(Encoding.UTF8.GetBytes(CliManifest.Format + "\nos " + Os + "\nrecipe " + recipe + "\n"));
             foreach (var pair in files.OrderBy(p => p.Key, StringComparer.Ordinal))
                 hash.AppendData(Encoding.UTF8.GetBytes(pair.Key + "\n" + pair.Value.Hash + "\n"));
             return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();

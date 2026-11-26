@@ -1,5 +1,6 @@
 // N0 (unit 57): the build inputs of antiphon-scripts as files of a checkout, read from the disk (tracked, dirty and
-// untracked alike; git is not asked). The inputs are:
+// untracked alike; git is not asked). Unit 59: the same rules list another product's inputs from its own entry project
+// (CliProduct; the checkpoint tool's tools/Antiphon.Checkpoints). The inputs are:
 //  - the project graph from scripts/lib/Antiphon.Scripts/Antiphon.Scripts.csproj through every ProjectReference
 //    (Antiphon.Nightly, Antiphon.LiveLane, Antiphon.CliLauncher, src/Antiphon.IO.WriteBehind today): every file under
 //    each project's folder, except what the SDK's default globs leave out there (the top-level bin, obj, bin-* and
@@ -69,12 +70,19 @@ namespace Antiphon.CliLauncher
         private static readonly StringComparison PathComparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
         /// <summary>The inputs, ordered by name (ordinal). CliInputException when the checkout has no CLI project.</summary>
-        public static IReadOnlyList<CliInput> Discover(string checkout)
+        public static IReadOnlyList<CliInput> Discover(string checkout) => Discover(checkout, EntryProject);
+
+        /// <summary>
+        /// The inputs of another entry project (a CliProduct's, relative to the checkout), ordered by name (ordinal), by the
+        /// same rules. CliInputException when the checkout has no such project.
+        /// </summary>
+        public static IReadOnlyList<CliInput> Discover(string checkout, string entryProject)
         {
             if (string.IsNullOrWhiteSpace(checkout)) throw new CliInputException("no checkout was named");
+            if (string.IsNullOrWhiteSpace(entryProject)) throw new CliInputException("no entry project was named");
             var root = Path.GetFullPath(checkout).TrimEnd('\\', '/');
-            var entry = Path.GetFullPath(Path.Combine(root, EntryProject));
-            if (!File.Exists(entry)) throw new CliInputException(root + " has no " + EntryProject);
+            var entry = Path.GetFullPath(Path.Combine(root, entryProject));
+            if (!File.Exists(entry)) throw new CliInputException(root + " has no " + entryProject);
             var walk = new Walk(root);
             var projects = new Queue<string>();
             projects.Enqueue(entry);

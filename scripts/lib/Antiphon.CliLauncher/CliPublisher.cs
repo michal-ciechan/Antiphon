@@ -11,7 +11,8 @@
 // The shared build is incremental, which MSBuild decides by file times. It is used only when the build record shows that
 // every input whose bytes changed since the last build is newer than that build's end, and no build file (anything but a
 // .cs source) was added or removed; otherwise build/ is removed first and the build is clean. So a change whose time is
-// older than the last build (a copy that keeps times) never reaches a published folder stale. ASCII only.
+// older than the last build (a copy that keeps times) never reaches a published folder stale. Unit 59: Ensure publishes
+// another product (CliProduct) the same way, in its own cache, with its own recipe and failure lines. ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -96,11 +97,11 @@ namespace Antiphon.CliLauncher
         });
 
         /// <summary>
-        /// The build recipe: the build arguments, the output it copies and the environment rule, one line. Part of the
-        /// identity, so a build made by an older recipe is never taken for the current one. Kept as text (no hashing on the
-        /// launch check's path).
+        /// The CLI's build recipe (CliProduct.Cli.Recipe): the build arguments, the output it copies and the environment
+        /// rule, one line. Part of the identity, so a build made by an older recipe is never taken for the current one. Kept
+        /// as text (no hashing on the launch check's path).
         /// </summary>
-        public static string Recipe { get; } = "dotnet " + string.Join(" ", BuildTemplate) + "; copy bin/Antiphon.Scripts/release; environment without MSBuild*";
+        public static string Recipe => CliProduct.Cli.Recipe;
 
         /// <summary>The build arguments for a project and artifacts path.</summary>
         public static IReadOnlyList<string> BuildArguments(string project, string artifacts) =>
@@ -111,18 +112,25 @@ namespace Antiphon.CliLauncher
         /// none. Null after one line on options.Error when the checkout has no CLI, the lock was not had in time, the build
         /// failed or could not start, or the inputs kept changing during the build.
         /// </summary>
-        public static string Ensure(string checkout, CliPublishOptions options)
+        public static string Ensure(string checkout, CliPublishOptions options) => Ensure(checkout, options, CliProduct.Cli);
+
+        /// <summary>
+        /// Ensure for a product: its DLL in the published folder of its current inputs, under its own cache, lock and
+        /// recipe; the failure line starts with the product's prefix.
+        /// </summary>
+        public static string Ensure(string checkout, CliPublishOptions options, CliProduct product)
         {
             options ??= new CliPublishOptions();
+            product ??= CliProduct.Cli;
             CliCache cache;
             try
             {
-                cache = new CliCache(checkout);
+                cache = new CliCache(checkout, product);
                 Directory.CreateDirectory(cache.Root);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException)
             {
-                return Fail(options, "cannot create the CLI cache under " + checkout + ": " + e.Message);
+                return Fail(options, product, "cannot create " + product.Title + " cache under " + checkout + ": " + e.Message);
             }
             using var held = Lock(cache, options);
             if (held == null) return null;
@@ -132,11 +140,11 @@ namespace Antiphon.CliLauncher
             }
             catch (CliInputException e)
             {
-                return Fail(options, e.Message);
+                return Fail(options, product, e.Message);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
-                return Fail(options, "cannot publish the CLI in " + cache.Root + ": " + e.Message);
+                return Fail(options, product, "cannot publish " + product.Title + " in " + cache.Root + ": " + e.Message);
             }
         }
 
@@ -196,24 +204,25 @@ namespace Antiphon.CliLauncher
 
         private static string Publish(CliCache cache, CliPublishOptions options)
         {
-            var project = Path.Combine(cache.Checkout, CliInputs.EntryProject.Replace('/', Path.DirectorySeparatorChar));
+            var product = cache.Product;
+            var project = Path.Combine(cache.Checkout, product.Project.Replace('/', Path.DirectorySeparatorChar));
             for (var attempt = 1; attempt <= Math.Max(1, options.Attempts); attempt++)
             {
                 var record = CliManifest.Read(cache.RecordPath);
                 var now = options.UtcNow();
-                var inputs = CliInputs.Discover(cache.Checkout);
-                var before = CliIdentity.Compute(inputs, record, now);
+                var inputs = CliInputs.Discover(cache.Checkout, product.Project);
+                var before = CliIdentity.Compute(inputs, record, now, product.Recipe);
                 var folder = cache.FolderOf(before.Name);
-                if (CliCache.IsPublished(folder, before.Identity))
+                if (CliCache.IsPublished(folder, before.Identity, product.DllName))
                 {
                     // Built before (another process, or these sources earlier): point at it again.
                     CliCache.Touch(folder);
                     return Point(cache, before.Name, options);
                 }
-                if (!IncrementalIsSafe(inputs, before, record, File.Exists(Path.Combine(cache.BuildOutput, CliCache.DllName))))
+                if (!IncrementalIsSafe(inputs, before, record, File.Exists(Path.Combine(cache.BuildOutput, product.DllName))))
                 {
                     CliCache.Discard(cache.BuildDirectory);
-                    if (Directory.Exists(cache.BuildDirectory)) return Fail(options, "cannot remove the old build " + cache.BuildDirectory);
+                    if (Directory.Exists(cache.BuildDirectory)) return Fail(options, product, "cannot remove the old build " + cache.BuildDirectory);
                 }
                 // An interrupted build leaves no record, so the next one is clean.
                 if (File.Exists(cache.RecordPath)) File.Delete(cache.RecordPath);
@@ -228,17 +237,17 @@ namespace Antiphon.CliLauncher
                 }
                 catch (Exception e) when (e is Win32Exception || e is InvalidOperationException)
                 {
-                    return Fail(options, "dotnet did not start to build the CLI: " + e.Message);
+                    return Fail(options, product, "dotnet did not start to build " + product.Title + ": " + e.Message);
                 }
                 var ended = options.UtcNow();
                 before.WithBuildEnd(Math.Max(ended.Ticks, 1)).Write(cache.RecordPath);
                 File.WriteAllText(cache.LogPath, build.Log ?? "", new UTF8Encoding(false));
-                if (build.ExitCode != 0 || !File.Exists(Path.Combine(cache.BuildOutput, CliCache.DllName)))
+                if (build.ExitCode != 0 || !File.Exists(Path.Combine(cache.BuildOutput, product.DllName)))
                 {
                     var first = (build.Log ?? "").Replace("\r\n", "\n").Split('\n').Where(line => Regex.IsMatch(line, @"\berror\b", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)).Take(1).Select(line => line.Trim()).ToArray();
-                    return Fail(options, "the CLI did not build (exit " + build.ExitCode + ", log " + cache.LogPath + ")" + (first.Length > 0 ? ": " + first[0] : ""));
+                    return Fail(options, product, product.Title + " did not build (exit " + build.ExitCode + ", log " + cache.LogPath + ")" + (first.Length > 0 ? ": " + first[0] : ""));
                 }
-                var after = CliIdentity.Compute(CliInputs.Discover(cache.Checkout), before, options.UtcNow());
+                var after = CliIdentity.Compute(CliInputs.Discover(cache.Checkout, product.Project), before, options.UtcNow(), product.Recipe);
                 if (!string.Equals(after.Identity, before.Identity, StringComparison.Ordinal)) continue;
 
                 var temporary = Path.Combine(cache.Root, "tmp-" + Guid.NewGuid().ToString("N"));
@@ -251,7 +260,7 @@ namespace Antiphon.CliLauncher
                     {
                         // An incomplete folder under this name (never published): out of the way first.
                         CliCache.Discard(folder);
-                        if (Directory.Exists(folder)) return Fail(options, "cannot replace the incomplete " + folder);
+                        if (Directory.Exists(folder)) return Fail(options, product, "cannot replace the incomplete " + folder);
                     }
                     Directory.Move(temporary, folder);
                 }
@@ -261,14 +270,14 @@ namespace Antiphon.CliLauncher
                 }
                 return Point(cache, before.Name, options);
             }
-            return Fail(options, "the CLI's inputs changed during each of " + Math.Max(1, options.Attempts) + " builds; run it again");
+            return Fail(options, product, product.Title + "'s inputs changed during each of " + Math.Max(1, options.Attempts) + " builds; run it again");
         }
 
         private static string Point(CliCache cache, string name, CliPublishOptions options)
         {
             cache.WritePointer(name, options.Sleep);
             cache.Prune(name, options.Keep, options.UtcNow());
-            return Path.Combine(cache.FolderOf(name), CliCache.DllName);
+            return Path.Combine(cache.FolderOf(name), cache.Product.DllName);
         }
 
         private static FileStream Lock(CliCache cache, CliPublishOptions options)
@@ -284,14 +293,14 @@ namespace Antiphon.CliLauncher
                 {
                     if (options.UtcNow() >= deadline)
                     {
-                        Fail(options, "the build lock " + cache.LockPath + " was still held after " + Describe(options.LockWait));
+                        Fail(options, cache.Product, "the build lock " + cache.LockPath + " was still held after " + Describe(options.LockWait));
                         return null;
                     }
                     options.Sleep(options.LockPoll);
                 }
                 catch (UnauthorizedAccessException e)
                 {
-                    Fail(options, "cannot open the build lock " + cache.LockPath + ": " + e.Message);
+                    Fail(options, cache.Product, "cannot open the build lock " + cache.LockPath + ": " + e.Message);
                     return null;
                 }
             }
@@ -311,9 +320,9 @@ namespace Antiphon.CliLauncher
                 File.Copy(file, Path.Combine(target, Path.GetRelativePath(source, file)), true);
         }
 
-        private static string Fail(CliPublishOptions options, string message)
+        private static string Fail(CliPublishOptions options, CliProduct product, string message)
         {
-            options.Error.WriteLine("antiphon-cli: " + message.Replace("\r", " ").Replace("\n", " "));
+            options.Error.WriteLine(product.Prefix + ": " + message.Replace("\r", " ").Replace("\n", " "));
             options.Error.Flush();
             return null;
         }

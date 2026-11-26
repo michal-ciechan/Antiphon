@@ -19,6 +19,9 @@
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="PowerShellStandard.Library" Version="5.1.1" IncludeAssets="compile" PrivateAssets="all" />
     <ProjectReference Include="../../../src/Antiphon.IO.WriteBehind/Antiphon.IO.WriteBehind.csproj" />
+    <!-- Unit 59: the checkpoints command (CheckpointTool) publishes the checkpoint tool with the cached launcher's identity,
+         cache and publish. Dependency-free, so the core gains no package. -->
+    <ProjectReference Include="../Antiphon.CliLauncher/Antiphon.CliLauncher.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- CARD-1313: the selector identity (TestSelection.SelectorFiles). The running selector compares its own sources
