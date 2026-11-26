@@ -199,6 +199,20 @@ public sealed class IncrementalSelectionSoundnessTests
         var lostRoster = world.Input("lost-roster", fails: false);
         Overlay(lostRoster, "r3000000/logs/groups-planned.json", doc => doc["chunks"]!.AsArray().RemoveAt(0));
         ReplayProvenSelection(world, lostRoster, world.Output("lost-roster"), true).ShouldBe(2, "P.cohort lost planned member");
+
+        var duplicateContent = world.Input("duplicate-content", fails: false);
+        var authorityPath = Path.Combine(duplicateContent, "state", "qualification-cohort.json");
+        var authority = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(authorityPath))!;
+        var roster = authority["rosters"]!.AsArray().Single(row => row!["run"]!.GetValue<string>() == ProvenReplayWorld.RunId(3));
+        var contents = roster!["contents"]!.AsArray();
+        contents.Count.ShouldBe(2, "P.roster fixture has two planned chunks");
+        contents[0]!.GetValue<string>().ShouldNotBe(contents[1]!.GetValue<string>(), "P.roster fixture identities differ");
+        contents[1] = contents[0]!.DeepClone();
+        File.WriteAllText(authorityPath, authority.ToJsonString());
+        ProvenReplayWorld.Seal(duplicateContent);
+        ReplayProvenSelection(world, duplicateContent, world.Output("duplicate-content"), true,
+                expectedRefusal: "proof-cohort-roster-mismatch:r3000000")
+            .ShouldBe(2, "P.roster duplicate content replaces a required identity at the same count");
     }
 
     [Test, Timeout(25_000)]
@@ -374,7 +388,8 @@ public sealed class IncrementalSelectionSoundnessTests
         ProvenReplayWorld.Seal(input);
     }
 
-    private static int ReplayProvenSelection(ProvenReplayWorld world, string custody, string destination, bool enabled)
+    private static int ReplayProvenSelection(ProvenReplayWorld world, string custody, string destination, bool enabled,
+        string? expectedRefusal = null)
     {
         string[] arguments = ["--input-root", custody, "--output", destination,
             "--as-of", ProvenReplayWorld.AsOf, "--repository-root", world.Repository];
@@ -384,6 +399,8 @@ public sealed class IncrementalSelectionSoundnessTests
         var exit = RcSelectionReplay.Run(enabled ? [..arguments, "--proven-subtraction"] : arguments, stdout, stderr);
         Console.WriteLine($"C2076 replay case={Path.GetFileName(destination)} elapsedMs={clock.ElapsedMilliseconds}");
         if (exit == 2) Console.WriteLine(stderr.ToString());
+        if (expectedRefusal is not null)
+            stderr.ToString().Trim().ShouldBe($"{RcSelectionReplay.Name}: refused ({expectedRefusal})", "P.roster refusal reason");
         return exit;
     }
 
