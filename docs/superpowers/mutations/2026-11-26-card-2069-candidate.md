@@ -1,6 +1,6 @@
 # CARD-2069 P2 integrity positive-control candidates
 
-Code and landing owner `61d71670-581e-4328-ab78-dbb3602ee237`. The [verification appendix](../plans/2026-11-26-card-2069-p2-integrity-test-design.md) defines the paired fixtures and the [mechanical contract](../../mechanical-pc-contract.md) governs binding at the verified landing.
+Code and landing owner `61d71670-581e-4328-ab78-dbb3602ee237`. The [verification appendix](../plans/2026-11-26-card-2069-p2-integrity-test-design.md) and the [round 2 supplement](../../investigations/2026-11-26-card-2069-code.md#round-2-verification-supplement) define the paired fixtures. The [mechanical contract](../../mechanical-pc-contract.md) governs binding at the verified landing.
 
 C selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes`. T selects `/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse`. Each variant has one method per phase with exit codes 0/1/0 and executed counts 1/1/1. Inspect the decisive labels as well as the method verdict. Product paths below are relative to `scripts/lib/Antiphon.Nightly/`.
 
