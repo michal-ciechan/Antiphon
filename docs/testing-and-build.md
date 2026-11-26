@@ -1357,6 +1357,59 @@ Neither the records nor warning lines include raw paths, exception text, sample
 payload, cursor or ledger secrets. Diagnostic state is available without opening
 the spool, so an operator can inspect a startup failure while live sampling runs.
 
+### The CLI entry (cached launcher)
+
+`scripts/antiphon <command>` (sh), `scripts\antiphon.cmd <command>` (cmd) and every `.ps1` launcher (through
+`scripts/lib/antiphon-cli.ps1`) run `antiphon-scripts` (`scripts/lib/Antiphon.Scripts`) from their own checkout. Since
+unit 57 (N0 of the [PowerShell-to-C# plan](superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md)) a warm call starts one
+process, `dotnet exec <published build> <arguments>`, with no msbuild. Arguments, stdin, stdout, stderr and the exit code
+pass through untouched. Exit 9 with one stderr line (`antiphon-cli: ...`) means the CLI could not be built or started.
+
+- **Cache** (`bin-launcher/antiphon-scripts/`, ignored): `current` names the published build the launchers run. Each
+  `<identity>/` folder (24 hex characters) is one complete build, with its manifest `cli-identity` and its lease
+  `cli-inuse`, and is never written again. `build/` is the shared incremental build, which nothing runs from;
+  `build.record`, `build.lock` and `build.log` sit beside it. A process running a published build holds its lease. So a
+  nightly that holds its dll for hours keeps its folder, and the next build publishes beside it.
+- **Identity**: SHA-256 over the build recipe, the OS and every build input's name and bytes. The inputs are read from
+  the disk, tracked, dirty and untracked alike:
+  - the project graph from `Antiphon.Scripts.csproj` (Antiphon.Nightly, Antiphon.LiveLane, Antiphon.CliLauncher and
+    `src/Antiphon.IO.WriteBehind`): every file in each project folder except the top-level `bin`, `obj`, `bin-*` and
+    `workspace` and dot-folders;
+  - the files the project and build files name (Compile links, imports);
+  - `Directory.Build.*`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig` and `.globalconfig` in
+    each project folder and above it. Package versions are in the project files.
+  `CliInputs`, `CliIdentity` (`scripts/lib/Antiphon.CliLauncher`); `CliLauncherTests`.
+- **Protocol**: the launcher sets `ANTIPHON_CLI_CHECK=<checkout>` and runs the build `current` names. Before any command
+  the CLI removes the variable from its own environment, so children never inherit it, and compares the checkout's inputs
+  with its manifest. The size and time of each input are the fast path; a mismatch falls back to the bytes, and a time
+  within 3 s of the hashing is never trusted. When they match, the command runs in that process. When they differ, the
+  CLI publishes the current inputs' build (or finds it) under `build.lock` and runs it as a child with the same arguments,
+  console and directory, then exits with the child's code. No exit code is reserved, so none can collide with a
+  command's own; `build-slot` passes its command's code through. Without the variable nothing is checked: tests, children
+  and a direct `dotnet exec` are not affected.
+- **Build and publish** (`CliPublisher`): one build at a time under `build.lock`. A caller waits up to 15 minutes, then
+  gets one line. The build is `dotnet build ... -c Release --artifacts-path build/` (two nodes, no reused nodes or
+  compiler server, without the caller's `MSBuild*` variables, output to `build.log`, never stdout). Its output is copied
+  to `tmp-<guid>/` with the manifest and lease, then renamed to `<identity>/` in one step. Inputs that change during a
+  build are built again. The shared build is incremental only when every input whose bytes changed is newer than the
+  last build's end and no build file (anything but a `.cs` source) was added or removed. Otherwise `build/` is removed
+  first, so a change that keeps an old time never publishes stale code.
+- **Pruning**: after a publish, the current build and the two newest others stay, plus any build in use (its lease is
+  held). Leftover `tmp-*` and `trash-*` go, `boot-*` folders after an hour, and the old launcher's `run-*` copies and
+  in-place `bin`/`obj` after 7 days.
+- **First run**: with nothing published, the launcher builds the dependency-free `scripts/lib/Antiphon.CliLauncher` into
+  a fresh `boot-<n>/` folder (a few seconds). It runs `Antiphon.CliLauncher publish <checkout>`, then the published
+  build. Concurrent first calls each build their own launcher and then share one CLI build.
+- **Tests**: `ANTIPHON_SCRIPTS_DLL` names a built dll for the `.ps1` launcher, which runs it in place and unchecked.
+  `AntiphonCliLauncherTests` covers the launcher contract, `CliLauncherTests` the identity, protocol, lock, publish and
+  pruning in process.
+
+Measured on the laptop (warm, unchanged tree; median of 10): `scripts\antiphon.cmd --help` 2,190 ms before, 97 ms after;
+`scripts/antiphon --help` (Git Bash) 2,299 ms before, 136 ms after; `pwsh -File scripts/build-slot.ps1` (a usage error)
+2,714 ms before, 458 ms after (pwsh's own start is about 220 ms). The identity check adds about 12-17 ms to a 55 ms
+`dotnet exec`. A call after an edit in the launcher project took 11 s (a 7.5 s incremental build). The first run in a
+checkout took 24 s (launcher plus a full CLI build); a first run whose identity is already published took 4.7 s.
+
 ### Build slots (CARD-0589)
 
 CARD-1506: Windows build/test children use the single policy in
@@ -1708,7 +1761,7 @@ the receipt's `watchdogInstanceId` to equal it. Its notification ledger
 (`NightlyHealthNotifications.cs`) remains only as test-guarded logic: the production
 notification sink is null. Since W2-nightly S05 the evaluator is C#
 (`scripts/lib/Antiphon.Nightly/NightlyHealth*.cs`, `antiphon-scripts nightly-health`) and
-`scripts/nightly-health.ps1` is its 5.1 launcher (warm build into `bin-launcher/`; exit 9
+`scripts/nightly-health.ps1` is its 5.1 launcher (the cached launcher's published build under `bin-launcher/`; exit 9
 when the CLI cannot be built or started, leaving `last-monitor.json` to go stale).
 
 CARD-0544 D-6 readiness (`NightlyHealth.Evaluate`): `ReadyForDeferral` is
