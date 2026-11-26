@@ -98,8 +98,8 @@ public sealed class OperatorStatusTests
             File.WriteAllText(Path.Combine(Live, "dispatch-schedule.json"),
                 """{"runId":"2026-11-26-1100-live","entries":[{"suite":"suite","chunk":"a"},{"suite":"suite","chunk":"b"},{"suite":"suite","chunk":"newDone"},{"suite":"suite","chunk":"newWaiting"}]}""");
             File.WriteAllText(Path.Combine(Live, "active-chunk.json"), """{"chunk":"b"}""");
-            File.WriteAllText(Path.Combine(_state, "last-run.json"), $$"""
-                {"runId":"2026-11-26-1100-live","lane":"rc","profile":"Full","candidateId":"rc-2026-12-06-0123456789ab","expectedSha":"{{Pin}}","phase":"tests","startedAt":"2026-11-26T11:00:00Z"}
+            File.WriteAllText(Path.Combine(_state, "last-run.json"), $$$"""
+                {"runId":"2026-11-26-1100-live","lane":"rc","profile":"Full","candidateId":"rc-2026-12-06-0123456789ab","expectedSha":"{{{Pin}}}","phase":"tests","startedAt":"2026-11-26T11:00:00Z"}
                 """);
             File.WriteAllText(Path.Combine(Path.GetDirectoryName(Heartbeat)!, "supervisor-identity.json"), """{"runId":"2026-11-26-1100-live"}""");
             File.WriteAllText(Heartbeat, """{"observedAtUtc":"2026-11-26T11:59:00Z","idleMinutes":1,"hangSuspected":false}""");
@@ -139,23 +139,23 @@ public sealed class OperatorStatusTests
             Requests.Add(method + " " + path);
             return path switch
             {
-                "/api/agent-tasks/pipeline" => new(200, $$"""
+                "/api/agent-tasks/pipeline" => new(200, $$$"""
                     {"stages":[
-                        {"role":"Code","inFlight":[],"queued":[],"blocked":[{"taskId":"{{Code}}","shortId":"12345678","title":"Fixture code","card":{"identifier":"CARD-2087"}}],"ready":[]},
-                        {"role":"Merge","inFlight":[{"taskId":"{{Merge}}","shortId":"87654321","title":"Fixture merge","status":"Working"}],"queued":[],"blocked":[],"ready":[]}
+                        {"role":"Code","inFlight":[],"queued":[],"blocked":[{"taskId":"{{{Code}}}","shortId":"12345678","title":"Fixture code","card":{"identifier":"CARD-2087"}}],"ready":[]},
+                        {"role":"Merge","inFlight":[{"taskId":"{{{Merge}}}","shortId":"87654321","title":"Fixture merge","status":"Working"}],"queued":[],"blocked":[],"ready":[]}
                     ],"concurrencyScopes":[],"hosts":[{"hostId":"fixture-host","effectiveLimit":3,"inFlight":1,"remaining":2}],
                     "runners":[{"runnerId":"fixture-host"}]}
                     """),
-                "/api/agent-tasks" => new(200, $$"""
-                    {"items":[{"id":"{{Code}}","role":"Code","status":"Blocked","runnerId":"fixture-host","landRequestedAt":"2026-11-26T11:00:00Z"}]}
+                "/api/agent-tasks" => new(200, $$$"""
+                    {"items":[{"id":"{{{Code}}}","role":"Code","status":"Blocked","runnerId":"fixture-host","landRequestedAt":"2026-11-26T11:00:00Z"}]}
                     """),
-                "/api/agent-tasks/" + Code => new(200, $$"""
-                    {"summary":{"id":"{{Code}}","role":"Code","status":"Blocked","runnerId":"fixture-host","title":"Fixture code","cardIdentifier":"CARD-2087"},
+                "/api/agent-tasks/" + Code => new(200, $$$"""
+                    {"summary":{"id":"{{{Code}}}","role":"Code","status":"Blocked","runnerId":"fixture-host","title":"Fixture code","cardIdentifier":"CARD-2087"},
                     "failureReason":"first line\nsecond line","nextStage":"Review","nextHandoff":"review the candidate",
                     "result":"next: invalid","landRequest":{"state":"Queued","queuePosition":1}}
                     """),
-                "/api/agent-tasks/" + Merge => new(200, $$"""
-                    {"summary":{"id":"{{Merge}}","role":"Merge","status":"Working","runnerId":"fixture-host","title":"Fixture merge"}}
+                "/api/agent-tasks/" + Merge => new(200, $$$"""
+                    {"summary":{"id":"{{{Merge}}}","role":"Merge","status":"Working","runnerId":"fixture-host","title":"Fixture merge"}}
                     """),
                 "/api/orchestrator-instructions" => new(200, """{"content":"fixture"}"""),
                 "/api/session-runners/fixture-host/slots" => new(200, """{"occupied":1,"declaredCapacity":3,"slots":[]}"""),

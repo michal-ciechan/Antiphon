@@ -15,7 +15,7 @@ Mutation candidates are unbound and pending for SourceLanding Mutation.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial | Environment |
 |---|---|---|---|---|---|---|---:|---:|---|---|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2087-red/` | red | `/*/*/OperatorStatusTests/Exact_eta_matches_finished_chunks_and_lists_failures_and_unknowns` | V-1 | 1 fails at the ETA assertion before the fix | 1 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2087-redtest/` | red | `/*/*/OperatorStatusTests/Exact_eta_matches_finished_chunks_and_lists_failures_and_unknowns` | V-1 | 1 fails at the ETA assertion before the fix | 1 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2087-final/` | status | `/*/*/(OperatorStatusTests*)\|(StatusSnapshotScriptTests*)\|(RegisteredCallerScriptTests*)/*` | V-1, V-2, V-3, R-1 | all listed pass | 9 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-3 | S2 | CP-2 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | R-2 | all listed pass | 53 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
 | CP-4 | S2 | CP-2 | impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreGoldenTests*)/*` | R-3 | all listed pass | 2 | 2 | true | `ANTIPHON_LINUX_COMPILER_POLICY=0` |
