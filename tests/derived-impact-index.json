@@ -2414,9 +2414,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandingSafetyHarness.cs",
-      "classes": 60,
+      "classes": 61,
       "reason": "cap",
-      "owed": 35,
+      "owed": 36,
       "first": [
         "AgentTaskLandCheckpointMatrixTests",
         "AgentTaskLandConcurrencyTests",
@@ -2430,9 +2430,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MigrationTestDatabase.cs",
-      "classes": 40,
+      "classes": 41,
       "reason": "cap",
-      "owed": 15,
+      "owed": 16,
       "first": [
         "AgentTaskLandNotificationPersistenceTests",
         "AgentTuiPersistenceTests",
