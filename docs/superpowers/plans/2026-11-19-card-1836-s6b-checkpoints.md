@@ -24,7 +24,7 @@ Provisional method 60s, child 45s plus 10s joined cleanup. The nightly core cach
 |---|---|---|---|---|---|---|---:|---:|
 | CP-12 | S6b | `tests/Antiphon.Tests -> bin-c1836-s6b/` | linux-run-evidence | `/*/*/(RcRunEvidenceTests*)\|(RcFullTimingContractTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-12 R-4 | all listed, 0 failed/skipped | 4 | 15 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-s6b-guards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)/*` | policy, categories, layering, spawn census | all listed, 0 failed/skipped | 79 | 15 |
-| CP-91 | S6b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s6b-pty/` | linux-pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 4 |
+| CP-91 | S6b | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s6b-pty/` | linux-pty-census | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 4 |
 | CP-92 | S6b | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s6b-runner/` | linux-runner-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, 0 failed/skipped | 2 | 4 |
 
 ### S6b command contract and remaining native work

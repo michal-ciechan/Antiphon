@@ -53,7 +53,7 @@ separate slice, then rerun the red row. Resolve impacted classes again at HEAD.
 | CP-4 | AD4 | n/a | sort-cost | `pwsh -NoProfile -File scripts/test-rc-boundary.ps1 -Case OrdinalSortAndSingleDigest` | V-1871-4 | one contract, no per-pair comparator, both timings <5s, exit 0 after repair | n/a | 1 |
 | CP-5 | Final | `tests/Antiphon.Tests -> bin-c1871-boundary/` | boundary | `/*/*/RcBoundaryChunkIdTests/*` | V-1871-1..4 R-1871-1 parent V-5..V-8 | every method, 0 failed | 11 | 4 |
 | CP-6 | Final | CP-5 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(DerivedImpactIndexInvariantTests*)/*` | R-1871-2 | each class nonzero, 0 failed | 11 | 12 |
-| CP-7 | Final | `tests/Antiphon.Agents.Pty.Tests -> bin-c1871-pty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | R-1871-2 parent CP-12 | nonzero, 0 failed | 1 | 2 |
+| CP-7 | Final | `tests/Antiphon.Agents.Pty.Tests -> bin-c1871-pty/` | pty-roster | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | R-1871-2 parent CP-12 | nonzero, 0 failed | 1 | 2 |
 | CP-8 | Final | `tests/Antiphon.SessionRunner.Tests -> bin-c1871-runner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | R-1871-2 parent CP-13 | nonzero, 0 failed | 1 | 2 |
 
 ## Performance budget

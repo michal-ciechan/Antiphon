@@ -290,7 +290,7 @@ Run one checkpoint-tool invocation per committed slice/lane group, with the corr
 | CP-16 | S6 | `tests/Antiphon.Tests -> bin-rcspeed-c/` | portable-trial-admission | `/*/*/(RcFullParallelTrialTests*)\|(ProcessSpawnLimitTests*)/*` | C, D diagnostic credit | 6 new + 21 existing expanded results, 0 failed/skipped | 27 | 8 | true |
 | CP-17 | S3 | `CP-8` | portable-heartbeat-harness | `/*/Antiphon.Tests.Scripts/RcFullWatchdogHarnessTests/HeartbeatExistingContract` | B2 existing heartbeat regression | 1 wrapper; exactly 17 internal PASS, 0 FAIL, exit 0 | 1 | 1 | true |
 | CP-18 | S3 | `CP-8` | portable-c1397-harness | `/*/Antiphon.Tests.Scripts/RcFullWatchdogHarnessTests/C1397ExistingContract` | B2 planner/watchdog and census | 1 wrapper; exactly 1 internal PASS C1397, 0 FAIL, harness exit 0 | 1 | 1 | true |
-| CP-19 | S3 | `CP-8` | portable-cost-ceiling-regression | `/*/Antiphon.Tests.Scripts/RcRosterRepairTests/Costs` | B2 planner/policy pair | exact method, 4 internal C1567 assertions, 0 failed/skipped | 1 | 1 | true |
+| CP-19 | S3 | `CP-8` | portable-cost-ceiling-regression | `/*/Antiphon.Tests.Invariants/RcRosterRepairTests/Costs` | B2 planner/policy pair | exact method, 4 internal C1567 assertions, 0 failed/skipped | 1 | 1 | true |
 
 ### Cost
 

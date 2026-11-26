@@ -68,5 +68,5 @@ build root because the stopped run retained its output. No inherited-red claim.
 | CP-93 | S7a | CP-7 | index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | derived guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S7a | CP-7 | envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | adjacent envelope guard | all methods, no failures/skips | 4 | 1 |
 | CP-95 | S7a | CP-7 | admission | `/*/*/RcHistoricalAdmissionTests/*` | affected fixture consumer | all 7 methods, no failures/skips | 7 | 3 |
-| CP-91 | S7a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s7a-pty/` | pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 1 |
+| CP-91 | S7a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s7a-pty/` | pty-census | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 1 |
 | CP-92 | S7a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s7a-runner/` | runner-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 2 |

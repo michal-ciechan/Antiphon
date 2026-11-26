@@ -63,7 +63,7 @@ lease held across the entire checkpoint loop.
 |---|---|---|---|---|---|---|---|---|
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | boundary | `/*/*/RcBoundaryChunkIdTests/(StableIdIgnoresOrder*)\|(MovedClassChangesId*)\|(UnassignedStaysAlone*)\|(TwoBoundariesNeverShare*)\|(CaseKeyChangesIdentity*)\|(CanonicalEncodingKeepsSpecialCharacters*)\|(ShortIdCollisionIsUnassigned*)` | V-5 V-6 V-7 V-8 | all listed, 0 failed | 7 | 4 |
 | CP-11 | S2 | `tests/Antiphon.Tests -> bin-c1836-s2final/` | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(DerivedImpactIndexInvariantTests*)/*` | guard union and impacted classes | each class nonzero, 0 failed | 11 | 6 |
-| CP-12 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s2pty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
+| CP-12 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s2pty/` | pty-roster | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
 | CP-13 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s2runner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | spawn-limit-rosters | nonzero, 0 failed | 1 | 2 |
 
 ## Performance budget

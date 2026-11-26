@@ -26,7 +26,7 @@ Provisional method 60s, child 45s plus 10s joined cleanup, as in the activation 
 | CP-93 | S5c | CP-9 | linux-index | `/*/*/(DerivedImpactIndexTests*)\|(DerivedImpactIndexInvariantTests*)/*` | index guard | all methods, no failures/skips | 27 | 5 |
 | CP-94 | S5c | CP-9 | linux-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | envelope guard | all methods, no failures/skips | 4 | 1 |
 | CP-95 | S5c | CP-9 | linux-adjacent | `/*/*/(RcHistoricalAdmissionTests*)\|(RcReleaseBaselineTests*)\|(RcIncrementalLedgerTests*)\|(RcLedgerDurationTests*)/*` | R-1, adjacent readers | all methods, no failures/skips | 7 | 2 |
-| CP-91 | S5c | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s5c-pty/` | linux-pty-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 1 |
+| CP-91 | S5c | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-s5c-pty/` | linux-pty-census | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 1 |
 | CP-92 | S5c | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-s5c-runner/` | linux-runner-census | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | both methods, no failures/skips | 2 | 2 |
 
 ### S5c command contract and remaining native work

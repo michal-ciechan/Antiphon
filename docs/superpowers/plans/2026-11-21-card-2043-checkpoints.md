@@ -26,5 +26,5 @@ The pending method-scoped controls are in the [unbound candidate](../mutations/2
 | CP-5 | S2 | CP-2 | rolling-preview | `/*/*/RollingVolumeRecycleScriptTests/C1008_Dry_run_preview_binds_a_dry_run_cleanup_receipt` | R-2 | read-only preview, dirty and unpublished guards | 1 | 4 | true |
 | CP-6 | S2 | CP-2 | native-roster | `/*/*/WindowsUnitPlatformAdmissionInvariantTests/C1210_Roster_closure_matches_source_gates` | R-3 | roster closure is green | 1 | 2 | true |
 | CP-7 | S2 | CP-2 | app-spawn-limiter | `/*/*/ProcessSpawnLimitTests/*` | R-3 | application spawn limiter contract is green | 1 | 2 | true |
-| CP-8 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c2043-pty/` | pty-spawn-limiter | `/*/*/ProcessSpawnLimitTests/*` | R-3 | both Pty limiter methods green | 2 | 4 | true |
+| CP-8 | S2 | `tests/Antiphon.Agents.Pty.Tests -> bin-c2043-pty/` | pty-spawn-limiter | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | R-3 | both Pty limiter methods green | 2 | 4 | true |
 | CP-9 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-c2043-runner/` | runner-spawn-limiter | `/*/*/ProcessSpawnLimitTests/*` | R-3 | both runner limiter methods green | 2 | 6 | true |

@@ -44,7 +44,7 @@ build is intentional: regenerate-derived-impact-index.ps1 -NoBuild looks there.
 | CP-3 | S2 | tests/Antiphon.SessionRunner.Tests -> bin-c1860-final-runner/ | restart-compatibility | `/*/*/RunnerRestartScriptCompatibilityTests/*` | V-1,R-1 | >= 20 executed, 0 failed; native Windows skips pending | 20 | 3 |
 | CP-4 | S2 | tests/Antiphon.Tests -> bin-c1860-final-driver/ | driver-and-impact | `/*/*/(DerivedImpactIndexTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexInvariantTests*)/*` | V-2,R-2 | both classes, 0 failed | 2 | 4 |
 | CP-5 | S2 | CP-3 | runner-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | 0 failed | 2 | 1 |
-| CP-6 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1860-final-pty/ | pty-limiter-impact | `/*/*/ProcessSpawnLimitTests/*` | R-2 | 0 failed | 2 | 2 |
+| CP-6 | S2 | tests/Antiphon.Agents.Pty.Tests -> bin-c1860-final-pty/ | pty-limiter-impact | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | R-2 | 0 failed | 2 | 2 |
 
 Use checkpoint tool run --plan with --after S1 or --after S2, --serial,
 --expected-source-sha committed HEAD. Record actual tested SHA, fresh TRX method counts,

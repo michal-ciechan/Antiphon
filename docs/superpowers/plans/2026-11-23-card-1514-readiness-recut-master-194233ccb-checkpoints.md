@@ -28,6 +28,6 @@ Code task 3ad7f31d re-cuts the reviewed readiness chain (Code 74b3af9d tip `a8a6
 | CP-13 | recut3 | CP-1 | impact-retirement-receipt-2 | `/*/*/VolumeRetirementReceiptTests/(Journal_*)\|(Lock_*)\|(Ready_*)\|(Large_*)\|(Late_*)\|(Failed_*)\|(One_*)\|(Control_*)` | R-2 | 0 failed/skipped | 10 | 12 | false |
 | CP-14 | recut3 | CP-1 | impact-retirement-receipt-3 | `/*/*/VolumeRetirementReceiptTests/(Sigkill_*)\|(Resume_*)\|(Missing_*)` | R-2 | 0 failed/skipped | 7 | 5 | false |
 | CP-15 | recut3 | `tests/Antiphon.SessionRunner.Tests -> bin-r3c-runner/` | impact-runner | `/*/*/(Card1619LinuxStopIntentTests*)\|(Card1619RunnerExitTests*)\|(Card1653PeerCheckTests*)\|(Card1653SocketDirTests*)\|(ProcessSpawnLimitTests*)/*` | R-2 | 0 failed/skipped | 58 | 6 | false |
-| CP-16 | recut3 | `tests/Antiphon.Agents.Pty.Tests -> bin-r3c-pty/` | impact-pty | `/*/*/(ProcessSpawnLimitTests*)/*` | R-2 | 0 failed/skipped | 2 | 2 | true |
+| CP-16 | recut3 | `tests/Antiphon.Agents.Pty.Tests -> bin-r3c-pty/` | impact-pty | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | R-2 | 0 failed/skipped | 2 | 2 | true |
 
 Rows with roster-listed skips (CP-2, CP-5, CP-7, CP-8, CP-9) are qualified with `pwsh -NoProfile -File scripts/validate-checkpoint-receipt.ps1 -Evidence <report.json> -ExpectedSourceSha <tip>`; the tool's `validate` verb refuses every skip. `Min` counts executed tests only.

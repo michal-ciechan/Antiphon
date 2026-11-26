@@ -1674,6 +1674,119 @@
         "Antiphon.Tests.TestHelpers.TestClassificationPolicyTests(Antiphon.Tests.TestHelpers.ClassificationProbeSession).1.1.C487_probe_temp_directory_is_removed_when_the_body_throws.1.1.0",
         "Antiphon.Tests.TestHelpers.TestClassificationPolicyTests(Antiphon.Tests.TestHelpers.ClassificationProbeSession).1.1.Missing_slow_class_is_named.1.1.0"
       ]
+    },
+    {
+      "plan": "docs/superpowers/plans/2026-10-08-card-1144-1146-1147-confirmed-park-reply-plan.md",
+      "row": "CP-29",
+      "project": "tests/Antiphon.Tests",
+      "uids": [
+        "Antiphon.Tests.Invariants.BlockedTaskParkProjectionTests.1.1.C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers.1.1.0"
+      ]
+    },
+    {
+      "plan": "docs/superpowers/plans/2026-10-08-card-1144-1146-1147-confirmed-park-reply-plan.md",
+      "row": "CP-30",
+      "project": "tests/Antiphon.Tests",
+      "uids": [
+        "Antiphon.Tests.Invariants.BlockedTaskParkProjectionTests.1.1.C1065_OccupancyTracksProcessesNotBlockedStatus.1.1.0"
+      ]
+    },
+    {
+      "plan": "docs/superpowers/plans/2026-10-08-card-1154-local-park-guidance-plan.md",
+      "row": "CP-17",
+      "project": "tests/Antiphon.Tests",
+      "uids": [
+        "Antiphon.Tests.Invariants.BlockedTaskParkProjectionTests.1.1.C1065_DefaultOffRetainsRecoveryOfAcceptedAnswers.1.1.0"
+      ]
+    },
+    {
+      "plan": "docs/superpowers/plans/2026-10-29-card-1514-rc-full-speedups-plan.md",
+      "row": "CP-19",
+      "project": "tests/Antiphon.Tests",
+      "uids": [
+        "Antiphon.Tests.Invariants.RcRosterRepairTests.1.1.Costs.1.1.0"
+      ]
+    },
+    {
+      "plan": "docs/superpowers/plans/2026-10-29-card-1610-failed-task-live-session-plan.md",
+      "row": "CP-78",
+      "project": "tests/Antiphon.Tests",
+      "uids": [
+        "Antiphon.Tests.Invariants.ProcessSpawnTimeoutPolicyTests.1.1.Spawn_timeouts_do_not_exceed_ten_minutes.1.1.0",
+        "Antiphon.Tests.Invariants.ProcessSpawnTimeoutPolicyTests.1.1.Spawning_classes_carry_a_class_timeout.1.1.0",
+        "Antiphon.Tests.Scripts.C1008PlatformContractTests.1.1.C1050_Audit_rejects_empty_or_incomplete_outcomes.1.1.0",
+        "Antiphon.Tests.Scripts.C1008PlatformContractTests.1.1.C1050_Guard_matches_native_platform.1.1.0",
+        "Antiphon.Tests.Scripts.C1008PlatformContractTests.1.1.C1050_Remote_entries_guard_before_work.1.1.0",
+        "Antiphon.Tests.Scripts.C1008PlatformContractTests.1.1.C1050_Rolling_entries_guard_before_work.1.1.0",
+        "Antiphon.Tests.Scripts.C1008PlatformContractTests.1.1.C1050_Windows_remote_outcomes_are_exact(System.Threading.CancellationToken).1.1.0",
+        "Antiphon.Tests.Scripts.C1008PlatformContractTests.1.1.C1050_Windows_rolling_outcomes_are_exact(System.Threading.CancellationToken).1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Host_cleanup_reports_waited.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Host_recycle_admission_reports_waited.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Host_recycle_post_removal_reports_waited.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Host_recycle_post_removal_reports_waited_main_volumes.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Host_recycle_post_removal_reports_waited_resume.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Host_recycle_post_removal_reports_waited_temp_volumes.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Wrapper_cleanup_reports_waited.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Wrapper_redeploy_reports_waited.1.1.0",
+        "Antiphon.Tests.Scripts.C1364BoundLandWaitProofTests.1.1.C1364_Wrapper_retire_volumes_reports_waited.1.1.0",
+        "Antiphon.Tests.Scripts.DelegateScriptInterruptSwitchTests.1.1.Interrupt_is_a_refine_only_switch.1.1.0",
+        "Antiphon.Tests.Scripts.DelegateScriptInterruptSwitchTests.1.1.Interrupt_output_prints_interruptWritten_and_refinementDelivered_on_separate_lines.1.1.0",
+        "Antiphon.Tests.Scripts.DelegateScriptInterruptSwitchTests.1.1.Interrupt_posts_the_flag_and_a_fresh_request_id.1.1.0",
+        "Antiphon.Tests.Scripts.DelegateScriptRunnerSwitchTests.1.1.Runner_is_a_create_only_parameter.1.1.0",
+        "Antiphon.Tests.Scripts.DelegateScriptRunnerSwitchTests.1.1.Runner_switch_refuses_shared_and_pins.1.1.0",
+        "Antiphon.Tests.Scripts.DelegateScriptRunnerSwitchTests.1.1.Runner_switch_sends_a_worktree_task.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Check_has_no_install_effects.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Check_qualifies_deployment_shell.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Check_rejects_canonical_leaf_symlink.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Explicit_tool_phases_never_deploy.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Final_recycle_guard_remains.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Preflight_is_fresh_for_each_entry.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Preflight_precedes_every_phase.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_admits_host_prerequisites.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_cleans_only_owned_staging.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_publishes_complete_no_clobber.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_refuses_unsafe_destination.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_requalifies_published_jq.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_requires_canonical_source.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_requires_missing_jq.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_serializes_and_rechecks.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Provision_verifies_download_before_use.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Real_transport_emits_no_pipeline_output.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Receipt_persistence_is_required.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Receipt_rejects_canonical_lookup_with_unapproved_target.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Receipt_requires_complete_current_proof.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Transport_is_bounded_and_reaped.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1025_Transport_preserves_secret_custody.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Changed_leaf_cannot_emit_success_proof.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Check_rejects_canonical_hardlink.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Digest_is_bound_to_open_descriptor.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_False_probe_uses_open_descriptor.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Final_link_checks_are_independent.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Final_permission_checks_are_independent.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Identity_comparisons_include_device.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Installed_pin_is_checked_before_execution.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Metadata_syntax_refuses.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Observation_failures_are_invalid.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Open_descriptor_must_match_canonical_leaf.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Pre_execution_link_checks_are_independent.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Proof_is_buffered_until_final_admission.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Provision_removes_only_owned_stage_link.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Receipt_formatter_uses_open_descriptor.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Staged_unlink_failure_refuses.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_True_probe_uses_open_descriptor.1.1.0",
+        "Antiphon.Tests.Scripts.HostJqPrerequisiteScriptTests.1.1.C1058_Version_probe_uses_open_descriptor.1.1.0",
+        "Antiphon.Tests.Scripts.QualificationCheckoutSourceTests.1.1.C885_Cleanup_clears_read_only_objects_before_removing_owned_tree.1.1.0",
+        "Antiphon.Tests.Scripts.QualificationCheckoutSourceTests.1.1.C885_MarkedAutocrlfClone_stays_checkpoint_clean.1.1.0",
+        "Antiphon.Tests.Scripts.QualificationCheckoutSourceTests.1.1.C885_OwnershipMarkers_are_ignored_at_the_checkout_root.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.An_exception_is_a_fixed_warning_without_its_text.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Crlf_checkout_sends_carriage_return_free_remote_commands.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Heredoc_fed_docker_exec_keeps_stdin_open.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Refresh_script_skips_without_a_relay_session_and_reports_mode_only.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Refresh_script_streams_the_token_over_stdin_and_never_prints_it.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Remote_stderr_is_one_bounded_line.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Upload_failure_surfaces_remote_stderr_without_the_token.1.1.0",
+        "Antiphon.Tests.Scripts.RefreshGithubTokenScriptTests.1.1.Verify_failure_surfaces_remote_stderr.1.1.0"
+      ]
     }
   ]
 }

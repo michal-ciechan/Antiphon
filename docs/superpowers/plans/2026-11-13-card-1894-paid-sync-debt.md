@@ -63,7 +63,7 @@ whole-class integration row (three ordinary executions total). No extra repetiti
 | CP-2 | S2-S3 | CP-1 | impacted-retention | /*/*/(C0824DesktopLegacyReleasePolicyTests*)\|(C0824DesktopLegacyReleaseSettingsTests*)\|(C0824DesktopLegacyReleaseSwitchTests*)\|(C0824RefOnlyBoundaryTests*)\|(C0824RefOnlyCleanupTests*)\|(C0824TransportLimiterTests*)\|(C1677RetentionServerTests*)\|(C1677TempSweepServerTests*)\|(C1708ReflogSalvageTests*)/* | V-1,V-2,V-3,R-1 | all listed, 0 failed | 9 | 8 | false |
 | CP-3 | S2-S3 | CP-1 | guards | /*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(DerivedImpactIndexTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestLaneCategoryGuardTests*)\|(DerivedImpactIndexInvariantTests*)/* | R-2 | all listed, 0 failed | 11 | 3 | false |
 | CP-4 | S2-S3 | tests/Antiphon.SessionRunner.Tests -> bin-c1894-runner/ | runner-roster | /*/*/ProcessSpawnLimitTests/* | R-2 | all listed, 0 failed | 1 | 2 | true |
-| CP-5 | S2-S3 | tests/Antiphon.Agents.Pty.Tests -> bin-c1894-pty/ | pty-roster | /*/*/ProcessSpawnLimitTests/* | R-2 | all listed, 0 failed | 1 | 2 | true |
+| CP-5 | S2-S3 | tests/Antiphon.Agents.Pty.Tests -> bin-c1894-pty/ | pty-roster | /*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/* | R-2 | all listed, 0 failed | 1 | 2 | true |
 
 S1's original CP-1 used bin-c1894-red/ at 51d1980d8464327553d2f8f87034720c1d62d659:
 26 executed, 24 passed, 2 failed, 0 skipped; both paid Ready cases failed their

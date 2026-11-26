@@ -22,7 +22,7 @@ The canary launches one CLI and clones from the test-owned Postgres fixture. Che
 | CP-6 | final | n/a | c2046-evidence | `pwsh -NoProfile -File scripts/check-evidence-diff.ps1 -BaseRef 6be80dcccb9a9748f46d7c77f9c418d80e32f8bf -HeadRef HEAD` | R-1 | exit 0 | n/a | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-7 | final | n/a | c2046-pins | `pwsh -NoProfile -Command '$digest = @(& pwsh -NoProfile -File scripts/test-live-lane-run.ps1 -PrintInputDigest)[-1].Trim(); $pin = [regex]::Match((Get-Content -Raw scripts/test-live-lane-run.ps1), ("PinnedInputDigest = " + [char]39 + "([0-9a-f]{64})" + [char]39)).Groups[1].Value; Write-Output "computed=$digest pinned=$pin"; if (!$digest -or $digest -cne $pin) { throw "input digest drift" }'` | R-1 | exit 0 | n/a | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-8 | final | CP-1 | c2046-main-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-2 | 0 failed | 1 | 2 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-9 | final | CP-4 | c2046-pty-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-2 | 0 failed | 1 | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-9 | final | CP-4 | c2046-pty-spawn | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | V-2 | 0 failed | 1 | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-10 | final | `tests/Antiphon.SessionRunner.Tests -> bin-c2046-replay-runner/` | c2046-runner-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-2 | 0 failed | 1 | 3 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-11 | final | CP-4 | c2046-startup | `/*/*/CodexStartupReadinessTests/*` | V-4 | 32 passed, 0 failed | 32 | 1 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 

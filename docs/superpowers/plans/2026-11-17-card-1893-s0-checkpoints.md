@@ -25,4 +25,4 @@ Impacted-classes rows for `29ba0c5002..` the S0 tip are included. No Windows-onl
 | CP-9 | S0 | CP-1 | s0-spawn | `/*/*/ProcessSpawnLimitTests/*` | V-5 | all listed, 0 failed | 30 | 10 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-15 | S0 | CP-1 | s0-envelope | `/*/*/ReleaseImpactEnvelopeTests/*` | V-5 | all listed, 0 failed | 6 | 10 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
 | CP-10 | S0 | tests/Antiphon.SessionRunner.Tests -> bin-c1893s0b-sr/ | s0-session-runner | `/*/*/(CustodyNamespaceBootstrapTests*)\|(HostStatsProbeParseTests*)\|(ProcessSpawnLimitTests*)/*` | V-5 | all listed, 0 failed | 15 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
-| CP-11 | S0 | tests/Antiphon.Agents.Pty.Tests -> bin-c1893s0b-pty/ | s0-pty | `/*/*/ProcessSpawnLimitTests/*` | V-5 | all listed, 0 failed | 2 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |
+| CP-11 | S0 | tests/Antiphon.Agents.Pty.Tests -> bin-c1893s0b-pty/ | s0-pty | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | V-5 | all listed, 0 failed | 2 | 15 | true | ANTIPHON_LINUX_COMPILER_POLICY=0 |

@@ -51,7 +51,7 @@ Checkpoint timings/logs and loadavg live under `.antiphon/c1906/`.
 | CP-6 | all | CP-1 | limiter-main | `/*/*/ProcessSpawnLimitTests/*` | R-2 | main assembly spawn guard | 1 | 1 | true |
 | CP-7 | all | CP-1 | platform-census | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | R-2 | impacted native annotation census | 2 | 1 | true |
 | CP-8 | all | `tests/Antiphon.SessionRunner.Tests -> bin-c1906-runner-b/` | limiter-runner | `/*/*/ProcessSpawnLimitTests/*` | R-2 | runner assembly spawn guard | 2 | 3 | true |
-| CP-9 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-c1906-pty-b/` | limiter-pty | `/*/*/ProcessSpawnLimitTests/*` | R-2 | PTY assembly spawn guard | 2 | 2 | true |
+| CP-9 | all | `tests/Antiphon.Agents.Pty.Tests -> bin-c1906-pty-b/` | limiter-pty | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | R-2 | PTY assembly spawn guard | 2 | 2 | true |
 | CP-10 | all | CP-1 | nightly-policy-admission | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreTests*)/*` | R-2 | policy-input admission and core/fallback witnesses | 5 | 2 | true |
 
 ## Scope and controls

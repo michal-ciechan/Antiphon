@@ -32,7 +32,7 @@ No suffix-collision class matches are allowed; inspect fresh TRX per operand.
 |---|---|---|---|---|---|---|---:|---:|
 | CP-8 | S4a | `tests/Antiphon.Tests -> bin-c1836-portfinal/` | linux-pack | `/*/*/(RcBoundaryPackTests*)\|(RcBoundaryChunkIdTests*)\|(NightlyCoreTests*)\|(LiveLaneRunnerTests*)/*` | V-8 R-2 | 5 packer methods, 11 S2 methods and every adjacent method, zero failed/skipped | 21 | 8 |
 | CP-90 | all | `tests/Antiphon.Tests -> bin-c1836-portguards/` | lane-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(ProcessSpawnLimitTests*)\|(DerivedImpactIndexTests*)\|(ReleaseImpactEnvelopeTests*)\|(DerivedImpactIndexInvariantTests*)/*` | policy, categories, spawn census, index/envelope | each class nonzero, zero failed/skipped | 79 | 6 |
-| CP-91 | S4a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-portpty/` | pty-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
+| CP-91 | S4a | `tests/Antiphon.Agents.Pty.Tests -> bin-c1836-portpty/` | pty-roster | `/*/*/(ProcessSpawnLimitTests*)\|(ProcessSpawnLimitInvariantTests*)/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
 | CP-92 | S4a | `tests/Antiphon.SessionRunner.Tests -> bin-c1836-portrunner/` | runner-roster | `/*/*/ProcessSpawnLimitTests/*` | impacted spawn-limit-rosters | all methods, zero failed/skipped | 1 | 2 |
 
 Red witness run `20261113-043938-d9be` tested committed SHA
