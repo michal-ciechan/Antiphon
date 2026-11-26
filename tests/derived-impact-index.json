@@ -24820,6 +24820,7 @@
     {
       "path": "tests/Antiphon.Tests/Application/ParallelWorlds.cs",
       "classes": [
+        "BlockedTaskParkReleaseTests",
         "CodexCliObservationGapTests",
         "CodexCliObservationTests",
         "DelegateBranchDeliveryTests"
@@ -27661,7 +27662,8 @@
       "path": "tests/Antiphon.Tests/TestHelpers/GitTreeTemplate.cs",
       "classes": [
         "GitTreeTemplateTests",
-        "LandNonCodeSkipTests"
+        "LandNonCodeSkipTests",
+        "TaskParkPublicationTests"
       ]
     },
     {
