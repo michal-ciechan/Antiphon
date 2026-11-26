@@ -15,7 +15,7 @@ namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
 [ParallelLimiter<CheckpointToolSpawnLimit>]
-public sealed partial class CheckpointWarmBuildTests : CheckpointTestBase
+public sealed class CheckpointWarmBuildTests : CheckpointTestBase
 {
     [Test]
     public void intermediate_cache_is_shared_by_matching_builds_and_survives_bin_cleanup()
@@ -685,6 +685,28 @@ public sealed partial class CheckpointWarmBuildTests : CheckpointTestBase
         admitted.ShouldBe(ExitCodes.Green, output.ToString());
         SealFixture.Properties(replay.Rows.ShouldHaveSingleItem()).ShouldBe(properties);
         output.ToString().ShouldContain("buildSource=verified");
+    }
+
+    [Test]
+    public void cache_file_creation_does_not_reopen_its_exclusive_handle()
+    {
+        var root = TempDir();
+        var path = Path.Combine(root, "staged.seal");
+        var io = new ExclusiveOpenIo(path);
+        var context = new CheckpointCleanupContext(io, CheckpointCleanupDefaults.Context.Git);
+        var write = new CheckpointWrite(context);
+
+        var refusal = write.OpenCreate(path, write.Under(root), out var stream);
+        using (stream)
+        {
+            refusal.ShouldBeNull();
+            stream.ShouldNotBeNull();
+            io.ExclusivePathProbes.ShouldBe(0, "Windows denies a second open while the creator holds FileShare.None");
+            write.WasCreated(path).ShouldBeTrue();
+            context.Registry.Identity(path).ShouldNotBeNull();
+        }
+
+        context.Registry.Identity(path).ShouldBe(FilesystemIdentityReader.Read(io, path));
     }
 
     [Test]

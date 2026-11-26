@@ -1,35 +1,16 @@
 using Antiphon.Checkpoints;
 using Antiphon.HostCleanup.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Microsoft.Win32.SafeHandles;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Checkpoints;
 
-public sealed partial class CheckpointWarmBuildTests
+[Category("Unit")]
+[ParallelLimiter<CheckpointToolSpawnLimit>]
+public sealed class CheckpointHeldHandleTests : CheckpointTestBase
 {
-    [Test]
-    public void cache_file_creation_does_not_reopen_its_exclusive_handle()
-    {
-        var root = TempDir();
-        var path = Path.Combine(root, "staged.seal");
-        var io = new ExclusiveOpenIo(path);
-        var context = new CheckpointCleanupContext(io, CheckpointCleanupDefaults.Context.Git);
-        var write = new CheckpointWrite(context);
-
-        var refusal = write.OpenCreate(path, write.Under(root), out var stream);
-        using (stream)
-        {
-            refusal.ShouldBeNull();
-            stream.ShouldNotBeNull();
-            io.ExclusivePathProbes.ShouldBe(0, "Windows denies a second open while the creator holds FileShare.None");
-            write.WasCreated(path).ShouldBeTrue();
-            context.Registry.Identity(path).ShouldNotBeNull();
-        }
-
-        context.Registry.Identity(path).ShouldBe(FilesystemIdentityReader.Read(io, path));
-    }
-
     [Test]
     [Arguments(true)]
     [Arguments(false)]
@@ -93,29 +74,6 @@ public sealed partial class CheckpointWarmBuildTests
         }
     }
 
-    private sealed class ExclusiveOpenIo(string protectedPath) : ForwardingNativeIo, ICheckpointCleanupIo
-    {
-        private Stream? _exclusive;
-        internal int ExclusivePathProbes { get; private set; }
-        CheckpointPlatform ICheckpointCleanupIo.Platform => CheckpointPlatform.Windows;
-
-        public override Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
-        {
-            var opened = CheckpointCleanupDefaults.Context.Io.Open(path, mode, access, share);
-            if (path == protectedPath && share == FileShare.None)
-                _exclusive = opened;
-            return opened;
-        }
-
-        CheckpointStat ICheckpointCleanupIo.CustodyStat(string path)
-        {
-            if (path != protectedPath || _exclusive?.CanWrite != true)
-                return base.CustodyStat(path);
-            ExclusivePathProbes++;
-            return new CheckpointStat("unknown", 0, 0, 0, 0, 0);
-        }
-    }
-
     private sealed class ThrowingHandleIo(string path) : ForwardingNativeIo
     {
         internal IOException Fault { get; } = new("injected handle inspection failure");
@@ -138,5 +96,26 @@ public sealed partial class CheckpointWarmBuildTests
     {
         internal SafeFileHandle NativeHandle => base.SafeFileHandle;
         public override SafeFileHandle SafeFileHandle => throw fault;
+    }
+}
+
+internal sealed class ExclusiveOpenIo(string protectedPath) : ForwardingNativeIo, ICheckpointCleanupIo
+{
+    private Stream? _exclusive;
+    internal int ExclusivePathProbes { get; private set; }
+    CheckpointPlatform ICheckpointCleanupIo.Platform => CheckpointPlatform.Windows;
+    public override Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
+    {
+        var opened = CheckpointCleanupDefaults.Context.Io.Open(path, mode, access, share);
+        if (path == protectedPath && share == FileShare.None)
+            _exclusive = opened;
+        return opened;
+    }
+    CheckpointStat ICheckpointCleanupIo.CustodyStat(string path)
+    {
+        if (path != protectedPath || _exclusive?.CanWrite != true)
+            return base.CustodyStat(path);
+        ExclusivePathProbes++;
+        return new CheckpointStat("unknown", 0, 0, 0, 0, 0);
     }
 }

@@ -26,9 +26,10 @@ retains its independent qualification debt. The task base is
 | V-3 | The previous OpenCreate witness directly asserts creation registration and a bound identity. M2 remains pending for Mutation. |
 | V-4 | The overlap preserves the first row's warm binding, sends the second build cold, refuses the independent contender, drains both rows and reacquires the sealed partition. Collect five watchdog-window samples with phase timestamps. |
 | V-5 | All named impacted classes, the Final guard batch, and the live-lane guard pair have fresh nonzero TRX evidence. The six policy guards and the plan class selection guard are identifiable in the same validated receipt. |
-| R-1 | Query both runner routes. Native Windows confirmation remains pending under the active qualification hold. Run the exact V-1 method (both arguments) and the V-4 overlap at the reviewed SHA once a native slot is available. Budget one minute for each test host invocation, excluding build and slot wait. Preserve native TRX and timed phases. |
+| R-1 | Query both runner routes. Native Windows confirmation remains pending under the active qualification hold. Run `CheckpointHeldHandleTests.gate_and_append_record_identity_without_reopening` (both arguments) and `CheckpointWarmBuildTests.overlapping_build_keeps_first_rows_partition` at the reviewed SHA once a native slot is available. Budget one minute for each test host invocation, excluding build and slot wait. Preserve native TRX and timed phases. |
 | R-2 | Preserve the separate CARD-2054 R4 and native Windows qualification debt, including cross-process contention, temporary close/replacement and reacquisition after publication failure. |
 | R-3 | Run evidence-diff from the full task base and a merge-tree check against fetched master. |
+| R-4 | Check OS witness declarations at the committed SHA. Linux placement skips for the native recovery, anchored delete and custody cases selected by impact remain pending on Windows. |
 
 ## Performance budget
 
@@ -50,9 +51,10 @@ it. The small-sample nearest-rank p95 is 963.9 ms. The Linux watchdog is 2 s.
 The Windows watchdog stays at its existing 5 s pending native calibration.
 Retain these samples separately from final qualification of the repair.
 
-The main test project shares one isolated Debug build across three rows.
+The main test project shares one isolated Debug build across five rows.
 Expect 5 to 8 minutes for the main build, up to 2 minutes each for the affected
-class and guard rows, and up to 1 minute for the live-lane pair. The two
+class and guard rows, and up to 1 minute for the live-lane pair. Allow up to
+3 minutes for each of the two derived impact rows. The two
 process-roster mirror projects each have two methods and a separate Debug
 build, provisionally 1 to 3 minutes each. The checkpoint run is serial across
 rows to keep the Pty and main test executions separate. Capture queue times,
@@ -63,8 +65,10 @@ classes in each project. The nightly and rc lanes own full-assembly execution.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2085-main/` | held-handles | `/*/*/(CheckpointWarmBuildTests*)\|(CheckpointTerminalReceiptTests*)\|(CheckpointExecutorLogTests*)\|(ProcessDriverTests*)\|(CheckpointOwnedOutputTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempScopeTests*)\|(CheckpointTempUsageTests*)\|(HostCleanupCheckpointCustodyTests*)/*` | V-1 to V-5 | Each class present and zero failures | 35 | 8 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2085-main/` | held-handles | `/*/*/(CheckpointWarmBuildTests*)\|(CheckpointHeldHandleTests*)\|(CheckpointTerminalReceiptTests*)\|(CheckpointExecutorLogTests*)\|(ProcessDriverTests*)\|(CheckpointOwnedOutputTests*)\|(CheckpointToolCopyCleanupTests*)\|(CheckpointTempScopeTests*)\|(CheckpointTempUsageTests*)\|(HostCleanupCheckpointCustodyTests*)/*` | V-1 to V-5 | Each class present and zero failures | 35 | 8 |
 | CP-2 | S1 | CP-1 | final-guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)\|(ProcessSpawnLimitTests*)\|(TestTimingOperationLabelTests*)/*` | V-5 | Each class present and zero failures | 60 | 2 |
 | CP-3 | S1 | CP-1 | live-lane-inventory | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | V-5 | Both methods pass | 2 | 1 |
 | CP-4 | S1 | `tests/Antiphon.Agents.Pty.Tests -> bin-c2085-pty/` | pty-roster | `/*/*/(ProcessSpawnLimitTests*)/*` | V-5 | Both methods pass | 2 | 3 |
 | CP-5 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-c2085-runner/` | runner-roster | `/*/*/(ProcessSpawnLimitTests*)/*` | V-5 | Both methods pass | 2 | 3 |
+| CP-6 | S1 | CP-1 | impacted-execution | `/*/*/(CheckpointAdmissionContractTests*)\|(CheckpointBuildBindingPathTests*)\|(CheckpointImportTests*)\|(CheckpointLargeStampTests*)\|(CheckpointOrFilterTests*)\|(CheckpointProcessIdentityTests*)\|(CheckpointSelectedOutputTests*)\|(CheckpointTaskOwnershipTests*)\|(OuterRowBuildStampTests*)\|(PhaseJournalKillDiagnosticTests*)\|(RowRunnerTests*)\|(WaitCommandTests*)/*` | V-5 | Each class present and zero failures | 60 | 3 |
+| CP-7 | S1 | CP-1 | impacted-custody | `/*/*/(AnchoredPathDeleteWitnessTests*)\|(CheckpointRecoveryWindowsTests*)\|(CheckpointWindowsAnchoredDeleteTests*)\|(CheckpointWindowsAnchoredPathDeleteWitnessTests*)\|(EvidenceFolderTests*)\|(HostCleanupCheckpointAuthorityTests*)\|(HostCleanupCheckpointCompatibilityTests*)\|(HostCleanupCheckpointExtractionTests*)\|(OutputCleanupTests*)\|(UnsafeDeleteRecoveryTests*)/*` | V-5 and R-4 | Each class present and zero failures. Windows-only methods are eligible for pinned roster skips on Linux. | 60 | 3 |
