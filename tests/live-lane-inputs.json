@@ -24,21 +24,18 @@
         "server/",
         "tests/Shared/",
         "tests/Antiphon.SessionRunner.Tests/",
-        "tests/Antiphon.PtyHost.Tests/"
+        "tests/Antiphon.PtyHost.Tests/",
+        "tests/Antiphon.Agents.Pty.Tests/"
       ],
       "runtimeRoots": [
-        "scripts/",
-        "tests/live-lane-checkpoints/",
-        ".claude/",
-        "docker/"
+        "tests/live-lane-checkpoints/"
       ],
       "namespaceRoots": [
         "Antiphon.Agents.Pty",
         "Antiphon.PtyHost",
         "Antiphon.SessionRunner",
         "Antiphon.Server",
-        "Antiphon.Tests",
-        "Antiphon.Agents.Pty.Tests"
+        "Antiphon.LiveClaude.Tests"
       ],
       "instructionPatterns": [
         "CLAUDE.md",

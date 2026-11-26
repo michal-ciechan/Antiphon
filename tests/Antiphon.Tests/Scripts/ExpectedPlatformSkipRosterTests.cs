@@ -210,19 +210,21 @@ public sealed class ExpectedPlatformSkipRosterTests
         rows.Check(driftBad.Contains(wrongId), "EPS roster-drift-reports-mismatch", string.Join(",", driftBad));
     }
 
-    // A live-context entry tolerates its skip on any platform; the committed C680 row is labelled live-context.
+    // A live-context entry tolerates its skip on any platform. The committed roster carries live-context rows, and none for
+    // the C680 canary: unit 60 moved it into the live Claude project, which no nightly or rc suite runs.
     private static void LiveContext(NightlyCaseRows rows)
     {
-        const string c680 = "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs";
+        const string c680 = "Antiphon.LiveClaude.Tests.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs";
         var liveRoster = new object[] { Entry("windows", c680, "20 missing-context", "live-context") };
         var liveLinux = Verdict([Row(c680, "NotExecuted", "Skipped: 20 missing-context")], roster: liveRoster, platform: "linux");
         var liveReasons = Joined(liveLinux["reasons"]);
         rows.Check(Flag(liveLinux, "coverageComplete") && Flag(liveLinux, "testsPassed") && !liveReasons.Contains("unexecuted-outcome"),
             "EPS live-context-any-platform", liveReasons);
 
-        var c680Rows = NightlyChunkVerdict.SkipRoster(RosterPath).Where(e => PsValue.Str(PsValue.Prop(e, "test")) == c680).ToArray();
-        var c680Class = c680Rows.Length == 1 ? PsValue.Str(PsValue.Prop(c680Rows[0], "reasonClass")) : "";
-        rows.Check(c680Rows.Length == 1 && c680Class == "live-context", "EPS live-context-labeled", "count=" + c680Rows.Length + " class=" + c680Class);
+        var committed = NightlyChunkVerdict.SkipRoster(RosterPath);
+        var c680Rows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "test")).Contains("ClaudeDialogWatchdogCanaryTests", StringComparison.Ordinal)).ToArray();
+        var liveRows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "reasonClass")) == "live-context").ToArray();
+        rows.Check(c680Rows.Length == 0 && liveRows.Length > 0, "EPS live-context-labeled", "c680=" + c680Rows.Length + " live-context=" + liveRows.Length);
     }
 
     /// <summary>

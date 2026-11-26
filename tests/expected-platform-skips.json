@@ -79,12 +79,6 @@
     },
     {
       "platform": "windows",
-      "test": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
-      "reasonPrefix": "20 missing-context",
-      "reasonClass": "live-context"
-    },
-    {
-      "platform": "windows",
       "test": "Antiphon.Tests.Application.C0824RefOnlySyncTests.Reported_tip_and_mirror_publication_keep_existing_contract",
       "reasonPrefix": "S7 real phone-home recipient fixture requires Linux; Windows handle qualification is separate."
     },

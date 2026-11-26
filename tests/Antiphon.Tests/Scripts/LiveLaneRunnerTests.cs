@@ -539,7 +539,7 @@ public sealed class LiveLaneRunnerTests
     }
 
     /// <summary>A real candidate policy edit: one rc exclusion, with the policy hash recomputed.</summary>
-    private static void AddPolicyExclusion(string root, string className = "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests")
+    private static void AddPolicyExclusion(string root, string className = "Antiphon.LiveClaude.Tests.ClaudeDialogWatchdogCanaryTests")
     {
         var path = Path.Combine(root, LiveLaneInputDigest.PolicyPath);
         var policy = JsonNode.Parse(File.ReadAllText(path))!.AsObject();

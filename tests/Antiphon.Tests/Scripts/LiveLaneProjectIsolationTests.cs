@@ -63,6 +63,32 @@ public sealed class LiveLaneProjectIsolationTests
             .ShouldNotContain(r => r.Contains("Antiphon.LiveLane", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Unit 60: the lane's live tests are one dedicated project, tests/Antiphon.LiveClaude.Tests, which the fingerprint's
+    /// repositoryClosure covers (the contract stays the runner above). Every core row names it; it references only the product
+    /// projects the tests exercise and compiles nothing from scripts/ or tools/, so neither the nightly core nor the CLI
+    /// enters its closure.
+    /// </summary>
+    [Test]
+    public void Live_tests_are_one_project_without_tooling()
+    {
+        const string live = "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj";
+        var manifest = JsonNode.Parse(File.ReadAllText(Path.Combine(Repo, "tests/live-lanes.json")))!;
+        manifest["core"]!.AsArray().Select(row => row!["project"]!.GetValue<string>()).Distinct().ShouldBe(["Antiphon.LiveClaude.Tests"]);
+        var project = XDocument.Load(Path.Combine(Repo, live));
+        Items(project, "ProjectReference").Select(r => r.Replace('\\', '/')).Order(StringComparer.Ordinal).ShouldBe(
+        [
+            "../../server/Antiphon.Server.csproj",
+            "../../src/Antiphon.Agents.Pty/Antiphon.Agents.Pty.csproj",
+            "../../src/Antiphon.Messaging.Client.Testing/Antiphon.Messaging.Client.Testing.csproj",
+            "../../src/Antiphon.SessionRunner.Contracts/Antiphon.SessionRunner.Contracts.csproj",
+            "../../src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj",
+        ]);
+        foreach (var kind in new[] { "Compile", "None", "Content", "EmbeddedResource" })
+            Items(project, kind).Select(r => r.Replace('\\', '/'))
+                .Where(r => r.Contains("/scripts/", StringComparison.Ordinal) || r.Contains("/tools/", StringComparison.Ordinal)).ShouldBeEmpty(kind + " item from tooling");
+    }
+
     [Test]
     public void Contract_files_are_the_project_input_set()
     {

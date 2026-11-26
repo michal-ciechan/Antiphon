@@ -343,6 +343,16 @@
     },
     {
       "paths": [
+        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractHarness.cs"
+      ],
+      "sets": [
+        "provider.claude.fake-native"
+      ],
+      "full": false,
+      "id": "P-TEST-dc354521b2b4"
+    },
+    {
+      "paths": [
         "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs"
       ],
       "sets": [
@@ -525,7 +535,7 @@
     },
     {
       "paths": [
-        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"
+        "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"
       ],
       "sets": [
         "provider.claude.tui-live"
@@ -535,7 +545,7 @@
     },
     {
       "paths": [
-        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs"
+        "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlMenuCanaryTests.cs"
       ],
       "sets": [
         "provider.claude.tui-live"
@@ -565,7 +575,7 @@
     },
     {
       "paths": [
-        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs"
+        "tests/Antiphon.LiveClaude.Tests/ClaudeSubmitContractLiveTests.cs"
       ],
       "sets": [
         "provider.claude.tui-live"
@@ -1761,16 +1771,16 @@
         "tests/Antiphon.Agents.Pty.Tests/ClaudeLocalCommandCanaryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudeOverlayCanaryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudePasteLossCanaryTests.cs",
-        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs",
-        "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudeSignalCanaryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitConfirmCanaryTests.cs",
-        "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudeTrustPromptCanaryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudeTuiModeTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/ClaudeVerifiedDeliveryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/OrchestratorWorkspaceLayoutCanaryTests.cs",
         "tests/Antiphon.Agents.Pty.Tests/PtyPasteMarkerExperiments.cs",
+        "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs",
+        "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlMenuCanaryTests.cs",
+        "tests/Antiphon.LiveClaude.Tests/ClaudeSubmitContractLiveTests.cs",
         "tests/Antiphon.Tests/Agents/ClaudeEffortPromptCanaryTests.cs"
       ],
       "reason": "Reviewed source inventory; discovery must reconcile exact members and classify remainder resources before unattended execution.",
@@ -1842,14 +1852,14 @@
           "source": "tests/Antiphon.Agents.Pty.Tests/ClaudePasteLossCanaryTests.cs"
         },
         {
-          "class": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
-          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"
+          "class": "Antiphon.LiveClaude.Tests.ClaudeRemoteControlAtStartupCanaryTests",
+          "project": "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj",
+          "source": "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlAtStartupCanaryTests.cs"
         },
         {
-          "class": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
-          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeRemoteControlMenuCanaryTests.cs"
+          "class": "Antiphon.LiveClaude.Tests.ClaudeRemoteControlMenuCanaryTests",
+          "project": "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj",
+          "source": "tests/Antiphon.LiveClaude.Tests/ClaudeRemoteControlMenuCanaryTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeSignalCanaryTests",
@@ -1862,9 +1872,9 @@
           "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitConfirmCanaryTests.cs"
         },
         {
-          "class": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests",
-          "project": "tests/Antiphon.Agents.Pty.Tests/Antiphon.Agents.Pty.Tests.csproj",
-          "source": "tests/Antiphon.Agents.Pty.Tests/ClaudeSubmitContractLiveTests.cs"
+          "class": "Antiphon.LiveClaude.Tests.ClaudeSubmitContractLiveTests",
+          "project": "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj",
+          "source": "tests/Antiphon.LiveClaude.Tests/ClaudeSubmitContractLiveTests.cs"
         },
         {
           "class": "Antiphon.Agents.Pty.Tests.ClaudeTrustPromptCanaryTests",
@@ -3574,7 +3584,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "f385cc7c7f0530679cbee20b942ca9ebdf2a2e6e6abed116993ee85d35163491",
+  "catalogHash": "d91aef3a88dc2f6f73bb4dd7c8b06037e9d60e5413d34f5ccdb3721111c2c512",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

@@ -2,12 +2,12 @@
   "format": "antiphon-live-lanes-v1",
   "core": [
     {
-      "project": "Antiphon.Tests",
-      "namespace": "Antiphon.Tests.Agents",
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
       "class": "ClaudeDialogWatchdogCanaryTests",
       "method": "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
       "arguments": [],
-      "uid": "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests.1.1.C680_LiveNudgeRefusesPermissionAndQuestionDialogs.1.1.0",
+      "uid": "Antiphon.LiveClaude.Tests.ClaudeDialogWatchdogCanaryTests.1.1.C680_LiveNudgeRefusesPermissionAndQuestionDialogs.1.1.0",
       "categories": [
         "Integration",
         "LiveClaude"
@@ -15,14 +15,14 @@
       "bound": true
     },
     {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
       "class": "ClaudeSubmitContractLiveTests",
       "method": "Submitting_via_two_writes_completes_a_turn",
       "arguments": [
         "claude"
       ],
-      "uid": "Antiphon.Agents.Pty.Tests.ClaudeSubmitContractLiveTests.1.1.Submitting_via_two_writes_completes_a_turn(System.String).1.1.0",
+      "uid": "Antiphon.LiveClaude.Tests.ClaudeSubmitContractLiveTests.1.1.Submitting_via_two_writes_completes_a_turn(System.String).1.1.0",
       "categories": [
         "OptIn",
         "Headed",
@@ -32,12 +32,12 @@
       "bound": true
     },
     {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
       "class": "ClaudeRemoteControlAtStartupCanaryTests",
       "method": "Control_auto_connects_a_bridge_session_before_the_first_user",
       "arguments": [],
-      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Control_auto_connects_a_bridge_session_before_the_first_user.1.1.0",
+      "uid": "Antiphon.LiveClaude.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Control_auto_connects_a_bridge_session_before_the_first_user.1.1.0",
       "categories": [
         "HeadedCanary",
         "OptIn",
@@ -47,12 +47,12 @@
       "bound": true
     },
     {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
       "class": "ClaudeRemoteControlAtStartupCanaryTests",
       "method": "Settings_file_prevents_auto_connect_and_keeps_startup_records",
       "arguments": [],
-      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Settings_file_prevents_auto_connect_and_keeps_startup_records.1.1.0",
+      "uid": "Antiphon.LiveClaude.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Settings_file_prevents_auto_connect_and_keeps_startup_records.1.1.0",
       "categories": [
         "HeadedCanary",
         "OptIn",
@@ -62,12 +62,12 @@
       "bound": true
     },
     {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
       "class": "ClaudeRemoteControlAtStartupCanaryTests",
       "method": "Remote_control_slash_command_still_arms_after_settings_off",
       "arguments": [],
-      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Remote_control_slash_command_still_arms_after_settings_off.1.1.0",
+      "uid": "Antiphon.LiveClaude.Tests.ClaudeRemoteControlAtStartupCanaryTests.1.1.Remote_control_slash_command_still_arms_after_settings_off.1.1.0",
       "categories": [
         "HeadedCanary",
         "OptIn",
@@ -77,12 +77,12 @@
       "bound": true
     },
     {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
       "class": "ClaudeRemoteControlMenuCanaryTests",
       "method": "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt",
       "arguments": [],
-      "uid": "Antiphon.Agents.Pty.Tests.ClaudeRemoteControlMenuCanaryTests.1.1.C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt.1.1.0",
+      "uid": "Antiphon.LiveClaude.Tests.ClaudeRemoteControlMenuCanaryTests.1.1.C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt.1.1.0",
       "categories": [
         "HeadedCanary",
         "OptIn",
@@ -641,76 +641,6 @@
       "namespace": "Antiphon.Agents.Pty.Tests",
       "class": "ClaudePasteLossCanaryTests",
       "method": "Marked_bodies_into_real_claude_are_diffed_against_its_transcript",
-      "arguments": [],
-      "shapes": [
-        "Explicit",
-        "SkipIfNotEligible"
-      ],
-      "disposition": "policy-excluded",
-      "owner": "CARD-0599",
-      "reason": "headed or real-provider experiment owned by its own canary workflow"
-    },
-    {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
-      "class": "ClaudeRemoteControlAtStartupCanaryTests",
-      "method": "Control_auto_connects_a_bridge_session_before_the_first_user",
-      "arguments": [],
-      "shapes": [
-        "Explicit",
-        "SkipIfNotEligible"
-      ],
-      "disposition": "core",
-      "owner": "CARD-1545",
-      "reason": "live-claude core roster"
-    },
-    {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
-      "class": "ClaudeRemoteControlAtStartupCanaryTests",
-      "method": "Remote_control_slash_command_still_arms_after_settings_off",
-      "arguments": [],
-      "shapes": [
-        "Explicit",
-        "SkipIfNotEligible"
-      ],
-      "disposition": "core",
-      "owner": "CARD-1545",
-      "reason": "live-claude core roster"
-    },
-    {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
-      "class": "ClaudeRemoteControlAtStartupCanaryTests",
-      "method": "Settings_file_prevents_auto_connect_and_keeps_startup_records",
-      "arguments": [],
-      "shapes": [
-        "Explicit",
-        "SkipIfNotEligible"
-      ],
-      "disposition": "core",
-      "owner": "CARD-1545",
-      "reason": "live-claude core roster"
-    },
-    {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
-      "class": "ClaudeRemoteControlMenuCanaryTests",
-      "method": "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt",
-      "arguments": [],
-      "shapes": [
-        "Explicit",
-        "SkipIfNotEligible"
-      ],
-      "disposition": "core",
-      "owner": "CARD-1545",
-      "reason": "live-claude core roster"
-    },
-    {
-      "project": "Antiphon.Agents.Pty.Tests",
-      "namespace": "Antiphon.Agents.Pty.Tests",
-      "class": "ClaudeRemoteControlMenuCanaryTests",
-      "method": "One_Esc_dismisses_the_remote_control_management_menu",
       "arguments": [],
       "shapes": [
         "Explicit",
@@ -1414,6 +1344,89 @@
       "reason": "Only these methods launch real Claude; other methods retain Windows/Node/native prerequisites."
     },
     {
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
+      "class": "ClaudeDialogWatchdogCanaryTests",
+      "method": "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
+      "arguments": [],
+      "shapes": [
+        "ANTIPHON_HEADED_TESTS"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
+      "class": "ClaudeRemoteControlAtStartupCanaryTests",
+      "method": "Control_auto_connects_a_bridge_session_before_the_first_user",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
+      "class": "ClaudeRemoteControlAtStartupCanaryTests",
+      "method": "Remote_control_slash_command_still_arms_after_settings_off",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
+      "class": "ClaudeRemoteControlAtStartupCanaryTests",
+      "method": "Settings_file_prevents_auto_connect_and_keeps_startup_records",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
+      "class": "ClaudeRemoteControlMenuCanaryTests",
+      "method": "C514_Idle_menu_clearance_preserves_bridge_and_converts_prompt",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "core",
+      "owner": "CARD-1545",
+      "reason": "live-claude core roster"
+    },
+    {
+      "project": "Antiphon.LiveClaude.Tests",
+      "namespace": "Antiphon.LiveClaude.Tests",
+      "class": "ClaudeRemoteControlMenuCanaryTests",
+      "method": "One_Esc_dismisses_the_remote_control_management_menu",
+      "arguments": [],
+      "shapes": [
+        "Explicit",
+        "SkipIfNotEligible"
+      ],
+      "disposition": "policy-excluded",
+      "owner": "CARD-0599",
+      "reason": "headed or real-provider experiment owned by its own canary workflow"
+    },
+    {
       "project": "Antiphon.Tests",
       "namespace": "Antiphon.Tests.Agents",
       "class": "Card0168InteractiveProbeTests",
@@ -1455,19 +1468,6 @@
       "disposition": "policy-excluded",
       "owner": "CARD-0599",
       "reason": "opt-in real-provider or interactive workflow; needs a live CLI session"
-    },
-    {
-      "project": "Antiphon.Tests",
-      "namespace": "Antiphon.Tests.Agents",
-      "class": "ClaudeDialogWatchdogCanaryTests",
-      "method": "C680_LiveNudgeRefusesPermissionAndQuestionDialogs",
-      "arguments": [],
-      "shapes": [
-        "ANTIPHON_HEADED_TESTS"
-      ],
-      "disposition": "core",
-      "owner": "CARD-1545",
-      "reason": "live-claude core roster"
     },
     {
       "project": "Antiphon.Tests",

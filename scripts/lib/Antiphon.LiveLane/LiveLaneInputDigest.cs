@@ -84,7 +84,7 @@ namespace Antiphon.LiveLane
         /// The deliberate pin. Never this commit's own blobs: a clean checkout always matches its own commit, so a change
         /// to an input is caught only against this value.
         /// </summary>
-        public const string Pinned = "d14dfa4637872765913a3acd0da10c86c7f590ae38c7f80090d9541fcf2bbc59";
+        public const string Pinned = "f6d19136c2fc1de984052efb8506a370a0d8bf4f2c4b86ea741f3941be7130df";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";
@@ -103,11 +103,13 @@ namespace Antiphon.LiveLane
 
         /// <summary>
         /// The census sentinels: the C680 live nudge canary and an ordinary class must be required; the live adapter
-        /// round trip must be excluded. Membership in the right set, never a name anywhere in the census.
+        /// round trip must be excluded. Membership in the right set, never a name anywhere in the census. Unit 60 moved
+        /// the canary into tests/Antiphon.LiveClaude.Tests, which no rc suite runs; its sentinel keeps the rc policy from
+        /// excluding the class by name, so a reviewer's C680 exclusion still fails the census as well as the pin.
         /// </summary>
         public static readonly IReadOnlyList<LiveLaneSentinel> Sentinels = new[]
         {
-            new LiveLaneSentinel("sentinel-c680", "Antiphon.Tests.Agents.ClaudeDialogWatchdogCanaryTests", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs", "Integration"),
+            new LiveLaneSentinel("sentinel-c680", "Antiphon.LiveClaude.Tests.ClaudeDialogWatchdogCanaryTests", "C680_LiveNudgeRefusesPermissionAndQuestionDialogs", "Integration"),
             new LiveLaneSentinel("sentinel-ordinary", "Antiphon.Tests.Ordinary", "Plain", "Unit"),
             new LiveLaneSentinel("sentinel-excluded", "Antiphon.Tests.Agents.ClaudeAdapterIntegrationTests", "RoundTrip", "Integration")
         };

@@ -139,6 +139,9 @@
     "tests/Antiphon.GitInProcess.Tests/Antiphon.GitInProcess.Tests.csproj": [
       "git-operations"
     ],
+    "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj": [
+      "claude-runner"
+    ],
     "tests/Antiphon.MarkdownPdf.FakeBrowser/Antiphon.MarkdownPdf.FakeBrowser.csproj": [
       "markdown-pdf"
     ],
@@ -209,6 +212,7 @@
     "tests/Antiphon.Checkpoints.FilterHost/Antiphon.Checkpoints.FilterHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
     "tests/Antiphon.Checkpoints.LifecycleHost/Antiphon.Checkpoints.LifecycleHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
     "tests/Antiphon.Checkpoints.RepeatHost/Antiphon.Checkpoints.RepeatHost.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
+    "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj": "The live Claude core lane (CARD-1545): its tests drive a real Claude and run only through the live lane; Antiphon.Tests lists its discovery for the core roster. Not a standalone RC qualification suite.",
     "tests/Antiphon.NativeLinuxPolicy.Probe/Antiphon.NativeLinuxPolicy.Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite.",
     "tests/Antiphon.TestTiming.Probe/Antiphon.TestTiming.Probe.csproj": "Harness-only executable fixture, invoked by its owning test suite; not a standalone RC qualification suite."
   }

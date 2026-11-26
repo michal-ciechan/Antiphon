@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "1c09ba49adfe8c7e34c33f2f3841223577de220173d46288b96b6729234c2a10",
+  "policyHash": "9ffaf6160dc89d34a0f6f05c1fd97f204032987c8bfc6428e42b68bd857f1ffb",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -2106,6 +2106,14 @@
       "project": "tests/Antiphon.IO.WriteBehind.Tests/Antiphon.IO.WriteBehind.Tests.csproj"
     },
     {
+      "reason": "CARD-1545 live Claude core lane (unit 60): the six tests that drive a real Claude, run only by the live lane; no nightly or rc suite runs this assembly. Antiphon.Tests stages it and lists its discovery for the core roster (LiveLaneInventoryTests.ExactCoreRoster).",
+      "consumers": [
+        "tests/Antiphon.Tests/Antiphon.Tests.csproj"
+      ],
+      "role": "child",
+      "project": "tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj"
+    },
+    {
       "reason": "Existing CARD-1514 timing probe is an explicit child host launched by the primary timing lifecycle tests and staged by Antiphon.Tests.",
       "consumers": [
         "tests/Antiphon.Tests/Antiphon.Tests.csproj"
@@ -2147,7 +2155,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "f385cc7c7f0530679cbee20b942ca9ebdf2a2e6e6abed116993ee85d35163491",
+    "hash": "d91aef3a88dc2f6f73bb4dd7c8b06037e9d60e5413d34f5ccdb3721111c2c512",
     "path": "tests/test-selection-policy.json"
   }
 }

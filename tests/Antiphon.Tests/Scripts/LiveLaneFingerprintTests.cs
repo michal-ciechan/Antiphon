@@ -83,12 +83,23 @@ public sealed class LiveLaneFingerprintTests
             }
             w.Cases.Check("real-head", real1.Digest is { Length: 64 } && real1.Digest == real2.Digest && empty.Count == 0
                 && !real1.UnknownReasons.Any(reason => reason.StartsWith("declared-root-empty:", StringComparison.Ordinal)), "empty=" + string.Join(",", empty));
-            // Review f5fcf533 follow-up (a): docker/ and the two sibling test trees are declared roots, so their namespaces and
-            // scripts are hashed; the two fixture strings stay unknown on purpose.
-            var sibling = real1.UnknownReasons.Where(reason => System.Text.RegularExpressions.Regex.IsMatch(reason,
-                @"^(namespace-outside-inputs|undeclared-runtime):(docker/|tests/Antiphon\.SessionRunner\.Tests/|tests/Antiphon\.PtyHost\.Tests/)")).ToList();
-            w.Cases.Check("real-declaration", real1.Status == "unknown" && sibling.Count == 0 && real1.UnknownReasons.Contains("undeclared-runtime:file.ps1")
-                && real1.UnknownReasons.Contains("undeclared-runtime:outside.ps1"), "reasons=" + real1.UnknownReasons.Count + " sibling=" + sibling.Count);
+            // Unit 60: the core lane is the one dedicated project, so the closure holds no scripts/ project (the nightly core and
+            // the CLI stay out of the hash) and nothing under scripts/ is a runtime root. The sibling test trees (SessionRunner,
+            // PtyHost and, since the PTY canaries moved, the PTY tests) are declared roots so their namespaces are hashed. Two
+            // fixture strings outside the inventory read as namespace declarations and stay unknown on purpose: the reasons are
+            // exactly those two, so a new unknown input fails here until the declaration covers it.
+            var tooling = paths.Where(path => path.StartsWith("scripts/lib/Antiphon.Nightly/", StringComparison.Ordinal)
+                || path.StartsWith("scripts/lib/Antiphon.Scripts/", StringComparison.Ordinal)).ToList();
+            var fixtureStrings = new[]
+            {
+                "namespace-outside-inputs:tests/Antiphon.Tests/Scripts/DerivedImpactIndexTests.cs",
+                "namespace-outside-inputs:tools/Antiphon.NativeLinuxMigrationAudit/NativeLinuxWindowsReasonAudit.cs",
+            };
+            w.Cases.Check("real-declaration", real1.Status == "unknown" && real1.UnknownReasons.SequenceEqual(fixtureStrings)
+                && real1.SelectedProjects.SequenceEqual(["tests/Antiphon.LiveClaude.Tests/Antiphon.LiveClaude.Tests.csproj"])
+                && !real1.ClosureProjects.Any(project => project.StartsWith("scripts/", StringComparison.Ordinal)) && tooling.Count == 0,
+                "reasons=" + string.Join(",", real1.UnknownReasons) + " closure=" + string.Join(",", real1.ClosureProjects.Where(p => p.StartsWith("scripts/", StringComparison.Ordinal)))
+                + " tooling=" + string.Join(",", tooling.Take(5)));
         }
         catch (Exception e) when (e is LiveLaneRefusal or InvalidOperationException)
         {
@@ -96,6 +107,61 @@ public sealed class LiveLaneFingerprintTests
             w.Cases.Check("real-declaration", false, e.Message);
         }
     }, "deterministic", "sha-free", "path-free", "absent-vs-empty", "domain", "missing-root", "shadow-only", "mode", "real-head", "real-declaration");
+
+    /// <summary>
+    /// Unit 60 (the owner: "the source files for this digest should all be in an isolated project dedicated to running real
+    /// Claude"): with the core rows in a host test project that references the nightly core and the CLI, an edit to either
+    /// moves the fingerprint; with the core rows in a dedicated project that references only the product, the same edits
+    /// leave it where it was, and an edit to the dedicated project's own tests still moves it.
+    /// </summary>
+    [Test]
+    public void DedicatedProjectKeepsToolingOutOfTheHash() => Run(nameof(DedicatedProjectKeepsToolingOutOfTheHash), w =>
+    {
+        w.Put("scripts/lib/Nightly/Nightly.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        w.Put("scripts/lib/Nightly/N.cs", "namespace Antiphon.Nightly;\n");
+        w.Put("scripts/lib/Cli/Cli.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../Nightly/Nightly.csproj\" /></ItemGroup></Project>");
+        w.Put("scripts/lib/Cli/C.cs", "namespace Antiphon.Scripts;\n");
+        w.Put("tests/Main.Tests/Main.Tests.csproj", MainTestsProject.Replace("</ItemGroup>",
+            "<ProjectReference Include=\"../../scripts/lib/Nightly/Nightly.csproj\" /><ProjectReference Include=\"../../scripts/lib/Cli/Cli.csproj\" /></ItemGroup>"));
+        w.Put("tests/Live.Tests/Live.Tests.csproj", PtyTestsProject.Replace("<Compile Include=\"../Shared/LiveClaude/Shared.cs\" /><Content Include=\"../Shared/Data/*.json\" />", ""));
+        w.Put("tests/Live.Tests/L.cs", "namespace Antiphon.LiveClaude.Tests;\n");
+        w.WriteCatalog("tests/Pty.Tests/Pty.Tests.csproj", "tests/Main.Tests/Main.Tests.csproj", "tests/Live.Tests/Live.Tests.csproj", "tests/Other/Other.csproj");
+        // No runtime root over the tooling in either layout (as the real declaration since unit 60), so only the project graph
+        // decides what the tooling contributes.
+        var hostedDeclaration = Declaration();
+        hostedDeclaration["runtimeRoots"] = new List<object> { "scripts/hooks/" };
+        w.WriteDeclaration(new LiveLaneMap((Lane, hostedDeclaration)));
+        var hosted = w.Commit();
+        // The dedicated layout as the real one: the sibling PTY test tree is a declared root and the namespace roots are the
+        // product's and the live project's.
+        var declaration = Declaration();
+        declaration["runtimeRoots"] = new List<object> { "scripts/hooks/" };
+        ((List<object>)declaration["minimumRoots"]!).Add("tests/Pty.Tests/");
+        declaration["namespaceRoots"] = new List<object> { "Antiphon.Agents.Pty", "Antiphon.PtyHost", "Antiphon.SessionRunner", "Antiphon.Server", "Antiphon.LiveClaude.Tests" };
+        w.WriteDeclaration(new LiveLaneMap((Lane, declaration)));
+        w.WriteCoreRows(("Live.Tests", "PtyLive"), ("Live.Tests", "MainLive"));
+        var dedicated = w.Commit();
+        string Edited(string from)
+        {
+            w.Repo.Checkout(from);
+            w.Put("scripts/lib/Nightly/N.cs", "namespace Antiphon.Nightly;\n// edited\n");
+            w.Put("scripts/lib/Cli/C.cs", "namespace Antiphon.Scripts;\n// edited\n");
+            return w.Commit();
+        }
+        var hostedEdit = Edited(hosted);
+        var dedicatedEdit = Edited(dedicated);
+        var hostedFp = w.Fp(hosted);
+        var dedicatedFp = w.Fp(dedicated);
+        w.Cases.Check("hosted-moves", hostedFp.Status == "complete" && Differs(w.Fp(hostedEdit), hostedFp, "repositoryClosure")
+            && hostedFp.ClosureProjects.Contains("scripts/lib/Nightly/Nightly.csproj"), string.Join(",", hostedFp.UnknownReasons.Concat(hostedFp.ClosureProjects)));
+        w.Cases.Check("dedicated-stable", dedicatedFp.Status == "complete" && Same(w.Fp(dedicatedEdit), dedicatedFp)
+            && dedicatedFp.SelectedProjects.SequenceEqual(["tests/Live.Tests/Live.Tests.csproj"])
+            && !dedicatedFp.ClosureProjects.Any(project => project.StartsWith("scripts/", StringComparison.Ordinal)),
+            string.Join(",", dedicatedFp.UnknownReasons.Concat(dedicatedFp.ClosureProjects)));
+        w.Repo.Checkout(dedicated);
+        w.Put("tests/Live.Tests/L.cs", "namespace Antiphon.LiveClaude.Tests;\n// edited\n");
+        w.Cases.Check("dedicated-own-source", Differs(w.Fp(w.Commit()), dedicatedFp, "testSources"));
+    }, "hosted-moves", "dedicated-stable", "dedicated-own-source");
 
     [Test]
     public void ReferenceClosureInvalidates() => Run(nameof(ReferenceClosureInvalidates), w =>
@@ -401,13 +467,17 @@ public sealed class LiveLaneFingerprintTests
         public void WriteDeclaration(LiveLaneMap lanes, string format = "antiphon-live-lane-inputs-v1", string suffix = "") =>
             Put("tests/live-lane-inputs.json", LiveLaneData.Canonical(new LiveLaneMap(("format", format), ("lanes", lanes))) + suffix);
 
-        public void WriteManifest(string suffix = "")
+        public void WriteManifest(string suffix = "") => WriteCoreRows(suffix, ("Pty.Tests", "PtyLive"), ("Main.Tests", "MainLive"));
+
+        public void WriteCoreRows(params (string Project, string Class)[] rows) => WriteCoreRows("", rows);
+
+        private void WriteCoreRows(string suffix, params (string Project, string Class)[] rows)
         {
             LiveLaneMap Row(string project, string @class) => new(("project", project), ("namespace", "Antiphon." + project), ("class", @class), ("method", "Live"),
                 ("arguments", new List<object>()), ("uid", "Antiphon." + project + "." + @class + ".1.1.Live.1.1.0"),
                 ("categories", new List<object> { "Integration", "LiveClaude" }), ("bound", true));
             Put("tests/live-lanes.json", LiveLaneData.Canonical(new LiveLaneMap(("format", "antiphon-live-lanes-v1"),
-                ("core", new List<object> { Row("Pty.Tests", "PtyLive"), Row("Main.Tests", "MainLive") }), ("gates", new List<object>()), ("additiveContract", new List<object>()))) + suffix);
+                ("core", rows.Select(row => (object)Row(row.Project, row.Class)).ToList()), ("gates", new List<object>()), ("additiveContract", new List<object>()))) + suffix);
         }
 
         public void WriteCatalog(params string[] batches)
@@ -415,6 +485,10 @@ public sealed class LiveLaneFingerprintTests
             var projects = new LiveLaneMap();
             foreach (var path in new[] { "src/Protocol/Protocol.csproj", "src/Agents.Pty/Agents.Pty.csproj", "src/SessionRunner/SessionRunner.csproj", "server/Server.csproj",
                          "tests/Pty.Tests/Pty.Tests.csproj", "tests/Main.Tests/Main.Tests.csproj", "src/Unrelated/Unrelated.csproj", "tests/Other/Other.csproj" })
+                projects[path] = new List<object> { "fixture" };
+            // Projects a case adds (unit 60: a dedicated live project and the tooling a host test project references).
+            foreach (var path in Directory.EnumerateFiles(Repo.Root, "*.csproj", SearchOption.AllDirectories)
+                         .Select(full => Path.GetRelativePath(Repo.Root, full).Replace('\\', '/')).Order(StringComparer.Ordinal).Where(path => !projects.Contains(path)).ToList())
                 projects[path] = new List<object> { "fixture" };
             Put("tests/rc-project-categories.json", LiveLaneData.Canonical(new LiveLaneMap(("schemaVersion", 1), ("projects", projects), ("batches", batches.Cast<object>().ToList()))));
         }
