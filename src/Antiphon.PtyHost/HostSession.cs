@@ -132,19 +132,41 @@ public sealed class HostSession : IAsyncDisposable
             return new ErrorMessage("verification_custody_unsupported_backend", "The launch requires Linux placement v1.");
         var cutoff = LinuxPlacementLaunch.ClampAtReceipt(senderDeadline, atReceipt);
         if (cutoff <= atReceipt)
+        {
+            LogLinuxPlacement(atReceipt, cutoff, null, "expired_at_receipt");
             return new ErrorMessage("verification_custody_start_failed", "The Linux placement deadline expired.");
+        }
         using var admission = CancellationTokenSource.CreateLinkedTokenSource(ct, _custodyLifetime.Token);
         admission.CancelAfter(Stopwatch.GetElapsedTime(atReceipt, cutoff));
+        long? admittedAt = null;
+        var outcome = "faulted";
         try
         {
             await _admission.WaitAsync(admission.Token);
-            try { return await LaunchCoreAsync(launch, cutoff, admission.Token); }
+            try
+            {
+                admittedAt = Stopwatch.GetTimestamp();
+                var reply = await LaunchCoreAsync(launch, cutoff, admission.Token);
+                outcome = reply is ErrorMessage error ? error.Code : "launched";
+                return reply;
+            }
             finally { _admission.Release(); }
         }
         catch (OperationCanceledException) when (admission.IsCancellationRequested)
         {
+            outcome = "canceled";
             return new ErrorMessage("verification_custody_start_failed", "The Linux placement admission expired or was canceled.");
         }
+        finally { LogLinuxPlacement(atReceipt, cutoff, admittedAt, outcome); }
+    }
+
+    private void LogLinuxPlacement(long atReceipt, long cutoff, long? admittedAt, string outcome)
+    {
+        var elapsedMs = Stopwatch.GetElapsedTime(atReceipt).TotalMilliseconds;
+        var budgetMs = Stopwatch.GetElapsedTime(atReceipt, Math.Max(atReceipt, cutoff)).TotalMilliseconds;
+        var admissionMs = admittedAt is { } stamp ? Stopwatch.GetElapsedTime(atReceipt, stamp).TotalMilliseconds : (double?)null;
+        _log.Info(FormattableString.Invariant(
+            $"Linux placement outcome={outcome} elapsed_ms={elapsedMs:F3} receipt_budget_ms={budgetMs:F3} admission_ms={admissionMs:F3}"));
     }
 
     private async Task<PtyHostMessage> LaunchCoreAsync(LaunchMessage launch, long? cutoff, CancellationToken ct)

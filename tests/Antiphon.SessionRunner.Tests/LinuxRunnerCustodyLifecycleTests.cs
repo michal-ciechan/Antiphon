@@ -271,13 +271,26 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             await File.WriteAllTextAsync(script, body);
             var request = new RunnerLaunchRequest(binding.Generation.SessionId, "/bin/sh", [script],
                 new Dictionary<string, string>(), snapshot, 80, 24, VerificationBinding: binding);
-            var started = await runtime.StartAsync(request, CancellationToken.None);
-            return new NativeHold
+            try
             {
-                Runtime = runtime, Binding = binding, Store = runtime.CustodyForTests.Store,
-                ReleasePath = release, DescendantPath = descendant, RootPath = root,
-                RootPid = started.Pid ?? 0, HostPid = started.HostPid ?? 0,
-            };
+                var started = await runtime.StartAsync(request, CancellationToken.None);
+                return new NativeHold
+                {
+                    Runtime = runtime, Binding = binding, Store = runtime.CustodyForTests.Store,
+                    ReleasePath = release, DescendantPath = descendant, RootPath = root,
+                    RootPid = started.Pid ?? 0, HostPid = started.HostPid ?? 0,
+                };
+            }
+            finally
+            {
+                if (Environment.GetEnvironmentVariable("ANTIPHON_TEST_LINUX_PLACEMENT_TIMING") == "1")
+                {
+                    var log = Path.Combine(settings.PtyHostLogDir, $"{request.SessionId:N}.log");
+                    if (File.Exists(log))
+                        foreach (var line in File.ReadLines(log).Where(line => line.Contains("[INF] Linux placement outcome=")))
+                            Console.WriteLine(line);
+                }
+            }
         }
 
         public async Task WaitForDescendantAsync()
