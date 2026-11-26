@@ -29,6 +29,32 @@ Two of the drivers are in-process twins of C# that already exists: `ToolchainFlo
 `TestTimingsTwinTests` compare `lib/toolchain-floor.ps1` and `lib/test-timings.ps1` with `ToolchainFloor.cs` and
 `TestTimings.cs`. Those two libraries are the first to go.
 
+## Normal operations first (owner, 2026-11-26)
+
+The owner set the order on 2026-11-26. The port goes first to what runs in normal operations: debug, code, work,
+interact, review, test, merge, land and cleanup. One-off scripts are fine to keep as PowerShell. That covers finished
+migrations, cutovers, card host proofs and their fixtures. They are neither ported nor deleted. The tests that start
+them are removed, so no test launches a `.ps1`.
+
+These normal-operations paths still go through PowerShell, in priority order:
+
+| # | Path | Today | Target |
+|---|---|---|---|
+| N1 | Agent build and test (code, debug, test, land) | The delegate bundle (`server/Bundles/delegate-basics.md`), `AGENTS.md` and the repository skills tell every agent to run `pwsh -NoProfile -File scripts/build-slot.ps1 ... -- <command>` and `scripts/run-checkpoint.ps1`. `nightly-run` is named the same way. Each call starts pwsh, which loads `lib/antiphon-cli.ps1` and only then starts the CLI. | The instructions name the commands: `scripts/antiphon build-slot` and `scripts/antiphon checkpoints row` (`scripts\antiphon.cmd ...` on Windows). That is one C# call. A launcher stays only while something else still starts it by path: a kept one-off or Windmill. |
+| N2 | Land: checkpoint receipt validation | For every receipt, the server runs `pwsh -File scripts/validate-checkpoint-receipt.ps1` (`CheckpointReceipts:ValidatorScript`, with the 5-minute launcher budget). | The server starts the CLI's validate verb directly, with no pwsh and the same budget rules. |
+| N3 | AppHost, SessionRunner and watchdog Scheduled Tasks | `AutostartInstall` registers tasks that run `scripts/autostart-apphost.ps1`, `autostart-session-runner.ps1`, `watchdog-apphost.ps1` and `apphost-watchdog-state-observer.ps1`. | The tasks run the CLI commands directly. The code lands first. The owner then re-registers the real tasks in a supervised step, and the launchers go after that. |
+| N4 | Production server restart on server2 | `restart-linux-server.ps1` (333 lines of PowerShell logic) and its driver. | A command, ported with the rest of W8. |
+| - | Cleanup (build junk, Claude sessions, Codex test residue), nightly, release cut, GitHub sync, Postgres snapshot | Windmill starts thin launchers by path; their logic is already C#. | Unchanged, because Windmill job definitions are not edited. |
+| - | herdr session launch | SessionRunner types a generated `.launch.ps1` into the pane's interactive PowerShell. | Out of scope: this is the pane's shell protocol, not a repository script. |
+
+Kept as one-offs (PowerShell, not ported): the CARD-1407 cutover (`cutover-postgres-server2.ps1` and its driver) and the
+CARD-1408 cutover monitor (unit 55).
+
+The W10 harnesses are classified when their turn comes. `c590-real.ps1` is not a one-off: it is the live server2 bridge
+that `verify-docker-stack` routes the real deploy, retire and runner-cache cases through. It moves with W8, together
+with the `c1008-host-proof.ps1` it loads. Finished card proofs become one-offs. The launchers and W1 libraries that a
+kept one-off still starts or loads stay with it.
+
 ## What is left (2026-11-24, after unit 43)
 
 Snapshot: `wip/next` after units 1-54 (unit 20 and unit 45 by the owner's decisions), on master `350b6340b`. There are **75 tracked `.ps1` files**, from 356 on 2026-11-22. Master added `scripts/lib/desktop-postgres.ps1` (`ed338d6b2`, a W8 library for `deploy-local`, and for `pg-qps` until unit 46) after unit 20; unit 49 deleted it with `deploy-local.ps1`.

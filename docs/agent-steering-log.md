@@ -481,6 +481,61 @@ current one."
 
 ---
 
+## 2026-11-26 - One-off scripts stay PowerShell: no port, no deletion
+
+**Context:** Slice D of the `.ps1`-to-C# plan reached the CARD-1407 Postgres cutover. The scripts were
+`scripts/cutover-postgres-server2.ps1` (1265 lines), its driver `scripts/test-cutover-postgres-server2.ps1`
+(2314 lines) and the CARD-1408 post-cutover monitor. The cutover ran on 2026-11-18. The desktop database it would
+roll back to was torn down on 2026-11-24 (`docs/investigations/2026-11-24-desktop-postgres-teardown.md`).
+
+**What the agent recommended:** First, port the cutover to a behaviourally identical `cutover-postgres-server2`
+command. That meant every phase, hold and rollback step, with every driver case moved to C# tests. After the owner
+said "Postgres is running in docker in server2 already FWIW", the agent switched to deleting the three scripts with a
+dated restore note.
+
+**Why the agent picked it:** Every earlier unit either ported a script or deleted one that nothing started. A
+finished migration fitted neither, and the plan's goal was fewer `.ps1` files.
+
+**What the owner preferred:** "And one off scripts are fine to keep in ps1". One-off tools stay as PowerShell, neither
+ported nor deleted. The tests that started them go, so no test launches a `.ps1`. The launchers they start by path
+stay with them.
+
+**Principle (the agent's reading):** The port is for code that keeps running: recurring jobs, libraries and the CLI.
+A one-off is reference material. Porting it buys nothing, and deleting it loses the reference.
+
+**Candidate guidance:** "Before scoping a port, read the card's latest status. Classify finished one-offs (migrations,
+cutovers, card host proofs) as kept PowerShell and spend the port on what still runs."
+
+---
+
+## 2026-11-26 - Normal operations first
+
+**Context:** After unit 54 the remaining work was ordered by the plan's groups. W8's deploy paths came next, then the
+W10 server2 harnesses, then the W1 libraries they load. The order followed the plan's slices, not how often a script runs.
+
+**What the agent did:** It kept working through W8 in slice order (snapshot, server2 deploy, cutover). Next it planned
+to triage the W10 card host proofs.
+
+**Why the agent picked it:** The owner had opened W8 slice by slice. The plan's "What is left" table listed W8, then
+W10, then W1, as the groups still holding PowerShell.
+
+**What the owner preferred:** "We should be looking at scripts which are run during normal operations
+(debug,code,work,interact,review,test,merge,land,cleanup,etc)". The next work is whatever still routes normal
+operations through PowerShell:
+- the agent build and test instructions, which run `build-slot.ps1` and `run-checkpoint.ps1` through pwsh;
+- the land path's receipt validator;
+- the AppHost, SessionRunner and watchdog Scheduled Tasks.
+Deploy tooling and one-offs come after these.
+
+**Principle (the agent's reading):** Rank the remaining PowerShell by how often normal work runs it, not by the
+plan's grouping. A thin launcher still costs a pwsh start on every call. The callers that run it constantly should
+call the C# directly.
+
+**Candidate guidance:** "Order the port by run frequency in normal operations; move the callers (bundle, skills,
+server settings, Scheduled Tasks) onto the CLI before porting rarely run tooling."
+
+---
+
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
