@@ -687,6 +687,27 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     }
 
     [Test]
+    public void cache_file_creation_does_not_reopen_its_exclusive_handle()
+    {
+        var root = TempDir();
+        var path = Path.Combine(root, "staged.seal");
+        var io = new ExclusiveCreateIo(path);
+        var context = new CheckpointCleanupContext(io, CheckpointCleanupDefaults.Context.Git);
+        var write = new CheckpointWrite(context);
+
+        var refusal = write.OpenCreate(path, write.Under(root), out var stream);
+        using (stream)
+        {
+            refusal.ShouldBeNull();
+            stream.ShouldNotBeNull();
+            io.ExclusivePathProbes.ShouldBe(0, "Windows denies a second open while the creator holds FileShare.None");
+            context.Registry.Identity(path).ShouldNotBeNull();
+        }
+
+        context.Registry.Identity(path).ShouldBe(FilesystemIdentityReader.Read(io, path));
+    }
+
+    [Test]
     public async Task overlapping_build_keeps_first_rows_partition()
     {
         var fixture = NewSealFixture();
@@ -966,6 +987,29 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             .Where(arg => arg.StartsWith("--property:", StringComparison.Ordinal) &&
                 !arg.StartsWith("--property:OutputPath=", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private sealed class ExclusiveCreateIo(string protectedPath) : ForwardingNativeIo, ICheckpointCleanupIo
+    {
+        private Stream? _exclusive;
+        internal int ExclusivePathProbes { get; private set; }
+        CheckpointPlatform ICheckpointCleanupIo.Platform => CheckpointPlatform.Windows;
+
+        public override Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
+        {
+            var opened = base.Open(path, mode, access, share);
+            if (path == protectedPath && share == FileShare.None)
+                _exclusive = opened;
+            return opened;
+        }
+
+        CheckpointStat ICheckpointCleanupIo.CustodyStat(string path)
+        {
+            if (path != protectedPath || _exclusive?.CanWrite != true)
+                return base.CustodyStat(path);
+            ExclusivePathProbes++;
+            return new CheckpointStat("unknown", 0, 0, 0, 0, 0);
+        }
     }
 
     private sealed class DigestSealIo(CheckpointCleanupContext context) : CheckpointIntermediateCache.SealIo
