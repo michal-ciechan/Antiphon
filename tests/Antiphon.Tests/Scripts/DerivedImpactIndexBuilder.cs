@@ -229,7 +229,22 @@ internal static class DerivedImpactIndexBuilder
     {
         var path = Path.Combine(repoRoot, "tests", "derived-impact-index.json");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllBytes(path, index.Utf8);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        try
+        {
+            using (stream)
+                stream.Write(index.Utf8);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch
+        {
+            // Keep the write or move error if the temporary file also cannot be removed.
+            try { File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            throw;
+        }
     }
 
     // In-memory lane classification. The agreement witness compares this with PlatformTaxonomy.Derive.
