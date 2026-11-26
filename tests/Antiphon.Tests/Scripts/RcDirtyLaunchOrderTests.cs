@@ -119,14 +119,20 @@ public sealed class RcDirtyLaunchOrderTests
         foreach (var name in new[] { "release-cut.ps1", "nightly-run.ps1" })
         {
             var text = RcInputFixtureRepository.ReadSource("scripts/" + name);
-            Note(text.Contains("ValidateSet('Full', 'Shadow', 'ChangeAware')", StringComparison.Ordinal), name + "-modes-unchanged");
+            Note(text.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal),
+                name + "-modes-unchanged");
             Note(!HasDirtyOrderCaller(text), name + "-has-no-dirty-order-caller");
             Note(!text.Contains("Incremental", StringComparison.Ordinal), name + "-has-no-incremental-mode");
         }
-        // Unit 15 of the 2026-11-22 plan: release-cut.ps1 is the launcher of the release cut (ReleaseCut), Full by default.
+        // ReleaseCutTests exercises the in-process qualification seam. The public parser must refuse Incremental.
         var cut = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/ReleaseCut.cs");
-        Note(new ReleaseCutOptions().SelectionMode == "Full" && !HasDirtyOrderCaller(cut), "release-cut-has-no-dirty-order-caller");
-        Note(!cut.Contains("Incremental", StringComparison.Ordinal), "release-cut-has-no-incremental-mode");
+        Note(!HasDirtyOrderCaller(cut), "release-cut-has-no-dirty-order-caller");
+        string[] cutArgs = ["--ref", "rc/2026-11-30"];
+        var parsed = ReleaseCutOptions.Parse(cutArgs, "", _ => null);
+        Note(new ReleaseCutOptions().SelectionMode == "Full" && parsed.SelectionMode == "Full", "release-cut-defaults-to-full");
+        var refusal = Should.Throw<NightlyUsageException>(
+            () => ReleaseCutOptions.Parse([.. cutArgs, "--selection-mode", "Incremental"], "", _ => null));
+        Note(refusal.Message.StartsWith("--selection-mode expects ", StringComparison.Ordinal), "release-cut-refuses-incremental-mode");
         // W2-nightly S17: the nightly tests run is the nightly-tests command (scripts/nightly-tests.ps1 is deleted): its modes
         // are NightlyTestsOptions', Full by default.
         var testsOptions = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/NightlyTestsOptions.cs");
