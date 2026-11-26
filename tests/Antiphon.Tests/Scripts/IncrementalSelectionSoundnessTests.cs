@@ -174,7 +174,8 @@ public sealed class IncrementalSelectionSoundnessTests
     public async Task ProvenSubtractionReplayRejectsInvalidArtifactsAndCohorts(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld();
-        await world.InitializeAsync(cancellationToken);
+        // Cohort custody binds distinct attempts even when every run qualified the same commit.
+        await world.InitializeAsync(cancellationToken, reuseCommit: true);
         var corrupt = world.Input("corrupt", fails: false);
         File.AppendAllText(Path.Combine(corrupt, "type-graphs", world.Sha(3) + ".json"), "\n");
         ReplayProvenSelection(world, corrupt, world.Output("corrupt"), true).ShouldBe(2, "P.invalid artifact");

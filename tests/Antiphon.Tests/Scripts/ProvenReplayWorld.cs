@@ -36,7 +36,7 @@ internal sealed class ProvenReplayWorld : IDisposable
     internal static string RunId(int run) => $"run-{RunKey(run)}-attempt";
 
     internal async Task InitializeAsync(CancellationToken cancellationToken, bool includeGateEndpoints = false,
-        bool includeRenameEndpoint = false)
+        bool includeRenameEndpoint = false, bool reuseCommit = false)
     {
         var clock = Stopwatch.StartNew();
         const string north = "tests/L/A.cs";
@@ -112,7 +112,8 @@ internal sealed class ProvenReplayWorld : IDisposable
             new(Left, "L", [north, leftUse], [], [pack.Core, tunit]),
             new(Right, "R", [Changed, rightUse], [], [pack.Core, tunit]),
         ];
-        for (var run = 0; run < _shas.Length; run++)
+        var endpointCount = reuseCommit ? 1 : _shas.Length;
+        for (var run = 0; run < endpointCount; run++)
         {
             if (run != 0 && run != 3)
                 Put("Directory.Build.props", files["Directory.Build.props"] = $"<Project><!-- run {run} --></Project>\n");
@@ -122,7 +123,16 @@ internal sealed class ProvenReplayWorld : IDisposable
             (_shas[run], _graphs[run]) = CommitEndpoint();
             if (_alias) _historicalGraphs[run] = PreserveHistoricalRule(_graphs[run], north);
         }
-        await ObserveLeftAsync([files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
+        if (reuseCommit)
+        {
+            Array.Fill(_shas, _shas[0]);
+            Array.Fill(_graphs, _graphs[0]);
+            Array.Fill(_historicalGraphs, _historicalGraphs[0]);
+        }
+        else
+        {
+            await ObserveLeftAsync([files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
+        }
         if (includeGateEndpoints)
         {
             Git("checkout", "--detach", _shas[3]);
@@ -277,12 +287,16 @@ internal sealed class ProvenReplayWorld : IDisposable
         };
         if (extraDecoy)
             expectedContents.Add(RcChunkReceipt.ContentDigest("antiphon", "native", [new("L", "L.DecoyTests", "M", "d1")]));
+        var copiedGraphs = new HashSet<string>(StringComparer.Ordinal);
         for (var run = 0; run < _shas.Length; run++)
         {
             var (sha, sourceGraph) = Endpoint(run);
             var graph = Path.Combine(root, "type-graphs", sha + ".json");
-            Directory.CreateDirectory(Path.GetDirectoryName(graph)!);
-            File.Copy(sourceGraph, graph);
+            if (copiedGraphs.Add(sha))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(graph)!);
+                File.Copy(sourceGraph, graph);
+            }
             var directory = Path.Combine(root, "runs", RunKey(run));
             var logs = Path.Combine(directory, "logs");
             var rows = new List<object>();
