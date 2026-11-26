@@ -177,7 +177,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
     {
         KillCalls++;
-        return ReleaseSlotOverride?.Invoke() ?? Task.FromResult(new SessionRunnerSessionDto(
+        return Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
     }
 
@@ -188,7 +188,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Task<SessionRunnerSessionDto> ReleaseSlotAsync(Guid sessionId, string reason, CancellationToken ct)
     {
         SlotReleases.Add((sessionId, reason));
-        return Task.FromResult(new SessionRunnerSessionDto(
+        return ReleaseSlotOverride?.Invoke() ?? Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
     }
 
