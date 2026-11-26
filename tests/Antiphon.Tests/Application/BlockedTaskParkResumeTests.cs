@@ -630,8 +630,7 @@ public sealed class BlockedTaskParkResumeTests
     private static async Task<string> PublishAsync(RunnerSeatReleaseFixture f,
         WorkspaceMode mode = WorkspaceMode.Worktree, bool handle = true)
     {
-        await f.CreateSourceAsync(mode);
-        var tip = await CommitTipAsync(f);
+        var tip = await ParkedSourceAsync(f, mode);
         await f.EditAsync((task, _) => task.ResultFilePath = "report.md");
         using var scope = f.Harness.Provider.CreateScope();
         var task = await f.TaskAsync();
@@ -653,13 +652,11 @@ public sealed class BlockedTaskParkResumeTests
         return tip;
     }
 
-    private static async Task<string> CommitTipAsync(RunnerSeatReleaseFixture f)
+    // The owned source with a delegate's parked tip already committed and published to origin (the fixture's
+    // parked-tip template), instead of four git processes per case; returns that tip.
+    private static async Task<string> ParkedSourceAsync(RunnerSeatReleaseFixture f, WorkspaceMode mode = WorkspaceMode.Worktree)
     {
-        var branch = (await f.TaskAsync()).WorktreeBranch.ShouldNotBeNull();
-        await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "parked-tip.txt"), "parked tip");
-        await f.GitAsync(f.SourcePath, "add", "parked-tip.txt");
-        await f.GitAsync(f.SourcePath, "commit", "-m", "parked tip");
-        await f.GitAsync(f.SourcePath, "push", "--no-follow-tags", "origin", $"HEAD:refs/heads/{branch}");
+        await f.CreateSourceAsync(mode, parkedTip: true);
         return await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
     }
 

@@ -40,8 +40,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         {
             f.Wire.Qualified = Idle(TimeSpan.Zero, null);
             await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-            await f.CreateSourceAsync();
-            var tip = await CommitTipAsync(f);
+            var tip = await ParkedSourceAsync(f);
             var ancientAt = f.Now.AddHours(-30);
             await using (var db = f.Db())
             {
@@ -222,8 +221,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         await using var f = await RunnerSeatReleaseFixture.CreateAsync(AgentTaskStatus.Blocked, parking: true, reclaim: true);
         f.Wire.Qualified = Idle(TimeSpan.Zero, null);
         await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-        await f.CreateSourceAsync();
-        await CommitTipAsync(f);
+        await ParkedSourceAsync(f);
         var ancientAt = f.Now.AddHours(-30);
         await using (var db = f.Db())
         {
@@ -469,8 +467,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         {
             f.Wire.Qualified = Idle(TimeSpan.FromMilliseconds(119_999), null);
             await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-            await f.CreateSourceAsync();
-            await CommitTipAsync(f);
+            await ParkedSourceAsync(f);
             var verifier = new RunnerWorkspaceParkService();
             f.Wire.VerifySource = async command => command is { ParkVersion: 2, Publication: { } receipt }
                 && (await verifier.VerifySessionCheckoutAsync(receipt, receipt.Request.Path, default)).Receipt is not null;
@@ -879,8 +876,7 @@ public sealed partial class BlockedTaskParkReclaimTests
             configureDb: options => options.AddInterceptors(fault));
         f.Wire.Qualified = Idle(TimeSpan.Zero, null);
         await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-        await f.CreateSourceAsync();
-        await CommitTipAsync(f);
+        await ParkedSourceAsync(f);
         await AncientBlockAsync(f, f.TaskId);
         ArmPathVerifier(f);
         var rows = new List<Row> { new(f.TaskId, f.SessionId) };
@@ -1233,8 +1229,7 @@ public sealed partial class BlockedTaskParkReclaimTests
             configureDb: options => options.AddInterceptors(counter));
         f.Wire.Qualified = Idle(TimeSpan.Zero, null);
         await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-        await f.CreateSourceAsync();
-        await CommitTipAsync(f);
+        await ParkedSourceAsync(f);
         await AncientBlockAsync(f, f.TaskId);
         ArmPathVerifier(f);
         var second = await SeedBlockedAsync(f, "second");
@@ -1363,8 +1358,7 @@ public sealed partial class BlockedTaskParkReclaimTests
         {
             f.Wire.Qualified = Idle(TimeSpan.Zero, null);
             await f.EditAsync((task, _) => task.Role = AgentTaskRole.Code);
-            await f.CreateSourceAsync();
-            await CommitTipAsync(f);
+            await ParkedSourceAsync(f);
             var ancientAt = f.Now.AddHours(-30);
             await using (var db = f.Db())
             {
@@ -1575,13 +1569,11 @@ public sealed partial class BlockedTaskParkReclaimTests
         await db.SaveChangesAsync();
     }
 
-    private static async Task<string> CommitTipAsync(RunnerSeatReleaseFixture f)
+    // The owned source with a delegate's parked tip already committed and published to origin (the fixture's
+    // parked-tip template), instead of four git processes per case; returns that tip.
+    private static async Task<string> ParkedSourceAsync(RunnerSeatReleaseFixture f, WorkspaceMode mode = WorkspaceMode.Worktree)
     {
-        var branch = (await f.TaskAsync()).WorktreeBranch.ShouldNotBeNull();
-        await File.WriteAllTextAsync(Path.Combine(f.SourcePath, "parked-tip.txt"), "parked tip");
-        await f.GitAsync(f.SourcePath, "add", "parked-tip.txt");
-        await f.GitAsync(f.SourcePath, "commit", "-m", "parked tip");
-        await f.GitAsync(f.SourcePath, "push", "--no-follow-tags", "origin", $"HEAD:refs/heads/{branch}");
+        await f.CreateSourceAsync(mode, parkedTip: true);
         return await f.GitAsync(f.SourcePath, "rev-parse", "HEAD");
     }
 

@@ -143,6 +143,7 @@ internal sealed partial class RunnerSeatReleaseFixture
     private async Task<string> SourceTreeAsync(string root, Guid taskId, bool remote, bool prePublished = false,
         bool parkedTip = false)
     {
+        if (remote && parkedTip) throw new NotSupportedException("a parked tip is a local source only");
         var token = taskId.ToString("N")[..8];
         if (GitTreeTemplate.Enabled)
         {
@@ -186,7 +187,7 @@ internal sealed partial class RunnerSeatReleaseFixture
         // Windows' system core.autocrlf=true, the user's ~/.config/git/ignore) while libgit2 here is isolated from
         // it and this fixture's own git reads none of it. Pinned locally, every reader sees the same status config,
         // and the runner's clean-status reads are answered in process as they are in production. Worktrees share it.
-        await PinStatusConfigAsync(root, repository);
+        await TaskParkPublicationTests.ParkGit.PinStatusConfigAsync(root, repository, GitAsync);
         await File.WriteAllTextAsync(Path.Combine(repository, "source.txt"), "retained source");
         await GitAsync(repository, "add", "source.txt");
         await GitAsync(repository, "commit", "-m", "retained baseline");
@@ -200,8 +201,7 @@ internal sealed partial class RunnerSeatReleaseFixture
         if (parkedTip)
         {
             // A delegate's parked tip, committed on the owned branch and already published to origin, for cases about
-            // the park's delivery, reply and resume rather than its push (that push is TaskParkPublicationTests').
-            if (remote) throw new NotSupportedException("a parked tip is a local source only");
+            // the park's delivery, reply, resume and reclaim rather than its push (that push is TaskParkPublicationTests').
             var task = Path.Combine(root, "task");
             await File.WriteAllTextAsync(Path.Combine(task, "parked-tip.txt"), "parked tip");
             await GitAsync(task, "add", "parked-tip.txt");
@@ -215,19 +215,10 @@ internal sealed partial class RunnerSeatReleaseFixture
             await GitAsync(runnerRepo, "config", "user.name", "park test");
             await GitAsync(runnerRepo, "config", "user.email", "park@example.invalid");
             await GitAsync(runnerRepo, "config", "commit.gpgsign", "false");
-            await PinStatusConfigAsync(root, runnerRepo);
+            await TaskParkPublicationTests.ParkGit.PinStatusConfigAsync(root, runnerRepo, GitAsync);
             await GitAsync(runnerRepo, "worktree", "add", "-b", branch, Path.Combine(root, "runner", "worktrees", mirror), sha);
         }
         return sha;
-    }
-
-    private async Task PinStatusConfigAsync(string root, string repository)
-    {
-        var empty = Path.Combine(root, "status-config-empty").Replace('\\', '/');
-        if (!File.Exists(empty)) await File.WriteAllTextAsync(empty, "");
-        await GitAsync(repository, "config", "core.autocrlf", "false");
-        await GitAsync(repository, "config", "core.excludesFile", empty);
-        await GitAsync(repository, "config", "core.attributesFile", empty);
     }
 
     public async Task<string> GitAsync(string path, params string[] arguments)
