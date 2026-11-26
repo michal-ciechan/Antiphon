@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 368,
+      "classes": 369,
       "reason": "allowlist"
     },
     {
@@ -183,9 +183,9 @@
     },
     {
       "path": "docs/agent-card-lifecycle.md",
-      "classes": 180,
+      "classes": 181,
       "reason": "cap",
-      "owed": 155,
+      "owed": 156,
       "first": [
         "AgentTaskMidTurnRefineTests",
         "AgentTaskPoolTests",
@@ -786,9 +786,9 @@
     },
     {
       "path": "server/Application/Services/AgentTaskService.cs",
-      "classes": 209,
+      "classes": 210,
       "reason": "cap",
-      "owed": 184,
+      "owed": 185,
       "first": [
         "DefaultRunnerRerouteTests",
         "HeldStandingAgentChainTests",
@@ -2444,14 +2444,14 @@
       "reason": "cap",
       "owed": 17,
       "first": [
+        "AgentTaskLandHeldNotificationTests",
         "AgentTaskLandNotificationPersistenceTests",
         "AgentTuiPersistenceTests",
         "C0824RefOnlySnapshotMigrationTests",
         "C1514HostLoadMigrationTests",
         "Card1619ExitPersistenceTests",
         "Card1773TranscriptPromptStampMigrationTests",
-        "CardFilePrivacyMigrationTests",
-        "CardVerificationPolicyTests"
+        "CardFilePrivacyMigrationTests"
       ]
     },
     {
@@ -24083,6 +24083,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Application/CapacityRecoveryCompatibilityTests.cs",
+      "classes": [
+        "HistoricalMigrationSeedCoverageTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Application/CapacityRecoveryTaskTests.cs",
       "classes": [
         "CapacityAdmissionLifecycleTests",
@@ -24954,6 +24960,36 @@
       "path": "tests/Antiphon.Tests/Application/PipelineHandoffPilotTests.cs",
       "classes": [
         "PipelineSpeedIntegrationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.Admission.cs",
+      "classes": [
+        "HistoricalMigrationSeedCoverageTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.Correction.cs",
+      "classes": [
+        "HistoricalMigrationSeedCoverageTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.Http.cs",
+      "classes": [
+        "HistoricalMigrationSeedCoverageTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.Wiring.cs",
+      "classes": [
+        "HistoricalMigrationSeedCoverageTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/PipelineSpeedIntegrationTests.cs",
+      "classes": [
+        "HistoricalMigrationSeedCoverageTests"
       ]
     },
     {
@@ -28124,7 +28160,6 @@
       "path": "tests/Antiphon.Tests/TestHelpers/MigrationTestDatabase.cs",
       "classes": [
         "AgentTaskInternalDecisionMigrationTests",
-        "AgentTaskLandHeldNotificationTests",
         "AgentTaskWorktreeBaseMigrationTests",
         "C0824RefOnlyIdentityTests",
         "CallerWakeTests",
@@ -28136,6 +28171,7 @@
         "ChannelOutboundMigrationTests",
         "DispatchBaseNotificationTests",
         "DispatchConcurrencyMigrationTests",
+        "HistoricalMigrationSeedCoverageTests",
         "HostCleanupOrchestrationTests",
         "LandRequestWriteDiagnosticTests",
         "OutputDistillationMigrationTests",
