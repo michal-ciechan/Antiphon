@@ -1,5 +1,6 @@
 using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -141,6 +142,39 @@ public sealed class GhostSeatReleaseTests
         world.Client.SlotReleases.Count.ShouldBe(7, "V-3: deferred seats remain eligible next sweep");
         world.Client.SlotReleases.Select(r => r.SessionId).Distinct().Count().ShouldBe(7);
         world.Stopper.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task C2078_Repeated_ghost_sweeps_keep_only_one_intent_for_a_lost_reply()
+    {
+        await using var world = await World.StartAsync();
+        await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+        world.Client.ReleaseSlotOverride = () => throw new HttpRequestException("runner response lost");
+        for (var i = 0; i < 3; i++)
+            await world.RetireAsync();
+        world.Client.SlotReleases.Count.ShouldBe(3);
+
+        world.Directory.Offline = true;
+        await world.SeedFailedAsync(30, Mirror("equal", false), AgentTaskFailureCode.CompletedWithoutProgress);
+        var neverSent = world.SessionId;
+        for (var i = 0; i < 3; i++)
+        {
+            world.Advance(TimeSpan.FromSeconds(5));
+            await world.RetireAsync();
+        }
+
+        world.Client.SlotReleases.Count.ShouldBe(3, "no request reached the offline runner");
+        world.Directory.OfflineResolves.ShouldBe(6, "both seats reached release on all three offline sweeps");
+        var intents = await world.PendingReleaseIntentsAsync();
+        intents.ShouldBe([world.Client.SlotReleases[0].SessionId],
+            "both lost replies and offline sweeps preserve only the one outstanding obligation");
+        intents.ShouldNotContain(neverSent);
+
+        world.Directory.Offline = false;
+        world.Client.ReleaseSlotOverride = null;
+        await world.RetireAsync();
+        world.Client.SlotReleases.Count.ShouldBe(5, "the next eligible sweep releases both seats");
+        (await world.PendingReleaseIntentsAsync()).ShouldBeEmpty();
     }
 
     [Test]
@@ -363,19 +397,21 @@ public sealed class GhostSeatReleaseTests
         private readonly string _connectionString;
         private readonly FakeTimeProvider _clock;
         public FakeSessionRunnerClient Client { get; }
+        public SlotDirectory Directory { get; }
         public RecordingSessionStopper Stopper { get; }
         public Guid SessionId { get; private set; }
         public Guid AgentId { get; private set; }
         private Guid _taskId;
 
         private World(IsolatedTestSchema schema, ServiceProvider provider, string connectionString,
-            FakeTimeProvider clock, FakeSessionRunnerClient client, RecordingSessionStopper stopper)
+            FakeTimeProvider clock, FakeSessionRunnerClient client, SlotDirectory directory, RecordingSessionStopper stopper)
         {
             _schema = schema;
             _provider = provider;
             _connectionString = connectionString;
             _clock = clock;
             Client = client;
+            Directory = directory;
             Stopper = stopper;
         }
 
@@ -384,6 +420,7 @@ public sealed class GhostSeatReleaseTests
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var clock = new FakeTimeProvider(Now);
             var client = new FakeSessionRunnerClient();
+            var directory = new SlotDirectory(client);
             var stopper = new RecordingSessionStopper { StopsSessionsIn = schema.ConnectionString };
             var services = new ServiceCollection();
             services.AddLogging();
@@ -413,7 +450,7 @@ public sealed class GhostSeatReleaseTests
             services.AddSingleton<AgentSessionRuntime>();
             services.AddSingleton<SessionMessageQueueService>();
             services.AddSingleton<IDelegateSessionStopper>(stopper);
-            services.AddSingleton<ISessionRunnerDirectory>(new SlotDirectory(client));
+            services.AddSingleton<ISessionRunnerDirectory>(directory);
             services.AddSingleton<DelegationWorkspaceResolver>();
             services.AddDelegationWorktreeGraph(new GitSettings
             {
@@ -424,7 +461,7 @@ public sealed class GhostSeatReleaseTests
             services.AddSingleton<AgentTaskReplyService>();
             services.AddScoped<AgentTaskDispatcher>();
             var provider = services.BuildServiceProvider();
-            return new World(schema, provider, schema.ConnectionString, clock, client, stopper);
+            return new World(schema, provider, schema.ConnectionString, clock, client, directory, stopper);
         }
 
         public async Task RetireAsync()
@@ -692,6 +729,14 @@ public sealed class GhostSeatReleaseTests
             return await db.AgentIncidents.CountAsync(i => i.Kind == kind && i.SessionId == SessionId);
         }
 
+        public async Task<Guid?[]> PendingReleaseIntentsAsync()
+        {
+            await using var db = Open();
+            return await db.AgentIncidents.Where(i => i.Kind == AgentIncidentKind.RunnerSlotReleaseIntent
+                    && i.FailureReason == "pending:server2")
+                .Select(i => i.SessionId).ToArrayAsync();
+        }
+
         public async Task<List<AttentionItemDto>> HeldAsync()
         {
             await using var db = Open();
@@ -765,8 +810,16 @@ public sealed class GhostSeatReleaseTests
 
     private sealed class SlotDirectory(FakeSessionRunnerClient client) : ISessionRunnerDirectory
     {
+        public bool Offline { get; set; }
+        public int OfflineResolves { get; private set; }
         public ISessionRunnerClient Local => client;
-        public ISessionRunnerClient Resolve(string? runnerId) => client;
+        public ISessionRunnerClient Resolve(string? runnerId)
+        {
+            if (!Offline)
+                return client;
+            OfflineResolves++;
+            throw new ServiceUnavailableException("Runner is offline.", PhoneHomeProblemTypes.Unavailable);
+        }
         public IReadOnlyList<string> KnownRunnerIds => ["server2"];
         public Task<SessionRunnerOwner?> GetOwnerAsync(Guid sessionId, CancellationToken ct) =>
             Task.FromResult<SessionRunnerOwner?>(null);

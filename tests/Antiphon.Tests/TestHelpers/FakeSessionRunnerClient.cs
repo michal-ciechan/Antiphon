@@ -20,6 +20,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Func<ConflictException>? StartRefusal { get; set; }
     public Func<CancellationToken, Task<IReadOnlyList<SessionRunnerSessionDto>>>? ListOverride { get; set; }
     public Func<Guid, CancellationToken, Task<SessionRunnerSessionDto>>? GetOverride { get; set; }
+    public Func<Task<SessionRunnerSessionDto>>? ReleaseSlotOverride { get; set; }
 
     public IReadOnlyList<string>? ExtraFeatures { get; set; }
     public bool AdvertiseHerdr { get; set; } = true;
@@ -176,7 +177,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Task<SessionRunnerSessionDto> KillAsync(Guid sessionId, CancellationToken ct)
     {
         KillCalls++;
-        return Task.FromResult(new SessionRunnerSessionDto(
+        return ReleaseSlotOverride?.Invoke() ?? Task.FromResult(new SessionRunnerSessionDto(
             sessionId, null, DateTime.UtcNow, "Exited", 0, AgentExitReason.KilledByRequest, 0));
     }
 
