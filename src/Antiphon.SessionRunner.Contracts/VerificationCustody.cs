@@ -64,7 +64,11 @@ public enum VerificationCustodyState
 public sealed record VerificationHostIdentity(
     [property: JsonRequired] Guid RunnerStoreId, [property: JsonRequired] Guid HostInstanceId,
     [property: JsonRequired] Guid ContainerId, [property: JsonRequired] int HostPid,
-    [property: JsonRequired] DateTime HostStartTimeUtc);
+    [property: JsonRequired] DateTime HostStartTimeUtc)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LinuxProcessIdentity? LinuxIdentity { get; init; }
+}
 
 /// <summary>Terminal evidence. Session exit, kill acknowledgements and worker reports cannot create this.</summary>
 public sealed record VerificationCustodyReceipt(
