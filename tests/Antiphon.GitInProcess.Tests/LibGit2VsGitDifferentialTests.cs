@@ -62,6 +62,18 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40) + "^{commit}");
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", head[..12]);
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", "HEAD");
+        await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", fixture.SeedSha + ".." + head);
+        await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", head + ".." + fixture.SeedSha);
+        await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", head + ".." + head);
+        await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", fixture.TargetRef + "..HEAD");
+        await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", "master.." + fixture.SourceRef);
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", fixture.SeedSha + "..." + head);
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", ".." + head);
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", head + "..");
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", tree + ".." + head);
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", "refs/heads/no-such-branch.." + head);
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", "HEAD~1..HEAD");
+        await CompareAsync(cwd, Expect.Fallback, "rev-list", "--count", "--first-parent", fixture.SeedSha + ".." + head);
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", "HEAD^{commit}");
         await CompareAsync(cwd, Expect.Answered, "rev-parse", "--verify", fixture.TargetRef + "^{commit}");
@@ -245,6 +257,46 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(fixture.Repository, Expect.Answered, "merge-base", "--is-ancestor", fixture.SeedSha, ahead);
         await CompareAsync(fixture.Repository, Expect.Answered, "merge-base", "--is-ancestor", ahead, fixture.SeedSha);
         await CompareAsync(fixture.Repository, Expect.Answered, "merge-base", "--is-ancestor", ahead, ahead);
+    }
+
+    [Test]
+    public async Task Object_presence_and_range_counts_match_git()
+    {
+        await using var fixture = new LandingGitFixture();
+        await fixture.InitializeAsync();
+        var repo = fixture.Repository;
+        // A merge on the source branch, so a count walks both parents.
+        await fixture.RequiredAsync(fixture.Source, "checkout", "-q", "-b", "side");
+        await fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "side");
+        await fixture.RequiredAsync(fixture.Source, "checkout", "-q", "-");
+        await fixture.RequiredAsync(fixture.Source, "commit", "--allow-empty", "-m", "main line");
+        await fixture.RequiredAsync(fixture.Source, "merge", "--no-ff", "-q", "-m", "merge side", "side");
+        var head = (await GitAsync(fixture.Source, "rev-parse", "HEAD")).Output.Trim();
+        await CompareAsync(repo, Expect.Answered, "rev-list", "--count", fixture.SeedSha + ".." + head);
+        await CompareAsync(repo, Expect.Answered, "rev-list", "--count", "refs/heads/side.." + head);
+
+        var tree = (await GitAsync(repo, "rev-parse", head + "^{tree}")).Output.Trim();
+        await fixture.RequiredAsync(repo, "tag", "-a", "on-commit", "-m", "on commit", head);
+        await fixture.RequiredAsync(repo, "tag", "-a", "on-tree", "-m", "on tree", tree);
+        var commitTag = (await GitAsync(repo, "rev-parse", "refs/tags/on-commit")).Output.Trim();
+        var treeTag = (await GitAsync(repo, "rev-parse", "refs/tags/on-tree")).Output.Trim();
+        var blob = (await GitAsync(repo, "rev-parse", head + ":" + (await GitAsync(repo, "ls-tree", "--name-only", head)).Output.Split('\n')[0])).Output.Trim();
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", blob);
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", commitTag);
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", commitTag + "^{commit}");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", treeTag + "^{commit}");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", blob + "^{commit}");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-t", blob);
+
+        // A ref named by a hex id: git reads the argument as that id (and warns), libgit2 would read the ref.
+        var missing = new string('2', 40);
+        await fixture.RequiredAsync(repo, "update-ref", "refs/heads/" + missing, head);
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", missing);
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", missing + "^{commit}");
+        await CompareAsync(repo, Expect.Fallback, "rev-list", "--count", missing + ".." + head);
+        await fixture.RequiredAsync(repo, "update-ref", "refs/heads/" + fixture.SeedSha, head);
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", fixture.SeedSha);
+        await CompareAsync(repo, Expect.Fallback, "rev-list", "--count", fixture.SeedSha + ".." + head);
     }
 
     [Test]

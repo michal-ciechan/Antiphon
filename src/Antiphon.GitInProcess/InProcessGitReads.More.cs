@@ -73,6 +73,7 @@ internal static partial class InProcessGitReads
         "diff-tree" => DiffTree(repo, a),
         "ls-tree" => LsTree(repo, a),
         "cat-file" => CatFileExists(repo, a),
+        "rev-list" => RevListCount(repo, a),
         _ => null,
     };
 
@@ -87,13 +88,40 @@ internal static partial class InProcessGitReads
         var peel = spec.EndsWith("^{commit}", StringComparison.Ordinal);
         var id = peel ? spec[..^"^{commit}".Length] : spec;
         if (!GitText.IsOid(id)) return null;
-        var target = repo.Lookup(id);
-        if (target is null) return null;
-        var peeled = target;
-        while (peel && peeled is TagAnnotation tag) peeled = tag.Target;
-        if (peel && peeled is not LibGit2Sharp.Commit) return null;
-        return Ok("");
+        // Read as an object id only (PlainId: a ref of that hex name is git's, which warns), and without the peel only
+        // the object database's index is asked, as git reads only the header: no whole blob is inflated.
+        if (!peel) return PlainId(repo, id) is { } oid && repo.ObjectDatabase.Contains(oid) ? Ok("") : null;
+        var peeled = ById(repo, id);
+        while (peeled is TagAnnotation tag) peeled = tag.Target;
+        return peeled is LibGit2Sharp.Commit ? Ok("") : null;
     }
+
+    /// <summary>
+    /// <c>rev-list --count &lt;a&gt;..&lt;b&gt;</c>: the number of commits reachable from b and not from a, when each end is a
+    /// commit rev-parse would answer here without a word (HEAD, a full ref, a full id or an unambiguous short name; see
+    /// <see cref="Commit"/>). Anything else (an empty end, a symmetric difference, other options, a missing or
+    /// non-commit end) is git's.
+    /// </summary>
+    private static LandingGitResult? RevListCount(Repository repo, IReadOnlyList<string> a)
+    {
+        if (a is not ["rev-list", "--count", var range]) return null;
+        var dots = range.IndexOf("..", StringComparison.Ordinal);
+        if (dots <= 0 || dots + 2 >= range.Length || range.IndexOf("..", dots + 2, StringComparison.Ordinal) >= 0
+            || range[dots + 2] == '.') return null;
+        if (RangeEnd(repo, range[..dots]) is not { } from || RangeEnd(repo, range[(dots + 2)..]) is not { } to) return null;
+        var filter = new CommitFilter
+        {
+            IncludeReachableFrom = to,
+            ExcludeReachableFrom = from,
+            SortBy = CommitSortStrategies.None,
+        };
+        return Ok(repo.Commits.QueryBy(filter).Count() + "\n");
+    }
+
+    // A full id is read as that id alone (PlainId); any other end as rev-parse --verify <end>^{commit} reads it here.
+    private static string? RangeEnd(Repository repo, string end) => GitText.IsOid(end)
+        ? (ById(repo, end) as LibGit2Sharp.Commit)?.Sha
+        : Commit(repo, end, peel: true) is { ExitCode: 0, Output: var sha } ? sha.Trim() : null;
 
     private static LandingGitResult? ForEachRef(Repository repo, IReadOnlyList<string> a)
     {
@@ -356,14 +384,18 @@ internal static partial class InProcessGitReads
     /// when a ref reads as that hex name (git still reads the hex as the id, but warns "refname ... is ambiguous"
     /// on stderr first).
     /// </summary>
-    private static GitObject? ById(Repository repo, string sha)
+    private static GitObject? ById(Repository repo, string sha) => PlainId(repo, sha) is { } id ? repo.Lookup(id) : null;
+
+    /// <summary>A full 40-hex id git reads as that id alone: no ref of that hex name in any rule (git would warn of the
+    /// ambiguity, or read the ref).</summary>
+    private static ObjectId? PlainId(Repository repo, string sha)
     {
         if (sha.Length != 40) return null;
         // git's first rule is the file $GIT_DIR/<name> (libgit2's Refs[hex] reads the hex as an object id instead).
         if (HasLooseRef(repo, sha)) return null;
         foreach (var name in new[] { "refs/" + sha, "refs/tags/" + sha, "refs/heads/" + sha, "refs/remotes/" + sha, "refs/remotes/" + sha + "/HEAD" })
             if (repo.Refs[name] is not null || HasLooseRef(repo, name)) return null;
-        return repo.Lookup(new ObjectId(sha));
+        return new ObjectId(sha);
     }
 
     private static Tree? TreeOf(Repository repo, string sha) => ById(repo, sha) switch

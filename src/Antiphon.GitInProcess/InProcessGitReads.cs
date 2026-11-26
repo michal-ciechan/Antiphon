@@ -71,7 +71,8 @@ internal static partial class InProcessGitReads
     }
 
     private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base"
-            or "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file"
+            or "for-each-ref" or "diff-tree" or "ls-tree"
+        || a is ["cat-file", "-e", _] or ["rev-list", "--count", _]
         || a is ["worktree", "list", "--porcelain", "-z"] or ["worktree", "list", "--porcelain"];
 
     /// <summary>
@@ -341,7 +342,7 @@ internal static partial class InProcessGitReads
                 return mergeBase?.Sha == ancestor.Sha ? Ok("") : Exit(1);
             }
 
-            case "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file":
+            case "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file" or "rev-list":
                 return MoreAnswer(repo, a);
         }
         return null;
