@@ -206,6 +206,13 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
         }),
         // Attribute sources libgit2 cannot follow the way the git child does: every status is git's.
         new("attr-tree-set", r => r.GitAsync("config", "attr.tree", "HEAD"), Fallback: Falls.Conversion),
+        new("relative-excludes-file", async r =>
+        {
+            // libgit2 resolves a relative excludes file from the work tree, as git does: no refusal needed.
+            await r.WriteAsync(".my-ignore", "secret.env\n");
+            await r.WriteAsync("secret.env", "s\n");
+            await r.GitAsync("config", "core.excludesFile", ".my-ignore");
+        }),
         new("relative-attributes-file", async r =>
         {
             // Resolved from the git child's working directory, not from this process's.
@@ -213,14 +220,11 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
             await r.GitAsync("config", "core.attributesFile", ".attrs-local");
         }, Fallback: Falls.Conversion),
         // Copy detection: git pairs the added path with its modified source ("C  copy.txt\0a.txt\0"), libgit2 lists
-        // "A  copy.txt" and "M  a.txt". Every status is git's (clean ones too: the refusal is read before the tree).
-        new("copy-detection", async r =>
-        {
-            await r.GitAsync("config", "diff.renames", "copies");
-            await r.WriteAsync("a.txt", "a\nmore\n");
-            File.Copy(r.Full("a.txt"), r.Full("copy.txt"));
-            await r.GitAsync("add", "a.txt", "copy.txt");
-        }, Fallback: Falls.Conversion),
+        // "A  copy.txt" and "M  a.txt": the listing is git's (ListingFallbacks); the path sets agree and stay in process.
+        new("copy-detection", r => StageCopyAsync(r, ("diff.renames", "copies"))),
+        // status.renames wins over diff.renames, in both directions.
+        new("status-renames-off-over-diff-copies", r => StageCopyAsync(r, ("diff.renames", "copies"), ("status.renames", "false"))),
+        new("status-renames-copies-over-diff-off", r => StageCopyAsync(r, ("diff.renames", "false"), ("status.renames", "copies"))),
         // A path removed from the index that is still on disk and now ignored: git prints "D  secret.env" and, with
         // --ignored, "!! secret.env"; libgit2 has one entry for both, so that form is git's.
         new("ignored-removed-from-index", async r =>
@@ -373,6 +377,15 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     private static void Touch(Repo r, string relative) =>
         File.SetLastWriteTimeUtc(r.Full(relative), DateTime.UtcNow.AddMinutes(5));
 
+    /// <summary>a.txt modified and staged, copy.txt a staged copy of it, under the given config.</summary>
+    private static async Task StageCopyAsync(Repo r, params (string Key, string Value)[] config)
+    {
+        foreach (var (key, value) in config) await r.GitAsync("config", key, value);
+        await r.WriteAsync("a.txt", "a\nmore\n");
+        File.Copy(r.Full("a.txt"), r.Full("copy.txt"));
+        await r.GitAsync("add", "a.txt", "copy.txt");
+    }
+
     // CARD-1830. MAX_PATH and NTFS index timestamps. Same early return as the other
     // Windows-only cases in this project: the method still runs on Linux, and these
     // three arguments still run on Windows.
@@ -494,6 +507,8 @@ public sealed class LibGit2VsGitWorkingTreeVerdictTests
     {
         "staged-rename",    // git pairs the added and deleted paths: R  new\0old
         "unmerged-conflict", // git's two-letter unmerged code
+        "copy-detection",    // git pairs the copy with its source: C  copy.txt\0a.txt\0
+        "status-renames-copies-over-diff-off",
     };
 
     /// <summary>Scenarios with one libgit2 entry git lists as a changed row and a <c>!!</c> row: git answers --ignored.</summary>

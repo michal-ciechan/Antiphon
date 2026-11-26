@@ -38,7 +38,9 @@ internal static class WorkTreeConversion
         var attributeSource = childEnvironment is null ? Environment.GetEnvironmentVariable("GIT_ATTR_SOURCE")
             : childEnvironment.TryGetValue("GIT_ATTR_SOURCE", out var source) ? source : null;
         if (!string.IsNullOrEmpty(attributeSource)) return "GIT_ATTR_SOURCE is set";
-        if (config.Get<string>("attr.tree") is not null) return "attr.tree is set";
+        // The child's own value (a -c on the command is TryAnswer's to refuse), and libgit2's in case they differ.
+        if (config.Get<string>("attr.tree") is not null || GitStatusConfigAgreement.ChildValue(config, childEnvironment, [], "attr.tree") is not null)
+            return "attr.tree is set";
         var files = new List<string>();
         if (outside.System is { } system) files.Add(system);
         if (SystemFilesDiffer(outside.System) is { } differ) return differ;
@@ -104,15 +106,19 @@ internal static class WorkTreeConversion
         return null;
     }
 
-    private static readonly HashSet<string> StatusAttributeNames = new(StringComparer.Ordinal)
+    /// <summary>
+    /// Attributes no status reads. Anything else counts, a macro name included: its definition may sit in another
+    /// file (a repository's root <c>.gitattributes</c>) and turn on text or eol conversion.
+    /// </summary>
+    private static readonly HashSet<string> StatusNeutralNames = new(StringComparer.Ordinal)
     {
-        "text", "eol", "crlf", "ident", "binary", "filter", "working-tree-encoding",
+        "diff", "merge", "export-ignore", "export-subst", "delta", "whitespace", "conflict-marker-size",
     };
 
     /// <summary>
-    /// The first attribute in <paramref name="file"/> that a status reads, "unreadable" when it cannot be read, null
+    /// The first attribute in <paramref name="file"/> a status could read, "unreadable" when it cannot be read, null
     /// when none. Tokens after each pattern (and in an <c>[attr]</c> macro line) are attributes: <c>name</c>,
-    /// <c>-name</c>, <c>!name</c> or <c>name=value</c>.
+    /// <c>-name</c>, <c>!name</c> or <c>name=value</c>; only <see cref="StatusNeutralNames"/> and linguist-* are safe.
     /// </summary>
     private static string? StatusAttributes(string file)
     {
@@ -133,7 +139,7 @@ internal static class WorkTreeConversion
                 var name = token.TrimStart('-', '!');
                 var equals = name.IndexOf('=');
                 if (equals >= 0) name = name[..equals];
-                if (StatusAttributeNames.Contains(name)) return name;
+                if (!StatusNeutralNames.Contains(name) && !name.StartsWith("linguist-", StringComparison.Ordinal)) return name;
             }
         }
         return null;

@@ -26,10 +26,11 @@ internal static class GitStatusConfigAgreement
         "core.symlinks", "core.trustctime", "core.checkstat", "core.precomposeunicode", "core.fsmonitor",
         "core.splitindex", "core.sparsecheckout", "core.sparsecheckoutcone", "core.worktree",
         "core.bare", "core.protectntfs", "index.sparse", "index.version", "extensions.worktreeconfig",
-        // Not read by libgit2's status, but they change git's listing (copy pairs) or attribute source, so the
-        // in-process reader refuses them: libgit2's merged value must be the child's for that refusal to be sound.
-        "status.renames", "diff.renames", "attr.tree",
     ];
+    // Also listed from the child, never compared (libgit2 reads none of them), for ChildValue: status.renames and
+    // diff.renames, whose copies value the porcelain listing refuses, and attr.tree, which every status refuses.
+    // A relative core.excludesFile needs no refusal: libgit2 resolves it from the work tree, as git does
+    // (relative-excludes-file in LibGit2VsGitWorkingTreeVerdictTests).
 
     private static readonly HashSet<string> BoolKeys = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -48,7 +49,7 @@ internal static class GitStatusConfigAgreement
     private sealed record ChildConfig(
         IReadOnlyDictionary<string, string> Inherited, IReadOnlyDictionary<string, string> Command,
         (string Path, long Length, DateTime Written)[] Stamps, string? DefaultIgnore, string? DefaultAttributes,
-        string? SystemAttributes, bool SystemAttributesKnown);
+        string? SystemAttributes, bool SystemAttributesKnown, DateTime AskedUtc);
 
     private static readonly ConcurrentDictionary<string, ChildConfig> Views = new(StringComparer.Ordinal);
     private const int ViewLimit = 256;
@@ -87,9 +88,7 @@ internal static class GitStatusConfigAgreement
         foreach (var (key, value) in overrides) command[key] = value;
         foreach (var key in Keys)
         {
-            var wanted = command.TryGetValue(key, out var c) ? c
-                : Level(config, key, ConfigurationLevel.Worktree) ?? Level(config, key, ConfigurationLevel.Local)
-                  ?? (child.Inherited.TryGetValue(key, out var i) ? i : null);
+            var wanted = Resolved(config, command, child, key);
             var seen = config.Get<string>(key)?.Value;
             if (!Same(key, wanted, seen)) return $"{key}: git child '{wanted}', libgit2 '{seen}'";
         }
@@ -101,6 +100,27 @@ internal static class GitStatusConfigAgreement
             && !SameDefault(child.DefaultAttributes, "attributes"))
             return "default attributes file differs: " + child.DefaultAttributes;
         return null;
+    }
+
+    /// <summary>The value the git child resolves for <paramref name="key"/>: command, then worktree and local, then inherited.</summary>
+    private static string? Resolved(Configuration config, IReadOnlyDictionary<string, string> command, ChildConfig child, string key) =>
+        command.TryGetValue(key, out var c) ? c
+        : Level(config, key, ConfigurationLevel.Worktree) ?? Level(config, key, ConfigurationLevel.Local)
+          ?? (child.Inherited.TryGetValue(key, out var i) ? i : null);
+
+    /// <summary>
+    /// The git child's value for <paramref name="key"/> (one the agreement lists from the child), or null when unset
+    /// or the child's config cannot be listed.
+    /// </summary>
+    internal static string? ChildValue(Configuration config, IReadOnlyDictionary<string, string?>? childEnvironment,
+        IReadOnlyList<KeyValuePair<string, string>> overrides, string key)
+    {
+        string? Env(string name) => childEnvironment is null ? Environment.GetEnvironmentVariable(name)
+            : childEnvironment.TryGetValue(name, out var v) ? v : null;
+        if (View(Env) is not { } child) return null;
+        var command = new Dictionary<string, string>(child.Command, StringComparer.OrdinalIgnoreCase);
+        foreach (var (k, value) in overrides) command[k] = value;
+        return Resolved(config, command, child, key);
     }
 
     private static string? Level(Configuration config, string key, ConfigurationLevel level)
@@ -157,7 +177,8 @@ internal static class GitStatusConfigAgreement
         return view;
     }
 
-    private static bool Fresh(ChildConfig view) => view.Stamps.All(s => Stamp(s.Path) == s);
+    private static bool Fresh(ChildConfig view) => view.Stamps.All(s => Stamp(s.Path) == s)
+        && (view.SystemAttributesKnown || DateTime.UtcNow - view.AskedUtc < UnknownRetry);
 
     private static (string Path, long Length, DateTime Written) Stamp(string path)
     {
@@ -189,14 +210,7 @@ internal static class GitStatusConfigAgreement
         foreach (var arg in new[] { "config", "--show-origin", "--show-scope", "-z", "--get-regexp", "^((core|index|extensions)\\.|status\\.renames$|diff\\.renames$|attr\\.tree$)" })
             start.ArgumentList.Add(arg);
         if (Run(start) is not ({ } output, 0 or 1)) return null;
-        // The system attributes file (git 2.42+). A probe that did not run (start failure, timeout) is not cached;
-        // an older git that names none leaves the file unknown, on every platform, since its prefix decides it.
-        start.ArgumentList.Clear();
-        foreach (var arg in new[] { "var", "GIT_ATTR_SYSTEM" }) start.ArgumentList.Add(arg);
-        if (Run(start) is not ({ } named, var exit)) return null;
-        var (systemAttributes, systemKnown) = exit == 0 && named.Trim() is { Length: > 0 } trimmed
-            ? (Path.GetFullPath(trimmed), true)
-            : ((string?)null, false);
+        var (systemAttributes, systemKnown) = SystemAttributesFile(start);
 
         var inherited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var command = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -227,8 +241,34 @@ internal static class GitStatusConfigAgreement
             .Select(Stamp).ToArray();
         return new ChildConfig(inherited, command, stamps,
             xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "ignore")),
-            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "attributes")), systemAttributes, systemKnown);
+            xdg is null ? null : Path.GetFullPath(Path.Combine(xdg, "attributes")), systemAttributes, systemKnown,
+            DateTime.UtcNow);
     }
+
+    /// <summary>
+    /// The child's system attributes file: <c>git var GIT_ATTR_SYSTEM</c> (git 2.42+). An older git outside Windows
+    /// names it by its prefix (<c>git --exec-path</c> is <c>&lt;prefix&gt;/libexec/git-core</c>; the file is
+    /// <c>/etc/gitattributes</c> for prefix <c>/usr</c>, else <c>&lt;prefix&gt;/etc/gitattributes</c>). Unknown when
+    /// neither answers; a view with an unknown file is asked again after <see cref="UnknownRetry"/>.
+    /// </summary>
+    private static (string? File, bool Known) SystemAttributesFile(ProcessStartInfo start)
+    {
+        start.ArgumentList.Clear();
+        foreach (var arg in new[] { "var", "GIT_ATTR_SYSTEM" }) start.ArgumentList.Add(arg);
+        var probe = Run(start);
+        if (probe is ({ } named, 0) && named.Trim() is { Length: > 0 } trimmed) return (Path.GetFullPath(trimmed), true);
+        if (probe is null || OperatingSystem.IsWindows()) return (null, false);
+        start.ArgumentList.Clear();
+        start.ArgumentList.Add("--exec-path");
+        if (Run(start) is not ({ } exec, 0)) return (null, false);
+        const string suffix = "/libexec/git-core";
+        var path = exec.Trim().TrimEnd('/');
+        if (!path.EndsWith(suffix, StringComparison.Ordinal)) return (null, false);
+        var prefix = path[..^suffix.Length];
+        return (prefix is "/usr" or "" ? "/etc/gitattributes" : prefix + "/etc/gitattributes", true);
+    }
+
+    private static readonly TimeSpan UnknownRetry = TimeSpan.FromMinutes(1);
 
     /// <summary>gits stdout and exit code, or null when it could not start or ran past 30 seconds.</summary>
     private static (string Output, int Exit)? Run(ProcessStartInfo start)
