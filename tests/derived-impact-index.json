@@ -2387,9 +2387,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 141,
+      "classes": 142,
       "reason": "cap",
-      "owed": 116,
+      "owed": 117,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -24143,6 +24143,12 @@
       "path": "tests/Antiphon.Tests/Application/C0824RefOnlyProvisionTests.cs",
       "classes": [
         "C0824RefOnlyPreparationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Application/C0824RefOnlySnapshotMigrationTests.cs",
+      "classes": [
+        "C0824RefOnlySnapshotMigrationInvariantTests"
       ]
     },
     {
