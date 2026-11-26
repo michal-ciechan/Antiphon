@@ -4502,7 +4502,7 @@ public sealed partial class AgentTaskDispatcher
             return null;
         try
         {
-            // Lexical key (CARD-1118): Path.GetFullPath, then separator normalisation.
+            // Lexical key (CARD-1118): resolve a native path, then use the shared path spelling.
             // GetFullPath collapses ".." and does not resolve symlinks. AgentService
             // stores the trimmed working directory; the request check rejects a blank
             // one. Pinned dispatch copies that stored string onto the task, so the
@@ -4510,7 +4510,7 @@ public sealed partial class AgentTaskDispatcher
             // directory can stay two keys, and each miss probes its own path.
             // Collapsed spellings share the first arm for this tick. The probe opens
             // the stored path, so ".." through a symlink can reuse another directory's arm.
-            return DelegationWorkspaceResolver.NormalizeSeparators(Path.GetFullPath(directory));
+            return WorkingDirectoryIdentity.CasePreservingKey(Path.GetFullPath(directory));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
@@ -9760,7 +9760,7 @@ public sealed partial class AgentTaskDispatcher
         // there cannot claim.
         foreach (var surplus in warm
             .GroupBy(a => (
-                Directory: DelegationWorkspaceResolver.NormalizeSeparators(a.WorkingDirectory).ToUpperInvariant(),
+                Directory: PoolDirectoryKey(a.WorkingDirectory),
                 a.Kind))
             .SelectMany(g => g.OrderByDescending(a => a.PoolIdleSince)
                 .Skip(Math.Max(0, _settings.PoolMaxIdlePerDirectory))))
@@ -9900,8 +9900,7 @@ public sealed partial class AgentTaskDispatcher
 
             acted++;
         }
-        foreach (var group in warm.GroupBy(a => (
-            Directory: DelegationWorkspaceResolver.NormalizeSeparators(a.WorkingDirectory).ToUpperInvariant(), a.Kind)))
+        foreach (var group in warm.GroupBy(a => (Directory: PoolDirectoryKey(a.WorkingDirectory), a.Kind)))
         {
             var needed = group.Count() - Math.Max(0, _settings.PoolMaxIdlePerDirectory)
                 - group.Count(retire.Contains);
@@ -10245,16 +10244,15 @@ public sealed partial class AgentTaskDispatcher
                 && (expectedModelId == null || s.EffectiveModelId == expectedModelId)
                 && (s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct);
 
-    private static bool SameDirectory(string a, string b)
+    private static string PoolDirectoryKey(string path)
     {
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        return string.Equals(
-            DelegationWorkspaceResolver.NormalizeSeparators(a),
-            DelegationWorkspaceResolver.NormalizeSeparators(b),
-            comparison);
+        var key = WorkingDirectoryIdentity.CasePreservingKey(path);
+        // Preserve the janitor's existing Windows grouping. Linux paths keep their case.
+        return WorkingDirectoryIdentity.IsWindowsPath(path) ? key.ToUpperInvariant() : key;
     }
+
+    private static bool SameDirectory(string a, string b) =>
+        WorkingDirectoryIdentity.Same(a, b, preserveWindowsOrdinalCase: true);
 
     /// <summary>
     /// Whether an orchestrator's worktree gets the PreToolUse deny hook. The per-task choice wins;
@@ -10288,10 +10286,7 @@ public sealed partial class AgentTaskDispatcher
             ScopeResolver.Resolve(a.Scope, map), ScopeResolver.Resolve(b.Scope, map));
 
     private static bool SameRepo(string a, string b) =>
-        string.Equals(
-            DelegationWorkspaceResolver.NormalizeSeparators(a),
-            DelegationWorkspaceResolver.NormalizeSeparators(b),
-            StringComparison.OrdinalIgnoreCase);
+        WorkingDirectoryIdentity.Same(a, b, preserveWindowsOrdinalCase: true);
 
     private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 

@@ -84,7 +84,10 @@ public class SharedWriterLeaseProjectionTests
     [Test]
     [Arguments(@"C:\Work\Repo", "c:/work/repo/", true)]
     [Arguments(@"\\FileHost\Share\Repo", @"\/filehost/share/repo", true)]
+    [Arguments(@"C:\Work\Σ", "c:/work/ς", true)]
+    [Arguments(@"C:\Work\K", "c:/work/k", false)]
     [Arguments("/srv/Team/repo", "/srv/team/repo", false)]
+    [Arguments(@"/srv/team\repo", "/srv/team/repo", false)]
     public void repository_identity_agrees_for_scope_checks_and_live_holds(
         string runningKey, string queuedKey, bool sameRepo)
     {
