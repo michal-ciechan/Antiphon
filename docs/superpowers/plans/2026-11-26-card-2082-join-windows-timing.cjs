@@ -52,7 +52,7 @@ function subjects() {
   return [...selected.values()].sort((a, b) => a.project.localeCompare(b.project) || a.type.localeCompare(b.type));
 }
 
-// Same-pin, same-case Linux replay evidence from the Plan's group 113, 141 and 86 investigations.
+// Exact-pin failure and pass comparisons are documented in the companion class-timing ledger.
 // A differently selected, passing Linux checkpoint cannot settle a Windows failure.
 const reproduced = new Map([
   ['b8cbfb24/Antiphon.Tests/Antiphon.Tests.Checkpoints.PlanCoverageBindingTests', 2],
@@ -69,7 +69,15 @@ function compare(run, key, counts) {
   assert(matches <= failures, 'Retained class counts disagree with the same-case failure replay for ' + key);
   if (matches === failures) return 'no: all observed Failed rows reproduced on Linux at this pin';
   if (matches) return matches + ' reproduced on Linux; remaining Failed rows unknown';
-  if (run === 'b8cbfb24' && key.endsWith('.NightlyNativeOwnershipTests')) return 'native Windows descendant-exit failure; corresponding Linux case excluded; other failures unresolved';
+  if (run === 'b8cbfb24' && failures === 1) {
+    if (key === 'Antiphon.Tests/Antiphon.Tests.Checkpoints.CheckpointAdmissionContractTests'
+        || key === 'Antiphon.Tests/Antiphon.Tests.Scripts.IncrementalSelectionSoundnessTests') {
+      return 'yes: same failed Windows method passed on Linux at the B pin';
+    }
+    if (key === 'Antiphon.Tests/Antiphon.Tests.Scripts.NightlyNativeOwnershipTests') {
+      return 'Windows-native failure: this case is excluded on Linux';
+    }
+  }
   return 'unknown: no matching Linux case verdict for each Windows failure';
 }
 
