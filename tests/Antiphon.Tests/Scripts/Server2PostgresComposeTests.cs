@@ -35,7 +35,7 @@ public sealed class Server2PostgresComposeTests
     internal static string Drill => Server2PostgresWorld.DrillText;
 
     // Assert-NoDocker: no tool started, and the fixture password on neither stream.
-    private static void NoDocker(Server2PostgresRun run, string name)
+    internal static void NoDocker(Server2PostgresRun run, string name)
     {
         run.Tools.ShouldBeEmpty(name + " " + run);
         run.Out.ShouldNotContain(Server2PostgresWorld.Password, Case.Sensitive, name + " hides the fixture password");
@@ -211,7 +211,7 @@ public sealed class Server2PostgresComposeTests
     // Get-RenderedFields' four fields, read from the file's YAML instead of `docker compose config` (no docker): the pinned volume
     // name (a volume with an explicit name keeps it under every project name), the publish's host_ip and published port, and the
     // network's name.
-    private static (string Volume, string HostIp, string Published, string Network) Fields(string text)
+    internal static (string Volume, string HostIp, string Published, string Network) Fields(string text)
     {
         var yaml = new YamlStream();
         yaml.Load(new StringReader(text));
@@ -458,7 +458,7 @@ public sealed class Server2PostgresComposeTests
     }
 
     // Get-ServiceCpusets: each cpuset line's value, or "malformed".
-    private static string[] Cpusets(IEnumerable<string> lines) =>
+    internal static string[] Cpusets(IEnumerable<string> lines) =>
         lines.Where(line => Regex.IsMatch(line, @"^\s*cpuset\s*:", RegexOptions.IgnoreCase))
             .Select(line => Regex.Match(line, "^    cpuset: \"([0-9,-]+)\"$", RegexOptions.IgnoreCase) is { Success: true } exact ? exact.Groups[1].Value : "malformed").ToArray();
 

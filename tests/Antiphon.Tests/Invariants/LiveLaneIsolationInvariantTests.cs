@@ -24,5 +24,5 @@ public sealed class LiveLaneIsolationInvariantTests
 {
     [Test]
     public void Canary_callers_match_the_declared_profile() =>
-        LiveClaudeProfileAudit.C680Callers(Build,ClaudeDialogWatchdogCanaryTests.ProjectProfile);
+        LiveClaudeProfileAudit.C680Callers(LiveLaneIsolationTests.Build, ClaudeDialogWatchdogCanaryTests.ProjectProfile);
 }

@@ -11,5 +11,5 @@ namespace Antiphon.Tests.Invariants;
 public sealed class LiveLaneFingerprintInvariantTests
 {
     [Test]
-    public Task Stable_checkout_inputs() => Run(nameof(StableCanonicalInputs), Budget(23.9), "real-head", "real-declaration");
+    public Task Stable_checkout_inputs() => Run(nameof(LiveLaneFingerprintTests.StableCanonicalInputs), Budget(23.9), "real-head", "real-declaration");
 }
