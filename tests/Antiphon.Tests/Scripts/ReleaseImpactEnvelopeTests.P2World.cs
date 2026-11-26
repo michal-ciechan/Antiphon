@@ -20,6 +20,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
         internal const string ExtraInput = "shared/linked-input.txt";
         internal const string Readers = "tests/p2-reader-declarations.json";
         internal const string ProducerProject = "src/Producer/Producer.csproj";
+        internal const string BypassProject = "src/Bypass/Bypass.csproj";
         internal const string ProducerInput = "src/Producer/input.txt";
         internal const string OldReader = "shared/deleted-reader.txt";
         internal const string NewReader = "shared/added-reader.txt";
@@ -44,12 +45,12 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         internal static async Task<P2World> Create(bool trust = false, bool candidateOnlyTrust = false,
             bool directHit = false, string? historicalSide = null, bool brokenIndex = false, bool staleCatalog = false,
-            bool duplicateSimpleName = false)
+            bool duplicateSimpleName = false, bool bypass = false)
         {
             var world = new P2World();
             try
             {
-                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog, duplicateSimpleName);
+                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog, duplicateSimpleName, bypass);
                 return world;
             }
             catch
@@ -59,7 +60,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
             }
         }
 
-        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide, bool brokenIndex, bool staleCatalog, bool duplicateSimpleName)
+        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide, bool brokenIndex, bool staleCatalog, bool duplicateSimpleName, bool bypass)
         {
             _repo.Init();
             _repo.Git("config", "core.autocrlf", "false");
@@ -85,8 +86,10 @@ public sealed partial class ReleaseImpactEnvelopeTests
             _repo.Put(HotProject, trust
                 ? "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Producer/Producer.csproj\" /></ItemGroup></Project>"
                 : "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+            var bypassReference = bypass ? "<ProjectReference Include=\"../../src/Bypass/Bypass.csproj\" />" : "";
             _repo.Put(QuietProject, trust
-                ? "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Producer/Producer.csproj\" /></ItemGroup></Project>"
+                ? "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../../src/Producer/Producer.csproj\" />" +
+                    bypassReference + "</ItemGroup></Project>"
                 : "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             _repo.Put("tests/Hot/HotTests.cs", "namespace Probe; public class HotTests {}");
             _repo.Put("tests/Quiet/QuietTests.cs", "namespace Probe; public class QuietTests {}");
@@ -99,6 +102,12 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 projects[ProducerProject] = ["scripts"];
                 _repo.Put(ProducerProject, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
                 _repo.Put(ProducerInput, "baseline\n");
+            }
+            if (bypass)
+            {
+                projects[BypassProject] = ["scripts"];
+                _repo.Put(BypassProject, "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup>" +
+                    "<ProjectReference Include=\"../Producer/Producer.csproj\" /></ItemGroup></Project>");
             }
             _repo.Put(RcProjectSelection.CategoryPath, JsonSerializer.Serialize(new { schemaVersion = 1, projects, batches = new[] { HotProject, QuietProject } }));
 
@@ -217,7 +226,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
         internal P2.Authority Authority(P2.Request? pins = null, bool dirtyQuiet = false, bool omitQuietRow = false,
             bool removeQuietPin = false, bool duplicateQuietPass = false, bool failQuietExit = false,
             bool flipQuietRead = false, bool carryOrigin = false, bool? ownExecuted = null, bool contractDrift = false,
-            bool unresolved = false)
+            bool unresolved = false, bool foreignQuietAssembly = false, bool negativeQuietExit = false)
         {
             var request = pins ?? Request;
             var observations = Observe(request, dirtyQuiet);
@@ -227,13 +236,15 @@ public sealed partial class ReleaseImpactEnvelopeTests
             var run = carryOrigin ? "run-b0" : "run-b";
             var selected = Chunks.Where(chunk => chunk.Id != "Q" || !omitQuietRow).ToArray();
             var originalRows = selected.Select(chunk => Stamp(chunk, originSha, run, originAttempt,
-                chunk.Id == "Q" && failQuietExit ? 1 : 0)).ToArray();
+                chunk.Id == "Q" ? negativeQuietExit ? -1 : failQuietExit ? 1 : 0 : 0)).ToArray();
             var original = Seal(originSha, run, originAttempt, 1, originalRows);
             var inventory = carryOrigin ? Seal(b, "run-b", 2, 2, originalRows.Select(row =>
                 RcChunkReceipt.Carry(row, b, original.Artifact.Digest)).ToArray()) : original;
             var origins = selected.Where(chunk => chunk.Id != "Q" || !removeQuietPin).Select(chunk =>
             {
                 var trx = Trx(chunk, chunk.Id == "Q" && duplicateQuietPass);
+                if (chunk.Id == "Q" && foreignQuietAssembly)
+                    trx = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(trx).Replace("Quiet.dll", "Foreign.dll", StringComparison.Ordinal));
                 var identity = Artifact(chunk.Id.ToLowerInvariant() + ".trx", trx);
                 if (chunk.Id == "Q" && flipQuietRead) identity = identity with
                 {

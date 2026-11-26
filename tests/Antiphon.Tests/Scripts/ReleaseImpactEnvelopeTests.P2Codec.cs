@@ -83,6 +83,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
         }
 
         var envelope = IndependentEnvelope(schema, root, projections);
+        var knownDigest = envelope["rootDigest"]!.GetValue<string>();
         using var before = new MemoryStream(Encoding.UTF8.GetBytes(envelope.ToJsonString()));
         var reordered = new JsonObject(envelope.Reverse().Select(pair =>
             KeyValuePair.Create(pair.Key, pair.Value?.DeepClone())));
@@ -92,14 +93,13 @@ public sealed partial class ReleaseImpactEnvelopeTests
         permuted.Add(first);
         var spaced = reordered.ToJsonString(new JsonSerializerOptions { WriteIndented = true }).Replace("\n", "\r\n", StringComparison.Ordinal);
         using var after = new MemoryStream(Encoding.UTF8.GetBytes(spaced));
-        var decoded = ReleaseImpactIntegrity.Decode(before, false);
-        rows.Check(ReleaseImpactIntegrity.Decode(after, false).RootDigest == decoded.RootDigest, "C.transport.rootDigest");
+        rows.Check(ReadDigest(before) == knownDigest && ReadDigest(after) == knownDigest, "C.transport.rootDigest");
         var producerContext = new JsonObject(root.Where(pair => !pair.Key.EndsWith("Digest", StringComparison.Ordinal))
             .Select(pair => KeyValuePair.Create(pair.Key, pair.Value?.DeepClone())));
         var producer = ReleaseImpactIntegrity.Write(Element(producerContext),
             projections.ToDictionary(pair => pair.Key, pair => Element(pair.Value), StringComparer.Ordinal), false);
         using var producerWire = new MemoryStream(producer);
-        rows.Check(ReleaseImpactIntegrity.Decode(producerWire, false).RootDigest == decoded.RootDigest, "C.transport.producer");
+        rows.Check(ReadDigest(producerWire) == knownDigest, "C.transport.producer");
 
         bool ReversalDiffers(string role, JsonNode node, JsonArray sequence)
         {
@@ -133,7 +133,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
         rows.Check(ReleaseImpactIntegrity.RawSha256(Convert.FromHexString("EFBBBF710A")) ==
             "2606fab4b10ee18d42d71cece85a978a77032154667a8e4264cd5eb0025cdbff", "C.raw.bomSha");
 
-        var text = envelope.ToJsonString();
+        // These parser probes isolate shape from the canonical vectors above.
+        var text = Encoding.UTF8.GetString(producer);
         var duplicate = text.Replace("\"configuration\":", "\"configuration\":\"earlier\",\"configuration\":", StringComparison.Ordinal);
         rows.Check(RejectsWire(duplicate, "target"), "C.shape.nestedDuplicate.decodeAccepted");
         rows.Check(RejectsWire(text.Replace("\"repositoryId\":", "\"repositoryId\":\"earlier\",\"repositoryId\":",
@@ -202,34 +203,70 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
     private static bool CheckRealIndexShape(JsonNode schema, JsonObject example)
     {
-        // The checked-in index at the design pin may have moved on another branch. Reproduce its full measured
-        // shape from the pinned census without requiring Git history to be present in shallow CI.
+        const string pinnedBlob = "22140429604bf747958e70a7b782ec0ef3045eee";
         var projections = example.DeepClone().AsObject();
+        var path = Path.Combine(RepoRoot(), "tests", "derived-impact-index.json");
+        var raw = File.Exists(path) ? File.ReadAllBytes(path) : [];
         var edges = new JsonArray();
-        for (var path = 0; path < 2_627; path++)
+        var capped = new JsonArray();
+        var pinned = raw.Length == 922_895 && ReleaseImpactEvidence.BlobId(raw, 40) == pinnedBlob;
+        if (pinned)
         {
-            var classes = path < 768 ? 6 : 5;
-            for (var @class = 0; @class < classes; @class++)
-                edges.Add(new JsonObject { ["path"] = $"src/fixture-{path:D4}.txt", ["class"] = $"Probe.Class{@class}" });
+            using var source = JsonDocument.Parse(raw);
+            foreach (var edge in source.RootElement.GetProperty("edges").EnumerateArray())
+                foreach (var name in edge.GetProperty("classes").EnumerateArray())
+                    edges.Add(new JsonObject
+                    {
+                        ["path"] = edge.GetProperty("path").GetString(), ["class"] = name.GetString(),
+                    });
+            foreach (var entry in source.RootElement.GetProperty("cappedPaths").EnumerateArray())
+                capped.Add(entry.GetProperty("path").GetString());
         }
+        else
+        {
+            // The exact-byte identity check above recognises the design object in current checkouts.
+            // The measured shape is available when the checked-in index has moved.
+            for (var item = 0; item < 2_627; item++)
+            {
+                var classes = item < 768 ? 6 : 5;
+                var file = item == 0 ? "src/" + new string('x', 96) : $"src/fixture-{item:D4}.txt";
+                for (var @class = 0; @class < classes; @class++)
+                    edges.Add(new JsonObject { ["path"] = file, ["class"] = $"Probe.Class{@class}" });
+            }
+            for (var item = 0; item < 165; item++) capped.Add($"src/capped-{item:D3}.txt");
+        }
+        var paths = edges.Select(edge => edge!["path"]!.GetValue<string>()).Distinct(StringComparer.Ordinal).ToArray();
+        if (paths.Length != 2_627 || paths.Max(Encoding.UTF8.GetByteCount) != 100) return false;
         foreach (var role in new[] { "baselineIndex", "candidateIndex" })
         {
             var index = projections[role]!;
             index["rawByteCount"] = 922_895ul;
+            if (pinned)
+            {
+                index["blobId"] = pinnedBlob;
+                index["rawSha256"] = IndependentDigest(raw);
+            }
             index["edges"] = edges.DeepClone();
-            index["cappedPaths"] = new JsonArray(Enumerable.Range(0, 165)
-                .Select(i => (JsonNode)JsonValue.Create($"src/capped-{i:D3}.txt")).ToArray());
+            index["cappedPaths"] = capped.DeepClone();
         }
 
         var envelope = IndependentEnvelope(schema, P2Json("root").AsObject(), projections);
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(envelope.ToJsonString()));
-        var result = ReleaseImpactIntegrity.Decode(stream, false);
+        ReleaseImpactIntegrity.Decoded result;
+        try { result = ReleaseImpactIntegrity.Decode(stream, false); }
+        catch (ReleaseImpactIntegrity.WireException) { return false; }
         return stream.Length <= ReleaseImpactIntegrity.EnvelopeLimit && new[] { "baselineIndex", "candidateIndex" }.All(role =>
         {
             var index = result.Projections[role];
             return index.GetProperty("edges").GetArrayLength() == 13_903 && index.GetProperty("cappedPaths").GetArrayLength() == 165
                 && index.GetProperty("rawByteCount").GetUInt64() == 922_895;
         });
+    }
+
+    private static string? ReadDigest(Stream stream)
+    {
+        try { return ReleaseImpactIntegrity.Decode(stream, false).RootDigest; }
+        catch (ReleaseImpactIntegrity.WireException) { return null; }
     }
 
     private static bool RejectsWire(string wire, string component) => RejectsWire(Encoding.UTF8.GetBytes(wire), component);

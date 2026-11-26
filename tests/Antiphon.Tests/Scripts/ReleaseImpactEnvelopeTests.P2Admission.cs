@@ -81,7 +81,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
             CheckFull("T.reseal.context." + field, Admit(bytes), field == "algorithmSha" ? "p2-input:" : "p2-context:");
         }
 
-        byte[] Reseal(JsonObject root, JsonObject values, string? originalDigest = null)
+        byte[] Reseal(JsonObject root, JsonObject values, string? originalDigest = null, string? comparisonCase = null)
         {
             var amended = IndependentEnvelope(schema, root, values);
             var bytes = Encoding.UTF8.GetBytes(amended.ToJsonString());
@@ -89,7 +89,9 @@ public sealed partial class ReleaseImpactEnvelopeTests
             var transport = ReleaseImpactIntegrity.Decode(stream, foldedPaths: authority.ObservedTarget.FoldedPaths);
             transport.RootDigest.ShouldBe(amended["rootDigest"]!.GetValue<string>(),
                 "the checksum-only diagnostic accepts the internally coherent proposal");
-            transport.RootDigest.ShouldNotBe(originalDigest ?? wire["rootDigest"]!.GetValue<string>(), "the alternative changed an independently bound leaf");
+            var distinct = transport.RootDigest != (originalDigest ?? wire["rootDigest"]!.GetValue<string>());
+            if (comparisonCase is null) distinct.ShouldBeTrue("the alternative changed an independently bound leaf");
+            else Case(comparisonCase, distinct, "the alternative changed the honest projection");
             return bytes;
         }
 
@@ -309,11 +311,17 @@ public sealed partial class ReleaseImpactEnvelopeTests
         });
         var duplicate = P2.Prepare(world.Request, world.Chunks, world.Authority(duplicateQuietPass: true));
         var nonzero = P2.Prepare(world.Request, world.Chunks, world.Authority(failQuietExit: true));
+        var foreignAssembly = P2.Prepare(world.Request, world.Chunks, world.Authority(foreignQuietAssembly: true));
+        var negativeExit = P2.Prepare(world.Request, world.Chunks, world.Authority(negativeQuietExit: true));
+        var negativeResult = P2.AdmitPrepared(world.Request, world.Chunks,
+            () => new MemoryStream(negativeExit.Evidence!.WriteProposal()), negativeExit);
+        Case("T.receipts.negativeExit.honest", negativeResult.VerifiedHandle is not null &&
+            Ids(negativeResult.Owed).SequenceEqual(["H", "Q"]), negativeResult.Reason);
         var missing = P2.Prepare(world.Request, world.Chunks, world.Authority(omitQuietRow: true));
         foreach (var (id, binding) in new (string, P2.Preparation)[]
         {
             ("targetInputs.sameCasesDirtyInputs", dirty), ("receipts.copyOnly", copied), ("receipts.duplicatePass", duplicate),
-            ("receipts.failedExit", nonzero), ("owed.missingRow", missing),
+            ("receipts.failedExit", nonzero), ("receipts.foreignAssembly", foreignAssembly), ("owed.missingRow", missing),
         })
         {
             binding.Evidence.ShouldNotBeNull(binding.Reason);
@@ -323,6 +331,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
             var disputed = JsonNode.Parse(honestBytes)!.AsObject();
             var outward = disputed["projections"]!.AsObject();
             var originalQ = projections["selection"]!["decisions"]![1]!.DeepClone();
+            if (outward["receipts"]![1]!["origin"] is { } measuredOrigin)
+                originalQ["origin"] = measuredOrigin.DeepClone();
             outward["selection"]!["decisions"]![1] = originalQ;
             outward["selection"]!["classes"] = projections["selection"]!["classes"]!.DeepClone();
             var originalDigest = disputed["rootDigest"]!.GetValue<string>();
@@ -335,7 +345,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 receipt["origin"] ??= projections["receipts"]![1]!["origin"]!.DeepClone();
                 receipt["inputDigest"] ??= projections["receipts"]![1]!["inputDigest"]!.DeepClone();
             }
-            CheckFull("T." + id + ".disputedMode", Admit(Reseal(disputed, outward, originalDigest), binding), "p2-");
+            var resealed = Reseal(disputed, outward, originalDigest, "T." + id + ".resealDistinct");
+            CheckFull("T." + id + ".disputedMode", Admit(resealed, binding), "p2-");
         }
 
         var oneOpen = P2.Prepare(world.Request, world.Chunks, world.Authority(flipQuietRead: true));
@@ -485,6 +496,9 @@ public sealed partial class ReleaseImpactEnvelopeTests
             TrustRefusal(candidateOnly, P2.Prepare(candidateOnly.Request, candidateOnly.Chunks, candidateOnly.Authority(ownExecuted: true)), "candidateOnly");
         await using (var directHit = await P2World.Create(trust: true, directHit: true))
             TrustRefusal(directHit, P2.Prepare(directHit.Request, directHit.Chunks, directHit.Authority(ownExecuted: true)), "directHit");
+
+        await using (var bypass = await P2World.Create(trust: true, bypass: true))
+            TrustRefusal(bypass, P2.Prepare(bypass.Request, bypass.Chunks, bypass.Authority(ownExecuted: true)), "bypass");
 
         void TrustRefusal(P2World world, P2.Preparation proof, string id)
         {
