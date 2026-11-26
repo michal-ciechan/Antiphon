@@ -341,8 +341,10 @@ namespace Antiphon.Scripts
             [OperatorToolCommands.RefreshServer2GithubToken] = OperatorToolCommands.RunRefreshServer2GithubToken,
             [OperatorToolCommands.DesktopSlotProvisionName] = OperatorToolCommands.RunDesktopSlotProvision,
             [OperatorToolCommands.DesktopWinPhase1SecretsName] = OperatorToolCommands.RunDesktopWinPhase1Secrets,
-            // The live lane's pin command (W2 slice S21, the isolated Antiphon.LiveLane project) answers every input itself:
-            // exit 0 the digest printed; with --check 1 when it is not the pin or the census sentinels fail. Usage is 2.
+            // The live lane's commands (W2 slice S21, the isolated Antiphon.LiveLane project) answer every input themselves.
+            // live-lane-run: always exit 20, native-unqualified (the compact record on stdout). live-lane-input-digest: exit 0
+            // the digest printed; with --check 1 when it is not the pin or the census sentinels fail. Usage is 2 for both.
+            [LiveLaneRunCommand.Name] = LiveLaneCommands.RunLiveLaneRun,
             [LiveLaneInputDigestCommand.Name] = LiveLaneCommands.RunInputDigest,
         };
 

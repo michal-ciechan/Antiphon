@@ -59,6 +59,29 @@ public sealed class LiveLaneRunnerTests
         output.ToString().ShouldBe(LiveLaneInputDigest.Pinned + Environment.NewLine);
     }
 
+    // run-live-lane.ps1's native mode, captured before the script goes: the exact line and exit code, with and without
+    // its six parameters. live-lane-run keeps both, and its flags cannot change the answer.
+    private const string NativeLine = "{\"ExitCode\":20,\"Reason\":\"native-unqualified\",\"DiagnosticOnly\":true,\"GateCredit\":false,\"TerminalComplete\":false,"
+        + "\"RawChildExit\":null,\"CheckpointRunId\":null,\"Classification\":\"INCONCLUSIVE\",\"Rows\":[],\"RawChildOutcome\":null,\"ChildExits\":[],\"Probes\":[]}";
+
+    [Test]
+    public void NativeModeIsUnqualified()
+    {
+        foreach (var argv in new[]
+                 {
+                     Array.Empty<string>(),
+                     ["--lane", "live-claude-core-windows", "--candidate-ref", "HEAD", "--expected-sha", new string('a', 40), "--manifest", "m.json",
+                      "--coordination-root", "C:/nowhere/coord", "--results-root", "C:/nowhere/results"]
+                 })
+        {
+            var output = new StringWriter();
+            LiveLaneRunCommand.Run(LiveLaneRunOptions.Parse(argv), output).ShouldBe(20);
+            output.ToString().ShouldBe(NativeLine + Environment.NewLine);
+        }
+        foreach (var bad in new[] { new[] { "--bogus" }, ["--lane"], ["--lane", "a", "--lane", "b"], ["positional"], ["-Lane", "a"] })
+            Should.Throw<LiveLaneUsageException>(() => LiveLaneRunOptions.Parse(bad));
+    }
+
     private static Task Run(string method, params string[] cases) => ScriptHarness.RunHarnessCaseAsync(
         "test-live-lane-run.ps1", "C1545", "C1545_" + method, cases.Length,
         cases.Select(c => $"C1545 {method}/{c}").ToArray(),
