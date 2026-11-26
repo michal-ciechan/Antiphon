@@ -93,13 +93,13 @@ namespace Antiphon.Nightly
                     throw new InvalidDataException("type-proof-endpoint-unbound");
                 var before = root.GetProperty("conservative");
                 var after = root.GetProperty("graph");
-                var members = before.GetProperty("universe").EnumerateArray().Select(Identity)
+                var members = before.GetProperty("universe").EnumerateArray().Select(ReadMember)
                     .GroupBy(member => Simple(member.Type), StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.Distinct().ToArray(), StringComparer.Ordinal);
                 var sites = root.GetProperty("typeSites").EnumerateArray().Select(site =>
                 {
                     var origin = site.GetProperty("origin");
-                    return new Site(Identity(origin.GetProperty("consumer")), Strings(origin, "candidates"),
+                    return new Site(ReadMember(origin.GetProperty("consumer")), Strings(origin, "candidates"),
                         Strings(site, "retained"), Text(site, "rule") == "unique-source-type"
                             && Hex(Text(site, "sourceSha256"), 64) && Hex(Text(site, "contextDigest"), 64));
                 }).ToLookup(site => site.Consumer);
@@ -115,10 +115,10 @@ namespace Antiphon.Nightly
 
         private static Dictionary<(string Path, Member Id), string[]> Edges(JsonElement graph) =>
             graph.GetProperty("edges").EnumerateArray().SelectMany(edge => edge.GetProperty("classes").EnumerateArray()
-                .Select(consumer => (Path: Text(edge, "path"), Id: Identity(consumer), Kinds: Strings(consumer, "kinds"))))
+                .Select(consumer => (Path: Text(edge, "path"), Id: ReadMember(consumer), Kinds: Strings(consumer, "kinds"))))
                 .ToDictionary(row => (row.Path, row.Id), row => row.Kinds);
 
-        private static Member Identity(JsonElement row) => new Member(Text(row, "project"), Text(row, "fullName"));
+        private static Member ReadMember(JsonElement row) => new Member(Text(row, "project"), Text(row, "fullName"));
 
         private static string Simple(string name) => name.Substring(name.LastIndexOf('.') + 1);
         private static string Text(JsonElement row, string key) => row.GetProperty(key).GetString() ?? "";
