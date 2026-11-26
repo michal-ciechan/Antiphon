@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
@@ -15,11 +16,19 @@ internal sealed class ProvenReplayWorld : IDisposable
     private const string Left = "tests/L/L.csproj";
     private const string Right = "tests/R/R.csproj";
     internal const string Changed = "tests/R/B.cs";
+    internal const string RenamedFrom = "tests/R/data-before.txt";
+    internal const string RenamedTo = "tests/R/data-after.txt";
     internal const string AsOf = "2026-11-25T12:00:00Z";
     private readonly NightlyFixture _fixture = NightlyFixture.Create("c2076-replay");
     private readonly string[] _shas = new string[6];
     private readonly string[] _graphs = new string[6];
+    private readonly Dictionary<int, (string Sha, string Graph)> _heldEndpoints = [];
+    private (string Sha, string Graph) _renameEndpoint;
     private readonly HashSet<string> _observedFailures = new(StringComparer.Ordinal);
+    private readonly bool _alias;
+    private readonly string[] _historicalGraphs = new string[6];
+
+    internal ProvenReplayWorld(bool alias = false) => _alias = alias;
 
     internal string Repository => _fixture.PathOf("repo");
     internal string Output(string name) => _fixture.PathOf("output-" + name);
@@ -36,7 +45,7 @@ internal sealed class ProvenReplayWorld : IDisposable
         Git("config", "core.autocrlf", "false");
         using var pack = new ReleaseImpactTypeProofFixture();
         var tunit = pack.Emit("TUnit.Core", ReleaseImpactTypeProofFixture.TUnitAttributes, []);
-        const string left = """
+        const string reader = """
             namespace L;
             public class LeftTests
             {
@@ -49,20 +58,42 @@ internal sealed class ProvenReplayWorld : IDisposable
                 }
             }
             """;
+        const string alias = """
+            using Pick = South.Probe;
+            namespace L;
+            public class LeftTests
+            {
+                [TUnit.Core.Test, TUnit.Core.Arguments("l1"), TUnit.Core.Arguments("l2")]
+                public void M(string key)
+                {
+                    if (Pick.Value != 0) throw new System.Exception(key);
+                }
+            }
+            """;
+        var left = _alias ? alias : reader;
         var files = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             [".gitignore"] = ".antiphon/selector-replay/\n",
             ["Directory.Build.props"] = "<Project />\n",
             [Left] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
             [Right] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
-            [north] = "namespace North; public class Probe {}\n",
-            [Changed] = "namespace South; public class Probe {}\n",
+            [north] = _alias ? "namespace North; public class Probe { public const int Value = 0; }\n" : "namespace North; public class Probe {}\n",
+            [Changed] = RightSource(false),
+            [RenamedFrom] = "fixture payload retained across rename\n",
             [leftUse] = left + "\n",
             [rightUse] = "namespace R; public class RightTests { [TUnit.Core.Test, TUnit.Core.Arguments(\"r1\")] public void M(string key) { _ = typeof(South.Probe); } }\n",
         };
         foreach (var (path, text) in files) Put(path, text);
         const string policy = "scripts/lib/rc-trusted-projects.json";
-        Write(policy, new { format = "antiphon-rc-trusted-projects-v1", schema = 1, entries = Array.Empty<object>() });
+        Write(policy, new
+        {
+            format = "antiphon-rc-trusted-projects-v1", schema = 1,
+            entries = new[]
+            {
+                new { project = Right, configurations = new[] { "Release" }, downstream = new[] { Left },
+                    contractProducer = "fixture", ownedTests = new[] { new { chunk = "right", cases = new[] { "r1" } } } },
+            },
+        });
         Write("tests/rc-project-categories.json", new
         {
             schemaVersion = 1,
@@ -83,13 +114,39 @@ internal sealed class ProvenReplayWorld : IDisposable
         {
             if (run != 0 && run != 3)
                 Put("Directory.Build.props", files["Directory.Build.props"] = $"<Project><!-- run {run} --></Project>\n");
-            if (run is 3 or 4)
-                Put(Changed, files[Changed] = run == 3
-                    ? "namespace South; public class Probe { public int Value; }\n"
-                    : "namespace South; public class Probe {}\n");
+            if (run is 3 or 4) Put(Changed, files[Changed] = RightSource(run == 3));
+            if (_alias)
+                contexts[0] = contexts[0] with { References = [pack.Core, tunit, pack.Emit("R", files[Changed], []) with { Project = Right }] };
+            (_shas[run], _graphs[run]) = await CommitEndpointAsync();
+            if (_alias) _historicalGraphs[run] = PreserveHistoricalRule(_graphs[run], north);
+        }
+        await ObserveLeftAsync([left, files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
+        if (_alias) return;
+        Git("checkout", "--detach", _shas[3]);
+        Put("Directory.Build.props", files["Directory.Build.props"] = "<Project><!-- hold baseline --></Project>\n");
+        Put(Left, files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../R/R.csproj\" /></ItemGroup></Project>\n");
+        Put(Changed, files[Changed] = "namespace South; public class Probe {}\n");
+        _heldEndpoints.Add(4, await CommitEndpointAsync());
+        Put(Changed, files[Changed] = "namespace South; public class Probe { private int GateValue; }\n");
+        _heldEndpoints.Add(5, await CommitEndpointAsync());
+        Git("checkout", "--detach", _shas[3]);
+        files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
+        files["Directory.Build.props"] = "<Project><!-- run 2 --></Project>\n";
+        files[Changed] = "namespace South; public class Probe { public int Value; }\n";
+        File.Move(Path.Combine(Repository, RenamedFrom), Path.Combine(Repository, RenamedTo));
+        files[RenamedTo] = files[RenamedFrom];
+        files.Remove(RenamedFrom);
+        _renameEndpoint = await CommitEndpointAsync();
+
+        string RightSource(bool changed) => _alias
+            ? "namespace South; public class Probe { public const int Value = " + (changed ? "1" : "0") + "; }\n"
+            : changed ? "namespace South; public class Probe { public int Value; }\n" : "namespace South; public class Probe {}\n";
+
+        async Task<(string Sha, string Graph)> CommitEndpointAsync()
+        {
             Git("add", "--all");
             Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
-            var sha = _shas[run] = Git("rev-parse", "HEAD").Trim();
+            var sha = Git("rev-parse", "HEAD").Trim();
             var (manifest, pin) = pack.PinEndpoint(Repository, sha, files, contexts);
             var output = Path.Combine(Repository, ".antiphon", "selector-replay", sha + ".json");
             var driver = Path.Combine(AppContext.BaseDirectory, "derived-impact-index", "Antiphon.DerivedImpactIndex.dll");
@@ -100,34 +157,76 @@ internal sealed class ProvenReplayWorld : IDisposable
             };
             var result = await C1514Support.RunProcess(start, cancellationToken);
             result.ExitCode.ShouldBe(0, result.Text);
-            _graphs[run] = output;
+            return (sha, output);
         }
-        await ObserveLeftAsync([left, files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], cancellationToken);
     }
 
-    private async Task ObserveLeftAsync(string[] sources, CancellationToken cancellationToken)
+    private string PreserveHistoricalRule(string artifact, string north)
+    {
+        var historical = JsonNode.Parse(File.ReadAllText(artifact))!;
+        historical["producerBinarySha256"] = Digest(Encoding.UTF8.GetBytes("fixture archived first-candidate alias rule"));
+        var sites = historical["typeSites"]!.AsArray().Where(site =>
+            (string?)site!["origin"]!["consumer"]!["fullName"] == "L.LeftTests" &&
+            site["origin"]!["candidates"]!.AsArray().Any(candidate => (string?)candidate == Changed)).ToArray();
+        sites.ShouldNotBeEmpty("P.wrongly-dropped real alias provenance");
+        foreach (var site in sites)
+        {
+            site!["origin"]!["candidates"]!.AsArray().Select(candidate => (string?)candidate)
+                .ShouldContain(north, "P.wrongly-dropped original conservative decoy");
+            site["retained"]!.AsArray().Select(candidate => (string?)candidate)
+                .ShouldContain(Changed, "P.wrongly-dropped correct pre-archive winner");
+            site["winners"] = new JsonArray(north);
+            site["retained"] = new JsonArray(north);
+            site["metadataName"] = "North.Probe";
+            site["assembly"] = "L, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null";
+        }
+        var affected = historical["graph"]!["edges"]!.AsArray()
+            .Single(edge => (string?)edge!["path"] == Changed)!["classes"]!.AsArray();
+        var left = affected.Single(row => (string?)row!["fullName"] == "L.LeftTests")!;
+        left["kinds"]!.AsArray().Select(kind => (string?)kind).SequenceEqual(["type"])
+            .ShouldBeTrue("P.wrongly-dropped the archived rule removes only the type contribution");
+        affected.Remove(left);
+        var edges = historical["graph"]!["edges"]!.AsArray();
+        var decoy = edges.SingleOrDefault(edge => (string?)edge!["path"] == north);
+        if (decoy is null)
+        {
+            var at = edges.TakeWhile(edge => string.CompareOrdinal((string?)edge!["path"], north) < 0).Count();
+            decoy = new JsonObject { ["path"] = north, ["classes"] = new JsonArray() };
+            edges.Insert(at, decoy);
+        }
+        decoy["classes"]!.AsArray().Add(left);
+        var path = Path.ChangeExtension(artifact, ".historical.json");
+        File.WriteAllText(path, historical.ToJsonString());
+        return path;
+    }
+
+    private async Task ObserveLeftAsync(string[] sources, ReleaseImpactTypeProofFixture pack, CancellationToken cancellationToken)
     {
         const string harness = """
             public static class Program
             {
                 public static int Main(string[] args)
                 {
-                    try { new L.LeftTests().M(args[0]); return 0; }
-                    catch (System.Exception failure) { return failure.Message == args[0] ? 1 : 42; }
+                    var failures = 0;
+                    for (var index = 0; index < args.Length; index++)
+                    {
+                        try { new L.LeftTests().M(args[index]); }
+                        catch (System.Exception failure)
+                        {
+                            if (failure.Message != args[index]) return 42;
+                            failures |= 1 << index;
+                        }
+                    }
+                    return failures;
                 }
             }
             """;
         var output = _fixture.PathOf("executed-probe");
         Directory.CreateDirectory(output);
         var entry = Path.Combine(output, "probe.dll");
-        var compilation = CSharpCompilation.Create("probe", sources.Append(harness).Select(code => CSharpSyntaxTree.ParseText(code)),
-            [MetadataReference.CreateFromFile(typeof(object).Assembly.Location)],
-            new CSharpCompilationOptions(OutputKind.ConsoleApplication, deterministic: true));
-        using (var stream = File.Create(entry))
-        {
-            var result = compilation.Emit(stream, cancellationToken: cancellationToken);
-            result.Success.ShouldBeTrue(string.Join(Environment.NewLine, result.Diagnostics));
-        }
+        var syntax = sources.Append(harness).Select(code => CSharpSyntaxTree.ParseText(code)).ToArray();
+        var core = MetadataReference.CreateFromFile(typeof(object).Assembly.Location);
+        if (!_alias) Emit([core]);
         NightlyFixture.WriteJson(Path.Combine(output, "probe.runtimeconfig.json"), new
         {
             runtimeOptions = new { tfm = "net9.0", framework = new { name = "Microsoft.NETCore.App", version = "9.0.0" } },
@@ -138,25 +237,35 @@ internal sealed class ProvenReplayWorld : IDisposable
         {
             var actual = Git("show", _shas[run] + ":" + Changed);
             await File.WriteAllTextAsync(changedPath, actual, cancellationToken);
-            foreach (var key in new[] { "l1", "l2" })
-            {
-                var execution = await C1514Support.RunProcess(new ProcessStartInfo("dotnet", [entry, key])
-                    { WorkingDirectory = output }, cancellationToken);
-                execution.ExitCode.ShouldBe(run == 3 ? 1 : 0, $"P.absent-reader run {run} case {key}: {execution.Text}");
-                if (execution.ExitCode == 1) _observedFailures.Add(key);
-            }
+            if (_alias) Emit([core, pack.Open(pack.Emit("R", actual, []))]);
+            string[] keys = ["l1", "l2"];
+            var execution = await C1514Support.RunProcess(new ProcessStartInfo("dotnet", [entry, ..keys])
+                { WorkingDirectory = output }, cancellationToken);
+            execution.ExitCode.ShouldBe(run == 3 ? 3 : 0, $"P.absent-reader run {run}: {execution.Text}");
+            for (var index = 0; index < keys.Length; index++)
+                if ((execution.ExitCode & (1 << index)) != 0) _observedFailures.Add(keys[index]);
+        }
+
+        void Emit(MetadataReference[] references)
+        {
+            var compilation = CSharpCompilation.Create("probe", syntax, references,
+                new CSharpCompilationOptions(OutputKind.ConsoleApplication, deterministic: true));
+            using var stream = File.Create(entry);
+            var result = compilation.Emit(stream, cancellationToken: cancellationToken);
+            result.Success.ShouldBeTrue(string.Join(Environment.NewLine, result.Diagnostics));
         }
     }
 
-    internal string Input(string name, bool fails, bool carryHasEvidence = true)
+    internal string Input(string name, bool fails, bool carryHasEvidence = true, bool held = false, bool gateRed = false,
+        bool direct = false, bool rename = false, bool historical = false)
     {
         var root = _fixture.PathOf("input-" + name);
         for (var run = 0; run < _shas.Length; run++)
         {
-            var sha = _shas[run];
+            var (sha, sourceGraph) = Endpoint(run);
             var graph = Path.Combine(root, "type-graphs", sha + ".json");
             Directory.CreateDirectory(Path.GetDirectoryName(graph)!);
-            File.Copy(_graphs[run], graph);
+            File.Copy(sourceGraph, graph);
             var directory = Path.Combine(root, "runs", RunKey(run));
             var logs = Path.Combine(directory, "logs");
             var rows = new List<object>();
@@ -170,10 +279,11 @@ internal sealed class ProvenReplayWorld : IDisposable
                 var members = keys.Select(key => new { assembly, @class = type, method = "M", @case = key }).ToArray();
                 var content = RcChunkReceipt.ContentDigest("antiphon", "native",
                     keys.Select(key => new RcCaseIdentity(assembly, type, "M", key)).ToArray());
-                chunks.Add(new { suite = "antiphon", chunk = side, project, classes = new[] { type }, members });
+                chunks.Add(new { suite = "antiphon", chunk = side, project, classes = new[] { type }, members,
+                    consumes = held && run >= 4 && side == "left" ? new[] { Right } : Array.Empty<string>() });
                 var hit = run == 3 && side == "left";
                 if (hit && !carryHasEvidence) continue;
-                var fail = hit && fails && keys.All(_observedFailures.Contains);
+                var fail = hit && fails && keys.All(_observedFailures.Contains) || held && run == 5 && side == "right" && gateRed;
                 var trx = side + ".trx";
                 NightlyFixture.WriteTrx(Path.Combine(logs, trx), keys.Select(key =>
                     new NightlyTrxRow(key, type, "M", fail ? "Failed" : "Passed")).ToArray());
@@ -183,14 +293,21 @@ internal sealed class ProvenReplayWorld : IDisposable
                     disposition = "executed", contentDigest = content, platform = "windows", architecture = "x64", profile = "rc", trx,
                 });
             }
-            NightlyFixture.WriteJson(Path.Combine(logs, "groups-planned.json"), new { chunks, census = Array.Empty<object>() });
+            var census = direct && run == 5
+                ? new[] { new { reader = "L.LeftTests", globs = new[] { Changed } } } : Array.Empty<object>();
+            NightlyFixture.WriteJson(Path.Combine(logs, "groups-planned.json"), new { chunks, census });
             NightlyFixture.WriteJson(Path.Combine(logs, "summary.json"), new { sha, suites = rows });
             NightlyFixture.WriteJson(Path.Combine(directory, "attempt", "selection-attempt.json"), new { attemptId = RunId(run), runId = RunId(run) });
+            if (held && run == 5)
+                NightlyFixture.WriteJson(Path.Combine(directory, "attempt", "contracts.json"), new[] { "A", "B" }.Select(side => new
+                {
+                    project = Right, side, extractorVersion = "fixture", contractHash = Digest(Encoding.UTF8.GetBytes("same contract")),
+                }).ToArray());
         }
         NightlyFixture.WriteJson(Path.Combine(root, "custody.json"), new
         {
             asOf = AsOf,
-            runs = Enumerable.Range(1, 5).Select(run => new { run8 = RunKey(run), runId = RunId(run), stamp = $"2026-11-2{run}-0100", sha = _shas[run] }),
+            runs = Enumerable.Range(1, 5).Select(run => new { run8 = RunKey(run), runId = RunId(run), stamp = $"2026-11-2{run}-0100", sha = Endpoint(run).Sha }),
             predecessor = new { run8 = RunKey(0), runId = RunId(0), stamp = "2026-11-20-0100", sha = _shas[0] },
             repository = "card-2076-fixture", line = "rc", missing = Array.Empty<string>(),
         });
@@ -198,9 +315,25 @@ internal sealed class ProvenReplayWorld : IDisposable
         {
             asOf = AsOf, repository = "card-2076-fixture", line = "rc",
             runIds = Enumerable.Range(1, 5).Select(RunId), predecessorRun = RunId(0), predecessorSha = _shas[0],
+            rosters = Enumerable.Range(0, _shas.Length).Select(run => new
+            {
+                run = RunId(run), attempt = RunId(run), sha = Endpoint(run).Sha,
+                contents = new[]
+                {
+                    RcChunkReceipt.ContentDigest("antiphon", "native", [new("L", "L.LeftTests", "M", "l1"), new("L", "L.LeftTests", "M", "l2")]),
+                    RcChunkReceipt.ContentDigest("antiphon", "native", [new("R", "R.RightTests", "M", "r1")]),
+                },
+            }),
         });
         Seal(root);
         return root;
+
+        (string Sha, string Graph) Endpoint(int run)
+        {
+            if (held && _heldEndpoints.TryGetValue(run, out var endpoint)) return endpoint;
+            if (rename && run == 3) return _renameEndpoint;
+            return (_shas[run], historical ? _historicalGraphs[run] : _graphs[run]);
+        }
     }
 
     internal static void Seal(string root)

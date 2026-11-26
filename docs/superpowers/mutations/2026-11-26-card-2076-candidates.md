@@ -15,11 +15,11 @@ The locations below are candidate source anchors. The binding needs the reviewed
 | PC-7 | Single | CP-2 | T / `EX.unbound` | `DeclarationPaths` checks the resolved assembly and the pinned reference project. |
 | PC-8 | (a), (b) | CP-2 | T / `P.parts`, `P.unbound` | `DeclarationPaths` retains every declaration. `Bind` identifies an unavailable generated input. |
 | PC-9 | (a), (b) | CP-2 | T / `GU.ambiguous`, `GU.owners` | `Resolve` evaluates each owner and unions occurrence results. |
-| PC-10 | (a), (b) | CP-2 | T / `IU.ambiguous`, `IU.missing` | `Bind` and `Resolve` use the frozen generated input and preserve its candidates on refusal. Actual SDK generation witness remains outstanding. |
+| PC-10 | (a), (b) | CP-2 | T / `IU.ambiguous`, `IU.missing` | `Bind` and `Resolve` use actual SDK-emitted, frozen global usings and preserve candidates on refusal. |
 | PC-11 | Single | CP-2 | T / `N.ambiguous` | `ResolveSite` binds the nested type and keeps the declaring metadata name. |
 | PC-12 | (a), (b) | CP-2 | T / `AR.ambiguous`, `AR.argument` | `ResolveSite` uses the original definition and treats argument and constraint occurrences independently. |
 | PC-13 | (a), (b), (c) | CP-2 | T / `EXT.ambiguous`, `EXT.dynamic`, `EXT.receiver` | `ResolveSite` requires the reduced extension provider and resolved receiver. The unsupported path retains candidates. |
-| PC-14 | (a), (b) | CP-2 | T / `FW.missing`, `FW.chain` | `ForwardersBound` checks the terminal symbol and mapped facade. `Resolve` retains the facade file independently. The full TypeRef-chain evidence witness remains outstanding. |
+| PC-14 | (a), (b) | CP-2 | T / `FW.missing`, `FW.chain` | `ReadForwarding` checks the pinned Library return TypeRef, Facade export, and Destination definition. `Resolve` retains the facade file independently. |
 | PC-15 | Single | CP-2 | T / `SH.unsupported` | `ResolveSite` accepts a supported named type and retains candidates for shadowing symbols. |
 | PC-16 | (a), (b) | CP-2 | T / `CC.missing`, `CC.union` | `Bind` verifies the frozen configuration inventory. `Resolve` unions every reported evaluation. |
 | PC-17 | (a), (b) | CP-2 | T / `ER.compilation`, `ER.lookup` | `Bind` refuses a compilation with errors. `Resolve` retains the lexical origins without a model. |
@@ -29,17 +29,17 @@ The locations below are candidate source anchors. The binding needs the reviewed
 | PC-21 | (a), (b) | CP-2 | T / `ER.bounded`, `Q.limit` | `ResolveSite` retains the full candidate bucket at the limit. The bounded downstream widening witness remains outstanding. |
 | PC-22 | Single | CP-2 | T / `ER.unbounded` | The release relation keeps the Full fallback. The affected-universe witness remains outstanding. |
 | PC-23 | (a), (b) | CP-3 | C / `C.sides` | `RcChunkSelection.Select` visits B and A for index hits and retains the side-qualified project reasons. |
-| PC-24 | (a), (b) | CP-3 | C / `C.legacy`, `C.roster` | `RcTypeProofComparison.DropIndexHit` checks the legacy name and `RosterBound` checks the case join. |
+| PC-24 | (a), (b) | CP-3 | C / `C.legacy`, `C.roster` | `RcTypeProofComparison.DropIndexHit` checks the legacy name. `RosterBound` checks full case membership and recomputes the method-bound content digest. |
 | PC-25 | Single | CP-3 | C / `C.owed` | `RcTypeProofComparison.Independent` and `RcChunkSelection.Select` retain reader, hand, closure and graph obligations. |
 | PC-26 | (a), (b), (c) | CP-3 | C / `C.origin`, `C.debt`, `C.trust` | `RcChunkSelection.Select` keeps `RcChunkReceipt.Match`. The proof-specific later-debt and own-gate witnesses remain outstanding. |
 | PC-27 | (a), (b) | CP-3 | C / `C.cap`, `C.index` | `RcChunkSelection.Select` preserves cap and changed-index rules. |
 | PC-28 | Single | CP-3 | C / `C.reseal` | The independent CARD-2069 verifier and its recomputation witness remain outstanding. |
 | PC-29 | (a), (b) | CP-3 | C / `C.identity` | `RcAdmission.RequiredAlgorithmPaths` and `RcTypeProofComparison.Read` bind the algorithm and policy identity. |
 | PC-30 | Single | CP-3 | C / `C.delta` | `RcChunkSelection.Select` applies `DropIndexHit` before receipt matching. |
-| PC-31 | Single | CP-4 | P / `P.cohort` | `RcSelectionReplay.BindCohort` checks the ordered inventory and predecessor. |
+| PC-31 | Single | CP-4 | P / `P.cohort` | `RcSelectionReplay.BindCohort` checks the ordered inventory and predecessor, distinct run attempts, and sealed roster contents. |
 | PC-32 | Single | CP-4 | P / `P.incident` | `RcSelectionReplay.Replay` calls the shared selector with the pinned pair. |
 | PC-33 | Single | CP-4 | P / `P.blind` | `Replay` writes the initial seal before opening current-run outcomes. |
-| PC-34 | (a), (b) | CP-4 | P / `P.reveal`, `P.resolved` | `Replay` limits gate disclosure to the owned roster and binds the resolved digest. The proof-mode own-gate fixture remains outstanding. |
+| PC-34 | (a), (b) | CP-4 | P / `P.reveal`, `P.resolved` | `Replay` limits gate disclosure to the owned roster and binds the resolved digest. The proof replay exercises pass, fail, and direct-hit gate cases. |
 | PC-35 | Single | CP-4 | P / `P.chain` | `Replay` advances the chained ledger only from selected executions. |
 | PC-36 | Single | CP-4 | P / `P.roster` | `Plan` rejects duplicate roster keys. `ReadOutcomes` binds case identity to the expected chunk. |
 | PC-37 | (a), (b) | CP-4 | P / `P.nonclean` | `Replay` records every unsafe carry and prioritizes the hard-red verdict. |

@@ -64,6 +64,7 @@ namespace Antiphon.Nightly
             public string Stamp = "";
             public string Sha = "";
             public string Dir = "";
+            public string AttemptId = "";
         }
 
         sealed class Origin
@@ -161,8 +162,6 @@ namespace Antiphon.Nightly
                 Run8 = Str(predecessorRow["run8"]), RunId = Str(predecessorRow["runId"]), Sha = Str(predecessorRow["sha"]),
                 Dir = Path.Combine(frozen, "runs", Str(predecessorRow["run8"])),
             };
-            if (provenSubtraction)
-                BindCohort(frozen, custody, runs, chosen, predecessor, Str(predecessorRow["stamp"]), asOf);
             foreach (var run in chosen.Append(predecessor))
             {
                 if (provenSubtraction && (run.Run8.Length != 8 ||
@@ -173,6 +172,8 @@ namespace Antiphon.Nightly
                 if (type.Exit != 0 || type.Stdout.Trim() != "commit") throw new Refusal("candidate-sha-missing:" + run.Run8);
                 if (!Directory.Exists(run.Dir)) throw new Refusal("run-missing:" + run.Run8);
             }
+            var cohortPlans = provenSubtraction
+                ? BindCohort(frozen, custody, runs, chosen, predecessor, Str(predecessorRow["stamp"]), asOf) : null;
 
             var selectorHash = provenSubtraction ? Digest(Encoding.UTF8.GetBytes(
                 "antiphon-rc-proof-replay-v2\n" + SelectorHash + "\n" + ReleaseImpactEvidence.RunningSelectorBinaryDigest())) : SelectorHash;
@@ -182,7 +183,7 @@ namespace Antiphon.Nightly
             // ---- the chained ledger: seeded by the predecessor's clean executions ---------------------------------
             var ledger = new Dictionary<string, Origin>(StringComparer.Ordinal);
             var teacher = new Dictionary<string, Origin>(StringComparer.Ordinal);
-            var predecessorPlan = Plan(predecessor);
+            var predecessorPlan = cohortPlans?[predecessor.RunId] ?? Plan(predecessor);
             foreach (var (chunk, outcome, row) in ReadOutcomes(predecessor, predecessorPlan, exact: provenSubtraction))
                 if (outcome == "clean")
                 {
@@ -213,7 +214,7 @@ namespace Antiphon.Nightly
             foreach (var run in chosen)
             {
                 k++;
-                var plan = Plan(run);
+                var plan = cohortPlans?[run.RunId] ?? Plan(run);
                 var census = Items(Json(Path.Combine(run.Dir, "logs", "groups-planned.json")) is IDictionary planDoc ? planDoc["census"] : null).Cast<IDictionary>()
                     .Select(c => new RcReaderCensusEntry { Reader = Str(c["reader"]), Globs = Items(c["globs"]).Select(Str).ToArray() }).ToArray();
 
@@ -502,9 +503,7 @@ namespace Antiphon.Nightly
             RcChunkProofTrace proof, string policy, string selector, IDictionary origin, string repositoryIdentity, string line,
             List<RcSelectionMissRecord> records)
         {
-            var attempt = Json(Path.Combine(run.Dir, "attempt", "selection-attempt.json")) as IDictionary;
-            var attemptId = Str(attempt?["attemptId"] ?? attempt?["runId"]);
-            if (attemptId.Length == 0 || repositoryIdentity.Length == 0 || line.Length == 0)
+            if (run.AttemptId.Length == 0 || repositoryIdentity.Length == 0 || line.Length == 0)
                 throw new Refusal("miss-observation-scope-unbound:" + run.Run8);
             var diff = RcSelectionMiss.ReadDiff(repository, baseline.Sha, run.Sha);
             var cases = new List<RcMissCase>();
@@ -528,7 +527,7 @@ namespace Antiphon.Nightly
             {
                 var observation = new RcSelectionMissObservation("replay", asOf.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
                     repositoryIdentity, line, chunk.Suite, ReplayScope.Platform, ReplayScope.Architecture, ReplayScope.Profile,
-                    baseline.Sha, run.Sha, run.RunId, attemptId, chunk.Chunk, chunk.ContentDigest, @case, actual, "carry",
+                    baseline.Sha, run.Sha, run.RunId, run.AttemptId, chunk.Chunk, chunk.ContentDigest, @case, actual, "carry",
                     trx, trxSha, initial, resolved, originDigest, proof?.Identity ?? selector, policy,
                     proof?.BaselineGraphDigest, proof?.CandidateGraphDigest, removed, diff, "unresolved");
                 records.Add(RcSelectionMiss.Record(output, observation));
@@ -537,7 +536,7 @@ namespace Antiphon.Nightly
 
         // ---- inputs ---------------------------------------------------------------------------------------------
 
-        private static void BindCohort(string frozen, IDictionary custody, List<RunInput> all, List<RunInput> chosen,
+        private static Dictionary<string, List<PlannedChunk>> BindCohort(string frozen, IDictionary custody, List<RunInput> all, List<RunInput> chosen,
             RunInput predecessor, string predecessorStamp, DateTimeOffset asOf)
         {
             var order = Json(Path.Combine(frozen, "state", "qualification-cohort.json")) as IDictionary
@@ -556,6 +555,25 @@ namespace Antiphon.Nightly
                 throw new Refusal("proof-cohort-order-mismatch");
             if (all.Count > 5 && (all[all.Count - 6].RunId != predecessor.RunId || all[all.Count - 6].Sha != predecessor.Sha))
                 throw new Refusal("proof-cohort-predecessor-mismatch");
+            var attempts = new HashSet<string>(StringComparer.Ordinal);
+            var plans = new Dictionary<string, List<PlannedChunk>>(StringComparer.Ordinal);
+            var roster = Items(order["rosters"]).Cast<IDictionary>().ToLookup(row => Str(row["run"]), StringComparer.Ordinal);
+            if (roster.Count != chosen.Count + 1) throw new Refusal("proof-cohort-rosters-unbound");
+            foreach (var run in chosen.Prepend(predecessor))
+            {
+                var attempt = Json(Path.Combine(run.Dir, "attempt", "selection-attempt.json")) as IDictionary;
+                run.AttemptId = Str(attempt?["attemptId"]);
+                if (Str(attempt?["runId"]) != run.RunId || run.AttemptId.Length == 0 || !attempts.Add(run.AttemptId))
+                    throw new Refusal("proof-cohort-attempt-unbound:" + run.Run8);
+                var plan = Plan(run);
+                var rows = roster[run.RunId].ToArray();
+                if (rows.Length != 1 || Str(rows[0]["attempt"]) != run.AttemptId || Str(rows[0]["sha"]) != run.Sha ||
+                    !Items(rows[0]["contents"]).Select(Str).Order(StringComparer.Ordinal)
+                        .SequenceEqual(plan.Select(chunk => chunk.ContentDigest).Order(StringComparer.Ordinal), StringComparer.Ordinal))
+                    throw new Refusal("proof-cohort-roster-mismatch:" + run.Run8);
+                plans.Add(run.RunId, plan);
+            }
+            return plans;
         }
 
         /// <summary>The manifest's (path, sha256) map after checking the tree has exactly those files, no links, and equal digests.</summary>
