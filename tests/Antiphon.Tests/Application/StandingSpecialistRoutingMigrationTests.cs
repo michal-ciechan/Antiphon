@@ -19,20 +19,21 @@ public class StandingSpecialistRoutingMigrationTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var now = DateTime.UtcNow;
         var owner = new Agent { Id = Guid.NewGuid(), Name = "legacy primary", Slug = "legacy-primary",
             Kind = AgentKind.ClaudeCode, ModelLevel = AgentModelLevel.High, ModelId = "sonnet",
             WorkingDirectory = Path.GetTempPath(), AlwaysOn = true, CreatedAt = now, UpdatedAt = now };
         var taskId = Guid.NewGuid();
-        db.Agents.Add(owner);
-        db.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId, Title = "legacy Check",
+        seed.Agents.Add(owner);
+        seed.AgentTasks.Add(new AgentTask { Id = taskId, RootTaskId = taskId, Title = "legacy Check",
             Goal = "legacy facts", Role = AgentTaskRole.Check, AgentId = owner.Id,
             Status = AgentTaskStatus.Failed, FailureReason = "original identity refusal", CreatedAt = now });
         var hold = new ModelAvailabilityHold { Id = Guid.NewGuid(), Kind = AgentKind.ClaudeCode,
             ModelAlias = "sonnet", Source = ModelAvailabilitySource.Manual, HitAt = now,
             DisabledUntil = now.AddHours(1), Reason = "fixture capacity hold" };
-        db.ModelAvailabilityHolds.Add(hold);
-        await db.SaveChangesAsync();
+        seed.ModelAvailabilityHolds.Add(hold);
+        await seed.SaveChangesAsync();
         // Compare the persisted value: PostgreSQL timestamps have microsecond precision.
         var persistedUntil = await db.ModelAvailabilityHolds.Where(h => h.Id == hold.Id).Select(h => h.DisabledUntil).SingleAsync();
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();

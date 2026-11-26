@@ -85,16 +85,17 @@ public sealed class CardWorktreeMirrorBindingTests
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         var options = TestDbFixture.CreateDbContextOptions(schema.ConnectionString);
         await using var db = new AppDbContext(options);
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var activeId = Guid.NewGuid();
         var doneId = Guid.NewGuid();
         var canceledId = Guid.NewGuid();
         var scalarId = Guid.NewGuid();
-        db.AgentTasks.Add(TaskRow(activeId, AgentTaskStatus.Working, "/mirrors/active"));
-        db.AgentTasks.Add(TaskRow(doneId, AgentTaskStatus.Succeeded, "/mirrors/done"));
-        db.AgentTasks.Add(TaskRow(canceledId, AgentTaskStatus.Canceled, "/mirrors/canceled"));
-        db.AgentTasks.Add(TaskRow(scalarId, AgentTaskStatus.Queued, "/mirrors/scalar"));
-        await db.SaveChangesAsync();
-        await SeedDoneCardAsync(db, doneId);
+        seed.AgentTasks.AddRange(TaskRow(activeId, AgentTaskStatus.Working, "/mirrors/active"),
+            TaskRow(doneId, AgentTaskStatus.Succeeded, "/mirrors/done"),
+            TaskRow(canceledId, AgentTaskStatus.Canceled, "/mirrors/canceled"),
+            TaskRow(scalarId, AgentTaskStatus.Queued, "/mirrors/scalar"));
+        await seed.SaveChangesAsync();
+        await SeedDoneCardAsync(seed, doneId);
 
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations, name => name.EndsWith("_AddTaskWorktreeMirrorBinding", StringComparison.Ordinal));

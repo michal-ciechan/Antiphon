@@ -1,4 +1,6 @@
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Migrations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -17,6 +19,22 @@ internal static class MigrationTestDatabase
 
     public static Task<IsolatedTestSchema> CreateReversibleTipAsync(CancellationToken ct = default) =>
         CreateAsync(LastReversibleMigration, ct);
+
+    /// <summary>Seeds task graphs at the reversible tip with that migration's AgentTask columns.</summary>
+    public static AppDbContext CreateReversibleTipSeedContext(IsolatedTestSchema schema) =>
+        new ReversibleTipSeedDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+
+    private sealed class ReversibleTipSeedDbContext(DbContextOptions<AppDbContext> options) : AppDbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+            var task = builder.Entity<AgentTask>();
+            var legacy = new AddRefOnlyParkWorkspaceSnapshot().TargetModel.FindEntityType(typeof(AgentTask).FullName!)!;
+            foreach (var property in task.Metadata.GetProperties().Where(p => legacy.FindProperty(p.Name) is null).ToArray())
+                task.Ignore(property.Name);
+        }
+    }
 
     /// <summary>The review engine migration. Its Down throws, so a rewind detaches an empty copy instead.</summary>
     public const string ReviewEngineMigration = "20261122173647_AddReviewEngine";
@@ -53,9 +71,8 @@ internal static class MigrationTestDatabase
     /// empty requested-model alias, then an
     /// empty land-verification addition.
     /// A stored value is refused with the migration's own message and is not dropped.
-    /// Historical seeds that insert the current <c>AgentTask</c> shape into a pre-alias schema are
-    /// covered by <see cref="RequestedModelAliasSchema"/> on every fixture context, because those
-    /// seeds never reach this rewind helper.
+    /// <see cref="RequestedModelAliasSchema"/> also adds the alias column for fixture commands
+    /// that name it before its migration.
     /// </summary>
     public static async Task DetachHostLoadAsync(AppDbContext db, CancellationToken ct = default)
     {

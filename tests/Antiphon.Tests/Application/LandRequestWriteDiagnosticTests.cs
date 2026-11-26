@@ -167,9 +167,10 @@ public sealed class LandRequestWriteDiagnosticTests
         // Seed the unrelated task at the last reversible migration, then rewind
         // before inserting the request in the actual legacy schema below.
         await db.GetService<IMigrator>().MigrateAsync(MigrationTestDatabase.LastReversibleMigration);
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(owned);
         var taskId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "legacy", Goal = "legacy",
             Role = AgentTaskRole.Code, Kind = AgentTaskKind.Worker, Workspace = WorkspaceMode.Worktree,
@@ -177,7 +178,7 @@ public sealed class LandRequestWriteDiagnosticTests
             Status = AgentTaskStatus.Succeeded, ReplyTo = AgentTaskReplyTo.None,
             CreatedAt = now, CompletedAt = now,
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
         await db.GetService<IMigrator>().MigrateAsync(migrations[position - 1]);
         var requestId = Guid.NewGuid();
         var token = Guid.NewGuid();

@@ -20,18 +20,19 @@ public class CapacityRecoveryCompatibilityTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations,
             m => m.EndsWith("_AddAgentTaskEventInputBody", StringComparison.Ordinal));
         position.ShouldBeGreaterThan(0);
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "legacy input", Goal = "legacy",
             Status = AgentTaskStatus.Failed, CreatedAt = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(migrations[position - 1]);
         // Insert against the actual pre-upgrade schema, which has no InputBody column.
@@ -52,10 +53,11 @@ public class CapacityRecoveryCompatibilityTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = CapacityRecoveryTestSupport.CreateContext(schema);
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var holdId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         var now = DateTime.UtcNow;
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId,
             RootTaskId = taskId,
@@ -68,7 +70,7 @@ public class CapacityRecoveryCompatibilityTests
             FailureReason = "WallParked",
             ConcurrencyToken = Guid.NewGuid(),
         });
-        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        seed.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
         {
             Id = holdId,
             Kind = AgentKind.ClaudeCode,
@@ -80,7 +82,7 @@ public class CapacityRecoveryCompatibilityTests
             ClearedAt = null,
         });
         var clearedId = Guid.NewGuid();
-        db.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
+        seed.ModelAvailabilityHolds.Add(new ModelAvailabilityHold
         {
             Id = clearedId,
             Kind = AgentKind.ClaudeCode,
@@ -91,7 +93,7 @@ public class CapacityRecoveryCompatibilityTests
             Reason = "already cleared",
             ClearedAt = now.AddHours(-1),
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
 
         var migrations = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
         var position = Array.FindIndex(migrations, m => m.EndsWith("_Card0412CapacityRecovery", StringComparison.Ordinal));

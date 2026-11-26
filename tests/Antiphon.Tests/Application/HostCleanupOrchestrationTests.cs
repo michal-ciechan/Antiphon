@@ -37,6 +37,7 @@ public sealed class HostCleanupOrchestrationTests
     {
         await using var schema = await MigrationTestDatabase.CreateReversibleTipAsync();
         await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        await using var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var migrations = db.Database.GetMigrations().ToArray();
         var cleanup = Array.FindIndex(migrations, name => name.EndsWith("_AddHostCleanup"));
         cleanup.ShouldBeGreaterThan(0, "C826.cleanup-migration-present");
@@ -46,13 +47,13 @@ public sealed class HostCleanupOrchestrationTests
         var taskId = Guid.NewGuid();
         var eventId = Guid.NewGuid();
         var at = DateTime.UtcNow;
-        db.AgentTasks.Add(new AgentTask
+        seed.AgentTasks.Add(new AgentTask
         {
             Id = taskId, RootTaskId = taskId, Title = "cleanup upgrade sentinel",
             Goal = "preserve existing rows", Status = AgentTaskStatus.Succeeded,
             CreatedAt = at, WorkingDirectory = "/virtual/cleanup-upgrade",
         });
-        await db.SaveChangesAsync();
+        await seed.SaveChangesAsync();
         // Park has InputBody and IsLandTerminal, and not the later nullable load columns.
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "AgentTaskEvents" ("Id", "AgentTaskId", "Type", "Detail", "InputBody", "At", "IsLandTerminal")

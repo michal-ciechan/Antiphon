@@ -25,16 +25,16 @@ public sealed class DispatchConcurrencyMigrationTests
         var now = DateTime.UtcNow;
         var projectP = Guid.NewGuid();
         var projectQ = Guid.NewGuid();
-        await using (var db = NewDb(schema.ConnectionString))
+        await using (var seed = MigrationTestDatabase.CreateReversibleTipSeedContext(schema))
         {
-            db.Projects.AddRange(Project(projectP, "P", now), Project(projectQ, "Q", now));
-            await db.SaveChangesAsync();
+            seed.Projects.AddRange(Project(projectP, "P", now), Project(projectQ, "Q", now));
+            await seed.SaveChangesAsync();
             foreach (var projectId in new Guid?[] { projectP, projectQ, null })
             {
                 foreach (var status in Enum.GetValues<AgentTaskStatus>())
                 {
                     var id = Guid.NewGuid();
-                    db.AgentTasks.Add(new AgentTask
+                    seed.AgentTasks.Add(new AgentTask
                     {
                         Id = id,
                         RootTaskId = id,
@@ -51,7 +51,7 @@ public sealed class DispatchConcurrencyMigrationTests
             }
 
             var sessionId = Guid.NewGuid();
-            db.AgentSessions.Add(new AgentSession
+            seed.AgentSessions.Add(new AgentSession
             {
                 Id = sessionId,
                 DefinitionName = "claude",
@@ -65,7 +65,7 @@ public sealed class DispatchConcurrencyMigrationTests
                 StartedAt = now,
                 LastSeenAt = now,
             });
-            db.HostBudgets.Add(new HostBudget
+            seed.HostBudgets.Add(new HostBudget
             {
                 HostId = "desktop",
                 MaxInFlight = 0,
@@ -73,7 +73,7 @@ public sealed class DispatchConcurrencyMigrationTests
                 UpdatedAt = now,
                 Revision = 3,
             });
-            db.RunnerRoutingSettings.Add(new RunnerRoutingSettings
+            seed.RunnerRoutingSettings.Add(new RunnerRoutingSettings
             {
                 Id = RunnerRoutingSettings.SingletonKey,
                 Revision = 4,
@@ -82,11 +82,7 @@ public sealed class DispatchConcurrencyMigrationTests
                 LastReason = "frozen",
                 LastProvenance = "Human",
             });
-            await db.SaveChangesAsync();
-            // Seed with the current model, then retain its historical columns in the
-            // predecessor schema. Current entities cannot be inserted after a rewind.
-            db.ChangeTracker.Clear();
-            await RewindAsync(db);
+            await seed.SaveChangesAsync();
         }
 
         string[] beforeTasks;
@@ -95,6 +91,7 @@ public sealed class DispatchConcurrencyMigrationTests
         string beforeRouting;
         await using (var db = NewDb(schema.ConnectionString))
         {
+            await RewindAsync(db);
             beforeTasks = await TaskSnapshotAsync(db);
             beforeSessions = await SessionSnapshotAsync(db);
             beforeBudget = await BudgetSnapshotAsync(db);

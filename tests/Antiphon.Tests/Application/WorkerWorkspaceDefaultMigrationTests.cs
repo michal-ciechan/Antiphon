@@ -132,7 +132,7 @@ public sealed class WorkerWorkspaceDefaultMigrationTests
 
     private static async Task<(Guid ProjectId, (Guid Id, WorkspaceMode Mode)[] Tasks)> SeedAsync(IsolatedTestSchema schema)
     {
-        await using var db = NewDb(schema);
+        await using var db = MigrationTestDatabase.CreateReversibleTipSeedContext(schema);
         var now = DateTime.UtcNow;
         var project = new Project
         {
