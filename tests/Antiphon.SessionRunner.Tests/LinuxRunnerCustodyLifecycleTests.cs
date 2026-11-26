@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.TestSupport;
@@ -119,31 +120,36 @@ public sealed class LinuxRunnerCustodyLifecycleTests
     public async Task C1614_Root_exit_read_does_not_seal_live_descendant()
     {
         RequireNativeLifecycle();
+        await using var fx = await NativeHold.StartAsync();
+        await fx.WaitForDescendantAsync();
+        await fx.WaitForRootExitAsync();
+        var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, false, CancellationToken.None);
+        status.State.ShouldBe(VerificationCustodyState.Draining);
+        status.Receipt.ShouldBeNull();
+        File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
+        Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task C2081_Native_fixture_disposes_its_detached_host()
+    {
+        RequireNativeLifecycle();
         var fx = await NativeHold.StartAsync();
         try
         {
-            fx.HostCountBeforeLaunch.ShouldBe(0);
-            fx.OwnedHosts().Select(host => host.Pid).ShouldBe([fx.HostPid]);
-            await fx.WaitForDescendantAsync();
-            await fx.WaitForRootExitAsync();
-            var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, false, CancellationToken.None);
-            status.State.ShouldBe(VerificationCustodyState.Draining);
-            status.Receipt.ShouldBeNull();
-            File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
-            Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
+            await using (fx)
+            {
+                fx.HostCountBeforeLaunch.ShouldBe(0);
+                fx.OwnedHosts().Select(host => host.Pid).ShouldBe([fx.HostPid]);
+                await fx.WaitForDescendantAsync();
+                await fx.WaitForRootExitAsync();
+            }
+            fx.OwnedHosts().Length.ShouldBe(0, "no detached native PtyHost may outlive the fixture");
         }
         finally
         {
-            try
-            {
-                await fx.DisposeAsync();
-                fx.OwnedHosts().Length.ShouldBe(0, "no detached native PtyHost may outlive the fixture");
-            }
-            finally
-            {
-                // The witness itself must not leak a host when teardown regresses.
-                fx.KillHost();
-            }
+            // The witness itself must not leak a host when teardown regresses.
+            fx.KillHost();
         }
     }
 
@@ -287,7 +293,6 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             var body = hold
                 ? "#!/bin/sh\nsetsid sh -c 'echo $$ > \"" + descendant + "\"; while [ ! -f \"" + release + "\" ]; do sleep 0.1; done' </dev/null >/dev/null 2>&1 &\nsleep 0.2\nexit 0\n"
                 : "#!/bin/sh\nexit 0\n";
-            await File.WriteAllTextAsync(script, body);
             var request = new RunnerLaunchRequest(binding.Generation.SessionId, "/bin/sh", [script],
                 new Dictionary<string, string>(), snapshot, 80, 24, VerificationBinding: binding);
             var fixture = new NativeHold
@@ -295,10 +300,20 @@ public sealed class LinuxRunnerCustodyLifecycleTests
                 Runtime = runtime, Binding = binding, Store = runtime.CustodyForTests.Store,
                 ReleasePath = release, DescendantPath = descendant, RootPath = root,
             };
-            fixture.HostCountBeforeLaunch = fixture.OwnedHosts().Length;
-            var started = await runtime.StartAsync(request, CancellationToken.None);
-            fixture.RootPid = started.Pid ?? 0;
-            fixture.HostPid = started.HostPid ?? 0;
+            try
+            {
+                fixture.HostCountBeforeLaunch = fixture.OwnedHosts().Length;
+                await File.WriteAllTextAsync(script, body);
+                var started = await runtime.StartAsync(request, CancellationToken.None);
+                fixture.RootPid = started.Pid ?? 0;
+                fixture.HostPid = started.HostPid ?? 0;
+            }
+            catch (Exception launchError)
+            {
+                try { await fixture.DisposeAsync(); }
+                catch (Exception cleanupError) { throw new AggregateException(launchError, cleanupError); }
+                throw;
+            }
             return fixture;
         }
 
@@ -381,9 +396,63 @@ public sealed class LinuxRunnerCustodyLifecycleTests
 
         public async ValueTask DisposeAsync()
         {
-            try { await File.WriteAllTextAsync(ReleasePath, "release"); } catch (IOException) { }
-            try { await Runtime.DisposeAsync(); } catch { }
-            try { Directory.Delete(RootPath, recursive: true); } catch { }
+            try
+            {
+                await ReleasePayloadsAsync();
+            }
+            finally
+            {
+                // The runtime disconnects from its detached PtyHost. Join the exact host
+                // while the fixture still owns its paths, even after a failed test or launch.
+                try { KillHost(); }
+                finally { await Runtime.DisposeAsync(); }
+            }
+
+            OwnedHosts().ShouldBeEmpty("fixture teardown must leave no native PtyHost");
+            Directory.Delete(RootPath, recursive: true);
+        }
+
+        private async Task ReleasePayloadsAsync()
+        {
+            try { await File.WriteAllTextAsync(ReleasePath, "release"); }
+            finally
+            {
+                // The hold script can leave a reparented descendant. The host's recorded
+                // cgroup still owns that descendant after both the root and host exit.
+                var tree = HostPid > 0 || File.Exists(Store.PathFor(Binding.ExecutionId, "binding.json"))
+                    ? Store.ReadRecord<LinuxNamespaceRecord>(Binding, "linux-namespace.json")
+                    : null;
+                if (HostPid > 0)
+                    tree.ShouldNotBeNull("a started custody launch must record its cgroup");
+                if (tree is not null)
+                {
+                    var procs = LinuxCgroupContainment.ExecutionProcsPath(tree.NamespaceId, tree.ContainerId);
+                    var grace = Stopwatch.StartNew();
+                    while (ReadMembers(procs).Length != 0 && grace.Elapsed < TimeSpan.FromSeconds(2))
+                        await Task.Delay(50);
+
+                    if (ReadMembers(procs).Length != 0)
+                    {
+                        Guid.Parse(File.ReadAllText("/run/antiphon-custody/namespace").Trim())
+                            .ShouldBe(tree.NamespaceId, "only release the namespace recorded by this fixture");
+                        new LinuxCgroupContainment(tree.ContainerId).Terminate().Succeeded
+                            .ShouldBeTrue("the helper must drain the fixture's own cgroup");
+                    }
+
+                    ReadMembers(procs).ShouldBeEmpty("fixture teardown must leave no cgroup members");
+                }
+            }
+        }
+
+        private string[] ReadMembers(string procs)
+        {
+            try { return File.ReadAllLines(procs); }
+            catch (DirectoryNotFoundException) when (HostPid == 0)
+            {
+                // The host records custody before placement. A launch that never returned
+                // can have a record and no tree.
+                return [];
+            }
         }
     }
 }
