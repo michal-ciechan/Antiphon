@@ -182,7 +182,7 @@ public sealed class ExpectedPlatformSkipRosterTests
         var windows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "platform")) == "windows").ToArray();
         var unique = windows.Select(e => PsValue.Str(PsValue.Prop(e, "test"))).Distinct(StringComparer.Ordinal).Count();
         var gaps = NightlyExpectedSkips.SourceGaps(Repo, "windows", committed, null);
-        rows.Check(windows.Length == 33 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
+        rows.Check(windows.Length == 34 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
             "windows=" + windows.Length + " unique=" + unique + " gaps=" + string.Join(",", gaps));
 
         var planted = committed.Append(Entry("windows", Missing, "gone")).ToArray();
