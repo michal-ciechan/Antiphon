@@ -95,18 +95,18 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 229,
+      "classes": 231,
       "reason": "cap",
-      "owed": 204,
+      "owed": 206,
       "first": [
+        "StandingSpecialistSeatTests",
         "BlockedTaskParkProjectionTests",
         "ChannelContractsTests",
         "CodexMcpBootProbeTests",
         "CommitOnSettleDocumentationTests",
         "CommitOnSettleScriptTests",
         "DockerStackDocumentationTests",
-        "KeepSixDocumentationTests",
-        "LandGraphLandRefreshTests"
+        "KeepSixDocumentationTests"
       ]
     },
     {
@@ -116,23 +116,23 @@
     },
     {
       "path": "CLAUDE.md",
-      "classes": 199,
+      "classes": 201,
       "reason": "cap",
-      "owed": 174,
+      "owed": 176,
       "first": [
+        "AgentTaskCheckScheduleTests",
+        "AgentTaskCheckSweepTests",
+        "AgentTaskDeadSessionReconciliationTests",
+        "AgentTaskDeliveryWatchdogTests",
         "AgentTaskDispatchBaseGuardTests",
         "AgentTaskDispatchFailureTests",
         "AgentTaskInputSpillTests",
-        "AgentTaskInternalDecisionLifecycleTests",
-        "AgentTaskLandActiveSourceClaimTests",
-        "AgentTaskLandAdmissionControlledTests",
-        "AgentTaskLandAdmissionTests",
-        "AgentTaskLandMonitoringTests"
+        "AgentTaskInternalDecisionLifecycleTests"
       ]
     },
     {
       "path": "Directory.Build.props",
-      "classes": 28,
+      "classes": 29,
       "reason": "allowlist"
     },
     {
@@ -231,7 +231,7 @@
     },
     {
       "path": "global.json",
-      "classes": 38,
+      "classes": 39,
       "reason": "allowlist"
     },
     {
@@ -2542,10 +2542,11 @@
     },
     {
       "path": "tests/test-execution-policy.json",
-      "classes": 30,
+      "classes": 31,
       "reason": "cap",
-      "owed": 5,
+      "owed": 6,
       "first": [
+        "ReleaseSelectionHopSeedTests",
         "ReleaseTagAllocatorTests",
         "TestSelectionCatalogTests",
         "TestSelectionDependencyTests",
@@ -2572,8 +2573,10 @@
         "LandingRemovalPolicyControlTests",
         "LiveClaudeIsolationWiringTests",
         "LiveLaneAttestationTests",
+        "LiveLaneFingerprintTests",
         "LiveLaneIsolationTests",
         "LiveLaneReceiptTests",
+        "LiveLaneStatusTests",
         "ProcessSpawnLimitTests",
         "SettledWorktreeRemovalTests",
         "SpecialistToolPolicyTests"
@@ -2737,6 +2740,7 @@
         "BootstrapCheckTests",
         "CheckpointManifestDocumentationTests",
         "InstructionFileStampTests",
+        "LiveLaneFingerprintTests",
         "LiveLaneIsolationTests",
         "OrchestratorInstructionsGuidanceTests",
         "OrchestratorWorkspaceCommandTests",
@@ -2751,7 +2755,6 @@
         "StableBuildOutputDocumentationTests",
         "StandingPipelinePolicyDocumentationTests",
         "StandingSessionSelectionTests",
-        "StandingSpecialistSeatTests",
         "WorkerWorkspaceDefaultMigrationTests"
       ]
     },
@@ -2793,16 +2796,16 @@
         "AgentSupervisionTests",
         "AgentSystemPromptLaunchTests",
         "AgentTaskCheckInterpreterTests",
-        "AgentTaskCheckScheduleTests",
-        "AgentTaskCheckSweepTests",
-        "AgentTaskDeadSessionReconciliationTests",
-        "AgentTaskDeliveryWatchdogTests",
         "CardThreadEndpointTests",
         "ChannelContractsTests",
         "ClaudeHookAdditionalContextCanaryTests",
         "InstructionFileStampTests",
         "LiveClaudeIsolationWiringTests",
+        "LiveLaneAttestationTests",
+        "LiveLaneFingerprintTests",
         "LiveLaneIsolationTests",
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests",
         "OrchestratorWorkspaceCommandTests",
         "OrchestratorWorkspaceLayoutCanaryTests",
         "OrchestratorWorkspaceLayoutTests",
@@ -4739,12 +4742,6 @@
       ]
     },
     {
-      "path": "scripts/live-lane-status.ps1",
-      "classes": [
-        "LiveLaneProjectIsolationTests"
-      ]
-    },
-    {
       "path": "scripts/nightly-run.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4862,30 +4859,6 @@
         "VolumeRetirementContentTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
-      "path": "scripts/test-live-lane-evidence.ps1",
-      "classes": [
-        "CheckpointCallerBudgetTests"
-      ]
-    },
-    {
-      "path": "scripts/test-live-lane-fingerprint.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
-      ]
-    },
-    {
-      "path": "scripts/test-live-lane-isolation.ps1",
-      "classes": [
-        "CheckpointCallerBudgetTests"
-      ]
-    },
-    {
-      "path": "scripts/test-live-lane-receipt.ps1",
-      "classes": [
-        "ReleaseImpactScriptTests"
       ]
     },
     {
@@ -18216,6 +18189,7 @@
         "CheckpointAdmissionContractTests",
         "CheckpointExecutorLogTests",
         "CheckpointOwnedOutputTests",
+        "CheckpointReceiptSafetyTests",
         "CheckpointStatePublicationTests",
         "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
@@ -26009,6 +25983,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Fixtures/live-lane-parity.json",
+      "classes": [
+        "LiveLaneParityTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/HostJqPrerequisiteScriptTests.cs",
       "classes": [
         "HostJqFixtureClosureTests",
@@ -26029,6 +26009,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/LinuxOnlyCensus.cs",
       "classes": [
+        "LiveLaneReceiptTests",
         "ReleaseGatePlatformTests"
       ]
     },
@@ -26055,20 +26036,17 @@
       "path": "tests/Antiphon.Tests/Scripts/LiveLaneAttestationExport.cs",
       "classes": [
         "LiveLaneAttestationTests",
-        "LiveLaneReceiptTests"
-      ]
-    },
-    {
-      "path": "tests/Antiphon.Tests/Scripts/LiveLaneFingerprintTests.cs",
-      "classes": [
-        "LiveLaneAttestationTests",
-        "LiveLaneReceiptTests"
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/LiveLaneFixtures.cs",
       "classes": [
+        "LiveLaneAttestationTests",
+        "LiveLaneFingerprintTests",
         "LiveLaneOutcomeTests",
+        "LiveLaneReceiptTests",
         "LiveLaneRunnerTests"
       ]
     },
@@ -26087,6 +26065,17 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/LiveLaneS22Fixtures.cs",
+      "classes": [
+        "LiveLaneAttestationTests",
+        "LiveLaneCommissionTests",
+        "LiveLaneFingerprintTests",
+        "LiveLaneParityTests",
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyExecutionTests.cs",
       "classes": [
         "ProcessSpawnLimitTests"
@@ -26095,6 +26084,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/NativeLinuxPolicyWitnessMutationTests.cs",
       "classes": [
+        "LiveLaneReceiptTests",
         "ReleaseGatePlatformTests"
       ]
     },
@@ -26728,9 +26718,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarness.cs",
       "classes": [
-        "LiveLaneAttestationTests",
-        "LiveLaneFingerprintTests",
-        "LiveLaneReceiptTests",
         "ScriptHarnessProcessContractTests"
       ]
     },
@@ -26751,9 +26738,6 @@
       "path": "tests/Antiphon.Tests/Scripts/ScriptHarnessProcess.cs",
       "classes": [
         "C1514HostLoadScriptTests",
-        "LiveLaneAttestationTests",
-        "LiveLaneFingerprintTests",
-        "LiveLaneReceiptTests",
         "ProcessSpawnLimitTests",
         "ScriptHarnessLinuxOwnershipTests",
         "ScriptHarnessProcessContractTests",
@@ -26876,6 +26860,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/WindowsUnitPlatformAdmissionTests.cs",
       "classes": [
+        "LiveLaneReceiptTests",
         "ReleaseGatePlatformTests"
       ]
     },
@@ -29370,7 +29355,8 @@
         "LiveClaudeIsolationWiringTests",
         "LiveLaneAttestationTests",
         "LiveLaneIsolationTests",
-        "LiveLaneReceiptTests"
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests"
       ]
     },
     {
@@ -29411,6 +29397,7 @@
     {
       "path": "tests/Shared/NativeLinuxPolicyWitness.cs",
       "classes": [
+        "LiveLaneReceiptTests",
         "NativeLinuxPolicyMatcherParityTests",
         "NativeLinuxPolicyWitnessMutationTests",
         "NativeLinuxPolicyWitnessTests",
@@ -29420,6 +29407,7 @@
     {
       "path": "tests/Shared/NativeLinuxPolicyWitnessTests.cs",
       "classes": [
+        "LiveLaneReceiptTests",
         "ReleaseGatePlatformTests"
       ]
     },
@@ -29629,20 +29617,32 @@
     {
       "path": "tests/live-lane-inputs.json",
       "classes": [
-        "LiveLaneProjectIsolationTests"
+        "LiveLaneAttestationTests",
+        "LiveLaneFingerprintTests",
+        "LiveLaneProjectIsolationTests",
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests"
       ]
     },
     {
       "path": "tests/live-lanes.json",
       "classes": [
+        "LiveLaneAttestationTests",
         "LiveLaneCensusTests",
-        "LiveLaneProjectIsolationTests"
+        "LiveLaneFingerprintTests",
+        "LiveLaneProjectIsolationTests",
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests"
       ]
     },
     {
       "path": "tests/rc-project-categories.json",
       "classes": [
         "IncrementalSelectionSoundnessTests",
+        "LiveLaneAttestationTests",
+        "LiveLaneFingerprintTests",
+        "LiveLaneReceiptTests",
+        "LiveLaneStatusTests",
         "RcProjectSelectionTests",
         "ReleaseSelectionAttemptTests"
       ]
@@ -29661,6 +29661,7 @@
         "ChangeAwareReleaseTests",
         "ImpactedClassesSelectorTests",
         "LiveLaneCensusTests",
+        "LiveLaneReceiptTests",
         "NightlyRunParityTests",
         "NightlyScriptsTests",
         "QualificationTimingTests",
@@ -29677,7 +29678,6 @@
         "ReleaseImpactEnvelopeTests",
         "ReleasePromoteTests",
         "ReleasePublishTests",
-        "ReleaseSelectionHopSeedTests",
         "TestSelectionTests",
         "TimeoutAuditTests",
         "WindowsUnitPlatformAdmissionTests"
