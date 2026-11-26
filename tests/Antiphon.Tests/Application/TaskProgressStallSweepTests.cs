@@ -222,9 +222,7 @@ public class TaskProgressStallSweepTests
         var incident = (await scenario.IncidentsAsync()).ShouldHaveSingleItem(
             "the stall is still visible, keyed by its session");
         incident.AgentId.ShouldBeNull("the agent row is gone; naming it violates FK_AgentIncidents_Agents_AgentId");
-        await using var db = CreateContext();
-        (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued)).Status
-            .ShouldNotBe(AgentTaskStatus.Queued, "the same tick still decided the queued task");
+        await AssertQueuedTaskDecidedAsync(queued, "the same tick still decided the queued task");
     }
 
     /// <summary>
@@ -246,15 +244,30 @@ public class TaskProgressStallSweepTests
 
         deleter.Fired.ShouldBeTrue("the agent row vanished between the existence check and the insert");
         (await scenario.IncidentsAsync()).ShouldBeEmpty("that tick's stall write failed");
-        await using (var db = CreateContext())
-        {
-            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued)).Status
-                .ShouldNotBe(AgentTaskStatus.Queued, "the failed stall write did not reach the dispatch's save");
-        }
+        await AssertQueuedTaskDecidedAsync(queued, "the failed stall write did not reach the dispatch's save");
 
         await harness.DetectStalledProgressAsync(CancellationToken.None);
         (await scenario.IncidentsAsync()).ShouldHaveSingleItem().AgentId
             .ShouldBeNull("the next pass records the stall without the vanished agent");
+    }
+
+    private static async Task AssertQueuedTaskDecidedAsync(Guid taskId, string because)
+    {
+        await using var db = CreateContext();
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId);
+        if (task.Status == AgentTaskStatus.Queued)
+        {
+            var holds = await db.AgentTaskEvents.AsNoTracking()
+                .Where(e => e.AgentTaskId == taskId && e.Type == AgentTaskEventType.Held)
+                .OrderBy(e => e.At).Select(e => e.Detail).ToListAsync();
+            var occupants = await db.AgentTasks.AsNoTracking().Where(AgentTaskRoles.NotSpecialist)
+                .Where(t => (t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Dispatched)
+                    && !t.CapacityWaitRetained && (t.RunnerId == null || t.RunnerId == ""))
+                .OrderBy(t => t.CreatedAt).Select(t => t.Title).ToListAsync();
+            because += $". Held events [{string.Join(" | ", holds)}]. Counted local rows [{string.Join(" | ", occupants)}].";
+        }
+
+        task.Status.ShouldNotBe(AgentTaskStatus.Queued, because);
     }
 
     /// <summary>
