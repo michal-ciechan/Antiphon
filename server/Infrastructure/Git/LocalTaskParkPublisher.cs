@@ -83,23 +83,29 @@ public sealed class LocalTaskParkPublisher(ITaskProgressGit git, IRepositoryMuta
                 var endpointRead = await EndpointAsync(path, b.EndpointFingerprint, ct);
                 if (endpointRead.Failure is not null) return endpointRead.Failure;
                 var endpoint = endpointRead.Url!;
-                var observed = await RemoteAsync(path, endpoint, b.FullRef, ct);
-                if (!observed.Known) return Unknown();
-                if (observed.Sha != sha)
+                // Shared/ReadOnly sources and a previous receipt only verify: they never push, and the final
+                // observation below is their whole remote check. A first Worktree publication pushes first, with no
+                // earlier remote read: one captured SHA to one owned ref without force, so Git's fast-forward check
+                // refuses a remote that is not an ancestor and an equal remote is "up to date". Only a refused push
+                // reads the remote, to name why.
+                if (mode == WorkspaceMode.Worktree && previous is null)
                 {
-                    if (mode != WorkspaceMode.Worktree || previous is not null)
-                        return Held("park_publish_unconfirmed");
-                    if (observed.Sha is { } old)
-                    {
-                        var ff = await git.RunAsync(path, ["merge-base", "--is-ancestor", old, sha], ct);
-                        if (ff.ExitCode == 1) return Held("park_remote_not_ancestor");
-                        if (!ff.Succeeded) return Unknown();
-                    }
                     using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     budget.CancelAfter(TimeSpan.FromSeconds(60));
                     var push = await git.RunAsync(path, ["push", "--no-follow-tags", "--recurse-submodules=no",
                         "--", endpoint, sha + ":" + b.FullRef], budget.Token);
-                    if (!push.Succeeded) return Held("park_push_rejected");
+                    if (!push.Succeeded)
+                    {
+                        var observed = await RemoteAsync(path, endpoint, b.FullRef, ct);
+                        if (!observed.Known) return Unknown();
+                        if (observed.Sha is { } old && old != sha)
+                        {
+                            var ff = await git.RunAsync(path, ["merge-base", "--is-ancestor", old, sha], ct);
+                            if (ff.ExitCode == 1) return Held("park_remote_not_ancestor");
+                            if (!ff.Succeeded) return Unknown();
+                        }
+                        return Held("park_push_rejected");
+                    }
                 }
                 var finalEndpoint = await EndpointAsync(path, b.EndpointFingerprint, ct);
                 if (finalEndpoint.Failure is not null) return finalEndpoint.Failure;

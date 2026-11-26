@@ -172,32 +172,26 @@ public sealed class RunnerWorkspaceParkService
 
             var endpoint = await ReadEndpointAsync(path, request.Binding.EndpointFingerprint, ct);
             if (endpoint.Failure is { } endpointFailure) return endpointFailure;
-            var remoteBefore = await ReadExactRefAsync(path, endpoint.Url!, request.Binding.FullRef, ct);
-            if (remoteBefore.Failure is { } readFailure) return readFailure;
-            if (remoteBefore.Sha is { } remote && remote != tip)
+            // A receipt only verifies: it never pushes, and the final observation below is its whole remote check.
+            // Without one the push goes first, with no earlier remote read: a captured SHA, one owned ref and no
+            // force, so Git's own fast-forward check refuses a remote that is not an ancestor, and an equal remote
+            // is "up to date". Only a refused push reads the remote, to name why.
+            string? remoteBefore = null;
+            if (receipt is null)
             {
-                var forward = await GitAsync(path, ct, "merge-base", "--is-ancestor", remote, tip);
-                if (AncestryDecision(forward.ExitCode, "park_remote_not_ancestor") is { } remoteFailure)
-                    return remoteFailure;
-            }
-
-            if (remoteBefore.Sha != tip)
-            {
-                if (receipt is not null) return Held("park_publish_unconfirmed");
                 await AtBoundaryAsync(WorkspaceParkBoundary.BeforePush, ct);
-                // A captured SHA, one owned ref, and no force: branch drift cannot publish some
-                // other local tip. A concurrent remote writer still wins Git's FF check.
                 pushing = true;
                 using var pushBudget = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 pushBudget.CancelAfter(TimeSpan.FromSeconds(60));
-                var push = await GitAsync(path, pushBudget.Token, "push", "--no-follow-tags",
+                var push = await GitAsync(path, pushBudget.Token, "push", "--porcelain", "--no-follow-tags",
                     "--recurse-submodules=no", "--", endpoint.Url!, tip + ":" + request.Binding.FullRef);
-                if (push.ExitCode != 0) return Held("park_push_rejected");
                 pushing = false;
+                if (push.ExitCode != 0) return await PushRefusalAsync(path, endpoint.Url!, request.Binding.FullRef, tip, ct);
+                remoteBefore = await PushedFromAsync(path, push.Stdout, request.Binding.FullRef, tip, ct);
                 await AtBoundaryAsync(WorkspaceParkBoundary.AfterPush, ct);
             }
 
-            // Even equal and previously absent refs require a second, fresh exact observation.
+            // Every publication and every verification ends on one fresh exact observation of the remote ref.
             await AtBoundaryAsync(WorkspaceParkBoundary.BeforeFinalObservation, ct);
             var finalEndpoint = await ReadEndpointAsync(path, request.Binding.EndpointFingerprint, ct);
             if (finalEndpoint.Failure is { } finalEndpointFailure) return finalEndpointFailure;
@@ -217,7 +211,7 @@ public sealed class RunnerWorkspaceParkService
             if (lastEndpoint.Failure is { } lastEndpointFailure) return lastEndpointFailure;
 
             return new(WorkspaceParkOutcome.Published, "park_published", receipt ?? new(
-                Guid.NewGuid(), request, tip, remoteAfter.Sha!, remoteBefore.Sha,
+                Guid.NewGuid(), request, tip, remoteAfter.Sha!, remoteBefore,
                 Clean: true, DescendsFromBaseline: true, DateTimeOffset.UtcNow));
         }
         catch (OperationCanceledException)
@@ -297,6 +291,46 @@ public sealed class RunnerWorkspaceParkService
     private static bool HasActiveSequencer(string directory) =>
         new[] { "rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD" }
             .Any(name => Directory.Exists(Path.Combine(directory, name)) || File.Exists(Path.Combine(directory, name)));
+
+    /// <summary>
+    /// Why a park push was refused, read only after the refusal: a remote branch that is not an ancestor of the tip
+    /// is <c>park_remote_not_ancestor</c>, an unreadable remote or ancestry is unknown, anything else
+    /// <c>park_push_rejected</c>.
+    /// </summary>
+    private async Task<WorkspaceParkResult> PushRefusalAsync(string path, string endpoint, string fullRef, string tip, CancellationToken ct)
+    {
+        var remote = await ReadExactRefAsync(path, endpoint, fullRef, ct);
+        if (remote.Failure is { } readFailure) return readFailure;
+        if (remote.Sha is { } sha && sha != tip)
+        {
+            var forward = await GitAsync(path, ct, "merge-base", "--is-ancestor", sha, tip);
+            if (AncestryDecision(forward.ExitCode, "park_remote_not_ancestor") is { } remoteFailure) return remoteFailure;
+        }
+        return Held("park_push_rejected");
+    }
+
+    /// <summary>
+    /// The remote branch before an accepted push, from the push's own porcelain line for <paramref name="fullRef"/>:
+    /// <c>*</c> (new branch) is null, <c>=</c> (up to date) is the tip, a fast-forward's <c>old..new</c> names the old
+    /// tip, abbreviated, and is resolved here (it is an ancestor of the tip, so this repository has it). Informational
+    /// on the receipt: the final exact observation, not this, proves publication, so an output this cannot read
+    /// records null.
+    /// </summary>
+    private async Task<string?> PushedFromAsync(string path, string porcelain, string fullRef, string tip, CancellationToken ct)
+    {
+        foreach (var line in porcelain.Split('\n'))
+        {
+            var fields = line.TrimEnd('\r').Split('\t');
+            if (fields.Length < 3 || fields[0].Length != 1 || !fields[1].EndsWith(":" + fullRef, StringComparison.Ordinal)) continue;
+            if (fields[0] == "=") return tip;
+            if (fields[0] != " " || fields[2].Split("..") is not [var old, _] || old.Length < 4) return null;
+            if (IsObjectId(old)) return old;
+            var resolved = await GitAsync(path, ct, "rev-parse", "--verify", "--quiet", old + "^{commit}");
+            var full = resolved.Stdout.Trim();
+            return resolved.ExitCode == 0 && IsObjectId(full) ? full : null;
+        }
+        return null;
+    }
 
     internal static WorkspaceParkResult? AncestryDecision(int exitCode, string refusal) =>
         exitCode switch { 0 => null, 1 => Held(refusal), _ => Unknown() };

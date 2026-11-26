@@ -56,8 +56,9 @@ public sealed class WorkspaceParkPublicationTests
             receipt.Clean.ShouldBeTrue();
             receipt.DescendsFromBaseline.ShouldBeTrue();
             receipt.ReceiptId.ShouldNotBe(Guid.Empty);
-            world.Commands.Count(x => x[0] == "push").ShouldBe(relation == "equal" ? 0 : 1);
-            world.Commands.Count(x => x[0] == "ls-remote").ShouldBe(2, "fresh proof even on equal/missing ref");
+            // Push first (an equal remote is "up to date"), then one fresh exact observation proves it.
+            world.Commands.Count(x => x[0] == "push").ShouldBe(1);
+            world.Commands.Count(x => x[0] == "ls-remote").ShouldBe(1, "fresh proof even on equal/missing ref");
             world.Commands.ShouldNotContain(x => x[0] == "fetch" || x[0] == "reset" || x[0] == "merge"
                 || x[0] == "commit" || x[0] == "add");
             var verified = await world.Publisher().VerifyAsync(receipt, CancellationToken.None);
@@ -224,8 +225,9 @@ public sealed class WorkspaceParkPublicationTests
             var result = await world.Publisher().PrepareAsync(world.Request, CancellationToken.None);
             AssertHeld(result, "park_remote_not_ancestor", "G-20 " + relation);
             RunnerWorkspaceParkService.AncestryDecision(1, "park_remote_not_ancestor")!.Reason
-                .ShouldBe("park_remote_not_ancestor", "G-20 actual decision before Git push masks it");
-            world.Commands.ShouldNotContain(x => x[0] == "push", "G-20");
+                .ShouldBe("park_remote_not_ancestor", "G-20 the refusal's own decision");
+            // Git's fast-forward check refuses the one unforced push; only that refusal reads the remote to name it.
+            world.Commands.Single(x => x[0] == "push").ShouldNotContain(x => x.StartsWith("--force") || x.StartsWith('+'), "G-20");
             (await world.RemoteShaAsync()).ShouldBe(other, "G-20 remote preserved");
         }
     }
@@ -244,7 +246,8 @@ public sealed class WorkspaceParkPublicationTests
                 other = (await world.GitAsync(world.Repo, "rev-parse", "HEAD")).Trim();
                 await world.GitAsync(world.Repo, "push", "origin", "main:" + World.FullRef);
             }).PrepareAsync(world.Request, CancellationToken.None);
-            AssertHeld(result, "park_push_rejected", "G-21");
+            // The refused push reads the remote it lost to: the concurrent writer's commit is no ancestor of the tip.
+            AssertHeld(result, "park_remote_not_ancestor", "G-21");
             (await world.RemoteShaAsync()).ShouldBe(other, "G-21 FF push preserves concurrent writer");
             world.Commands.Single(x => x[0] == "push").ShouldNotContain(x => x.StartsWith("--force") || x.StartsWith('+'));
         }
@@ -335,7 +338,7 @@ public sealed class WorkspaceParkPublicationTests
             }).PrepareAsync(world.Request, CancellationToken.None);
             result.Receipt.ShouldBeNull(guard + " " + initial + "/" + final);
             result.Outcome.ShouldBe(final == "unavailable" ? WorkspaceParkOutcome.Unknown : WorkspaceParkOutcome.Held, guard);
-            world.Commands.Count(x => x[0] == "ls-remote").ShouldBe(2, guard + " fresh exact read");
+            world.Commands.Count(x => x[0] == "ls-remote").ShouldBe(1, guard + " fresh exact read");
         }
 
         foreach (var point in new[] { WorkspaceParkBoundary.AfterPush, WorkspaceParkBoundary.AfterFinalObservation })
