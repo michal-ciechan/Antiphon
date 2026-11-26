@@ -9715,7 +9715,7 @@ public sealed partial class AgentTaskDispatcher
     /// rows that recovery used to abandon as <c>Running</c>.</para>
     ///
     /// <para>CARD-1719: a Failed owner whose recorded mirror is clean and equal to origin is
-    /// released through <see cref="RunnerSlotService.ReleaseAsync"/> after
+    /// released through <see cref="RunnerSlotService.ReleaseForGhostSweepAsync"/> after
     /// <see cref="GhostSeatRelease.IdleMinutes"/> when the qualified coordinator does not own
     /// the task. A dirty, unpushed or unknown mirror keeps the seat.</para>
     /// </summary>
