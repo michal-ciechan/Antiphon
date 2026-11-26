@@ -154,8 +154,6 @@ internal static class WindowsUnitSkipRoster
         new("Antiphon.Tests.Scripts", "VolumeRetirementPublicationTests", "Binding_clock_record_requires_current_kernel_and_call", 1, "CARD-1901: full retirement publication proofs require native Linux (Bash and POSIX mounts); portable host writer witnesses remain required on Windows."),
         new("Antiphon.Tests.Scripts", "NightlyProbeSupervisorTests", "C1375_DeadlineKillsAndJoinsTree", 1,
             "CARD-1375 native expiry qualification requires Linux."),
-        new("Antiphon.Tests.Scripts", "PosixHarnessToolTests", "Cutover_window_completes_without_cat_grep_or_tr_on_path", 1,
-            "CARD-1407 window fakes are POSIX sh scripts; cat, grep and tr are external. Windows skips these cases because an extensionless sh fake is not a Windows executable."),
         new("Antiphon.Tests.Scripts", "RetiredTempContainerDockerTests", "RunShard", 1,
             "C994/C1008 real Docker lifecycle qualification requires native Linux inside its owned daemon (POSIX paths and process groups)."),
         new("Antiphon.Tests.Scripts", "RollingVolumeRecycleDockerTests", "RunShard", 1,

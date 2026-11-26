@@ -127,9 +127,10 @@ public sealed partial class ReleaseGatePlatformTests
         var shippedRows = shipped.Object.Profiles["rc"].Exclusions;
         var shipRows = shippedRows.Where(r => string.Equals(r.Owner, PolicyFixtureCard, StringComparison.OrdinalIgnoreCase)).ToArray();
         var linuxShipRows = shipRows.Where(r => r.Platform == "linux").ToArray();
+        // Unit 55 of the 2026-11-22 plan: the fourth row (antiphon PosixHarnessToolTests on Windows) left with the CARD-1407
+        // cutover window case, which ran a .ps1 driver.
         rows.Check(shipped.SchemaVersion == 4 && SameSet(shipRows.Select(r => r.Suite + "|" + r.Class + "|" + r.Platform),
-                ["e2e|AgentTaskLandDeliveryE2ETests|linux", "e2e|DispatchBaseWarningDeliveryE2ETests|linux", "e2e|WorktreeRetirementDeliveryE2ETests|linux",
-                    "antiphon|PosixHarnessToolTests|windows"])
+                ["e2e|AgentTaskLandDeliveryE2ETests|linux", "e2e|DispatchBaseWarningDeliveryE2ETests|linux", "e2e|WorktreeRetirementDeliveryE2ETests|linux"])
             && linuxShipRows.Length == 3 && linuxShipRows.All(r => r.Suite == "e2e") && SameSet(linuxShipRows.Select(r => r.Class), scopedRows.Select(r => r.Class)),
             "C1323 shipped-three-linux-rows");
         var c1614 = shippedRows.Where(r => string.Equals(r.Owner, "CARD-1614", StringComparison.OrdinalIgnoreCase)).ToArray();

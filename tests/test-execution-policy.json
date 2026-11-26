@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "56e362c9fb71ee703e2995a601edef5fd5f15578c69e562492c1fbcb05e89c05",
+  "policyHash": "9476cff4571181996a6813ea2c3e371bbdbe54b5365911fc82a93646c4bc61f0",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -1577,16 +1577,6 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
           "owner": "CARD-1601"
-        },
-        {
-          "suite": "antiphon",
-          "class": "PosixHarnessToolTests",
-          "methods": [
-            "Cutover_window_completes_without_cat_grep_or_tr_on_path"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: Native Linux mechanisms retained by the selected runtime gates; portable siblings remain required.",
-          "owner": "CARD-1323"
         },
         {
           "suite": "antiphon",

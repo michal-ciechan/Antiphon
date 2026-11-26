@@ -59,7 +59,6 @@ public sealed class RcCoverageAdmissionTests
         ("antiphon", "OwnedProcessTreeTests", "C448_SnapshotFailureKillsTheChildAndLeavesTheGrandchild", "CARD-0448"),
         ("antiphon", "OwnedProcessTreeTests", "C448_ProductionKillPassesTheServerPid", "CARD-0448"),
         ("antiphon", "CheckpointReceiptStallBudgetTests", "healthy_receipts_complete_with_every_pool_worker_occupied", "CARD-1601"),
-        ("antiphon", "PosixHarnessToolTests", "Cutover_window_completes_without_cat_grep_or_tr_on_path", "CARD-1323"),
         ("antiphon", "AgentReportStoreBudgetTests", "Slow_git_response_does_not_spend_write_budget", "CARD-1605"),
         ("antiphon", "C0824DesktopLegacyReleasePolicyTests", "Status_that_cannot_read_a_posix_directory_holds_it", "CARD-0824"),
     ];

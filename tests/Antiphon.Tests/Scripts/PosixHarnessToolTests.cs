@@ -1,6 +1,3 @@
-using Antiphon.TestSupport;
-using System.Diagnostics;
-using Antiphon.Tests.Checkpoints;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -58,71 +55,19 @@ public sealed class PosixHarnessToolTests
     // mode and link cases) are in-process QualificationTimingTests; they make FIFOs and set modes through libc and start
     // no POSIX tool, so they need no hidden PATH here.
 
-    [Test]
-    public void Cutover_w1_completes_without_chmod_on_path()
-    {
-        using var hidden = HiddenPath.Without("chmod");
-        var result = Run("test-cutover-postgres-server2.ps1", hidden.DirectoryPath, 60_000, "-Case", "W1");
-        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
-        AssertNoMissingCommand(result);
-        result.Stdout.ShouldContain("PASS W-1");
-    }
-
-    [Test]
-    [NativeLinuxOnly("CARD-1407 window fakes are POSIX sh scripts; cat, grep and tr are external. Windows skips these cases because an extensionless sh fake is not a Windows executable.")]
-    public void Cutover_window_completes_without_cat_grep_or_tr_on_path()
-    {
-        NativeLinuxGate.Require(
-            "CARD-1407 window fakes are POSIX sh scripts; cat, grep and tr are external. Windows skips these cases because an extensionless sh fake is not a Windows executable.");
-        using var hidden = HiddenPath.Without("cat", "grep", "tr");
-        var result = Run("test-cutover-postgres-server2.ps1", hidden.DirectoryPath, 120_000, "-Case", "W6");
-        result.Exit.ShouldBe(0, result.Stdout + result.Stderr);
-        AssertNoMissingCommand(result);
-        result.Stdout.ShouldContain("PASS W-6");
-    }
-
-    private static void AssertNoMissingCommand(CheckpointFixtureProcess.Output result)
-    {
-        var text = result.Stdout + result.Stderr;
-        text.IndexOf("command not found", StringComparison.Ordinal).ShouldBeLessThan(0, text);
-        text.IndexOf("is not recognized", StringComparison.Ordinal).ShouldBeLessThan(0, text);
-    }
-
-    private static CheckpointFixtureProcess.Output Run(string script, string path, int timeoutMs, params string[] extra)
-    {
-        var start = new ProcessStartInfo(OperatingSystem.IsWindows()
-            ? ScriptHarnessProcessFixture.ResolveInstalledPowerShell() : ResolveTool("pwsh"));
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Path.Combine(CheckpointFixtures.RepoRoot, "scripts", script));
-        foreach (var argument in extra)
-            start.ArgumentList.Add(argument);
-        start.Environment["PATH"] = path;
-        return CheckpointFixtureProcess.Run(start, timeoutMs);
-    }
-
-    private static string ResolveTool(string name)
-    {
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "")
-                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(directory, name);
-            if (File.Exists(candidate))
-                return Path.GetFullPath(candidate);
-        }
-
-        throw new FileNotFoundException(name);
-    }
+    // Unit 55 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the CARD-1407 cutover cases W1 (the -WhatIf
+    // preview with chmod hidden) and W6 (the landPending refusal and hold release with cat, grep and tr hidden) ran
+    // scripts/test-cutover-postgres-server2.ps1 here; no test launches a .ps1. Both checked only that one-off PowerShell script
+    // and its POSIX sh fakes, which stand in for the restart, maintenance, keep-six and repository-preview launchers, so they
+    // cover no C#: AppHostRestartTests, AppHostWatchdogStateObserverScriptTests, KeepSixCommandTests and
+    // RepositoryChildRecoveryCommandTests run those commands. The cutover ran on 2026-11-18; the owner keeps the script and
+    // its driver as PowerShell (2026-11-26), and the driver stays runnable by hand.
 
     private sealed class HiddenPath : IDisposable
     {
         private HiddenPath(string directoryPath) => DirectoryPath = directoryPath;
 
         public string DirectoryPath { get; }
-
-        public static HiddenPath Without(params string[] banned)
-            => FromDirectories((Environment.GetEnvironmentVariable("PATH") ?? "")
-                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries), OperatingSystem.IsWindows(), banned);
 
         internal static HiddenPath FromDirectories(IEnumerable<string> directories, bool windows, params string[] banned)
         {
