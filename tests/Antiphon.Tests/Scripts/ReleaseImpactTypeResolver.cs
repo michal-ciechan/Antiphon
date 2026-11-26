@@ -25,8 +25,7 @@ internal static class ReleaseImpactTypeResolver
             ReadDeclarations(tree);
 
         var evaluators = binding.Contexts.Select(bound => new Evaluation(bound)).ToArray();
-        var origins = legacyOrigins.ToList();
-        var originKeys = origins.Select(SiteKey).ToHashSet();
+        var origins = legacyOrigins.ToDictionary(SiteKey);
         foreach (var member in graph.Universe)
         {
             var id = new ReleaseImpactIdentity(member.Project, member.FullName);
@@ -40,7 +39,10 @@ internal static class ReleaseImpactTypeResolver
                         var candidates = Candidates(use, includeLexical: false);
                         if (candidates.Count == 0) continue;
                         var origin = Origin(id, use, candidates);
-                        if (originKeys.Add(SiteKey(origin))) origins.Add(origin);
+                        var key = SiteKey(origin);
+                        if (origins.TryGetValue(key, out var existing))
+                            origin = origin with { Candidates = Ordered(existing.Candidates.Concat(origin.Candidates)) };
+                        origins[key] = origin;
                     }
             }
         }
@@ -88,7 +90,7 @@ internal static class ReleaseImpactTypeResolver
                     Add(retained, id, edge.Path, kind);
                 }
 
-        foreach (var rawOrigin in origins)
+        foreach (var rawOrigin in origins.Values)
         {
             var origin = binding.UnavailableGenerated is { } missing && rawOrigin.Consumer.Project == missing.Project
                 ? rawOrigin with { Candidates = Ordered(rawOrigin.Candidates.Append(missing.Path)) }
