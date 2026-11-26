@@ -13,7 +13,7 @@ public sealed class ReleaseImpactRelationTests
 {
 
     [Test]
-    [Timeout(30_000)]
+    [Timeout(18_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributions(CancellationToken cancellationToken)
     {
         const string north = "tests/T/A.cs";
@@ -78,7 +78,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(8_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";
@@ -147,7 +147,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(8_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributionsThroughForwarders(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";
@@ -237,7 +237,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(10_000)]
     public void UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds(CancellationToken cancellationToken)
     {
         const string north = "tests/T/A.cs";
@@ -277,7 +277,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(12_000)]
     public void ScopedBindingsPreserveEveryAmbiguousCandidate(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";
@@ -346,7 +346,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(17_000)]
     public void ConfiguredBindingsPreserveEveryAmbiguousCandidate(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";
@@ -405,7 +405,7 @@ public sealed class ReleaseImpactRelationTests
                 generated, contexts, refusal, proposal, maximumCandidates, unavailableGenerated);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(9_000)]
     public async Task SdkGeneratedUsingsRetainOnlyPinnedBindings(CancellationToken cancellationToken)
     {
         const string project = "tests/T/T.csproj";

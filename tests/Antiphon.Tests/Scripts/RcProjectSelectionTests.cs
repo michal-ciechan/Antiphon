@@ -21,15 +21,15 @@ namespace Antiphon.Tests.Scripts;
 public sealed class RcProjectSelectionTests
 {
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(8_000)]
     public void BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken);
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(6_000)]
     public void EndpointProofsPreserveOwnedAndUnownedCaps(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken, ProofScenario.Caps);
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(7_000)]
     public void EndpointProofsPreserveIndependentReadersAndAddedConsumers(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken, ProofScenario.Readers);
 

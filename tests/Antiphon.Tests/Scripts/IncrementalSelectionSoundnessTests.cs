@@ -25,7 +25,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class IncrementalSelectionSoundnessTests
 {
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(28_000)]
     public async Task ProvenSubtractionReplayRecordsEverySkippedFailure(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld();
@@ -170,7 +170,7 @@ public sealed class IncrementalSelectionSoundnessTests
         ordinaryVerdict.RootElement.GetProperty("missedFailures").GetArrayLength().ShouldBe(0);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(9_000)]
     public async Task ProvenSubtractionReplayRejectsInvalidArtifactsAndCohorts(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld();
@@ -201,7 +201,7 @@ public sealed class IncrementalSelectionSoundnessTests
         ReplayProvenSelection(world, lostRoster, world.Output("lost-roster"), true).ShouldBe(2, "P.cohort lost planned member");
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(25_000)]
     public async Task ProvenSubtractionReplayRefusesUnverifiableOutcomes(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld();
@@ -254,7 +254,7 @@ public sealed class IncrementalSelectionSoundnessTests
         skippedVerdict.RootElement.GetProperty("runs")[2].GetProperty("skipped").GetInt32().ShouldBe(1);
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(23_000)]
     public async Task ProvenSubtractionReplayPreservesRepairAndRenameEvidence(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld();
@@ -317,7 +317,7 @@ public sealed class IncrementalSelectionSoundnessTests
             }).ShouldBeTrue("P.evidence both rename ends and the other change");
     }
 
-    [Test, Timeout(30_000)]
+    [Test, Timeout(18_000)]
     public async Task ProvenSubtractionReplayResolvesGateAndFailureDebt(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld();
@@ -390,7 +390,7 @@ public sealed class IncrementalSelectionSoundnessTests
     private static JsonDocument Read(string root, string name) => JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, name)));
     private static string DigestBytes(byte[] bytes) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
 
-    [Test, Timeout(60_000)]
+    [Test, Timeout(13_000)]
     public async Task ArchivedWrongAliasWinnerUsesTheReplayScorerAndLeavesAnOpenRepair(CancellationToken cancellationToken)
     {
         using var world = new ProvenReplayWorld(alias: true);
