@@ -166,6 +166,7 @@ public static class RunnerCapabilityFeatures
     public const string WorkspaceParkSourceModesV1 = "workspaceParkSourceModesV1";
     public const string WorkspaceRepositoryV1 = "workspaceRepositoryV1";
     public const string VerificationCustodyV1 = "verificationCustodyV1";
+    public const string VerificationDeadHostRecoveryV1 = "verificationDeadHostRecoveryV1";
     public const string HerdrAttach = "herdr-attach";
 
     /// <summary>CARD-0384: runner implements named-tab placement (TabLabel + check route).</summary>

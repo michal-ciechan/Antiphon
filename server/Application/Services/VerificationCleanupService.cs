@@ -59,6 +59,14 @@ public sealed class VerificationCleanupService(AppDbContext db, ISessionRunnerDi
                 // it from the local client would ask a machine that never held this execution,
                 // and get a confident "unsupported backend" back.
                 var status = await runners.Resolve(task.RunnerId).ReadVerificationCustodyAsync(binding, seal: true, ct);
+                if (binding.Backend == VerificationCustodyBackends.LinuxCgroup
+                    && status.Binding == binding && status.State == VerificationCustodyState.Unknown
+                    && status.Reason == RunnerSlotService.CustodyHostStillPresent && status.Receipt is null
+                    && status.Host?.RunnerStoreId == binding.RunnerStoreId)
+                {
+                    await RunnerSlotService.RecordCustodyReleaseAsync(db, task.RunnerId, binding,
+                        clock.GetUtcNow().UtcDateTime, CancellationToken.None);
+                }
                 if (status.Binding != binding || status.Receipt is null || status.Host is null)
                 {
                     var unknown = status.Reason ?? status.State.ToString();

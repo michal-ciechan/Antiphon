@@ -519,8 +519,14 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         finally { gate.Release(); }
     }
 
-    public async Task<VerificationCustodyStatus> ReadCustodyAsync(VerificationExecutionBinding binding,
-        bool seal, CancellationToken ct)
+    public Task<VerificationCustodyStatus> ReadCustodyAsync(VerificationExecutionBinding binding,
+        bool seal, CancellationToken ct) => ReadCustodyAsync(binding, seal, deadHostOnly: false, ct);
+
+    public Task<VerificationCustodyStatus> RecoverDeadCustodyAsync(VerificationExecutionBinding binding, CancellationToken ct) =>
+        ReadCustodyAsync(binding, seal: false, deadHostOnly: true, ct);
+
+    private async Task<VerificationCustodyStatus> ReadCustodyAsync(VerificationExecutionBinding binding,
+        bool seal, bool deadHostOnly, CancellationToken ct)
     {
         var gate = _launchLocks.GetOrAdd(binding.Generation.SessionId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
@@ -530,6 +536,14 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             if (seal) _custody.Value.Seal(binding);
             else _custody.Value.Store.RequireBinding(binding);
             if (_custody.Value.ReadFinal(binding) is { } final) return NoteUnresolved(final);
+            if (deadHostOnly)
+            {
+                // The recovery-only request can neither create the seal nor contact a live
+                // producer. The ledger checks the prior seal, namespace and host liveness.
+                var recorded = _custody.Value.ReadProducer(binding);
+                return NoteUnresolved(recorded is not null ? _custody.Value.Accept(recorded)
+                    : _custody.Value.ReleaseDeadHost(binding));
+            }
             if (_sessions.TryGetValue(binding.Generation.SessionId, out var session)
                 && session.VerificationBinding == binding)
             {

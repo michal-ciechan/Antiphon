@@ -46,4 +46,23 @@ public class RunnerSlotRulesTests
         storage.GetMonitoringApi().EnqueuedCount("default").ShouldBe(1);
         await Task.CompletedTask;
     }
+
+    [Test]
+    public async Task C2083_Local_custody_reconcile_stays_scheduled_when_phone_home_is_disabled()
+    {
+        var storage = new InMemoryStorage(HangfireConfiguration.CreateStorageOptions(new HangfireSettings()));
+        var manager = new RecurringJobManager(storage);
+        using var connection = storage.GetConnection();
+
+        HangfireConfiguration.RegisterRunnerSlotReconcileJob(manager, new PhoneHomeRunnerSettings { Enabled = false });
+        var local = connection.GetRecurringJobs().ShouldHaveSingleItem();
+        local.Id.ShouldBe(RunnerSlotReconcileJob.LocalCustodyJobId);
+        local.Job.Method.Name.ShouldBe(nameof(RunnerSlotReconcileJob.ExecuteLocalCustodyAsync));
+        local.Cron.ShouldBe("*/2 * * * *");
+        storage.GetMonitoringApi().EnqueuedCount("default").ShouldBe(1);
+
+        HangfireConfiguration.RegisterRunnerSlotReconcileJob(manager, new PhoneHomeRunnerSettings { Enabled = true });
+        connection.GetRecurringJobs().ShouldHaveSingleItem().Id.ShouldBe(RunnerSlotReconcileJob.RecurringJobId);
+        await Task.CompletedTask;
+    }
 }

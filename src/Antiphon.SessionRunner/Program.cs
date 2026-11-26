@@ -273,6 +273,14 @@ app.MapPost("/sessions/{id:guid}/executions/{executionId:guid}/seal", async (
     return Results.Ok(await runtime.ReadCustodyAsync(binding, true, ct));
 });
 
+app.MapPost("/sessions/{id:guid}/executions/{executionId:guid}/recover-dead-host", async (
+    Guid id, Guid executionId, VerificationExecutionBinding binding, SessionRunnerRuntime runtime, CancellationToken ct) =>
+{
+    if (binding.ExecutionId != executionId || binding.Generation.SessionId != id)
+        throw new VerificationCustodyException("verification_custody_identity_mismatch");
+    return Results.Ok(await runtime.RecoverDeadCustodyAsync(binding, ct));
+});
+
 app.MapSessionLaunchRoute();
 app.MapPlatformConstrainedLaunchRoute();
 
@@ -488,6 +496,8 @@ internal static class TerminalSeatReleaseRoutes
                 : [GrokRulesTransport.Capability, RunnerCapabilityFeatures.SessionGenerationV1, RunnerCapabilityFeatures.ConditionalMaintenanceInputV1, RunnerCapabilityFeatures.CompactionContinuationStopV1, RunnerCapabilityFeatures.PtyConditionalReadV1, RunnerCapabilityFeatures.TranscriptSinceV1];
             if (runtime.VerificationCustodyBackend is not null)
                 features = [.. features, RunnerCapabilityFeatures.VerificationCustodyV1];
+            if (runtime.VerificationCustodyBackend == VerificationCustodyBackends.LinuxCgroup)
+                features = [.. features, RunnerCapabilityFeatures.VerificationDeadHostRecoveryV1];
             features = [.. features, RunnerCapabilityFeatures.TerminalSeatReleaseV1,
                 RunnerCapabilityFeatures.TerminalSeatDeliveryEvidenceV1];
             if (runtime.SupportsWorkspacePark)

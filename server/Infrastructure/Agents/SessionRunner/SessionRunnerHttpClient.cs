@@ -264,6 +264,20 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
                 + Uri.EscapeDataString(binding.Generation.AcceptedStartedAt.ToString("O")),
                 ResilienceOperations.RunnerVerificationCustody,
                 ct);
+        return await ReadVerificationCustodyResponseAsync(response, ct);
+    }
+
+    public async Task<VerificationCustodyStatus> RecoverDeadVerificationCustodyAsync(
+        VerificationExecutionBinding binding, CancellationToken ct)
+    {
+        var path = $"sessions/{binding.Generation.SessionId:D}/executions/{binding.ExecutionId:D}/recover-dead-host";
+        using var response = await _httpClient.PostAsJsonAsync(path, binding, JsonOptions, ct);
+        return await ReadVerificationCustodyResponseAsync(response, ct);
+    }
+
+    private static async Task<VerificationCustodyStatus> ReadVerificationCustodyResponseAsync(
+        HttpResponseMessage response, CancellationToken ct)
+    {
         await ThrowForRunnerProblemAsync(response, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<VerificationCustodyStatus>(JsonOptions, ct)

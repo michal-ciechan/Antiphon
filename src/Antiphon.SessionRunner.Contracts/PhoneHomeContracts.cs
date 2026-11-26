@@ -204,7 +204,8 @@ public sealed record RunnerRetireResult(Guid ProcessBootId, int KilledSessions, 
 public sealed record PhoneHomeHostSeriesRequest(string Metric, string Window);
 
 /// <summary>CARD-0604: read (and optionally seal) a tracked execution's custody on the runner.</summary>
-public sealed record PhoneHomeReadCustodyRequest(VerificationExecutionBinding Binding, bool Seal);
+public sealed record PhoneHomeReadCustodyRequest(VerificationExecutionBinding Binding, bool Seal,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool DeadHostOnly = false);
 
 /// <summary>
 /// CARD-0604 D-19. Create the verification snapshot on the runner at the EXACT published sha.

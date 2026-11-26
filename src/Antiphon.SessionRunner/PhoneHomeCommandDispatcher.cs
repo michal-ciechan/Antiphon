@@ -111,6 +111,9 @@ public interface IPhoneHomeRuntimeSurface
         VerificationExecutionBinding binding, bool seal, CancellationToken ct) =>
         throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedTarget,
             "This runner cannot read verification custody.", 409);
+    Task<VerificationCustodyStatus> RecoverDeadCustodyAsync(VerificationExecutionBinding binding, CancellationToken ct) =>
+        throw new PhoneHomeAdmissionException(PhoneHomeProblemTypes.UnsupportedOperation,
+            "This runner cannot recover dead-host verification custody.", 409);
 }
 
 public sealed class PhoneHomeCommandDispatcher
@@ -521,7 +524,9 @@ public sealed class PhoneHomeCommandDispatcher
                 {
                     var body = request.Payload?.Deserialize<PhoneHomeReadCustodyRequest>(PhoneHomeFraming.Json)
                         ?? throw new ArgumentException("Read-custody body is required.");
-                    return Result(request, await _runtime.ReadCustodyAsync(body.Binding, body.Seal, ct));
+                    return Result(request, body.DeadHostOnly
+                        ? await _runtime.RecoverDeadCustodyAsync(body.Binding, ct)
+                        : await _runtime.ReadCustodyAsync(body.Binding, body.Seal, ct));
                 }),
                 PhoneHomeOperation.VerificationWorkspaceCreate => await MutateAsync(request, async () =>
                 {

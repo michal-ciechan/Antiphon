@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using Antiphon.Agents.Pty;
 using Antiphon.PtyHost.Protocol;
 using Antiphon.SessionRunner.Contracts;
@@ -209,7 +210,13 @@ public sealed class LinuxRunnerCustodyLifecycleTests
     }
 
     [Test]
-    public async Task C1614_Lost_host_explicit_release_kills_but_stays_unknown()
+    public Task C1614_Lost_host_explicit_release_kills_but_stays_unknown() => VerifyLostHostReleaseAsync(recoveryOnly: false);
+
+    [Test]
+    public Task C2083_Recovery_only_requires_a_prior_seal_and_waits_for_the_host_to_exit() =>
+        VerifyLostHostReleaseAsync(recoveryOnly: true);
+
+    private static async Task VerifyLostHostReleaseAsync(bool recoveryOnly)
     {
         RequireNativeLifecycle();
         await using var fx = await NativeHold.StartAsync();
@@ -218,10 +225,26 @@ public sealed class LinuxRunnerCustodyLifecycleTests
             .ShouldNotBeNull();
         var procs = LinuxCgroupContainment.ExecutionProcsPath(tree.NamespaceId, tree.ContainerId);
 
-        // Enter the recovery path before host exit to pin the refusal without a scheduling race.
         var ledger = fx.Runtime.CustodyForTests;
+        var now = DateTime.UtcNow;
+        var adapter = new PhoneHomeRuntimeAdapter(fx.Runtime, new RunnerBuildDto("fixture", null, now, now));
+        var dispatcher = new PhoneHomeCommandDispatcher(adapter, new PhoneHomeSettings
+        {
+            CapacityStatePath = Path.Combine(fx.RootPath, "capacity"),
+            LaunchGenerationsPath = Path.Combine(fx.RootPath, "generations"),
+        });
+        if (recoveryOnly)
+        {
+            dispatcher.Capabilities().Features!.ShouldContain(RunnerCapabilityFeatures.VerificationDeadHostRecoveryV1);
+            var unsealed = await RecoverAsync();
+            unsealed.Reason.ShouldBe("custody_observer_unavailable");
+            File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "runner-seal.json")).ShouldBeFalse();
+        }
+
+        // The host still accepts commands here. A recovery-only retry must use the
+        // liveness fence even when it could reach the live producer.
         ledger.Seal(fx.Binding);
-        var early = ledger.ReleaseDeadHost(fx.Binding);
+        var early = recoveryOnly ? await RecoverAsync() : ledger.ReleaseDeadHost(fx.Binding);
         early.State.ShouldBe(VerificationCustodyState.Unknown);
         early.Reason.ShouldBe("custody_host_still_present");
         early.Receipt.ShouldBeNull();
@@ -231,7 +254,8 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         // The fixture joins the owned PtyHost before asking the runner to recover the tree.
         fx.KillHost();
         Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeTrue();
-        var status = await fx.Runtime.ReadCustodyAsync(fx.Binding, true, CancellationToken.None);
+        var status = recoveryOnly ? await RecoverAsync()
+            : await fx.Runtime.ReadCustodyAsync(fx.Binding, true, CancellationToken.None);
         status.State.ShouldBe(VerificationCustodyState.Unknown);
         status.Reason.ShouldBe("released_unknown");
         status.Receipt.ShouldBeNull();
@@ -242,6 +266,16 @@ public sealed class LinuxRunnerCustodyLifecycleTests
         File.ReadAllLines(procs).ShouldBeEmpty();
         Directory.Exists("/proc/" + fx.DescendantPid).ShouldBeFalse();
         File.Exists(fx.Store.PathFor(fx.Binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
+
+        async Task<VerificationCustodyStatus> RecoverAsync()
+        {
+            var request = new PhoneHomeReadCustodyRequest(fx.Binding, Seal: false, DeadHostOnly: true);
+            var frame = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(), PhoneHomeOperation.ReadCustody,
+                JsonSerializer.SerializeToElement(request, PhoneHomeFraming.Json));
+            var result = await dispatcher.DispatchAsync(frame, CancellationToken.None);
+            result.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            return result.Payload!.Value.Deserialize<VerificationCustodyStatus>(PhoneHomeFraming.Json).ShouldNotBeNull();
+        }
     }
 
     internal static void RequireNativeLifecycle()

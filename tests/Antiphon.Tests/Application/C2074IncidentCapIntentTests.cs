@@ -94,6 +94,7 @@ public sealed class C2074IncidentCapIntentTests
         await using var db = new AppDbContext(options);
         var kill = Intent(db, sessionId, "pending:kill-generation:server2:" + old.Ticks, old);
         var release = Intent(db, sessionId, "pending:server2", old);
+        var custody = Intent(db, sessionId, $"pending:custody-release:server2:{old.Ticks}/{Guid.NewGuid():D}/{old.Ticks}", old);
         Intent(db, sessionId, "reconciled", old);
         Intent(db, sessionId, "failed:generation changed", old);
         Intent(db, sessionId, "Pending:server2", old);
@@ -107,7 +108,7 @@ public sealed class C2074IncidentCapIntentTests
         var removed = await PruneAsync(schema.ConnectionString, new SupervisionSettings(), ct);
 
         (await db.AgentIncidents.AsNoTracking().Select(i => i.Id).ToListAsync(ct))
-            .ShouldBe([kill, release], ignoreOrder: true, "only a pending release obligation survives the age sweep");
+            .ShouldBe([kill, release, custody], ignoreOrder: true, "only a pending release obligation survives the age sweep");
         removed.ShouldBe(4);
     }
 

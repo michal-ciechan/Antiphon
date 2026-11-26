@@ -478,11 +478,26 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     /// CARD-0604 D-19 (Cut B). Custody lives on the producer. The desktop asks the bound runner
     /// for it and imports the exact bytes; it never reconstructs a status from anything local.
     /// </summary>
-    public async Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(
+    public Task<VerificationCustodyStatus> ReadVerificationCustodyAsync(
         VerificationExecutionBinding binding, bool seal, CancellationToken ct)
+        => RequestVerificationCustodyAsync(new(binding, seal), ct);
+
+    public Task<VerificationCustodyStatus> RecoverDeadVerificationCustodyAsync(
+        VerificationExecutionBinding binding, CancellationToken ct)
     {
-        var frame = await _connection.RequestAsync(PhoneHomeOperation.ReadCustody,
-            new PhoneHomeReadCustodyRequest(binding, seal), ct);
+        // Older peers ignore unknown JSON fields. Send the recovery-only flag only to a peer
+        // that advertised its meaning at registration.
+        if (_connection.Capabilities?.Features?.Contains(RunnerCapabilityFeatures.VerificationDeadHostRecoveryV1,
+                StringComparer.Ordinal) != true)
+            return Task.FromResult(new VerificationCustodyStatus(binding, VerificationCustodyState.UnsupportedBackend,
+                PhoneHomeProblemTypes.UnsupportedOperation));
+        return RequestVerificationCustodyAsync(new(binding, Seal: false, DeadHostOnly: true), ct);
+    }
+
+    private async Task<VerificationCustodyStatus> RequestVerificationCustodyAsync(
+        PhoneHomeReadCustodyRequest request, CancellationToken ct)
+    {
+        var frame = await _connection.RequestAsync(PhoneHomeOperation.ReadCustody, request, ct);
         return Read<VerificationCustodyStatus>(frame) ?? throw Missing("read-custody");
     }
 
