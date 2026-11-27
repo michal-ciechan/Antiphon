@@ -132,6 +132,7 @@ public sealed class WatchQualTests
         var path = world.Files.Path.Combine(live, "suite-c.trx");
         var complete = world.Files.File.ReadAllText(path);
         world.Files.File.WriteAllText(path, complete.Replace("<ResultSummary outcome=\"Completed\" />", "", StringComparison.Ordinal));
+        world.Files.File.SetLastWriteTimeUtc(path, Start.UtcDateTime.AddMinutes(-1));
         var options = world.Options(timingRoot: timing, logDir: live);
 
         var (_, partial) = world.Run(options);
@@ -139,6 +140,7 @@ public sealed class WatchQualTests
         partial.ShouldContain(line => line.StartsWith("ETA outstanding=3 running=0 completed=0 unpriced=0 pointSeconds=350 ", StringComparison.Ordinal));
 
         world.Files.File.WriteAllText(path, complete);
+        world.Files.File.SetLastWriteTimeUtc(path, Start.UtcDateTime.AddMinutes(-1));
         var (_, terminal) = world.Run(options);
         terminal.ShouldNotContain(line => line.StartsWith("TRX-PARSE-ERROR", StringComparison.Ordinal));
         terminal.ShouldContain(line => line.StartsWith("ETA outstanding=2 running=0 completed=1 unpriced=0 pointSeconds=300 ", StringComparison.Ordinal));

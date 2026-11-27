@@ -66,9 +66,10 @@ public sealed class QualificationEtaTests
     {
         files.Directory.CreateDirectory(directory);
         var start = NowUtc.AddHours(-1);
+        var finish = start.AddTicks((long)Math.Round(duration * TimeSpan.TicksPerSecond));
         files.File.WriteAllText(files.Path.Combine(directory, "suite-" + chunk + ".trx"), $"""
             <TestRun xmlns="{WatchQual.TrxNamespace}">
-              <Times start="{start:O}" finish="{start.AddSeconds(duration):O}" />
+              <Times start="{start:O}" finish="{finish:O}" />
               <ResultSummary outcome="Completed" />
             </TestRun>
             """);
