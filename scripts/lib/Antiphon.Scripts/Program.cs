@@ -344,6 +344,8 @@ namespace Antiphon.Scripts
             // deploy stopped: <reason>", or the ANTIPHON_API or operator-token line), 1 a refusal of the arguments, the SHA or the saved
             // donor before the main block. Usage is 2.
             [DeployCommands.DeployServer2Name] = DeployCommands.RunDeployServer2,
+            // The W10 node harness adapters' verifier fake (unit 68, a test verb): one case's output and exit (1 a thrown case). Usage 2.
+            [DeployCommands.FakeVerifyName] = DeployCommands.RunFakeVerify,
             // The CARD-1776 repository mirrors answer every input themselves (unit 52): exit 0 the plan (the default, --what-if) or the
             // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
             // Usage is 2.

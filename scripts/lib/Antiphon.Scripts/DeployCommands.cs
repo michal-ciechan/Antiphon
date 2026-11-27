@@ -46,9 +46,11 @@ namespace Antiphon.Scripts
 
         internal const string DeployServer2Name = "deploy-server2";
 
+        internal const string FakeVerifyName = "c727-fake-verify";
+
         internal const string Usage = DeployLocalOptions.Usage + " | " + AmServiceDeployOptions.Usage + " | " + Server2PostgresDeployOptions.Usage
             + " | " + Server2ServerDeployOptions.Usage + " | " + Server2StagingDeployOptions.Usage + " | " + LinuxServerRestartOptions.Usage
-            + " | " + Server2RollingOptions.Usage;
+            + " | " + Server2RollingOptions.Usage + " | " + C727FakeVerifyOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -111,7 +113,8 @@ namespace Antiphon.Scripts
 
         // Exit 0 complete, 2 a refusal ("Rolling deploy stopped: <reason>", the ANTIPHON_API or operator-token line), 1 a refusal before
         // the main block; usage 2. With C727_TEST_VERIFY_STUB or C727_TEST_HTTP_STUB set (the W10 node harnesses), the script's
-        // offline fixture seams answer instead of ssh, the verifier and HTTP (Server2RollingStubOs), as the script's did.
+        // offline fixture seams answer instead of ssh, the verifier and HTTP (Server2RollingStubOs), as the script's did; since unit 68
+        // the fakes run in process (C727Fakes) and a harness adapter is started directly, never pwsh.
         internal static int RunDeployServer2(string[] args)
         {
             var options = Server2RollingOptions.Parse(args.Skip(1).ToArray(), Checkout);
@@ -120,10 +123,20 @@ namespace Antiphon.Scripts
             var seams = new Server2RollingSeams { World = production };
             if (Server2RollingStubOs.Wanted(host.Variables))
             {
-                var stub = new Server2RollingStubOs(host.Variables, production);
+                var stub = new Server2RollingStubOs(host.Variables, production, options.Checkout);
                 seams = new Server2RollingSeams { World = stub, Timing = stub.Timing, C994Now = () => stub.C994Now() ?? host.UtcNow, C994Advance = stub.C994Advance };
             }
             return Server2RollingDeploy.Run(options, host, new FileSystem(), seams);
+        }
+
+        // Unit 68: the W10 node harness adapters' fall-through to the verifier fake (scripts/fixtures/c727-fake-verify.ps1 until unit 68):
+        // one case on C727_TEST_STATE and C727_TEST_TRACE, its output and exit code (1 for a case that throws); usage 2. A test verb: nothing
+        // outside the harnesses runs it.
+        internal static int RunFakeVerify(string[] args)
+        {
+            var options = C727FakeVerifyOptions.Parse(args.Skip(1).ToArray());
+            var host = NightlyHost.Production(Console.Out, Console.Error);
+            return C727FakeVerify.Run(options, host.Variables, Checkout, Console.In, Console.Out, Console.Error);
         }
 
         // Exit 0 VERIFIED, 1 a what-if /health that is not 200 (or a terminating error), 3 refused before the probe, 5 unverified
