@@ -100,15 +100,23 @@ internal static partial class InProcessGitReads
     }
 
     /// <summary>A repository whose config names a promisor remote or a partial-clone filter fetches missing objects
-    /// on demand; an object's absence there is git's to decide. Read from the common config file's text.</summary>
+    /// on demand; an object's absence there is git's to decide. Read from the common config file's text; a config that
+    /// includes another file or turns on per-worktree config (where such a key could also live) is treated as one.</summary>
     private static bool MayBePartialClone(Repository repo)
     {
         if (CommonDirectory(repo.Info.Path) is not { } common) return true;
         var config = Path.Combine(common, "config");
         if (!File.Exists(config)) return false;
-        var text = File.ReadAllText(config);
+        string text;
+        // Shared for delete/replace: git commits config.lock by renaming it over config, which a reader without
+        // FileShare.Delete would make fail on Windows.
+        using (var stream = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (var reader = new StreamReader(stream))
+            text = reader.ReadToEnd();
         return text.Contains("promisor", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("partialclone", StringComparison.OrdinalIgnoreCase);
+            || text.Contains("partialclone", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("include", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("worktreeconfig", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

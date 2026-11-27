@@ -47,7 +47,7 @@ public sealed class LibGit2VsGitDifferentialTests
         if (answer.ExitCode != 0) answer.Diagnostic.ShouldBe($"git_exit_{answer.ExitCode}", shape);
         // An answer the stderr-forwarding runners take (TryAnswerSilently) is only one git gives without a word.
         // (An absent object's cat-file -e is taken by its exit code alone: its callers never read the stderr line.)
-        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null && !(args is ["cat-file", "-e", _] && git.ExitCode != 0))
+        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null && !(args is ["cat-file", "-e", _] && git.ExitCode == 128))
             error.ShouldBeEmpty("git wrote to stderr: " + shape);
     }
 
@@ -310,6 +310,10 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent + "^{commit}");
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", head + "^{commit}");
         await fixture.RequiredAsync(repo, "config", "--unset", "remote.origin.promisor");
+        // An included file could name a promisor too: also git's.
+        await fixture.RequiredAsync(repo, "config", "include.path", "promisor-free.inc");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent);
+        await fixture.RequiredAsync(repo, "config", "--unset", "include.path");
 
         // A file named like the range: without "--" git dies of the ambiguity (128).
         await CompareAsync(repo, Expect.Answered, "rev-list", "--count", "master..refs/heads/side");
