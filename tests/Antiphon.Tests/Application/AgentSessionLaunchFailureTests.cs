@@ -1995,6 +1995,28 @@ public class AgentSessionLaunchFailureTests
     // ---- CARD-0292 S1/S2: skip /remote-control on a live bridge; Esc a standing menu ----------
 
     [Test]
+    public async Task StartupRenameOwnsTheQueueWriterUntilSubmissionFinishes()
+    {
+        var adapter = new FakeAgentProtocolAdapter { PromptOutput = "ready" };
+        var probe = new CountingRcProbe { Armed = true };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
+        var gate = fixture.Services.GetRequiredService<SessionMessageQueueService>().GetLock(fixture.SessionId);
+        bool? queueAcquired = null;
+        adapter.OnPrompt = (prompt, _) =>
+        {
+            if (prompt.StartsWith("/rename ", StringComparison.Ordinal))
+            {
+                queueAcquired = gate.Wait(0);
+                if (queueAcquired == true) gate.Release();
+            }
+            return Task.CompletedTask;
+        };
+        await fixture.LaunchInteractiveAsync(remoteControlName: "fixture", resume: true);
+        queueAcquired.ShouldBe(false);
+        gate.CurrentCount.ShouldBe(1);
+    }
+
+    [Test]
     public async Task Boot_arm_cancels_a_leftover_queued_remote_control()
     {
         // CARD-0354: health-watch leftover on the persistent session must not be flushed after

@@ -127,6 +127,73 @@ public sealed partial class ChannelInputWithheldIncidentTests
 
     [Test]
     [Timeout(120_000)]
+    public async Task StartupAssistantCannotAnswerThePreviousGenerationsInbound(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenAsync(schema.ConnectionString, TimeProvider.System);
+        var chat = await h.BindChannelAsync();
+        const string body = "synthetic correlated first turn";
+        await h.SeedChannelCorrelationAsync(body, $"telegram:{chat}");
+        await h.InsertTurnAsync(body, "synthetic first answer");
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+        await h.DrainOutboundAsync();
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+        await h.InsertTranscriptEntryAsync(TranscriptKinds.SessionRestartBoundary);
+        var stray = await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "synthetic startup output");
+        await using var db = Db(schema.ConnectionString);
+        (await TranscriptTurnWindow.FindActionBoundaryAsync(db, h.SessionId, stray, ct)).ShouldBeNull();
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+        await h.DrainOutboundAsync();
+        h.Messaging.SentReplies.Count.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task ConfirmedWithholdAppendsOneClosureWithPromptEvidence(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenAsync(schema.ConnectionString, Clock());
+        var seed = await SeedAsync(h, h.Now.AddHours(-1), h.Now.AddMinutes(-20), 1);
+        using var bridge = Bridge(h);
+        await bridge.ScanWithheldChannelIncidentsAsync(ct);
+        await using var db = Db(schema.ConnectionString);
+        var incident = await db.AgentIncidents.AsNoTracking().SingleAsync(i => i.FailureReason == "ChannelInputWithheld", ct);
+        await db.SessionQueuedMessages.Where(m => m.Id == seed.QueueId).ExecuteUpdateAsync(s => s
+            .SetProperty(m => m.Status, QueuedMessageStatus.Sent).SetProperty(m => m.DeliveryAttempts, 1)
+            .SetProperty(m => m.LastDeliveryStartedAt, h.Now).SetProperty(m => m.LastDeliveryBaselineSequence, 0L)
+            .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.Delivered), ct);
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        (await db.AgentIncidents.CountAsync(i => i.FailureReason == incident.Id.ToString(), ct)).ShouldBe(0);
+        var seq = await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, WithheldBody, timestamp: h.Now);
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        var closure = (await db.AgentIncidents.Where(i => i.FailureReason == incident.Id.ToString()).ToListAsync(ct)).ShouldHaveSingleItem();
+        closure.Message.ShouldContain(seed.QueueId.ToString());
+        closure.Message.ShouldContain($"promptSequence={seq}");
+        closure.Message.ShouldNotContain(WithheldBody);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task PriorGenerationStandingResumeNoteIsClosedWithoutWriting(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, TimeProvider.System);
+        await h.InsertStoreVisibleTurnAsync("fixture session", "fixture idle");
+        await using var db = Db(schema.ConnectionString);
+        var generation = await db.AgentSessions.Where(s => s.Id == h.SessionId).Select(s => s.StartedAt).SingleAsync(ct);
+        var id = await h.SeedPendingMessageAsync("synthetic prior generation", origin: QueuedMessageOrigin.System);
+        await db.SessionQueuedMessages.Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.RuntimeActionKey, StandingResumeNote.Key(generation.AddMinutes(-1))), ct);
+        await h.Queue.FlushSessionAsync(h.SessionId, ct);
+        var closed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id, ct);
+        closed.Status.ShouldBe(QueuedMessageStatus.Canceled);
+        closed.CanceledAt.ShouldNotBeNull();
+        h.Adapter.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Timeout(120_000)]
     public async Task C1591_AgedWithheldChannelRowRaisesOneIncident(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();

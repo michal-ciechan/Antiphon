@@ -104,6 +104,31 @@ public sealed class GatewayTests
     }
 
     [Test]
+    public async Task AcceptedCorrelatedOutboundMarksOnlyItsGatewayReceiptsAnswered()
+    {
+        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync();
+        var ct = CancellationToken.None;
+        foreach (var id in new[] { "1904", "1913" })
+            await store.Store.RecordAsync(EfInboxReceiptStoreTests.Sample(id, "group-A"), "{}", "in", 0, 1, ct);
+        await store.Store.RecordAsync(EfInboxReceiptStoreTests.Sample("1904", "group-B"), "{}", "in", 0, 2, ct);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IInboxReceiptStore>(store.Store);
+        services.AddSingleton<IChannelAdapter>(new FaultingAdapter());
+        services.AddSingleton(Options.Create(new AntiphonGatewayOptions()));
+        await using var provider = services.BuildServiceProvider();
+        using var gateway = ActivatorUtilities.CreateInstance<GatewayOutboundService>(provider);
+        var reply = JsonSerializer.Deserialize<ChannelReply>(
+            """{"channel":"telegram","conversationId":"group-A","kind":"answer","answeredMessageIds":["1904"]}""", MessagingJson.Options)!;
+        await gateway.DispatchAsync(reply, ct);
+        var rows = await store.LoadAsync();
+        var answered = rows.Single(r => r.ConversationId == "group-A" && r.ChannelMessageId == "1904");
+        answered.Status.ShouldBe(Antiphon.Messaging.Service.InboxStatus.Answered);
+        answered.AnsweredAt.ShouldNotBeNull();
+        rows.Count(r => r.Status == Antiphon.Messaging.Service.InboxStatus.Pending).ShouldBe(2);
+    }
+
+    [Test]
     public async Task Outbound_logs_an_unknown_channel_rather_than_silently_dropping()
     {
         var logs = new List<string>();
