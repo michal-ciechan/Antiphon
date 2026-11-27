@@ -383,6 +383,7 @@ public sealed class OperatorStatusTests
                 <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
                   <Times finish="{Now.AddMinutes(-59).AddSeconds(seconds):O}" start="{Now.AddMinutes(-59):O}" />
                   <Results>{result}</Results>
+                  <ResultSummary outcome="Completed" />
                 </TestRun>
                 """);
         }

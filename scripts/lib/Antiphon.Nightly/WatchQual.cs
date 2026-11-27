@@ -179,7 +179,7 @@ namespace Antiphon.Nightly
             var root = document.DocumentElement;
             if (root == null || root.LocalName != "TestRun" || root.NamespaceURI != TrxNamespace) throw new InvalidDataException("Not a supported TRX TestRun.");
             // A complete TRX has a ResultSummary; a partially written document is retried.
-            if (document.SelectSingleNode("/t:TestRun/t:ResultSummary", ns) == null) throw new InvalidDataException("TRX has no ResultSummary yet.");
+            RequireResultSummary(document.SelectSingleNode("/t:TestRun/t:ResultSummary", ns) != null);
             var failed = document.SelectNodes(FailedResults, ns).Cast<XmlElement>().ToArray();
             if (failed.Length == 0) return null;
             var classes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -195,6 +195,11 @@ namespace Antiphon.Nightly
                 .Take(8)
                 .Select(group => group.Key + " " + group.Count().ToString(CultureInfo.InvariantCulture));
             return "FAILURES " + name + ": " + failed.Length.ToString(CultureInfo.InvariantCulture) + " failed :: " + string.Join(", ", groups);
+        }
+
+        internal static void RequireResultSummary(bool found)
+        {
+            if (!found) throw new InvalidDataException("TRX has no ResultSummary yet.");
         }
 
         private static void ReadTrx(WatchQualOptions options, NightlyHost host, IFileSystem files, HashSet<string> seen)

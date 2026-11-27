@@ -54,7 +54,7 @@ namespace Antiphon.Nightly
                 var name = files.Path.GetFileNameWithoutExtension(file.Name);
                 try
                 {
-                    var (time, failed) = ReadLive(files, file.FullName, reportFailures);
+                    var (time, failed) = ReadTrx(files, file.FullName, reportFailures);
                     if (!live.TryAdd(name, time))
                     {
                         duplicate.Add(name);
@@ -282,19 +282,22 @@ namespace Antiphon.Nightly
             return null;
         }
 
-        private static (ChunkTime Time, List<string> Failures) ReadLive(IFileSystem files, string path, bool reportFailures)
+        private static (ChunkTime Time, List<string> Failures) ReadTrx(IFileSystem files, string path, bool reportFailures)
         {
             using var stream = RcQualificationRecords.OpenSharedRead(files, path);
             using var reader = XmlReader.Create(stream, ReaderSettings());
             if (!IsTrx(reader)) throw new InvalidDataException("Not a TeamTest TestRun.");
             ChunkTime time = null;
+            var hasResultSummary = false;
             var failures = reportFailures ? new List<string>() : null;
             while (reader.Read())
             {
                 if (reader.Depth == 1 && IsElement(reader, "Times")) time = Time(reader);
+                if (reader.Depth == 1 && IsElement(reader, "ResultSummary")) hasResultSummary = true;
                 if (reportFailures && IsElement(reader, "UnitTestResult") && reader.GetAttribute("outcome") is "Failed" or "Error" or "Timeout" or "Aborted")
                     failures.Add(reader.GetAttribute("testName") ?? "(test name missing)");
             }
+            WatchQual.RequireResultSummary(hasResultSummary);
             return (time, failures);
         }
 
