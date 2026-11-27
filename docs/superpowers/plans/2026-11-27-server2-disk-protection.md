@@ -52,7 +52,7 @@ below cover the matching declared rows. Nightly and rc own full lanes.
 | CP-8 | repairs | CP-1 | dispatcher notification neighbors | `/*/*/(AgentTaskLandHeldNotificationTests*)\|(AgentTaskLandNotificationParkFollowUpTests*)\|(AgentTaskLandNotificationPersistenceTests*)\|(AgentTaskLandNotificationReconcileLoadTests*)\|(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationRescanTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)\|(AgentTaskLandReceiptWatermarkTests*)\|(ExpectationDebtTests*)\|(LandReceiptScanCacheTests*)\|(PreDispatchFailureDeliveryTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | dispatcher notification regression | AgentTaskLandHeldNotificationTests,AgentTaskLandNotificationParkFollowUpTests,AgentTaskLandNotificationPersistenceTests,AgentTaskLandNotificationReconcileLoadTests,AgentTaskLandNotificationRecoveryTests,AgentTaskLandNotificationRescanTests,AgentTaskLandReceiptTests,AgentTaskLandReceiptWatermarkSafetyTests,AgentTaskLandReceiptWatermarkTests,ExpectationDebtTests,LandReceiptScanCacheTests,PreDispatchFailureDeliveryTests,ReceiptScanDestinationIntegrationTests | 13 | 8 | true |
 | CP-9 | repairs | tests/Antiphon.SessionRunner.Tests -> bin-ad7e-runner/ | spawn roster | `/*/*/ProcessSpawnLimitTests/*` | runner spawn roster | ProcessSpawnLimitTests | 1 | 4 | true |
 | CP-10 | repairs | tests/Antiphon.Agents.Pty.Tests -> bin-ad7e-pty/ | spawn roster | `/*/*/ProcessSpawnLimitTests/*` | PTY spawn roster | ProcessSpawnLimitTests | 1 | 4 | true |
-| CP-11 | repairs | CP-1 | policy pin | `/*/*/LiveLaneRunnerTests/WrapperOnlyPaidManifest` | native exclusions preserve live-lane sentinels | WrapperOnlyPaidManifest | 1 | 2 | true |
+| CP-11 | repairs | CP-1 | policy pin | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreGoldenTests*)/*` | native exclusions preserve live-lane sentinels and policy | LiveLaneRunnerTests,NightlyCoreGoldenTests | 2 | 2 | true |
 
 ## Native and manual witnesses
 
@@ -61,7 +61,7 @@ dotnet launch sentinel in `scripts/test-checkpoint-disk-guard.mjs`. The Windows
 obligation uses a clean copy of `scripts\antiphon.cmd` from the tested SHA and a
 caller volume with less than 20 GiB free. It must print `workspace_disk_low`,
 exit 9, and leave the bootstrap cache absent. Run the required impacted Windows
-`Card1277PtyHostFixtureTests` separately on Windows.
+`Card1277PtyHostFixtureTests` and `GrokDelegateEndToEndTests` separately on Windows.
 
 ```powershell
 pwsh -NoProfile -File scripts/test-checkpoint-bootstrap-win.ps1 -LowSpaceDirectory <owned-low-space-directory>
