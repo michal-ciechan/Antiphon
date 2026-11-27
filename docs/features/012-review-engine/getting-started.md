@@ -690,7 +690,14 @@ So you tune a review through checks: what to look for (`@model` sections) and wh
 The workflow is `server/Application/Review/Workflows/pr-review.yaml`. It is compiled into the server,
 so changing it means editing that file and rebuilding. Each run keeps the version of the workflow it
 started with (stored by hash), so a change applies to new runs only. The run page's Workflow tab
-shows a run's graph.
+shows the pinned graph and its hash. Choose **Validate** to check it against the server's graph and
+execution rules. Error and warning counts appear on affected steps and routes. Select a location
+in the validation results to open its section and focus the node inspector. Diagnostics without a
+graph location remain in the results panel.
+
+Select a node to see its authored parameters and effective policy under current server settings.
+The inspector identifies an instance failure override, a repository gate rule, a value authored in
+the workflow revision, or a step default.
 
 **Nodes** have a `kind`:
 - `code`, `decision` and `completion` run a step named by `run`;
@@ -704,7 +711,7 @@ Params that work today:
 | Param | Kinds | Effect |
 |---|---|---|
 | `run` | code, decision, completion | The step to run (table below) |
-| `outputs` | code, decision | The outcomes the step can take. The validator checks that edge labels match them. |
+| `outputs` | code, decision | The outcomes the step can take. The validator checks declared outputs and routes against the registered step. |
 | `onFailure` (`stop`), `fallback` | work nodes | `continue` goes on, taking `fallback` as the step's outcome if one is set |
 | `chain` | decision, completion | The model chain to use |
 | `decisions` | gate | Any of `approve`, `another-round`, `close` |
@@ -753,15 +760,16 @@ A new decision name, such as "approve with conditions", or a new gate kind needs
    execution, CancellationToken ct)`. Return `NodeResult.Ok(outcome, summary, output)`: the outcome
    picks the edge. Model calls go through `DecisionChain` or `CompletionChain`, which you get from
    `walk.Services`.
-2. Register it in `Steps` in `server/Application/Review/ReviewWorkflowExecutor.cs`. Optionally map it
-   to a stage in `StageOf` there.
+2. Register it in `server/Application/Review/Workflows/ReviewWorkflowSteps.cs` with its kind,
+   emitted outcomes and model chain contract. Optionally map it to a stage in `StageOf` in
+   `ReviewWorkflowExecutor.cs`.
 3. Add the node to the YAML with `run` and `outputs`, plus its edges.
 4. Extend `tests/Antiphon.Tests/Review/ReviewWorkflowValidatorTests.cs` and
-   `ReviewEndToEndApiTests.cs`. The validator does not check that a `run` name exists: an unknown
-   name only fails when a run reaches it.
+   `ReviewEndToEndApiTests.cs` to exercise the graph rules and actual outcomes.
 
 `POST /api/review-workflows/validate` validates a graph, given as the JSON the run page's Workflow tab
-uses.
+uses. `GET /api/review-runs/{id}/workflow-policy` reads effective policy for that run's repository.
+Pass `?revisionId=` to inspect another stored graph in the same repository context.
 
 ## 11. Check that it works
 

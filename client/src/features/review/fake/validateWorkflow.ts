@@ -1,30 +1,92 @@
-import type { DiagnosticSeverity, WorkflowDiagnosticDto, WorkflowGraphDto, WorkflowValidationDto } from '../../../api/reviewEngine'
+import type { DiagnosticSeverity, NodeKind, WorkflowDiagnosticDto, WorkflowGraphDto, WorkflowNodeDto, WorkflowNodePolicyDto, WorkflowValidationDto } from '../../../api/reviewEngine'
+
+const STEPS: Record<string, NodeKind> = {
+  Intake: 'Code', Delta: 'Code', Categorise: 'Decision', SelectChecks: 'Decision', GroupChecks: 'Code',
+  BuildPacks: 'Code', CollateFindings: 'Join', VerifyFindings: 'Completion', Publish: 'Code', RouteAfterRound: 'Code',
+  NeedsHumanApproval: 'Code', BotApprove: 'Code', RecordBaseDrift: 'Code', CheckBaseMoved: 'Code',
+  BaseDriftCheck: 'Decision', UpdateBranch: 'Code', Merge: 'Code',
+}
+const STEP_OUTPUTS: Readonly<Record<string, readonly string[]>> = {
+  Delta: ['incremental', 'full'],
+  Categorise: ['feature', 'bugfix', 'refactor', 'test', 'docs', 'infra', 'dependency'],
+  RouteAfterRound: ['bot-round-limit', 'findings', 'clean'],
+  NeedsHumanApproval: ['yes', 'no'],
+  CheckBaseMoved: ['unchanged', 'moved', 'behind'],
+  BaseDriftCheck: ['affected', 'unaffected'],
+  UpdateBranch: ['approved', 'open'],
+}
+const DECISION_STEPS = new Set(['Delta', 'Categorise', 'SelectChecks', 'BaseDriftCheck'])
+const CONTROL_KINDS = new Set<NodeKind>(['Gate', 'Wait', 'FanOut'])
+const KINDS = new Set<NodeKind>([...Object.values(STEPS), ...CONTROL_KINDS, 'Agent'])
+
+export function fakeWorkflowNodePolicy(node: WorkflowNodeDto): WorkflowNodePolicyDto {
+  const step = node.run && STEPS[node.run] === node.kind ? node.run : null
+  const chainDefault = step === 'VerifyFindings' ? 'completions-cheap' : step && DECISION_STEPS.has(step) ? 'decisions-default' : null
+  const authored = typeof node.params.chain === 'string' ? node.params.chain : null
+  const chain = authored === '' && (step === 'Categorise' || step === 'SelectChecks') ? null : authored
+  return {
+    nodeId: node.id,
+    onFailure: step ? {
+      value: node.params.onFailure === 'continue' ? 'continue' : 'stop',
+      source: typeof node.params.onFailure === 'string' ? 'WorkflowRevision' : 'StepDefault',
+    } : null,
+    gatesOff: node.kind === 'Gate' ? { value: false, source: 'StepDefault' } : null,
+    chain: chainDefault ? { value: chain ?? chainDefault, source: chain === null ? 'StepDefault' : 'WorkflowRevision' } : null,
+  }
+}
 
 /**
  * The fake's POST /api/review-workflows/validate. It applies the design's cycle rule (§3.2): every
  * cycle must contain a Gate or Wait node, or be closed by an edge with `maxIterations`. A missing
- * description, an empty section and an unlabelled edge out of a branching node are warnings,
- * which do not make the graph invalid; every other diagnostic is an error.
+ * description or an empty section is a warning. Instance-specific execution policy comes from the HTTP API.
  */
 export function validateWorkflowGraph(graph: WorkflowGraphDto): WorkflowValidationDto {
   const diagnostics: WorkflowDiagnosticDto[] = []
   const add = (severity: DiagnosticSeverity, code: string, message: string, nodeIds: string[], edge: WorkflowDiagnosticDto['edge'] = null) =>
     diagnostics.push({ severity, code, message, nodeIds, edge })
   const ids = new Set<string>()
+  const children = new Set(graph.nodes.flatMap((node) =>
+    node.kind === 'FanOut' && typeof node.params.node === 'string' ? [node.params.node] : [],
+  ))
   for (const n of graph.nodes) {
     if (ids.has(n.id)) add('Error', 'duplicate-node', `Node "${n.id}" is defined twice.`, [n.id])
     ids.add(n.id)
+    if (!KINDS.has(n.kind)) add('Error', 'invalid-kind', 'Unknown kind for ' + n.id + '.', [n.id])
+    else if (CONTROL_KINDS.has(n.kind)) {
+      if (n.run !== null) add('Error', 'kind-mismatch', 'This kind handles its own execution.', [n.id])
+    } else if (!(n.kind === 'Agent' && n.run === null && children.has(n.id))) {
+      const kind = n.run && Object.hasOwn(STEPS, n.run) ? STEPS[n.run] : null
+      if (!kind) add('Error', 'unknown-step', 'Unknown step for ' + n.id + '.', [n.id])
+      else if (kind !== n.kind) add('Error', 'kind-mismatch', 'This step requires kind ' + kind + '.', [n.id])
+    }
+    if (n.run && Object.hasOwn(STEPS, n.run)) {
+      const outputs = Array.isArray(n.params.outputs) ? n.params.outputs : n.params.outputs === undefined ? [] : [n.params.outputs]
+      for (const output of new Set(outputs)) {
+        if (typeof output !== 'string' || (!(STEP_OUTPUTS[n.run] ?? []).includes(output) && output !== n.params.fallback))
+          add('Error', 'unsupported-output', 'The registered step cannot emit ' + String(output) + '.', [n.id])
+      }
+    }
+    if ('inputs' in n.params) {
+      if (!Array.isArray(n.params.inputs) || n.params.inputs.some((id) => typeof id !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(id)))
+        add('Error', 'invalid-input', 'Inputs must be an array of node IDs.', [n.id])
+      else add('Error', 'unsupported-input', 'This step does not support declared inputs.', [n.id])
+    }
     if (!n.description?.trim()) add('Warning', 'missing-description', `Node "${n.id}" has no description.`, [n.id])
   }
-  for (const e of graph.edges) {
+  const routes = new Map<string, Set<string>>()
+  for (const [index, e] of graph.edges.entries()) {
+    const edge = { from: e.from, to: e.to, index }
     const missing = [e.from, e.to].filter((id) => !ids.has(id))
-    if (missing.length > 0) add('Error', 'unknown-node', `Edge ${e.from} → ${e.to} names unknown node ${missing.join(', ')}.`, missing, { from: e.from, to: e.to })
-  }
-  const outgoing = new Map<string, number>()
-  for (const e of graph.edges) outgoing.set(e.from, (outgoing.get(e.from) ?? 0) + 1)
-  for (const e of graph.edges) {
-    if ((outgoing.get(e.from) ?? 0) > 1 && !e.label && !e.isBackEdge)
-      add('Warning', 'unlabelled-branch', `Edge ${e.from} → ${e.to} leaves a branching node without a label, so no outcome can select it.`, [e.from], { from: e.from, to: e.to })
+    if (missing.length > 0) add('Error', 'unknown-node', 'Unknown edge endpoint ' + missing.join(', ') + '.', missing, edge)
+    if (children.has(e.from) || children.has(e.to) || (e.overflow && children.has(e.overflow)))
+      add('Error', 'child-only', 'Fan-out children can only run through their parent fan-out.', [e.from, e.to], edge)
+    const used = routes.get(e.from) ?? new Set<string>()
+    routes.set(e.from, used)
+    const labels = e.label?.split('|').map((label) => label.trim()).filter(Boolean)
+    for (const label of new Set(labels?.length ? labels : [''])) {
+      if (used.has(label)) add('Error', 'ambiguous-route', 'More than one route for ' + (label || 'the default outcome') + '.', [e.from, e.to], edge)
+      used.add(label)
+    }
   }
   const sectionOf = new Map<string, string>()
   for (const s of graph.sections) {
@@ -47,7 +109,7 @@ export function validateWorkflowGraph(graph: WorkflowGraphDto): WorkflowValidati
   for (const scc of stronglyConnected([...ids].filter((id) => !breaker.has(id)), adj)) {
     const selfLoop = scc.length === 1 && (adj.get(scc[0]) ?? []).includes(scc[0])
     if (scc.length > 1 || selfLoop)
-      add('Error', 'cycle-unbounded', `Cycle through ${scc.join(' → ')} has no gate or wait node and no maxIterations on its closing edge.`, scc)
+      add('Error', 'unbounded-cycle', `Cycle through ${scc.join(' → ')} has no gate or wait node and no maxIterations on its closing edge.`, scc)
   }
 
   return { valid: diagnostics.every((d) => d.severity !== 'Error'), diagnostics }

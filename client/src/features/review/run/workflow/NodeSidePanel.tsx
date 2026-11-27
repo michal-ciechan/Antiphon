@@ -1,5 +1,6 @@
-import { Badge, Box, Code, Group, Paper, ScrollArea, Stack, Table, Text } from '@mantine/core'
-import type { DiagnosticSeverity, NodeExecutionDto, WorkflowDiagnosticDto, WorkflowNodeDto, WorkflowValidationDto } from '../../../../api/reviewEngine'
+import { Badge, Box, Button, Code, Group, Paper, ScrollArea, Stack, Table, Text } from '@mantine/core'
+import type { Ref } from 'react'
+import type { DiagnosticSeverity, NodeExecutionDto, WorkflowDiagnosticDto, WorkflowNodeDto, WorkflowNodePolicyDto, WorkflowPolicySource, WorkflowValidationDto } from '../../../../api/reviewEngine'
 import { CostText } from '../../components/CostText'
 import { SectionLabel } from '../../components/SectionLabel'
 import { ModelBadge } from '../../components/ReviewBadges'
@@ -66,20 +67,22 @@ export function NodeSidePanel({
   execs,
   iteration,
   now,
+  policy,
+  policyPending,
+  policyUnavailable,
+  headingRef,
 }: {
   def: WorkflowNodeDto
   execs: NodeExecutionDto[]
   iteration: number
   now: number
+  policy?: WorkflowNodePolicyDto
+  policyPending: boolean
+  policyUnavailable: boolean
+  headingRef?: Ref<HTMLHeadingElement>
 }) {
   const kind = NODE_KIND_META[def.kind]
   const params = Object.entries(def.params)
-  // Only a step that does work has a failure policy; gates, waits and fan-outs never continue past one.
-  const failurePolicy = def.kind === 'Gate' || def.kind === 'Wait' || def.kind === 'FanOut'
-    ? null
-    : def.params.onFailure === 'continue'
-      ? `continues${typeof def.params.fallback === 'string' ? ` along ${def.params.fallback}` : ''}, marked failed, continued`
-      : 'stops the run'
   const showItem = execs.some((e) => e.itemKey)
   const showOutcome = execs.some((e) => e.outcome)
   const rows = [...execs].sort((a, b) => a.iteration - b.iteration || (a.itemKey ?? '').localeCompare(b.itemKey ?? ''))
@@ -90,7 +93,7 @@ export function NodeSidePanel({
           <Badge size="sm" color={kind.color} variant="light">
             {kind.label}
           </Badge>
-          <Text fw={700}>{def.id}</Text>
+          <Text component="h3" fw={700} tabIndex={-1} ref={headingRef}>{def.id}</Text>
           {def.run && (
             <Text size="xs" ff="monospace" c="dimmed">
               run: {def.run}
@@ -104,11 +107,6 @@ export function NodeSidePanel({
         ) : (
           <Text size="xs" c="warning.4" mt={4}>
             No description.
-          </Text>
-        )}
-        {failurePolicy && (
-          <Text size="xs" c="dimmed" mt={4} data-testid="review-node-on-failure">
-            On failure: {failurePolicy}. Review:Policy:OnFailure:{def.id} overrides this per instance.
           </Text>
         )}
       </Box>
@@ -129,6 +127,26 @@ export function NodeSidePanel({
               ))}
             </Table.Tbody>
           </Table>
+        </Box>
+      )}
+      {(policyPending || policyUnavailable || policy?.onFailure || policy?.gatesOff || policy?.chain) && (
+        <Box>
+          <SectionLabel right={<Text size="xs" c="dimmed">Current settings</Text>}>Effective policy</SectionLabel>
+          {policyPending && <Text size="xs" c="dimmed">Loading current server policy…</Text>}
+          {policyUnavailable && <Text size="xs" c="dimmed">Could not load current server policy.</Text>}
+          {policy?.onFailure && (
+            <Text size="xs" data-testid="review-node-on-failure">
+              On failure · {policy.onFailure.value} · {POLICY_SOURCE[policy.onFailure.source]}
+            </Text>
+          )}
+          {policy?.gatesOff && (
+            <Text size="xs">
+              Gate · {policy.gatesOff.value ? 'off' : 'on'} · {POLICY_SOURCE[policy.gatesOff.source]}
+            </Text>
+          )}
+          {policy?.chain && (
+            <Text size="xs">Chain · {policy.chain.value} · {POLICY_SOURCE[policy.chain.source]}</Text>
+          )}
         </Box>
       )}
       <Box>
@@ -177,6 +195,13 @@ export function NodeSidePanel({
   )
 }
 
+const POLICY_SOURCE: Record<WorkflowPolicySource, string> = {
+  InstanceOverride: 'Instance override',
+  RepoRule: 'Repository rule',
+  WorkflowRevision: 'Workflow revision',
+  StepDefault: 'Step default',
+}
+
 const SEVERITY_META: Record<DiagnosticSeverity, { label: string; plural: string; color: string }> = tolerant(
   {
     Error: { label: 'error', plural: 'errors', color: 'danger' },
@@ -185,8 +210,12 @@ const SEVERITY_META: Record<DiagnosticSeverity, { label: string; plural: string;
   (value) => ({ label: value, plural: value, color: 'gray' }),
 )
 
-function DiagnosticRow({ d }: { d: WorkflowDiagnosticDto }) {
-  const where = [...d.nodeIds, ...(d.edge ? [`${d.edge.from} → ${d.edge.to}`] : [])]
+function DiagnosticRow({ d, nodeIds, onFocus }: {
+  d: WorkflowDiagnosticDto
+  nodeIds: ReadonlySet<string>
+  onFocus: (diagnostic: WorkflowDiagnosticDto, target: string) => void
+}) {
+  const edgeTarget = d.edge ? [d.edge.to, d.edge.from].find((id) => nodeIds.has(id)) : undefined
   return (
     <Box py={2}>
       <Text size="xs" c={`${SEVERITY_META[d.severity].color}.4`}>
@@ -195,11 +224,19 @@ function DiagnosticRow({ d }: { d: WorkflowDiagnosticDto }) {
         </Text>{' '}
         {d.message}
       </Text>
-      {where.length > 0 && (
-        <Text size="10px" ff="monospace" c="dimmed">
-          {where.join(' · ')}
-        </Text>
-      )}
+      <Group gap={4}>
+        {edgeTarget && (
+          <Button size="compact-xs" variant="subtle" onClick={() => onFocus(d, edgeTarget)}>
+            {d.edge?.from} → {d.edge?.to}
+          </Button>
+        )}
+        {d.edge && !edgeTarget && <Text size="xs" c="dimmed">{d.edge.from} → {d.edge.to}</Text>}
+        {[...new Set(d.nodeIds)].map((id) => nodeIds.has(id) ? (
+          <Button key={id} size="compact-xs" variant="subtle" onClick={() => onFocus(d, id)}>
+            {id}
+          </Button>
+        ) : <Text key={id} size="xs" c="dimmed">{id}</Text>)}
+      </Group>
     </Box>
   )
 }
@@ -208,7 +245,11 @@ function DiagnosticRow({ d }: { d: WorkflowDiagnosticDto }) {
  * Result of POST /api/review-workflows/validate for the graph on screen, errors first then
  * warnings (`severity`). Only errors make the graph invalid.
  */
-export function ValidationPanel({ result }: { result: WorkflowValidationDto }) {
+export function ValidationPanel({ result, nodeIds, onFocus }: {
+  result: WorkflowValidationDto
+  nodeIds: ReadonlySet<string>
+  onFocus: (diagnostic: WorkflowDiagnosticDto, target: string) => void
+}) {
   const groups = (['Error', 'Warning'] as const).map((severity) => ({ severity, items: result.diagnostics.filter((d) => d.severity === severity) }))
   return (
     <Paper withBorder p="xs" radius="md">
@@ -226,7 +267,7 @@ export function ValidationPanel({ result }: { result: WorkflowValidationDto }) {
               {g.items.length} {g.items.length === 1 ? SEVERITY_META[g.severity].label : SEVERITY_META[g.severity].plural}
             </Badge>
             {g.items.map((d, i) => (
-              <DiagnosticRow key={`${d.code}:${i}`} d={d} />
+              <DiagnosticRow key={`${d.code}:${i}`} d={d} nodeIds={nodeIds} onFocus={onFocus} />
             ))}
           </Box>
         ))}

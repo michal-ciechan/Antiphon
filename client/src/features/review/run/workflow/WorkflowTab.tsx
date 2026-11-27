@@ -1,23 +1,24 @@
 import { ActionIcon, Alert, Badge, Box, Button, Group, Modal, Paper, Popover, SegmentedControl, Skeleton, Stack, Text, Tooltip } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { Background, Controls, MarkerType, ReactFlow, type Edge, type EdgeTypes, type Node, type NodeTypes } from '@xyflow/react'
+import { Background, Controls, MarkerType, ReactFlow, type Edge, type EdgeTypes, type Node, type NodeTypes, type ReactFlowInstance } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { TbArrowsMaximize, TbArrowsMinimize, TbChevronDown, TbChevronRight, TbInfoCircle, TbMaximize, TbMinimize, TbShieldCheck } from 'react-icons/tb'
 import { useSearchParams } from 'react-router'
 import { getApiErrorMessage } from '../../../../api/client'
-import type { NodeKind, ReviewRunDetailDto, WorkflowGraphDto } from '../../../../api/reviewEngine'
+import type { NodeKind, ReviewRunDetailDto, WorkflowDiagnosticDto, WorkflowEdgeDto, WorkflowGraphDto } from '../../../../api/reviewEngine'
 import { QueryErrorAlert } from '../../components/ReviewProblem'
 import { SectionLabel } from '../../components/SectionLabel'
 import { NODE_STATUS_META } from '../../reviewMeta'
 import { shaRange, triggerLabel } from '../../reviewFormat'
-import { useReviewWorkflow, useValidateWorkflow } from '../../useReview'
+import { useReviewWorkflow, useReviewWorkflowPolicy, useValidateWorkflow } from '../../useReview'
 import { useReviewUiStore } from '../../useReviewUiStore'
 import { FloatingWindow } from './FloatingWindow'
 import { useDocumentFullscreen } from './useDocumentFullscreen'
 import { NodeSidePanel, ValidationPanel } from './NodeSidePanel'
 import { backEdgeTaken, edgeTakenIn, execsIn, groupByItem, iterationInfo, iterationsOf, rollupStatus } from './overlay'
 import { NODE_H, NODE_W, layoutWorkflow, parseNodeId, sectionNodeId, type LaidEdge } from './workflowLayout'
+import { diagnosticCounts } from './workflowDiagnostics'
 import { LaneEdgeView, SectionNodeView, StepNodeView, type LaneEdge, type SectionNode, type StepNode } from './WorkflowNodes'
 
 const nodeTypes: NodeTypes = { step: StepNodeView, section: SectionNodeView }
@@ -79,6 +80,35 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   const setCollapsed = useReviewUiStore((s) => s.setSectionCollapsed)
   const setAllCollapsed = useReviewUiStore((s) => s.setAllSectionsCollapsed)
   const validate = useValidateWorkflow()
+  const policy = useReviewWorkflowPolicy(run.id, run.workflowRevisionId)
+  const [inlineFlow, setInlineFlow] = useState<ReactFlowInstance | null>(null)
+  const [fullscreenFlow, setFullscreenFlow] = useState<ReactFlowInstance | null>(null)
+  const inspectorHeading = useRef<HTMLHeadingElement>(null)
+  const [diagnosticFocus, setDiagnosticFocus] = useState<{ target: string; endpoints: string[] } | null>(null)
+  const knownNodes = useMemo(() => new Set(graph.nodes.map((node) => node.id)), [graph.nodes])
+  const { nodeDiagnostics, edgeDiagnostics } = useMemo(() => {
+    const nodeDiagnostics = new Map<string, WorkflowDiagnosticDto[]>()
+    const edgeDiagnostics = new Map<WorkflowEdgeDto, WorkflowDiagnosticDto[]>()
+    for (const diagnostic of validate.data?.diagnostics ?? []) {
+      for (const id of new Set(diagnostic.nodeIds)) {
+        const items = nodeDiagnostics.get(id) ?? []
+        items.push(diagnostic)
+        nodeDiagnostics.set(id, items)
+      }
+      const edge = diagnostic.edge
+      if (edge) {
+        const matches = graph.edges.filter((candidate, index) =>
+          candidate.from === edge.from && candidate.to === edge.to && (edge.index === undefined || edge.index === index),
+        )
+        for (const match of matches) {
+          const items = edgeDiagnostics.get(match) ?? []
+          items.push(diagnostic)
+          edgeDiagnostics.set(match, items)
+        }
+      }
+    }
+    return { nodeDiagnostics, edgeDiagnostics }
+  }, [graph.edges, validate.data])
   const wide = useMediaQuery('(min-width: 1100px)', true)
   const [params, setParams] = useSearchParams()
   const fullscreen = params.get(FULLSCREEN_PARAM) === 'fullscreen'
@@ -144,6 +174,28 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
 
   const layout = useMemo(() => layoutWorkflow(graph, collapsed, expandedItems), [graph, collapsed, expandedItems])
 
+  function focusDiagnostic(diagnostic: WorkflowDiagnosticDto, target: string) {
+    const endpoints = [...new Set([target, ...(diagnostic.edge ? [diagnostic.edge.from, diagnostic.edge.to] : [])])]
+    for (const section of graph.sections) {
+      if (collapsed.has(section.id) && section.nodeIds.some((id) => endpoints.includes(id)))
+        setCollapsed(graph.name, section.id, false)
+    }
+    setSelectedId(layout.nodes.find((node) => node.stepId === target)?.id ?? target)
+    setDiagnosticFocus({ target, endpoints })
+  }
+
+  const activeFlow = fullscreen ? fullscreenFlow : inlineFlow
+  useEffect(() => {
+    if (!diagnosticFocus || !selectedId || parseNodeId(selectedId).stepId !== diagnosticFocus.target) return
+    inspectorHeading.current?.focus()
+    const nodes = layout.nodes
+      .filter((node) => diagnosticFocus.endpoints.includes(node.stepId))
+      .map((node) => ({ id: node.id }))
+    if (!activeFlow || nodes.length === 0) return
+    const frame = requestAnimationFrame(() => void activeFlow.fitView({ nodes, maxZoom: 1.3, padding: 0.3 }))
+    return () => cancelAnimationFrame(frame)
+  }, [activeFlow, diagnosticFocus, layout.nodes, selectedId])
+
   const flowNodes = useMemo(() => {
     const out: Node[] = []
     for (const s of layout.sections) {
@@ -162,6 +214,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           collapsed: s.collapsed,
           dir: s.dir,
           members: s.nodeIds.map((id) => ({ id, status: rollupStatus(execs.get(id)) })),
+          diagnostics: [...new Set(s.nodeIds.flatMap((id) => nodeDiagnostics.get(id) ?? []))],
           onToggle: () => setCollapsed(graph.name, s.id, !s.collapsed),
         },
       }
@@ -180,6 +233,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
         draggable: false,
         data: {
           def: n.def,
+          diagnostics: nodeDiagnostics.get(n.stepId) ?? [],
           status: rollupStatus(mine),
           execs: mine,
           items: n.item ? [] : groupByItem(mine).filter((g) => g.itemKey !== null),
@@ -196,7 +250,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
       out.push(step)
     }
     return out
-  }, [layout, execs, run.nodes, selectedId, graph.name, setCollapsed, agentsByStep, expandedSteps])
+  }, [layout, execs, run.nodes, selectedId, graph.name, setCollapsed, agentsByStep, expandedSteps, nodeDiagnostics])
 
   const flowEdges = useMemo(() => {
     // an edge animates while its visible target runs; for an agent node, only that agent's executions count
@@ -207,11 +261,13 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
     const out: Edge[] = []
     for (const e of layout.edges) {
       const taken = e.members.some((m) => edgeTakenIn(run, execs, m))
-      const color = edgeColor(e, graph, taken)
+      const diagnostics = diagnosticCounts([...new Set(e.members.flatMap((edge) => edgeDiagnostics.get(edge) ?? []))])
+      const color = diagnostics.label ? (diagnostics.errors ? '#ff8787' : '#ffd43b') : edgeColor(e, graph, taken)
       const marker = { type: MarkerType.ArrowClosed, color, width: 14, height: 14 }
       const backLabel = e.isBackEdge
         ? `↺ ${e.members.reduce((s, m) => s + backEdgeTaken(run, m), 0)}/${e.maxIterations ?? '∞'}${e.label ? ` ${e.label}` : ''}`
         : null
+      const label = [backLabel ?? e.label, diagnostics.label].filter(Boolean).join(' · ')
       if (e.lane) {
         const lane: LaneEdge = {
           id: e.id,
@@ -221,8 +277,8 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           sourceHandle: e.sourceHandle,
           targetHandle: e.targetHandle,
           markerEnd: marker,
-          style: { stroke: color, strokeWidth: taken ? 2 : 1.4, strokeDasharray: '5 4' },
-          data: { laneX: e.lane.x, dropY: e.lane.dropY, label: backLabel ?? '', color },
+          style: { stroke: color, strokeWidth: diagnostics.label ? 2.6 : taken ? 2 : 1.4, strokeDasharray: '5 4' },
+          data: { laneX: e.lane.x, dropY: e.lane.dropY, label, color },
         }
         out.push(lane)
         continue
@@ -236,21 +292,23 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
         targetHandle: e.targetHandle,
         markerEnd: marker,
         animated: taken && !e.isBackEdge && targetRunning(e.target),
-        style: { stroke: color, strokeWidth: taken ? 2.2 : e.isBackEdge ? 1.4 : 1.1, strokeDasharray: e.isBackEdge ? '5 4' : undefined },
-        label: backLabel ?? e.label ?? undefined,
-        labelStyle: { fill: e.isBackEdge || taken ? color : '#909296', fontSize: 10, fontWeight: taken ? 700 : 400 },
+        style: { stroke: color, strokeWidth: diagnostics.label ? 2.6 : taken ? 2.2 : e.isBackEdge ? 1.4 : 1.1, strokeDasharray: e.isBackEdge ? '5 4' : undefined },
+        label: label || undefined,
+        labelStyle: { fill: diagnostics.label || e.isBackEdge || taken ? color : '#909296', fontSize: 10, fontWeight: taken ? 700 : 400 },
         labelBgStyle: { fill: '#1a1b1e' },
         labelBgPadding: [4, 2],
         labelBgBorderRadius: 4,
       })
     }
     return out
-  }, [layout, execs, graph, run])
+  }, [layout, execs, graph, run, edgeDiagnostics])
   const shown = iterationInfo(run, iteration)
 
   // a selected agent node shows its step's description with only that agent's executions
   const selection = selectedId ? parseNodeId(selectedId) : null
   const selectedDef = selection ? graph.nodes.find((n) => n.id === selection.stepId) : undefined
+  const policyMatchesGraph = policy.data?.runId === run.id && policy.data.revisionId === run.workflowRevisionId && policy.data.hash === graph.hash
+  const selectedPolicy = policyMatchesGraph ? policy.data?.nodes.find((node) => node.nodeId === selectedDef?.id) : undefined
   const selectedTitle = selection ? (selection.item ? `${selection.stepId} · ${selection.item}` : selection.stepId) : ''
   const selectedExecs = run.nodes
     .filter((n) => selection && n.nodeId === selection.stepId && (!selection.item || n.itemKey === selection.item))
@@ -264,6 +322,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
       edges={flowEdges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
+      onInit={variant === 'inline' ? setInlineFlow : setFullscreenFlow}
       fitView
       fitViewOptions={{ padding: variant === 'fullscreen' ? 0.04 : 0.06 }}
       minZoom={0.2}
@@ -273,9 +332,14 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
       proOptions={{ hideAttribution: true }}
       colorMode="dark"
       onNodeClick={(_, n) => {
-        if (n.type === 'step') setSelectedId(n.id)
+        if (n.type !== 'step') return
+        setDiagnosticFocus(null)
+        setSelectedId(n.id)
       }}
-      onPaneClick={() => setSelectedId(null)}
+      onPaneClick={() => {
+        setDiagnosticFocus(null)
+        setSelectedId(null)
+      }}
     >
       <Background gap={24} size={1} color="#2c2e33" />
       <Controls showInteractive={false} />
@@ -343,13 +407,13 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
               </Text>
             </Text>
           )}
-          <Tooltip label="POST /api/review-workflows/validate: the cycle rule and section checks">
+          <Tooltip label="Check this workflow against the server’s registered steps and graph rules">
             <Button size="compact-xs" variant="light" color="teal" leftSection={<TbShieldCheck size={12} />} loading={validate.isPending} onClick={() => validate.mutate(graph)}>
               Validate
             </Button>
           </Tooltip>
-          <Text size="xs" ff="monospace" c="dimmed">
-            {graph.name} · {graph.hash.slice(7, 19)}
+          <Text size="xs" ff="monospace" c="dimmed" title={graph.hash}>
+            {graph.name} · {graph.hash.replace(/^sha256:/, '').slice(0, 12)}
           </Text>
         </Group>
     </>
@@ -357,7 +421,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
 
   const validationBody = (
     <>
-      {validate.data && <ValidationPanel result={validate.data} />}
+      {validate.data && <ValidationPanel result={validate.data} nodeIds={knownNodes} onFocus={focusDiagnostic} />}
       {validate.error && (
         <Alert color="danger" variant="light" p={6}>
           <Text size="xs">{getApiErrorMessage(validate.error, 'Validation failed.')}</Text>
@@ -384,7 +448,16 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           {validationBody}
           <Paper withBorder radius="md" p="sm">
             {selectedDef ? (
-              <NodeSidePanel def={selectedDef} execs={selectedExecs} iteration={iteration} now={now} />
+              <NodeSidePanel
+                def={selectedDef}
+                execs={selectedExecs}
+                iteration={iteration}
+                now={now}
+                policy={selectedPolicy}
+                policyPending={policy.isPending}
+                policyUnavailable={policy.isError || (!policy.isPending && !policyMatchesGraph)}
+                headingRef={!fullscreen ? inspectorHeading : undefined}
+              />
             ) : (
               <WorkflowLegend hint="Click a step for its description, parameters and every execution. Click a collapsed section to expand it." />
             )}
@@ -445,7 +518,16 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
                 onClose={() => setSelectedId(null)}
                 testId="review-workflow-node-window"
               >
-                <NodeSidePanel def={selectedDef} execs={selectedExecs} iteration={iteration} now={now} />
+                <NodeSidePanel
+                  def={selectedDef}
+                  execs={selectedExecs}
+                  iteration={iteration}
+                  now={now}
+                  policy={selectedPolicy}
+                  policyPending={policy.isPending}
+                  policyUnavailable={policy.isError || (!policy.isPending && !policyMatchesGraph)}
+                  headingRef={fullscreen ? inspectorHeading : undefined}
+                />
               </FloatingWindow>
             )}
             {(validate.data || validate.error) && (
@@ -477,5 +559,5 @@ export function WorkflowTab({ run, now }: { run: ReviewRunDetailDto; now: number
         retrying={workflow.isFetching}
       />
     )
-  return <WorkflowGraph run={run} graph={workflow.data} now={now} />
+  return <WorkflowGraph key={run.id + ':' + (run.workflowRevisionId ?? workflow.data.hash)} run={run} graph={workflow.data} now={now} />
 }

@@ -13,10 +13,11 @@ import {
   TbRobot,
   TbUserCheck,
 } from 'react-icons/tb'
-import type { NodeExecutionDto, NodeKind, NodeStatus, WorkflowNodeDto } from '../../../../api/reviewEngine'
+import type { NodeExecutionDto, NodeKind, NodeStatus, WorkflowDiagnosticDto, WorkflowNodeDto } from '../../../../api/reviewEngine'
 import { NODE_KIND_META, NODE_STATUS_META, modelColor, modelShort } from '../../reviewMeta'
 import { fmtTokens } from '../../reviewFormat'
 import { NODE_H, NODE_W, type Dir } from './workflowLayout'
+import { diagnosticCounts } from './workflowDiagnostics'
 
 const KIND_ICON: Record<NodeKind, ReactNode> = {
   Code: <TbCode size={13} />,
@@ -46,8 +47,19 @@ function StepHandles({ dir }: { dir: Dir }) {
   )
 }
 
+function DiagnosticBadge({ diagnostics }: { diagnostics: readonly WorkflowDiagnosticDto[] }) {
+  const { errors, label } = diagnosticCounts(diagnostics)
+  if (!label) return null
+  return (
+    <Badge size="xs" px={4} color={errors ? 'danger' : 'warning'} variant="filled" title={label} aria-label={label}>
+      {diagnostics.length}
+    </Badge>
+  )
+}
+
 export type StepData = {
   def: WorkflowNodeDto
+  diagnostics: readonly WorkflowDiagnosticDto[]
   status: NodeStatus
   execs: NodeExecutionDto[]
   /** a fan-out child's executions grouped by `itemKey` (e.g. reviewer groups); empty otherwise */
@@ -114,7 +126,7 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
         borderBottom: side,
         borderLeft: `4px solid ${meta.hex}`,
         borderRadius: def.kind === 'Gate' || def.kind === 'Wait' ? 14 : 6,
-        opacity: status === 'NotReached' ? 0.5 : 1,
+        opacity: status === 'NotReached' && data.diagnostics.length === 0 ? 0.5 : 1,
         animation: status === 'Running' ? 'reviewPulse 1.6s infinite' : undefined,
         overflow: 'hidden',
         cursor: 'pointer',
@@ -131,6 +143,7 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
           </Text>
         </Group>
         <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
+          <DiagnosticBadge diagnostics={data.diagnostics} />
           {onToggleExpand && (expandable || item) && (
             <ExpandToggle expanded={expanded} count={data.agentCount} step={def.id} onToggle={onToggleExpand} />
           )}
@@ -193,6 +206,7 @@ export type SectionData = {
   title: string
   collapsed: boolean
   members: { id: string; status: NodeStatus }[]
+  diagnostics: readonly WorkflowDiagnosticDto[]
   dir: Dir
   onToggle: () => void
 }
@@ -273,6 +287,7 @@ export function SectionNodeView({ data }: NodeProps<SectionNode>) {
         <Text size="10px" fw={600} style={{ color: r.status === 'NotReached' ? 'var(--mantine-color-dimmed)' : hex }} truncate>
           {r.text}
         </Text>
+        <DiagnosticBadge diagnostics={data.diagnostics} />
       </Group>
       <Group gap={3} mt={6} wrap="nowrap">
         {data.members.map((m) => (

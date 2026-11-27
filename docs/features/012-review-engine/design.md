@@ -264,6 +264,13 @@ executions.
 
 ### 3.3 Definition and revisions
 
+The current Workflow tab reads the run's revision and validates a candidate graph without storing it.
+The executor's step registration supplies kinds, emitted outcomes and chain defaults to validation.
+A policy read evaluates that graph for the run's repository under current instance settings and
+returns the source of each effective value. The revision pins the authored graph.
+
+The following authoring lifecycle describes the editor design.
+
 - The workflow lives in `.antiphon/review/workflow.yaml` and is layered like the prompts
   (section 10).
 - The resolved definition is stored as a revision with a SHA-256, like `PipelineDefinitionRevision`

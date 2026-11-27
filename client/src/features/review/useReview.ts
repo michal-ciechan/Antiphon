@@ -95,6 +95,13 @@ export function useReviewWorkflow(revisionId: string | null) {
   })
 }
 
+export function useReviewWorkflowPolicy(runId: string, revisionId: string | null) {
+  return useQuery({
+    queryKey: reviewEngineKeys.workflowPolicy(runId, revisionId),
+    queryFn: () => reviewApi().getWorkflowPolicy(runId, revisionId),
+  })
+}
+
 /**
  * Who the review UI acts as (`GET /api/review-me`). In HTTP mode the server resolves it (identity,
  * or `Review:DefaultViewerLogin` until identity lands); in fake mode it is the banner's "Viewing

@@ -26,6 +26,7 @@ import type {
   RunFindingResponse,
   SlaState,
   WorkflowGraphDto,
+  WorkflowPolicyDto,
   WorkflowValidationDto,
 } from '../../../api/reviewEngine'
 import { prRef } from '../reviewFormat'
@@ -45,7 +46,7 @@ import {
   type RunMeta,
 } from './seed'
 import { DEFAULT_WORKFLOW } from './workflowSeed'
-import { validateWorkflowGraph } from './validateWorkflow'
+import { fakeWorkflowNodePolicy, validateWorkflowGraph } from './validateWorkflow'
 
 /**
  * The in-memory review API. It implements the contract's `ReviewApi` against seeded data and keeps
@@ -842,6 +843,15 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         // the fake has one revision: every seeded run snapshotted the default workflow
         if (revisionId !== DEFAULT_WORKFLOW.revisionId) throw problem(404, `No workflow revision ${revisionId}.`)
         return DEFAULT_WORKFLOW
+      }),
+
+    getWorkflowPolicy: (runId, revisionId) =>
+      respond((): WorkflowPolicyDto => {
+        const run = requireRun(runId)
+        const selected = revisionId ?? run.workflowRevisionId
+        if (selected && selected !== DEFAULT_WORKFLOW.revisionId) throw problem(404, 'No workflow revision ' + selected + '.')
+        const { name, hash, nodes } = DEFAULT_WORKFLOW
+        return { runId, revisionId: selected, name, hash, nodes: nodes.map(fakeWorkflowNodePolicy) }
       }),
 
     validateWorkflow: (graph) => respond((): WorkflowValidationDto => validateWorkflowGraph(graph)),

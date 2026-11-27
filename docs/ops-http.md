@@ -462,6 +462,18 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   `WorkspaceSlotColdReset` and `WorkspaceSlotQuarantineRelease`. The `GET /sessions/workspace-slots`
   inventory and watchdog keys are S4.
 
+## Inspect a review workflow
+
+Read `GET /api/review-runs/{id}` for the run's `workflowRevisionId` and its repository. Read the graph
+from `GET /api/review-workflows/revisions/{revisionId}`, or `GET /api/review-workflows/default` for an
+unpinned run. Send a candidate graph directly as JSON to `POST /api/review-workflows/validate`.
+A 200 response has a `valid` flag and diagnostics. Errors can identify a node or the zero-based edge
+index in the submitted graph.
+
+Read `GET /api/review-runs/{id}/workflow-policy` for current effective failure, gate and chain values
+and their sources. Add `?revisionId=<id>` to inspect a specific revision for that repository. Both
+validation and policy inspection are read-only. See the [review engine API contract](features/012-review-engine/api.md).
+
 ## Shapes that bite
 
 - **PLURAL, OR 404.** `/api/boards`, `/api/agents`, `/api/cards`. There is no `/api/board`, and a

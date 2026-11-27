@@ -1228,6 +1228,18 @@ GET    /api/agents/{agentId}/review/threads    POST …/review/threads
 POST   /api/review/threads/{threadId}/comments | /dispatch | /resolve
 ```
 
+### Review engine workflow
+
+| Method | Route | Returns |
+|---|---|---|
+| GET | `/api/review-workflows/default` | Embedded graph |
+| GET | `/api/review-workflows/revisions/{id}` | Stored graph |
+| POST | `/api/review-workflows/validate` | Candidate graph diagnostics and validity |
+| GET | `/api/review-runs/{id}/workflow-policy?revisionId=` | Effective node policy and value sources for the run's repository and chosen graph. Omit `revisionId` to use the run's graph. |
+
+The [review engine API contract](features/012-review-engine/api.md) defines validation diagnostics
+and policy fields.
+
 ### Issue-tracker sync
 
 `TrackerSyncEndpoints.cs` — see [workflow-tracker-block.md](workflow-tracker-block.md).

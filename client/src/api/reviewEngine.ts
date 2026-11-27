@@ -332,12 +332,34 @@ export interface WorkflowDiagnosticDto {
   code: string
   message: string
   nodeIds: string[]
-  edge: { from: string; to: string } | null
+  edge: { from: string; to: string; index?: number } | null
 }
 
 export interface WorkflowValidationDto {
   valid: boolean
   diagnostics: WorkflowDiagnosticDto[]
+}
+
+export type WorkflowPolicySource = 'InstanceOverride' | 'RepoRule' | 'WorkflowRevision' | 'StepDefault'
+
+export interface WorkflowPolicyValue<T> {
+  value: T
+  source: WorkflowPolicySource
+}
+
+export interface WorkflowNodePolicyDto {
+  nodeId: string
+  onFailure: WorkflowPolicyValue<'stop' | 'continue'> | null
+  gatesOff: WorkflowPolicyValue<boolean> | null
+  chain: WorkflowPolicyValue<string> | null
+}
+
+export interface WorkflowPolicyDto {
+  runId: string
+  revisionId: string | null
+  name: string
+  hash: string
+  nodes: WorkflowNodePolicyDto[]
 }
 
 export interface ListResult<T> {
@@ -435,6 +457,7 @@ export interface ReviewApi {
   getDefaultWorkflow(): Promise<WorkflowGraphDto>
   /** The snapshot a run used (`workflowRevisionId`). */
   getWorkflowRevision(revisionId: string): Promise<WorkflowGraphDto>
+  getWorkflowPolicy(runId: string, revisionId: string | null): Promise<WorkflowPolicyDto>
   validateWorkflow(graph: WorkflowGraphDto): Promise<WorkflowValidationDto>
   /** Who the server acts as; mutations record this viewer as the actor. */
   getMe(): Promise<ReviewViewerDto>
@@ -476,6 +499,8 @@ export const httpReviewApi: ReviewApi = {
   decideGate: (gateId, request) => apiPost(`/review-gates/${enc(gateId)}/decision`, request),
   getDefaultWorkflow: () => apiGet('/review-workflows/default'),
   getWorkflowRevision: (revisionId) => apiGet(`/review-workflows/revisions/${enc(revisionId)}`),
+  getWorkflowPolicy: (runId, revisionId) =>
+    apiGet('/review-runs/' + enc(runId) + '/workflow-policy' + (revisionId ? '?revisionId=' + enc(revisionId) : '')),
   validateWorkflow: (graph) => apiPost('/review-workflows/validate', graph),
   getMe: () => apiGet('/review-me'),
   seedDemo: () => apiPost('/review-runs/demo', {}),
@@ -533,6 +558,7 @@ export const reviewEngineKeys = {
   kpis: ['reviewKpis'] as const,
   defaultWorkflow: ['reviewWorkflows', 'default'] as const,
   workflowRevision: (revisionId: string) => ['reviewWorkflows', 'revisions', revisionId] as const,
+  workflowPolicy: (runId: string, revisionId: string | null) => ['reviewWorkflows', 'policy', runId, revisionId] as const,
   /** not in the SignalR list: the viewer changes only with identity (or the fake's viewer switch) */
   me: ['reviewMe'] as const,
   /** not in the SignalR list: polled, and replaced by the poll-now result */
