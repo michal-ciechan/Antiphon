@@ -3085,25 +3085,20 @@ public sealed partial class ChannelInboundRecoveryTests
         }
         await IngestAsync(TranscriptKinds.QueuedUserPrompt, marked);
         await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
-        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId))
-            .Status.ShouldBe(QueuedMessageStatus.Pending);
+        await AssertAwaitingReceiptAsync(ownedId, 0);
         await IngestAsync(TranscriptKinds.AssistantText, marked);
         await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
-        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId))
-            .Status.ShouldBe(QueuedMessageStatus.Pending);
+        await AssertAwaitingReceiptAsync(ownedId, 0);
         await IngestAsync(TranscriptKinds.UserPrompt, marked[..^13] + "different tail");
         await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
-        (await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId))
-            .Status.ShouldBe(QueuedMessageStatus.Pending);
+        await AssertAwaitingReceiptAsync(ownedId, 0);
         var markerEnd = marked.IndexOf(']');
         markerEnd.ShouldBeGreaterThan(0);
         var wrongMarker = $"[antiphon-channel:{Guid.NewGuid():N}]" + marked[(markerEnd + 1)..];
         await IngestAsync(TranscriptKinds.UserPrompt, wrongMarker);
         await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
-        var stillPending = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownedId);
-        stillPending.Status.ShouldBe(QueuedMessageStatus.Pending);
-        stillPending.Body.ShouldBe(marked);
-        stillPending.DeliveryAttempts.ShouldBe(3);
+        var awaiting = await AssertAwaitingReceiptAsync(ownedId, 0);
+        awaiting.Body.ShouldBe(marked);
         h.Adapter.SentInput.ShouldBeEmpty();
         await IngestAsync(TranscriptKinds.UserPrompt, marked);
         await IngestAsync(TranscriptKinds.TurnEnd, null, "end_turn");
@@ -3144,14 +3139,17 @@ public sealed partial class ChannelInboundRecoveryTests
                 && t.Sequence == sequence && t.Kind == kind && t.Text == text)).ShouldBeTrue();
             return sequence;
         }
-        async Task AssertPendingAsync(Guid ownerId)
+        async Task<SessionQueuedMessage> AssertAwaitingReceiptAsync(Guid ownerId, long? originalFloor)
         {
             await h.Queue.FlushSessionAsync(h.SessionId, Ct);
             await using var db = Db(schema.ConnectionString);
             var owner = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == ownerId);
-            owner.Status.ShouldBe(QueuedMessageStatus.Pending);
+            owner.Status.ShouldBe(QueuedMessageStatus.Sent);
+            owner.DeliveryVerdict.ShouldBeNull();
             owner.DeliveryAttempts.ShouldBe(3);
+            owner.LastDeliveryBaselineSequence.ShouldBe(originalFloor);
             h.Adapter.SentInput.ShouldBeEmpty();
+            return owner;
         }
         async Task AssertLateConfirmedAsync(Guid ownerId, string fullBody, long floor)
         {
@@ -3173,7 +3171,7 @@ public sealed partial class ChannelInboundRecoveryTests
         (await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt, equality.Body,
             DateTimeOffset.UtcNow)).ShouldBe(equalityFloor);
         await ObserveAsync(h.SessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
-        await AssertPendingAsync(equality.Id);
+        await AssertAwaitingReceiptAsync(equality.Id, equalityFloor);
         await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt, equality.Body, DateTimeOffset.UtcNow);
         await ObserveAsync(h.SessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
         await AssertLateConfirmedAsync(equality.Id, equality.Body, equalityFloor);
@@ -3183,7 +3181,7 @@ public sealed partial class ChannelInboundRecoveryTests
         await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt, stale.Body,
             new DateTimeOffset(staleStart.AddMinutes(-2), TimeSpan.Zero));
         await ObserveAsync(h.SessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
-        await AssertPendingAsync(stale.Id);
+        await AssertAwaitingReceiptAsync(stale.Id, null);
         var staleFloor = await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt, stale.Body,
             DateTimeOffset.UtcNow);
         await ObserveAsync(h.SessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
@@ -3207,7 +3205,7 @@ public sealed partial class ChannelInboundRecoveryTests
         await ObserveAsync(otherSessionId, TranscriptKinds.UserPrompt, wrongRecipient.Body,
             DateTimeOffset.UtcNow);
         await ObserveAsync(otherSessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
-        await AssertPendingAsync(wrongRecipient.Id);
+        await AssertAwaitingReceiptAsync(wrongRecipient.Id, 0);
         var recipientFloor = await ObserveAsync(h.SessionId, TranscriptKinds.UserPrompt,
             wrongRecipient.Body, DateTimeOffset.UtcNow);
         await ObserveAsync(h.SessionId, TranscriptKinds.TurnEnd, null, DateTimeOffset.UtcNow, "end_turn");
