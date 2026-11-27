@@ -57,7 +57,9 @@ public sealed class IncidentPageNotifier
                 && i.HumanNotifiedAt == null
                 && i.CreatedAt >= cutoff
                 && i.AgentId != null
-                && i.FailureReason != ProviderCapacityReason)
+                && i.FailureReason != ProviderCapacityReason
+                && i.FailureReason != ChannelBridgeService.WithheldReason
+                && i.FailureReason != ChannelBridgeService.NoOutboundReason)
             .OrderBy(i => i.CreatedAt)
             .ToListAsync(ct);
         if (candidates.Count == 0)

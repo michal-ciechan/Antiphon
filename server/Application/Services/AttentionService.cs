@@ -2231,7 +2231,9 @@ public sealed partial class AttentionService
         var items = new List<AttentionItemDto>();
 
         var recent = await _db.AgentIncidents.AsNoTracking()
-            .Where(i => i.Severity >= AlertSeverity.Error && i.CreatedAt >= since
+            .Where(i => i.Severity >= AlertSeverity.Error
+                && (i.CreatedAt >= since || (i.HumanNotifiedAt >= since &&
+                    (i.FailureReason == ChannelBridgeService.WithheldReason || i.FailureReason == ChannelBridgeService.NoOutboundReason)))
                 && i.Kind != AgentIncidentKind.HerdrSupervisionHeld
                 && i.Kind != AgentIncidentKind.StandingSpecialistHealth
                 && i.Kind != AgentIncidentKind.StandingContinuityHeld)

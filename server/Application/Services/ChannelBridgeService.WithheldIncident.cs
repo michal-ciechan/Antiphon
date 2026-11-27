@@ -48,7 +48,7 @@ public sealed partial class ChannelBridgeService
     // between the eligibility read and the incident/stamp commit.
     internal const string WithheldIncidentCandidateSql = $"""
         SELECT i."Id" AS "InboundId", i."AgentId", q."AgentSessionId" AS "SessionId",
-               i."Provider", i."ConversationId", i."NativeMessageId", q."LastWithholdReason"
+               i."Provider", i."ConversationId", i."NativeMessageId", q."Id" AS "QueueId", q."LastWithholdReason"
         FROM "SessionQueuedMessages" AS q
         JOIN "ChannelInbounds" AS i ON i."QueueMessageId" = q."Id"
         JOIN "AgentSessions" AS s ON s."Id" = q."AgentSessionId"
@@ -97,6 +97,7 @@ public sealed partial class ChannelBridgeService
             try
             {
                 await ScanWithheldChannelIncidentsAsync(ct);
+                await ScanChannelReplyAlertsAsync(ct);
                 _withheldScanFailures = 0;
                 _withheldFailureIncidentId = null;
                 _withheldFailureReported = false;
@@ -209,23 +210,28 @@ public sealed partial class ChannelBridgeService
         if (eligible.Count == 0)
             return;
 
+        var inboundIds = eligible.Select(c => c.InboundId).ToArray();
+        // Both monitors lock the inbound before inserting. The silence deadline can win
+        // while a turn is still working. Enrich its incident and retain the publication stamp.
+        var existing = await db.AgentIncidents.Where(i => inboundIds.Contains(i.Id))
+            .ToDictionaryAsync(i => i.Id, token);
         foreach (var row in eligible)
         {
-            db.AgentIncidents.Add(new AgentIncident
+            if (!existing.TryGetValue(row.InboundId, out var incident))
             {
-                Id = Guid.NewGuid(),
-                AgentId = row.AgentId,
-                SessionId = row.SessionId,
-                Kind = AgentIncidentKind.ChannelReplyLost,
-                Severity = AlertSeverity.Critical,
-                FailureReason = "ChannelInputWithheld",
-                CreatedAt = now,
-                Message = ColumnText.Clip(
-                    $"Inbound message {row.Provider}:{row.ConversationId}/{row.NativeMessageId} is withheld: {row.LastWithholdReason}",
-                    AgentIncident.MessageMaxLength),
-            });
+                incident = new AgentIncident
+                {
+                    Id = row.InboundId, AgentId = row.AgentId, CreatedAt = now,
+                    Kind = AgentIncidentKind.ChannelReplyLost, Severity = AlertSeverity.Critical,
+                };
+                db.AgentIncidents.Add(incident);
+            }
+            incident.SessionId = row.SessionId;
+            incident.FailureReason = WithheldReason;
+            incident.Message = ColumnText.Clip(
+                $"Inbound message {row.Provider}:{row.ConversationId}/{row.NativeMessageId} is withheld: {row.LastWithholdReason}. "
+                + ChannelRecoveryRoute(row.AgentId, row.SessionId, row.QueueId), AgentIncident.MessageMaxLength);
         }
-        var inboundIds = eligible.Select(c => c.InboundId).ToArray();
         await db.ChannelInbounds.Where(i => inboundIds.Contains(i.Id))
             .ExecuteUpdateAsync(s => s.SetProperty(i => i.InputWithheldIncidentAt, now), token);
         await db.SaveChangesAsync(token);
@@ -247,6 +253,7 @@ public sealed partial class ChannelBridgeService
         public string Provider { get; set; } = "";
         public string ConversationId { get; set; } = "";
         public string NativeMessageId { get; set; } = "";
+        public Guid QueueId { get; set; }
         public string? LastWithholdReason { get; set; }
     }
 }

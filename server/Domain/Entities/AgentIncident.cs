@@ -31,7 +31,7 @@ public class AgentIncident
     public DateTime CreatedAt { get; set; }
 
     /// <summary>
-    /// CARD-0338 S3: when the digest pager sent this incident to DigestEnabled channels.
+    /// CARD-0338 S3: when the digest pager sent this incident, or the channel monitor pushed it to operator attention.
     /// Not an acknowledgement — a second loss an hour later is a second page. Backfilled to
     /// <see cref="CreatedAt"/> on migrate so a deploy never pages history.
     /// </summary>

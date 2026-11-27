@@ -21,6 +21,9 @@ public sealed class ChannelBridgeSettings
     /// <summary>Age of an unowned inbound before a known supervision refusal raises a channel incident.</summary>
     public int AgedHoldIncidentMinutes { get; set; } = 10;
 
+    /// <summary>Deadline from group inbound acceptance to the next outbound. Zero disables this check.</summary>
+    public int GroupReplyDeadlineMinutes { get; set; } = 10;
+
     /// <summary>Extra settle time after a session we just started reports Running (TUI boot, MCP connect).</summary>
     public int AgentReadyDelaySeconds { get; set; } = 12;
 
@@ -105,6 +108,8 @@ public sealed class ChannelBridgeSettingsValidator : IValidateOptions<ChannelBri
             failures.Add("ChannelBridge:ReplyDebtGiveUpMinutes must be 0 (disabled) or at most "
                 + $"PendingReplyTtlMinutes ({settings.PendingReplyTtlMinutes}); got {settings.ReplyDebtGiveUpMinutes}. "
                 + "The TTL remains the backstop for a reply that is never published.");
+        if (settings.GroupReplyDeadlineMinutes is < 0 or > 10080)
+            failures.Add("ChannelBridge:GroupReplyDeadlineMinutes must be 0 (disabled) or 1..10080.");
         var rejected = (settings.MachineTurnTextOrigins ?? []).Where(o => Forbidden.Contains(o)).Distinct().ToList();
         if (rejected.Count > 0)
             failures.Add("ChannelBridge:MachineTurnTextOrigins must not include Channel, Ui, or Supervision "
