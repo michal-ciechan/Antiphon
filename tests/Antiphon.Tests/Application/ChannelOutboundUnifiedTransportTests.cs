@@ -72,7 +72,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
         // Overlap the in-process worlds inside this test's seat. Join them before
         // running scenarios that start a recovery child, one child at a time.
         await Parallel.ForEachAsync(scenarios.Where(scenario => !StartsWorker(scenario.Cut)),
-            new ParallelOptions { MaxDegreeOfParallelism = 4 },
+            new ParallelOptions { MaxDegreeOfParallelism = 8 },
             (scenario, _) => new ValueTask(RunScenarioAsync(scenario.LateGateway, scenario.Cut)));
         foreach (var scenario in scenarios.Where(scenario => StartsWorker(scenario.Cut)))
             await RunScenarioAsync(scenario.LateGateway, scenario.Cut);
