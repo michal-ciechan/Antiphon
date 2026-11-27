@@ -1,22 +1,31 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Review;
+using Antiphon.Server.Application.Review.Execution;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Orchestration;
+using Antiphon.Server.Infrastructure.Review;
+using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Shouldly;
 using TUnit.Core;
 
 namespace Antiphon.Tests.Review;
 
 [Category("Integration")]
+[NotInParallel("review-intake-api")]
 [ClassDataSource<ReviewRunIntakeApiTests.Factory>(Shared = SharedType.PerClass)]
 public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory factory)
 {
@@ -253,6 +262,126 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         (await db.ReviewRuns.CountAsync(r => r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed, ct)).ShouldBe(2);
     }
 
+    [Test]
+    public async Task Close_during_merge_retry_refuses_the_second_write(CancellationToken ct)
+    {
+        const int number = 209663;
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var id = Id(created);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var db = services.GetRequiredService<AppDbContext>();
+        var run = await db.ReviewRuns.Include(r => r.Subject).Include(r => r.Iterations).SingleAsync(r => r.Id == id, ct);
+        var walk = new ReviewWalk(services, db, run, run.Iterations.Single(),
+            services.GetRequiredService<ReviewWorkflowService>().Default, TimeProvider.System);
+        var merge = services.GetRequiredService<GitHubCodeHost>().MergeAsync(walk.Binding.Target, run.Subject.HeadSha, "squash", ct);
+        await factory.MergeHandler.FirstAttempt.Task.WaitAsync(ct);
+        using var closed = await client.PostAsJsonAsync($"/api/review-runs/{id}/close",
+            new { concurrencyToken = created.GetProperty("concurrencyToken").GetUInt32(), reason = "author withdrew approval" }, ct);
+        closed.StatusCode.ShouldBe(HttpStatusCode.OK, await closed.Content.ReadAsStringAsync(ct));
+
+        // The first HTTP response was 405. Any second PUT would succeed on this code host.
+        (await Should.ThrowAsync<CodeHostException>(async () => await merge)).Kind.ShouldBe(CodeHostFailureKind.Rejected);
+        factory.MergeHandler.Writes.ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(209664, "busy")]
+    [Arguments(209665, "eligible")]
+    [Arguments(209666, "enqueue-failed")]
+    public async Task Close_before_executor_records_task_handle_reconciles_the_real_queue(int number, string recipient,
+        CancellationToken ct)
+    {
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var nodeId = Guid.NewGuid();
+        db.ReviewNodeExecutions.Add(new ReviewNodeExecution
+        {
+            Id = nodeId, RunId = runId, NodeId = "reviewer", Kind = ReviewNodeKind.Agent,
+            ItemKey = "concurrency", Iteration = 1, Sequence = 2, Status = ReviewNodeStatus.Running,
+        });
+        await db.SaveChangesAsync(ct);
+
+        var connection = db.Database.GetConnectionString()!;
+        var queueOptions = new BridgeQueueHarness.HarnessOptions
+        {
+            ClaudeDialogObservation = true, ConnectionString = connection, PreserveDatabaseOnDispose = true,
+        };
+        Guid taskId;
+        DispatchBriefEnsureRequest request;
+        Guid sessionId;
+        Guid agentId;
+        await using (var harness = await BridgeQueueHarness.CreateAsync(queueOptions))
+        {
+            sessionId = harness.SessionId;
+            agentId = harness.AgentId;
+            var tasks = scope.ServiceProvider.GetRequiredService<IReviewTaskGateway>();
+            var goal = $"Review acme/widgets PR #{number} for the Antiphon review engine (run {runId:D}, iteration 1, round 1, reviewer group concurrency, attempt 1).";
+            var create = new CreateAgentTaskRequest(Goal: goal, Title: "Close race reviewer",
+                Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Review, Workspace: WorkspaceMode.ReadOnly,
+                WorkingDirectory: harness.TempRoot, CommitOnSettle: "Never", AgentKind: AgentKind.ClaudeCode,
+                ModelLevel: AgentModelLevel.High);
+            taskId = await tasks.CreateAsync(create, null, harness.TempRoot, ct);
+            var when = DateTime.UtcNow;
+            var sessionStarted = await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync(ct);
+            var claimed = await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, AgentTaskStatus.Dispatched).SetProperty(t => t.DispatchedAt, when)
+                .SetProperty(t => t.AgentId, agentId).SetProperty(t => t.AgentSessionId, sessionId), ct);
+            claimed.ShouldBe(1);
+            var attempt = await db.AgentTasks.Where(t => t.Id == taskId).Select(t => t.Attempt).SingleAsync(ct);
+            request = new DispatchBriefEnsureRequest(taskId, attempt, sessionId, when, sessionStarted);
+
+            if (recipient == "busy")
+                await harness.MarkWorkingAsync();
+
+            if (recipient == "enqueue-failed")
+            {
+                harness.Queue.BeforeDispatchBriefRowLock = _ => throw new IOException("injected before queue insert");
+                await Should.ThrowAsync<IOException>(() => harness.Queue.EnsureDispatchBriefAsync(request, ct));
+            }
+            else
+            {
+                (await harness.Queue.EnsureDispatchBriefAsync(request, ct)).Inserted.ShouldBeTrue();
+            }
+            if (recipient == "eligible")
+            {
+                await harness.Queue.FlushSessionAsync(sessionId, ct);
+                var delivered = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId, ct);
+                delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+                var prompt = await db.TranscriptEntries.AsNoTracking()
+                    .Where(t => t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt).Select(t => t.Text).SingleAsync(ct);
+                PromptSubmissionMatch.IsCompleteIn(delivered.Body, prompt!).ShouldBeTrue();
+                await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s.SetProperty(t => t.Status, AgentTaskStatus.Blocked), ct);
+            }
+            else
+                harness.Adapter.SubmittedBodies.ShouldBeEmpty();
+
+            // The dispatch has a task id. The executor has not copied that id into OutputJson.
+            (await db.ReviewNodeExecutions.AsNoTracking().SingleAsync(n => n.Id == nodeId, ct)).OutputJson.ShouldBeNull();
+            using var closed = await client.PostAsJsonAsync($"/api/review-runs/{runId}/close",
+                new { concurrencyToken = created.GetProperty("concurrencyToken").GetUInt32(), reason = "stop this reviewer" }, ct);
+            closed.StatusCode.ShouldBe(HttpStatusCode.OK, await closed.Content.ReadAsStringAsync(ct));
+            (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct)).Status.ShouldBe(AgentTaskStatus.Canceled);
+            factory.ReviewerStopper.Killed.ShouldContain(sessionId);
+        }
+
+        // A fresh queue process can try the same lost enqueue; the terminal task is durable.
+        await using var restarted = await BridgeQueueHarness.CreateAsync(queueOptions with { AttachSessionId = sessionId, AttachAgentId = agentId });
+        (await restarted.Queue.EnsureDispatchBriefAsync(request, ct)).Inserted.ShouldBeFalse();
+        await restarted.Queue.FlushSessionAsync(sessionId, ct);
+        restarted.Adapter.SubmittedBodies.ShouldBeEmpty();
+        var rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.ExecutionTaskId == taskId).ToListAsync(ct);
+        if (recipient == "enqueue-failed")
+            rows.ShouldBeEmpty();
+        else
+            rows.ShouldHaveSingleItem().Status.ShouldBe(recipient == "busy" ? QueuedMessageStatus.Canceled : QueuedMessageStatus.Sent);
+    }
+
     private HttpClient OpenPullRequest(int number)
     {
         factory.Host.Open(number, "Fix the lease", "author", new string('a', 40), new string('b', 40), [], "");
@@ -282,11 +411,20 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     {
         internal ScriptedCodeHost Host { get; } = new();
         internal IntakeRace Race { get; } = new();
+        internal MergeRetryHandler MergeHandler { get; } = new();
+        internal RecordingSessionStopper ReviewerStopper { get; } = new();
 
         protected override void ApplyTestOverrides(IServiceCollection services)
         {
+            var dispatcher = services.SingleOrDefault(s => s.ServiceType == typeof(IHostedService)
+                && s.ImplementationType == typeof(AgentTaskDispatcherHostedService));
+            if (dispatcher is not null)
+                services.Remove(dispatcher);
             services.RemoveAll<ICodeHost>();
             services.AddSingleton<ICodeHost>(Host);
+            services.RemoveAll<IDelegateSessionStopper>();
+            services.AddSingleton<IDelegateSessionStopper>(ReviewerStopper);
+            services.AddHttpClient<GitHubCodeHost>().ConfigurePrimaryHttpMessageHandler(() => MergeHandler);
             services.PostConfigure<ReviewExecutorSettings>(options => options.Enabled = false);
             services.PostConfigure<ReviewSettings>(options =>
             {
@@ -299,6 +437,28 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
                 options.Repos.Add(new ReviewCodeHostRepo { Repo = "acme/enterprise", Host = "intake-test-enterprise" });
             });
             services.AddDbContext<AppDbContext>(options => options.AddInterceptors(Race));
+        }
+    }
+
+    internal sealed class MergeRetryHandler : HttpMessageHandler
+    {
+        private int _writes;
+        public int Writes => Volatile.Read(ref _writes);
+        public TaskCompletionSource FirstAttempt { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/repos/acme/widgets")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"id":1234}""") });
+            request.Method.ShouldBe(HttpMethod.Put);
+            request.RequestUri!.AbsolutePath.ShouldBe("/repos/acme/widgets/pulls/209663/merge");
+            if (Interlocked.Increment(ref _writes) == 1)
+            {
+                FirstAttempt.TrySetResult();
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.MethodNotAllowed)
+                    { Content = new StringContent("""{"message":"not mergeable yet"}""") });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"merged":true}""") });
         }
     }
 
