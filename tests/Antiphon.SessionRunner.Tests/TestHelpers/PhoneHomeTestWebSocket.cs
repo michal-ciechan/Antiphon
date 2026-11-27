@@ -30,6 +30,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
 
     public int Overlaps { get; private set; }
     public int PeakConcurrentSends { get; private set; }
+    public Func<CancellationToken, Task>? BeforeClose { get; init; }
 
     public IReadOnlyList<PhoneHomeFrame> Sent
     {
@@ -102,11 +103,12 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
         _incoming.Writer.TryComplete(new WebSocketException(WebSocketError.ConnectionClosedPrematurely));
     }
 
-    public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+    public override async Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
     {
+        if (BeforeClose is not null)
+            await BeforeClose(cancellationToken);
         lock (_sync) _state = WebSocketState.Closed;
         _incoming.Writer.TryComplete();
-        return Task.CompletedTask;
     }
 
     public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) =>

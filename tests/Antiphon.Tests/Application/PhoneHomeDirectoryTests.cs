@@ -7,8 +7,10 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.SessionRunner.Tests.TestHelpers;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using System.Net;
@@ -56,6 +58,47 @@ public sealed class PhoneHomeDirectoryTests
         // The whole point of D-14: two is now a legal seat count, where CARD-0490 allowed only one.
         var response = Directory(maxCapacity: 8).Register(Registration(capacity: 2));
         response.Ticket.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Test]
+    public async Task Registration_and_recovery_can_progress_during_superseded_socket_cleanup()
+    {
+        var directory = Directory(maxCapacity: 8);
+        var closingEpoch = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var previous = new PhoneHomeTestWebSocket
+        {
+            BeforeClose = ct =>
+            {
+                closingEpoch.TrySetResult(directory.SnapshotLive()?.Epoch);
+                return finishClose.Task.WaitAsync(ct);
+            },
+        };
+        var request = Registration(capacity: 1);
+        var first = directory.Register(request);
+        directory.AcceptConnect("server2", first.Ticket, previous);
+        var second = directory.Register(request);
+        using var replacement = new PhoneHomeTestWebSocket();
+        replacement.Abort(); // The recovery cycle can inspect this socket without making a List RPC.
+        using var pump = new PhoneHomeRecoveryPump(directory, Options.Create(new PhoneHomeRunnerSettings()),
+            new NoScopeFactory(), NullLogger<PhoneHomeRecoveryPump>.Instance);
+        var accept = Task.Run(() => directory.AcceptConnect("server2", second.Ticket, replacement));
+        try
+        {
+            (await closingEpoch.Task.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBe(second.Epoch,
+                "the replacement must be published before the previous transport starts closing");
+            var one = Task.Run(() => directory.Register(request));
+            var two = Task.Run(() => directory.Register(request));
+            var cycle = Task.Run(() => pump.RunCycleAsync(CancellationToken.None));
+            await Task.WhenAll(one, two, cycle).WaitAsync(TimeSpan.FromSeconds(2));
+            (await one).Epoch.ShouldNotBe((await two).Epoch);
+            (await cycle).ShouldBeFalse();
+        }
+        finally
+        {
+            finishClose.TrySetResult();
+            await (await accept).DisposeAsync();
+        }
     }
 
     [Test]
