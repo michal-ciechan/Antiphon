@@ -14,12 +14,28 @@ If the session remains withheld, inspect `GET /api/sessions/fb38e751-dfbd-4b8d-9
 
 A committed Critical withheld incident now triggers the operator's Critical `AlertRaised` toast and the attention client's `AgentChanged` push. A hidden tab can show the existing desktop notification when browser permission is granted. The monitor records `HumanNotifiedAt` after publication. This records a feed push, not human acknowledgement. Legacy incidents with a pending input are matched on their committed timestamp, native message identity, agent and session. The incident carries the recovery route. These alerts bypass digest-chat paging.
 
-For enabled, agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinutes` defaults to 10. The oldest accepted inbound after the last outbound starts the clock. Additional inbound messages do not postpone it. The same attention path reports a missed deadline and uses the inbound ID to associate both monitors with one incident.
+For enabled, agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinutes` defaults to 10. The oldest accepted inbound still awaiting its own correlated reply starts the clock. An unrelated outbound or another inbound cannot postpone it. Once the guard clears, an overdue reply can raise its own alert even after the input-withheld incident closes.
 
 ## Gateway receipt
 
 Gateway ingress and the Kafka inbox consumer both write the same native key. Both the successful receipt and the desktop queue row were observed for `1904`. The redacted 23505 log cannot establish which writer or key lost its race. The store now uses a single conflict-targeted insert, preserves original content and offsets, and can fill missing broker coordinates on an older receipt. A conflict on any other key remains an error.
 
+
+## Desktop recovery evidence and follow-up repairs
+
+The separate recovery task `30a74d3b` verified these IDs on 2026-11-27. Its final observation at 08:20:24 UTC showed zero pending channel inputs. This Debug task used its read-only report and synthetic fixtures on server2.
+
+| Inbound | Transcript UserPrompt | Assistant reply | Outbound partition and offset | Telegram reply |
+|---|---|---|---|---|
+| 1904 | 1802 | 1809 | 0:821 | 1911 |
+| 1913 | 1814 | 1819 | 0:823 | 1915 |
+| 1914 | 1821 | 1823 | 0:824 | 1916 |
+
+- **Startup input.** Boot remote-control setup previously released the queue writer before submitting `/rename`. A resumed session now serializes the setup, rename and first output with ordinary delivery. Launcher wakeup follows setup. The user’s remote-control setting can stay enabled.
+- **Pre-prompt output.** Assistant entry 1800 became broker record 0:822 and Telegram message 1912. Transcript order places it before UserPrompt 1802. The recovery evidence does not identify the instruction that generated 1800. The bridge could attach startup text to the trailing window of a prior completed turn. Restart boundaries and generation timestamps now cap that window. A standing resume note also cannot supply a machine-follow-up destination.
+- **Incident closure.** The monitor verifies positive queue delivery and the complete, matching UserPrompt beyond the attempt baseline. It appends one closure referencing the original incident, queue, session, prompt sequence and transcript entry. Both incident records remain visible through the incident API. After activation, the operator can request the same closure with `POST /api/agents/a7647365-4803-4541-a457-ba9e7fcfa8f0/incidents/adcc0055-b52a-4c49-858c-9df40e2301c4/close?promptSequence=1802`. Recovery confirmed native prompt UUID `944284bd-a49c-4210-9a47-236a8a6e8305`.
+- **Gateway receipt.** New channel answers carry the exact native inbound IDs. On successful provider send, the gateway journals the accepted outbound ID and projects Answered onto the matching provider, conversation and message. Evidence also applies when the inbox row arrives second. For historical gateway inbox row `82ae5e3a-a972-435f-803e-5208aff42b88`, the recovery report verified acceptance as 1911. The operator can record that existing delivery using the gateway’s `POST /api/channels/messages/82ae5e3a-a972-435f-803e-5208aff42b88/ack`. This route sends no message.
+- **Resume note.** Sequence 414 belongs to a previous generation. Startup, queue selection and the stranded-queue sweep cancel outstanding System resume notes whose generation key predates the accepted launch. The queue preserves the note, its attempts and cancellation time.
 
 ## Verification on server2
 
