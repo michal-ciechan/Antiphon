@@ -65,6 +65,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
         foreach (var lateGateway in new[] { false, true })
         foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
         {
+            using var timing = TestTrace.ChunkSpan("C519 queue-to-adapter scenario");
+            timing?.SetTag("c519.kind", kind);
+            timing?.SetTag("c519.cut", cut);
+            timing?.SetTag("c519.busy", busy);
+            timing?.SetTag("c519.late-gateway", lateGateway);
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var fault = new HandoffFault(cut);
             var refusalSave = new RefusalSaveFault(fault);
@@ -87,9 +92,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
                     });
                 }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave), clock: clock);
             producer.Inner = w.Producer;
-            await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
+            using (TestTrace.ChunkSpan("C519 receive source"))
+                await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
             if (cut == "capture") fault.Armed = true;
-            await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
+            using (TestTrace.ChunkSpan("C519 capture turn"))
+                await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
             if (cut == "capture")
             {
                 fault.Fired.ShouldBe(1);
@@ -99,7 +106,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
             (await w.DeliveryAsync(kind))!.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
             if (cut is "definite-refusal" or "refusal-save")
             { producer.RefuseNext = true; fault.Armed = cut == "refusal-save"; }
-            await w.H.TickOutboundAsync(); await w.H.TickOutboundAsync();
+            using (TestTrace.ChunkSpan("C519 publish ticks"))
+            {
+                await w.H.TickOutboundAsync();
+                await w.H.TickOutboundAsync();
+            }
             if (cut is "definite-refusal" or "refusal-save")
             {
                 producer.Refusals.ShouldBe(1);

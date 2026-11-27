@@ -183,6 +183,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
         Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null,
         TimeProvider? clock = null, int warmProbes = 0)
     {
+        using var timing = TestTrace.ChunkSpan("C519 create world");
         await AwaitEarlierTeardownsAsync();
         var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var topic = "c519-" + Guid.NewGuid().ToString("N");
@@ -258,6 +259,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     public async Task StartGatewayAsync()
     {
         if (_gatewayStarted) return;
+        using var timing = TestTrace.ChunkSpan("C519 start gateway");
         await Gateway.StartAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
         _gatewayStarted = true;
     }
@@ -300,8 +302,10 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
 
     public async Task AssertReceiptAsync(int copies = 1, string? expectedText = null)
     {
-        await WaitForAsync(() => Slack.SentMessages.Count == BaselineReceipts + copies
-            && Slack.UploadedFiles.Count == copies);
+        using var timing = TestTrace.ChunkSpan("C519 assert receipt");
+        using (TestTrace.ChunkSpan("C519 wait for receipt"))
+            await WaitForAsync(() => Slack.SentMessages.Count == BaselineReceipts + copies
+                && Slack.UploadedFiles.Count == copies);
         foreach (var message in Slack.SentMessages.Skip(BaselineReceipts))
         {
             message.Channel.ShouldBe(Conversation); message.ThreadTs.ShouldBe(Thread);
@@ -375,6 +379,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
 
     private async Task RecoverInProcessAsync(int? offset, TimeSpan deadline, string label)
     {
+        using var timing = TestTrace.ChunkSpan("C519 recover in process");
         var started = Stopwatch.StartNew();
         var marker = Path.Combine(H.TempRoot, "recover-" + Guid.NewGuid().ToString("N") + ".json");
         var config = ProbeConfigFor(marker, null, RecoveryOffset(offset), false, "unified", null, null, null)
@@ -413,6 +418,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     // A recovery in a fresh child process (FirstRecoveryAsync decides when).
     public async Task ChildRecoverAsync(int? offset = null)
     {
+        using var timing = TestTrace.ChunkSpan("C519 recover in child");
         await using var child = await StartProbeAsync(null, RecoveryOffset(offset));
         await child.CompleteAsync();
     }
@@ -539,6 +545,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
 
     private async Task DisposeNowAsync()
     {
+        using var timing = TestTrace.ChunkSpan("C519 dispose world");
         try
         {
             if (_gatewayStarted) await Gateway.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
