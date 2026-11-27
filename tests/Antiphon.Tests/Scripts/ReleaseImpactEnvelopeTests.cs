@@ -22,7 +22,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
     public void P2CanonicalBytes() => CheckCanonicalVectors();
 
     [Test]
-    [P2MatrixTimeout(30_000)]
+    [P2MatrixTimeout(9_000)]
     public void TamperedBindingsRefuse(CancellationToken cancellationToken) =>
         CheckAdmission(cancellationToken, AdmissionCases.Proposal, nameof(TamperedBindingsRefuse));
 
