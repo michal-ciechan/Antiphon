@@ -42,7 +42,7 @@ One portable fixture assembly. The new ETA witnesses use small in-memory timing 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c2093-eta-final/` | eta-witness | `/*/*/QualificationEtaTests/Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles` | V-1 | exact method, 0 failed on candidate | 1 | 6 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c2093-eta-certified/` | eta-witness | `/*/*/QualificationEtaTests/Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles` | V-1 | exact method, 0 failed on candidate | 1 | 6 |
 | CP-2 | all | CP-1 | eta-entry-points | `/*/*/(QualificationEtaTests*)\|(OperatorStatusTests*)\|(WatchQualTests*)/*` | V-2 | all three classes, 0 failed/skipped | 30 | 1 |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | R-1 | all eleven classes, 0 failed/skipped | 78 | 1 |
 | CP-4 | all | CP-1 | live-gate-guards | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | R-1 | both methods, 0 failed/skipped | 2 | 1 |

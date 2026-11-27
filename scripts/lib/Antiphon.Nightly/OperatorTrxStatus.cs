@@ -28,12 +28,9 @@ namespace Antiphon.Nightly
             double? StartupSeconds, bool RunCompleted, QualificationEtaReading Eta);
 
         internal static IEnumerable<IFileInfo> TrxFiles(IFileSystem files, string directory) =>
-            files.DirectoryInfo.New(directory).EnumerateFiles("*.trx", new EnumerationOptions
-            {
-                MatchCasing = MatchCasing.CaseInsensitive,
-                AttributesToSkip = FileAttributes.ReparsePoint,
-                IgnoreInaccessible = false,
-            });
+            files.DirectoryInfo.New(directory).EnumerateFiles()
+                .Where(file => file.Name.EndsWith(".trx", StringComparison.OrdinalIgnoreCase)
+                    && (file.Attributes & FileAttributes.ReparsePoint) == 0);
 
         internal static Observation Read(IFileSystem files, string logDir, JsonObject schedule, JsonObject active, DateTimeOffset now,
             DateTimeOffset? started, bool completed, bool comparable, string previousRunLogDir, List<string> errors, bool reportFailures)
