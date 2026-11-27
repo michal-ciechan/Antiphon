@@ -11,6 +11,24 @@ public class ReviewWorkflowValidatorTests
     private const string Header = "workflow: t\nversion: 1\n";
 
     [Test]
+    public void C2109_S1_Unknown_step_is_reported_at_its_node()
+    {
+        var embedded = ReviewWorkflowYaml.LoadDefault();
+        embedded.Node("reviewer")!.Run.ShouldBeNull();
+        ReviewWorkflowValidator.Validate(embedded).Valid.ShouldBeTrue();
+
+        var workflow = embedded with
+        {
+            Nodes = embedded.Nodes.Select(node => node.Id == "categorise" ? node with { Run = "NoSuchStep" } : node).ToArray(),
+        };
+        var matching = ReviewWorkflowValidator.Validate(workflow).Diagnostics.Where(diagnostic => diagnostic.Code == "unknown-step").ToArray();
+
+        matching.Length.ShouldBe(1);
+        matching[0].Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+        matching[0].NodeIds.ShouldBe(["categorise"]);
+    }
+
+    [Test]
     public async Task The_default_pr_review_workflow_loads_and_is_valid()
     {
         var workflow = ReviewWorkflowYaml.LoadDefault();
