@@ -100,6 +100,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         var chat = await db.ChatChannels.SingleAsync(c => c.ExternalId == seed.ConversationId, ct);
         chat.Kind = ChatChannelKind.Group;
         chat.DigestEnabled = true;
+        chat.LastReplyAt = h.Now.AddMinutes(5); // unrelated startup output cannot pay this inbound
         var inbound = await db.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId, ct);
         inbound.ChatChannelId = chat.Id;
         await db.SaveChangesAsync(ct);
