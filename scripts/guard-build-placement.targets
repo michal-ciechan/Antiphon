@@ -1,0 +1,62 @@
+<Project InitialTargets="AntiphonKeepBuildsOutOfServer2Evidence">
+  <!-- The current CLI imports this file into a historical build before any project targets. -->
+  <PropertyGroup>
+    <AntiphonBuildPlacementImported>true</AntiphonBuildPlacementImported>
+  </PropertyGroup>
+  <UsingTask TaskName="AntiphonCheckBuildPlacement" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <ProjectDirectory ParameterType="System.String" Required="true" />
+      <Destinations ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var evidence = new Regex(@"^/work/(evidence|code-evidence|review-evidence|merge-evidence|test-evidence)(/|$)");
+        // The inline task compiles against netstandard. Resolve links through the
+        // current .NET runtime before accepting an apparently safe destination.
+        var linkTarget = typeof(FileSystemInfo).GetProperty("LinkTarget");
+        var resolveLinkTarget = typeof(FileSystemInfo).GetMethod("ResolveLinkTarget", new[] { typeof(bool) });
+        foreach (var destination in Destinations)
+        {
+            var value = destination.GetMetadata("Destination");
+            if (string.IsNullOrEmpty(value))
+                continue;
+            var path = Path.GetFullPath(Path.Combine(ProjectDirectory, value));
+            var physical = "/";
+            var blocked = evidence.IsMatch(path);
+            foreach (var component in path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (blocked)
+                    break;
+                physical = Path.Combine(physical, component);
+                var entry = new DirectoryInfo(physical);
+                if (linkTarget.GetValue(entry) != null)
+                    physical = ((FileSystemInfo)resolveLinkTarget.Invoke(entry, new object[] { true })).FullName;
+                blocked = evidence.IsMatch(physical);
+            }
+            if (blocked)
+                Log.LogError("workspace_evidence_write: {0}={1} in {2}", destination.ItemSpec, value, ProjectDirectory);
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="AntiphonKeepBuildsOutOfServer2Evidence" Condition="'$(OS)' != 'Windows_NT'">
+    <ItemGroup>
+      <_AntiphonBuildDestination Include="MSBuildProjectDirectory" Destination="$(MSBuildProjectDirectory)" />
+      <_AntiphonBuildDestination Include="OutputPath" Destination="$(OutputPath)" />
+      <_AntiphonBuildDestination Include="OutDir" Destination="$(OutDir)" />
+      <_AntiphonBuildDestination Include="BaseOutputPath" Destination="$(BaseOutputPath)" />
+      <_AntiphonBuildDestination Include="BaseIntermediateOutputPath" Destination="$(BaseIntermediateOutputPath)" />
+      <_AntiphonBuildDestination Include="IntermediateOutputPath" Destination="$(IntermediateOutputPath)" />
+      <_AntiphonBuildDestination Include="MSBuildProjectExtensionsPath" Destination="$(MSBuildProjectExtensionsPath)" />
+      <_AntiphonBuildDestination Include="ArtifactsPath" Destination="$(ArtifactsPath)" />
+      <_AntiphonBuildDestination Include="PublishDir" Destination="$(PublishDir)" />
+      <_AntiphonBuildDestination Include="RestoreOutputPath" Destination="$(RestoreOutputPath)" />
+      <_AntiphonBuildDestination Include="RestorePackagesPath" Destination="$(RestorePackagesPath)" />
+      <_AntiphonBuildDestination Include="PackageOutputPath" Destination="$(PackageOutputPath)" />
+    </ItemGroup>
+    <AntiphonCheckBuildPlacement ProjectDirectory="$(MSBuildProjectDirectory)" Destinations="@(_AntiphonBuildDestination)" />
+  </Target>
+</Project>

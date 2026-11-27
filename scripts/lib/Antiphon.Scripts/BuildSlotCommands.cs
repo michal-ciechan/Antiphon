@@ -32,7 +32,11 @@ namespace Antiphon.Scripts
         /// <summary>The parts of a child's start the core does not carry: the build-driver policy and the Linux lease TMPDIR.</summary>
         internal static BuildSlotPlatform Platform { get; } = new BuildSlotPlatform
         {
-            PrepareChild = (start, grant) => new BuildDriverEnvironment().Apply(start, grant),
+            PrepareChild = (start, grant) =>
+            {
+                AddBuildPlacementImport(start);
+                new BuildDriverEnvironment().Apply(start, grant);
+            },
             LeaseTemp = () =>
             {
                 var handle = LeaseTempDirectory.TryCreate();
@@ -42,6 +46,19 @@ namespace Antiphon.Scripts
 
         /// <summary>The build slot for an in-process caller: this process's console unless it captures.</summary>
         internal static BuildSlotRunner Runner() => BuildSlot.Runner(Platform, Console.Out, Console.Error);
+
+        private static void AddBuildPlacementImport(ProcessStartInfo start)
+        {
+            if (!OperatingSystem.IsLinux() || !BuildSlotCommandLine.IsDotnet(start.FileName)
+                || start.ArgumentList.Count == 0 || start.ArgumentList[0] != "build")
+                return;
+
+            // Use the launcher checkout. An older project still imports this guard for restore,
+            // including the cross-targeting evaluation used by SDK projects with TargetFrameworks.
+            var targets = Path.Combine(Checkout, "scripts", "guard-build-placement.targets");
+            start.ArgumentList.Add("-p:CustomBeforeMicrosoftCommonTargets=" + targets);
+            start.ArgumentList.Add("-p:CustomBeforeMicrosoftCommonCrossTargetingTargets=" + targets);
+        }
 
         // The command's own code; 4 no slot within the wait; 1 the command cannot be resolved or started; 130 interrupted;
         // usage 2 (a missing command among them).

@@ -300,8 +300,10 @@ public static class BuildConfinement
         WalkResult walked;
         try
         {
-            walked = Walk(projectFull, properties, workingDirectory, environment,
-                cancellationToken, Math.Max(1, graphEvaluationParallelism));
+            var parallelism = Math.Max(1, graphEvaluationParallelism);
+            walked = OperatingSystem.IsLinux()
+                ? EvaluateLinuxGraph(projectFull, properties, workingDirectory, environment, cancellationToken, parallelism)
+                : Walk(projectFull, properties, workingDirectory, environment, cancellationToken, parallelism);
         }
         catch (OperationCanceledException)
         {
@@ -593,6 +595,74 @@ public static class BuildConfinement
 
     private readonly record struct WalkResult(List<string> Projects, string? Error, string? PlacementRefusal = null);
 
+    private static WalkResult EvaluateLinuxGraph(
+        string project,
+        IReadOnlyList<string> properties,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string>? environment,
+        CancellationToken cancellationToken,
+        int parallelism)
+    {
+        if (Directory.Exists(project))
+        {
+            if (!ProjectWriteRoots.TryFindProjectFile(project, out var projectFile, out _) || projectFile is null)
+                return new WalkResult([], "entry project missing or ambiguous: " + project);
+            project = projectFile;
+        }
+
+        var scratch = Directory.CreateTempSubdirectory("antiphon-placement-");
+        var probe = Path.Combine(scratch.FullName, "BuildPlacementGraph.proj");
+        try
+        {
+            using (var resource = typeof(BuildConfinement).Assembly
+                .GetManifestResourceStream("Antiphon.Checkpoints.BuildPlacementGraph.proj")!)
+            using (var file = File.Create(probe))
+                resource.CopyTo(file);
+
+            var start = EvaluationStart(workingDirectory, environment);
+            foreach (var argument in new[] { "msbuild", probe, "-nologo", "-nodeReuse:false", "-maxcpucount:1",
+                "-getTargetResult:AntiphonEvaluateBuildGraph" }.Concat(properties))
+                start.ArgumentList.Add(argument);
+            start.Environment["_AntiphonGraphEntryProject"] = project;
+            start.Environment["_AntiphonGraphPropertyNames"] = string.Join(';', CheckpointBuildPlacement.EvaluatedPaths);
+            start.Environment["_AntiphonGraphParallelism"] = parallelism.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+            var result = CheckpointProcessRunner.Run(start, 120_000, false, cancellationToken);
+            if (result.TimedOut)
+                return new WalkResult([], "msbuild graph evaluation timed out");
+            if (result.Exit != 0)
+                return new WalkResult([], "msbuild graph evaluation exited " + result.Exit);
+
+            var jsonStart = result.Stdout.IndexOf('{');
+            if (jsonStart < 0)
+                return new WalkResult([], "msbuild graph JSON missing");
+            using var document = JsonDocument.Parse(result.Stdout[jsonStart..]);
+            if (!document.RootElement.TryGetProperty("TargetResults", out var targets)
+                || !targets.TryGetProperty("AntiphonEvaluateBuildGraph", out var evaluation)
+                || !evaluation.TryGetProperty("Items", out var destinations)
+                || destinations.ValueKind != JsonValueKind.Array)
+                return new WalkResult([], "msbuild graph destinations missing");
+            foreach (var destination in destinations.EnumerateArray())
+            {
+                if (!destination.TryGetProperty("ProjectDirectory", out var directory)
+                    || !destination.TryGetProperty("Identity", out var name)
+                    || !destination.TryGetProperty("Destination", out var path))
+                    return new WalkResult([], "msbuild graph destination malformed");
+                var projectDirectory = directory.GetString()!;
+                var property = name.GetString();
+                var value = path.GetString()!;
+                if (CheckpointBuildPlacement.IsEvidencePath(Path.GetFullPath(value, projectDirectory)))
+                    return new WalkResult([], null, $"{property}={value} in {projectDirectory}");
+            }
+            return new WalkResult([], null);
+        }
+        finally
+        {
+            File.Delete(probe);
+            scratch.Delete();
+        }
+    }
+
     private static WalkResult Walk(
         string projectFull,
         IReadOnlyList<string> properties,
@@ -621,27 +691,13 @@ public static class BuildConfinement
             }
             // These probes evaluate projects without running targets. Keep them within the
             // slot's CPU grant and join every probe before the actual build can start.
-            EvalResult Probe(string project)
-            {
-                var result = Evaluate(project, properties, workingDirectory, environment, cancellationToken);
-                foreach (var framework in result.Frameworks ?? [])
-                {
-                    var inner = Evaluate(project, [.. properties, "--property:TargetFramework=" + framework],
-                        workingDirectory, environment, cancellationToken);
-                    if (inner.Error is not null || inner.PlacementRefusal is not null)
-                        return inner;
-                    result.References.AddRange(inner.References);
-                }
-                return result;
-            }
+            EvalResult Probe(string project) => Evaluate(project, properties, workingDirectory, environment, cancellationToken);
             var evaluated = batch.Count == 1
                 ? [Probe(batch[0])]
                 : Task.WhenAll(batch.Select(project => Task.Run(() => Probe(project), cancellationToken)))
                     .GetAwaiter().GetResult();
             foreach (var eval in evaluated)
             {
-                if (eval.PlacementRefusal is not null)
-                    return new WalkResult([], null, eval.PlacementRefusal);
                 if (eval.Error is not null)
                     return new WalkResult([], eval.Error);
                 foreach (var reference in eval.References)
@@ -656,8 +712,7 @@ public static class BuildConfinement
         return new WalkResult(projects, null);
     }
 
-    private readonly record struct EvalResult(List<string> References, string? Error, string? PlacementRefusal = null,
-        string[]? Frameworks = null);
+    private readonly record struct EvalResult(List<string> References, string? Error);
 
     private static EvalResult Evaluate(
         string project,
@@ -670,11 +725,27 @@ public static class BuildConfinement
         {
             "msbuild", project, "-getItem:ProjectReference", "-nologo", "-nodeReuse:false",
         };
-        if (OperatingSystem.IsLinux())
-            args.Add("-getProperty:" + string.Join(',', CheckpointBuildPlacement.EvaluatedPaths)
+, CheckpointBuildPlacement.EvaluatedPaths)
+                + ",TargetFramework,TargetFrameworks");
+',', CheckpointBuildPlacement.EvaluatedPaths)
                 + ",TargetFramework,TargetFrameworks");
         args.AddRange(properties);
 
+        var psi = EvaluationStart(workingDirectory, environment);
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
+
+        CheckpointProcessRunner.Result result;
+        try { result = CheckpointProcessRunner.Run(psi, 120_000, false, cancellationToken); }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        { return new EvalResult([], ex.GetType().Name); }
+        if (result.TimedOut) return new EvalResult([], "msbuild evaluation timed out");
+        if (result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Exit);
+        return ParseEvaluation(result.Stdout);
+    }
+
+    private static ProcessStartInfo EvaluationStart(string workingDirectory, IReadOnlyDictionary<string, string>? environment)
+    {
         var psi = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = string.IsNullOrWhiteSpace(workingDirectory) ? Environment.CurrentDirectory : workingDirectory,
@@ -683,8 +754,6 @@ public static class BuildConfinement
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
         if (environment is not null)
             foreach (var (name, value) in environment)
                 psi.Environment[name] = value;
@@ -694,16 +763,10 @@ public static class BuildConfinement
         foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" })
             psi.Environment.Remove(name);
 
-        CheckpointProcessRunner.Result result;
-        try { result = CheckpointProcessRunner.Run(psi, 120_000, false, cancellationToken); }
-        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
-        { return new EvalResult([], ex.GetType().Name); }
-        if (result.TimedOut) return new EvalResult([], "msbuild evaluation timed out");
-        if (result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Exit);
-        return ParseEvaluation(result.Stdout, Path.GetDirectoryName(project)!);
+        return psi;
     }
 
-    private static EvalResult ParseEvaluation(string stdout, string projectDirectory)
+    private static EvalResult ParseEvaluation(string stdout)
     {
         var start = stdout.IndexOf('{');
         if (start < 0)
@@ -720,27 +783,10 @@ public static class BuildConfinement
 
         using (doc)
         {
-            string[]? frameworks = null;
-            if (OperatingSystem.IsLinux())
-            {
-                if (!doc.RootElement.TryGetProperty("Properties", out var properties) || properties.ValueKind != JsonValueKind.Object)
-                    return new EvalResult([], "msbuild write destinations missing");
-                foreach (var property in CheckpointBuildPlacement.EvaluatedPaths)
-                {
-                    if (!properties.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.String)
-                        return new EvalResult([], "msbuild write destination missing: " + property);
-                    if (value.GetString() is { Length: > 0 } path
-                        && CheckpointBuildPlacement.IsEvidencePath(Path.GetFullPath(path, projectDirectory)))
-                        return new EvalResult([], null, $"{property}={path}");
-                }
-                if (properties.GetProperty("TargetFramework").GetString() is not { Length: > 0 })
-                    frameworks = properties.GetProperty("TargetFrameworks").GetString()?
-                        .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            }
             if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Object)
                 return new EvalResult([], "msbuild items missing");
             if (!items.TryGetProperty("ProjectReference", out var references))
-                return new EvalResult([], null, Frameworks: frameworks);
+                return new EvalResult([], null);
             var paths = new List<string>();
             if (references.ValueKind == JsonValueKind.Object)
             {
@@ -758,7 +804,7 @@ public static class BuildConfinement
             else
                 return new EvalResult([], "project reference json unusable");
 
-            return new EvalResult(paths, null, Frameworks: frameworks);
+            return new EvalResult(paths, null);
         }
     }
 

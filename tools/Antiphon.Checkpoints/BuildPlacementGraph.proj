@@ -1,0 +1,59 @@
+<Project>
+  <!-- No target within the requested projects runs. Use the SDK's graph builder to determine
+       reference-specific global properties, framework variants and solution configuration. -->
+  <UsingTask TaskName="EvaluateAntiphonBuildGraph" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <EntryProject ParameterType="System.String" Required="true" />
+      <PropertyNames ParameterType="System.String[]" Required="true" />
+      <Parallelism ParameterType="System.Int32" Required="true" />
+      <Destinations ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Reference Include="$(MSBuildToolsPath)/Microsoft.Build.dll" />
+      <Reference Include="$(MSBuildToolsPath)/../../shared/Microsoft.NETCore.App/$([System.Environment]::Version)/System.Runtime.dll" />
+      <Using Namespace="Microsoft.Build.Evaluation" />
+      <Using Namespace="Microsoft.Build.Graph" />
+      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Threading" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in ((IBuildEngine6)BuildEngine).GetGlobalProperties())
+            globals.Add(pair.Key, pair.Value);
+
+        using (var collection = new ProjectCollection())
+        {
+            var graph = new ProjectGraph(new[] { new ProjectGraphEntryPoint(EntryProject, globals) },
+                collection, null, Parallelism, CancellationToken.None);
+            if (graph.ProjectNodes.Count > 500)
+            {
+                Log.LogError("project graph exceeds 500 project/property combinations");
+                return false;
+            }
+            var destinations = new List<ITaskItem>();
+            foreach (var node in graph.ProjectNodes)
+            {
+                foreach (var property in PropertyNames)
+                {
+                    var value = node.ProjectInstance.GetPropertyValue(property);
+                    if (value.Length == 0)
+                        continue;
+                    var destination = new TaskItem(property);
+                    destination.SetMetadata("ProjectDirectory", node.ProjectInstance.Directory);
+                    destination.SetMetadata("Destination", value);
+                    destinations.Add(destination);
+                }
+            }
+            Destinations = destinations.ToArray();
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="AntiphonEvaluateBuildGraph" Returns="@(_AntiphonEvaluatedDestination)">
+    <EvaluateAntiphonBuildGraph EntryProject="$(_AntiphonGraphEntryProject)"
+                               PropertyNames="$(_AntiphonGraphPropertyNames)"
+                               Parallelism="$(_AntiphonGraphParallelism)">
+      <Output TaskParameter="Destinations" ItemName="_AntiphonEvaluatedDestination" />
+    </EvaluateAntiphonBuildGraph>
+  </Target>
+</Project>
