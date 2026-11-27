@@ -1679,7 +1679,7 @@ public sealed class ChannelReplyDispatcher
         var replyHandle = await ResolveInboundReplyHandleAsync(db,
             originalContext is null ? matches : [originalContext], channel?.ReplyHandle, ct);
         var target = new ReplyTarget(provider, replyHandle, conversationId,
-            matches.Select(m => m.Id).ToArray(), channel is not null);
+            matches.Select(m => m.Id).ToArray(), [], channel is not null);
 
         var publicationAccepted = false;
         try
