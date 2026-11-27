@@ -24,7 +24,7 @@ public class HerdrLabelFollowSchedulingTests
         await pump.StartAsync(CancellationToken.None);
         await CheckAndStopPumpAsync(pump, async () =>
         {
-            await f.WaitForSubscriptionAsync();
+            await f.WaitForLabelPumpAsync();
             var gate = f.Fake.GateMethod("tab.get");
             Task? baseline = null;
             try
@@ -310,6 +310,33 @@ public class HerdrLabelFollowSchedulingTests
     }
 
     [Test]
+    public async Task Label_pump_readiness_waits_for_the_sweep_timer_on_unix()
+    {
+        Skip.Unless(!OperatingSystem.IsWindows(), "The Unix fixture requires the label sweep timer before advancing fake time.");
+        await using var f = new HerdrLabelFollowFixture();
+        await f.StartAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await using var stream = f.Client.SubscribeEventsAsync(
+            [new HerdrSubscription(HerdrEventTypes.PaneClosedSubscribe)], deadline.Token).GetAsyncEnumerator();
+        var reading = stream.MoveNextAsync().AsTask();
+        try
+        {
+            await f.Fake.FirstSubscriptionRecorded.WaitAsync(deadline.Token);
+            var ready = f.WaitForLabelPumpAsync();
+            ready.IsCompleted.ShouldBeFalse("the event stream is ready while the timer is still unregistered");
+
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), f.Clock);
+            await ready;
+        }
+        finally
+        {
+            await deadline.CancelAsync();
+            try { await reading; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        }
+    }
+
+    [Test]
     public async Task Idle_healthy_stream_checks_without_turns_or_gets()
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await using var runtime = await f.AdoptRuntimeAsync();
@@ -317,7 +344,7 @@ public class HerdrLabelFollowSchedulingTests
         await pump.StartAsync(CancellationToken.None);
         await CheckAndStopPumpAsync(pump, async () =>
         {
-            await f.WaitForSubscriptionAsync();
+            await f.WaitForLabelPumpAsync();
             f.Saved.TabLabel.ShouldBe("New"); f.Tab.Label = "Later";
             f.Clock.Advance(TimeSpan.FromHours(1));
             HerdrPaneSidecar? saved = null;
