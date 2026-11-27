@@ -40,9 +40,10 @@ internal sealed class ProviderAnswerPublisher(IServiceScopeFactory scopes, IProd
         {
             await producer.ProduceAsync(ProviderAnswerReceipt.Topic(options.Value.ResolveOutboundTopic()),
                 new Message<string, string> { Key = receipt.ConversationId, Value = JsonSerializer.Serialize(receipt, MessagingJson.Options) }, ct);
+            var publishedAt = DateTimeOffset.UtcNow;
             await db.InboxAnswerReceipts.Where(a => a.Channel == receipt.Channel && a.ConversationId == receipt.ConversationId
                 && a.ChannelMessageId == receipt.ChannelMessageId && a.PublishedAt == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(a => a.PublishedAt, DateTimeOffset.UtcNow), ct);
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.PublishedAt, publishedAt), ct);
         }
         return pending.Count;
     }
