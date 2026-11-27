@@ -22,6 +22,7 @@ public sealed class CheckpointEvidencePlacementTests
                 new XElement("TargetFramework", "net9.0"),
                 new XElement("IntermediateOutputPath",
                     new XAttribute("Condition", "'$(PlacementVariant)' == 'unsafe'"), protectedPath)));
+        Directory.CreateDirectory(Path.Combine(repo.Path, "child"));
         await repo.CommitFileAsync("child/Child.csproj", child.ToString());
         var entry = new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
             new XElement("PropertyGroup", new XElement("TargetFramework", "net9.0")),
