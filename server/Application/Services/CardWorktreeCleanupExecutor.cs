@@ -82,11 +82,11 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         if (BeforeIntentAsync is not null) await BeforeIntentAsync(ct);
         if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("before:card-intent", task.Id, ct);
 
-        // All slow inspection finished above. This lock is shared with launch admission;
-        // card writers serialize through the card row. There is no Git or network I/O here.
+        // Take row locks before the shared admission lock. Create can hold the card row
+        // while admitting a consumer, so this order also prevents a cross-connection cycle.
+        // Git inspection and artifact preservation finished above.
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
-            await WorkspaceReservationJournal.LockAdmissionAsync(db, ct);
             var card = await db.Cards.FromSqlInterpolated($"SELECT * FROM \"Cards\" WHERE \"Id\" = {endpoint.Target.Cleanup.CardId} FOR UPDATE")
                 .AsNoTracking().SingleAsync(ct);
             var currentGeneration = await db.CardRevisions.AsNoTracking().Where(r => r.CardId == card.Id
@@ -101,6 +101,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
                 return await RecordDesktopDecisionAsync(endpoint, intentDesktop, ct);
             }
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:card-intent", task.Id, ct);
+            await WorkspaceReservationJournal.LockAdmissionAsync(db, ct);
             reason = !DoneAuthorizes(card) || currentGeneration != endpoint.Target.Cleanup.DoneRevisionId
                 ? "done_generation_revoked"
                 : fresh.Attempt != task.Attempt || fresh.Status != task.Status

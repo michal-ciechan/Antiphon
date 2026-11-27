@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -6,6 +7,7 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using OwnerFacts = Antiphon.Server.Application.Services.WorkspaceReservationLiveness.OwnerFacts;
 
 namespace Antiphon.Server.Infrastructure.Data;
@@ -275,8 +277,31 @@ public sealed class WorkspaceReservationJournal(
             .ToList();
     }
 
-    // Also acquired by CardDone intent admission. A short transaction serializes readers
-    // with insertion even when no reservation row exists yet. Never held during external I/O.
-    internal static Task LockAdmissionAsync(AppDbContext db, CancellationToken ct) =>
-        db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(1017, 459)", ct);
+    // Also acquired by CardDone intent admission. Keep the existing database lock timeout
+    // for the other statements in the transaction and respect a shorter configured timeout.
+    internal static async Task LockAdmissionAsync(AppDbContext db, CancellationToken ct)
+    {
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("""
+                DO $admission$
+                DECLARE
+                    previous_timeout text := current_setting('lock_timeout');
+                BEGIN
+                    IF previous_timeout::interval = interval '0 seconds'
+                        OR previous_timeout::interval > interval '2 seconds' THEN
+                        PERFORM set_config('lock_timeout', '2s', true);
+                    END IF;
+                    PERFORM pg_advisory_xact_lock(1017, 459);
+                    PERFORM set_config('lock_timeout', previous_timeout, true);
+                END;
+                $admission$;
+                """, ct);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
+        {
+            throw new ServiceUnavailableException("Workspace admission is busy. Retry shortly.",
+                "workspace_admission_busy", ex, retryAfterSeconds: 2);
+        }
+    }
 }

@@ -92,11 +92,10 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
         if (rebased) command = CompletedCardWorkspaceLandingAuthority.Sign(command, publication!.Id, phoneHome!.Value.SharedSecret);
         if (BeforeIntentAsync is not null) await BeforeIntentAsync(ct);
 
-        // C1032_AdmissionIntentOrdering: shared admission and card writer locks cover only DB
-        // revalidation/intent. Inspection, artifact reads and outbound socket work are outside.
+        // Take row locks before the shared admission lock, in the same order as Create and
+        // desktop cleanup. Inspection, artifact reads and outbound socket work are outside.
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
-            await WorkspaceReservationJournal.LockAdmissionAsync(db, ct);
             await db.Cards.FromSqlInterpolated($"SELECT * FROM \"Cards\" WHERE \"Id\" = {command.CardId} FOR UPDATE")
                 .AsNoTracking().SingleAsync(ct);
             var freshEndpoint = await db.CardWorktreeCleanupEndpoints
@@ -111,6 +110,7 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
             {
                 var fresh = await db.AgentTasks.FromSqlInterpolated($"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
                     .AsNoTracking().SingleAsync(ct);
+                await WorkspaceReservationJournal.LockAdmissionAsync(db, ct);
                 var freshBinding = await db.TaskWorktreeMirrorBindings.AsNoTracking().SingleAsync(b => b.Id == row.Id, ct);
                 var reason = await EligibilityAsync(fresh, endpoint, freshBinding, ct);
                 if (reason is null && (fresh.Result != task.Result || fresh.ResultFilePath != task.ResultFilePath

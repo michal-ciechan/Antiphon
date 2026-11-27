@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Antiphon.Server.Application.Exceptions;
 using ValidationException = Antiphon.Server.Application.Exceptions.ValidationException;
@@ -41,9 +42,10 @@ public class ExceptionMiddleware
     {
         var (statusCode, detail) = Classify(exception);
         var traceId = context.TraceIdentifier;
+        var retryAfterSeconds = (exception as ServiceUnavailableException)?.RetryAfterSeconds;
 
         // Log at appropriate level
-        if (statusCode >= 500)
+        if (statusCode >= 500 && retryAfterSeconds is null)
         {
             _logger.LogError(exception, "Unhandled exception. TraceId: {TraceId}", traceId);
         }
@@ -78,6 +80,8 @@ public class ExceptionMiddleware
 
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/problem+json";
+        if (retryAfterSeconds is int seconds)
+            context.Response.Headers.RetryAfter = seconds.ToString(CultureInfo.InvariantCulture);
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(problemDetails, JsonOptions));
     }
