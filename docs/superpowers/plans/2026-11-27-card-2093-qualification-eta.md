@@ -29,6 +29,7 @@ One portable fixture assembly. The new ETA witnesses use small in-memory timing 
 - R-1 runs the required guard union, including PlanCheckpointClassSelectionGuardTests and the two companion live-gate methods.
 - R-2 runs the matched `nightly-live-lane` impact classes, LiveLaneRunnerTests and NightlyCoreGoldenTests, and the derived release-documentation classes, PerTaskFinalUnitLaneWitnessTests and ReleaseBranchModelDocumentationTests. The shared nightly code must retain the planning and live-lane fixture contracts, and the ETA documentation must preserve the per-task and release qualification rules.
 - R-3 checks entry-point wiring, diagnoses the retired estimate from the source chain and the reported incident, runs evidence-diff, and checks merge-tree against fresh origin/master. The inputs and arithmetic are portable. Record the scripts/lib startup-path census and its Windows pre-pick probe obligation.
+- V-3 covers the seven round 1 review findings. The CP-1 selection keeps the original hand-calculated witness and adds the seven regression methods. The witness-only commit runs that selection against the pre-fix implementation.
 
 | PC | Exact class and method | Mutation |
 |---|---|---|
@@ -43,8 +44,8 @@ One portable fixture assembly. The new ETA witnesses use small in-memory timing 
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c2093-eta-ms/` | eta-witness | `/*/*/QualificationEtaTests/Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles` | V-1 | exact method, 0 failed on candidate | 1 | 6 |
-| CP-2 | all | CP-1 | eta-entry-points | `/*/*/(QualificationEtaTests*)\|(OperatorStatusTests*)\|(WatchQualTests*)/*` | V-2 | all three classes, 0 failed/skipped | 30 | 1 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c2093-review-fixes/` | eta-witness | `/*/*/(QualificationEtaTests*)\|(OperatorStatusTests*)\|(WatchQualTests*)/(Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles)\|(Finished_mixed_suite_run_out_ranks_a_newer_stopped_attempt)\|(One_ten_millisecond_match_keeps_an_hour_near_its_baseline)\|(Well_formed_trx_stays_unfinished_in_eta_until_the_result_summary_arrives)\|(Exactly_twenty_fractional_matches_publish_p95_but_unequal_weights_do_not)\|(Linux_full_projection_is_withheld_by_status_cli_and_watcher)\|(Explicit_log_directory_must_match_every_available_full_run_id)\|(Fractional_observation_clock_publishes_the_same_finish_in_status_and_cli)` | V-1, V-3 | eight named methods, 0 failed on candidate | 8 | 14 |
+| CP-2 | all | CP-1 | eta-entry-points | `/*/*/(QualificationEtaTests*)\|(OperatorStatusTests*)\|(WatchQualTests*)/*` | V-2 | all three classes, 0 failed/skipped | 37 | 1 |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | R-1 | all eleven classes, 0 failed/skipped | 78 | 1 |
 | CP-4 | all | CP-1 | live-gate-guards | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | R-1 | both methods, 0 failed/skipped | 2 | 1 |
 | CP-5 | all | CP-1 | nightly-live-impact | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreGoldenTests*)/*` | R-2 | both classes, 0 failed/skipped | 37 | 1 |

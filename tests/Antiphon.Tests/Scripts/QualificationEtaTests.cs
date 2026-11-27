@@ -196,6 +196,117 @@ public sealed class QualificationEtaTests
     }
 
     [Test]
+    public void Finished_mixed_suite_run_out_ranks_a_newer_stopped_attempt()
+    {
+        var files = new MockFileSystem();
+        var logs = files.Path.Combine(NewRoot(files), "candidates", "rc-2026-11-10-0123456789ab", "logs");
+        var live = files.Path.Combine(logs, "2026-11-10-1100-current");
+        var previous = files.Path.Combine(logs, "2026-11-09-1100-earlier");
+        var stopped = files.Path.Combine(logs, "2026-11-10-1000-stopped");
+        foreach (var (dir, id) in new[] { (live, "current"), (previous, "earlier"), (stopped, "stopped") })
+        {
+            files.Directory.CreateDirectory(dir);
+            files.File.WriteAllText(files.Path.Combine(dir, "dispatch-schedule.json"), $$"""
+                {"runId":"{{id}}","entries":[{"suite":"suite","chunk":"a"},{"suite":"client","chunk":"all"},{"suite":"scripts","chunk":"all"}]}
+                """);
+        }
+        WriteFixtureTrx(files, previous, "a", 100);
+        WriteFixtureTrx(files, stopped, "a", 2);
+        foreach (var suite in new[] { "client", "scripts" })
+        {
+            files.File.WriteAllText(files.Path.Combine(previous, suite + "-all.timing.json"), $$"""
+                {"suite":"{{suite}}","chunk":"all","lastPhase":"complete","completedAt":"2026-11-09T11:03:00Z","trxMissing":true}
+                """);
+        }
+        files.File.WriteAllText(files.Path.Combine(stopped, "client-all.timing.json"), """
+            {"suite":"client","chunk":"all","lastPhase":"complete","completedAt":"2026-11-10T10:03:00Z","trxMissing":true}
+            """);
+        files.File.WriteAllText(files.Path.Combine(stopped, "scripts-all.timing.json"), """
+            {"suite":"scripts","chunk":"all","lastPhase":"timeout","completedAt":"2026-11-10T10:03:00Z","trxMissing":true}
+            """);
+        files.File.WriteAllText(files.Path.Combine(live, "client-all.timing.json"), """
+            {"suite":"client","chunk":"all","lastPhase":"complete","completedAt":"2026-11-10T11:03:00Z","trxMissing":true}
+            """);
+
+        var lines = Observe(files, ["--timing-root", live]);
+        lines[0].ShouldStartWith("ETA outstanding=2 running=0 completed=1 unpriced=1 pointSeconds=100 ");
+        lines.ShouldContain("UNVERIFIED rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): scripts-all.");
+
+        // When both command suites finish, neither needs a historical duration.
+        files.File.WriteAllText(files.Path.Combine(live, "scripts-all.timing.json"), """
+            {"suite":"scripts","chunk":"all","lastPhase":"complete","completedAt":"2026-11-10T11:04:00Z","trxMissing":true,"why":"script-failed"}
+            """);
+        Observe(files, ["--timing-root", live])[0]
+            .ShouldStartWith("ETA outstanding=1 running=0 completed=2 unpriced=0 pointSeconds=100 ");
+    }
+
+    [Test]
+    public void One_ten_millisecond_match_keeps_an_hour_near_its_baseline()
+    {
+        var files = new MockFileSystem();
+        var root = NewRoot(files);
+        var previous = files.Path.Combine(root, "previous");
+        WriteFixtureSchedule(files, root, "current", ["tiny", "hour"]);
+        WriteFixtureSchedule(files, previous, "previous", ["tiny", "hour"]);
+        WriteFixtureTrx(files, root, "tiny", 20);
+        WriteFixtureTrx(files, previous, "tiny", 0.01);
+        WriteFixtureTrx(files, previous, "hour", 3600);
+
+        Observe(files, ["--timing-root", root, "--previous-run-log-dir", previous])[0]
+            .ShouldStartWith("ETA outstanding=1 running=0 completed=1 unpriced=0 pointSeconds=3600 ");
+    }
+
+    [Test]
+    public void Exactly_twenty_fractional_matches_publish_p95_but_unequal_weights_do_not()
+    {
+        var files = new MockFileSystem();
+        var root = NewRoot(files);
+        var previous = files.Path.Combine(root, "previous");
+        var matched = Enumerable.Range(0, 20).Select(index => "a" + index).ToArray();
+        WriteFixtureSchedule(files, root, "current", [.. matched, "remaining"]);
+        WriteFixtureSchedule(files, previous, "previous", [.. matched, "remaining"]);
+        foreach (var chunk in matched)
+        {
+            WriteFixtureTrx(files, root, chunk, 10.1);
+            WriteFixtureTrx(files, previous, chunk, 10.1);
+        }
+        WriteFixtureTrx(files, previous, "remaining", 60);
+        string ObserveLine() => Observe(files, ["--timing-root", root, "--previous-run-log-dir", previous])[0];
+
+        ObserveLine().ShouldContain("p50=2026-11-10T12:01:00.000Z p95=2026-11-10T12:01:00.000Z confidence=matched ");
+        WriteFixtureTrx(files, root, matched[0], 10.10001);
+        WriteFixtureTrx(files, previous, matched[0], 10.10001);
+        ObserveLine().ShouldContain("p95=unavailable confidence=provisional ");
+    }
+
+    [Test]
+    public void Explicit_log_directory_must_match_every_available_full_run_id()
+    {
+        var files = new MockFileSystem();
+        var root = NewRoot(files);
+        const string runId = "11111111-1111-4111-8111-111111111111";
+        const string otherId = "11111111-2222-4222-8222-222222222222";
+        var log = files.Path.Combine(root, "copied-logs");
+        var named = files.Path.Combine(root, "timing-" + runId);
+        var custom = files.Path.Combine(root, "custom");
+        files.Directory.CreateDirectory(named);
+        files.Directory.CreateDirectory(custom);
+        WriteFixtureSchedule(files, log, otherId, ["a"]);
+        var explicitLog = new[] { "--run-log-dir", log };
+        Refused(files, ["--timing-root", named, .. explicitLog]).ShouldContain("different run");
+
+        WriteFixtureSchedule(files, custom, runId, ["a"]);
+        Refused(files, ["--timing-root", custom, .. explicitLog]).ShouldContain("different run");
+        WriteFixtureSchedule(files, custom, otherId, ["a"]);
+        files.File.WriteAllText(files.Path.Combine(custom, "active-chunk.json"), $$"""
+            {"runId":"{{runId}}","state":"Active","suite":"suite","chunk":"a"}
+            """);
+        Refused(files, ["--timing-root", custom, .. explicitLog]).ShouldContain("different run");
+        files.File.Delete(files.Path.Combine(custom, "active-chunk.json"));
+        Observe(files, ["--timing-root", custom, .. explicitLog])[0].ShouldStartWith("ETA ");
+    }
+
+    [Test]
     public void Command_refuses_missing_or_invalid_inputs()
     {
         var files = new MockFileSystem();

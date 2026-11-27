@@ -89,6 +89,64 @@ public sealed class OperatorStatusTests
     }
 
     [Test]
+    public void Linux_full_projection_is_withheld_by_status_cli_and_watcher()
+    {
+        using var world = new Fixture();
+        world.CompletePrevious();
+        // The prior chunks in this fixture overlap. Their durations cannot price a Linux Full run.
+        var statePath = Path.Combine(world.State, "last-run.json");
+        var state = JsonNode.Parse(File.ReadAllText(statePath))!.AsObject();
+        state["coverageScope"] = "Full";
+        state["platform"] = "linux";
+        File.WriteAllText(statePath, state.ToJsonString());
+        const string reason = "rc historical ETA requires a sequential Windows Full run.";
+        var (_, report) = world.Run();
+        report["rc"]!["eta"]!["projectedRemainingSeconds"].ShouldBeNull();
+        report["errors"]!.AsArray().Select(error => (string?)error).ShouldContain(reason);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var host = QualificationEtaTests.Host(output, error, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now));
+        var files = new FileSystem();
+        QualificationEta.Run(QualificationEtaOptions.Parse(["--timing-root", world.Timing]), host, files)
+            .ShouldBe(1, output.ToString());
+        output.ToString().ShouldBeEmpty();
+        error.ToString().ShouldContain(reason);
+
+        WatchQual.Run(new WatchQualOptions
+        {
+            LogDir = world.Live,
+            TimingRoot = world.Timing,
+            StateFile = Path.Combine(world.State, "watch-seen.txt"),
+            Heartbeat = world.Heartbeat,
+            Once = true,
+        }, host, files).ShouldBe(0);
+        output.ToString().ShouldContain("ETA-ERROR " + reason);
+        output.ToString().ShouldNotContain("pointSeconds=");
+    }
+
+    [Test]
+    public void Fractional_observation_clock_publishes_the_same_finish_in_status_and_cli()
+    {
+        using var world = new Fixture();
+        world.CompletePrevious();
+        world.Trx(world.Live, "suite-a", 30);
+        var observedAt = Now.AddTicks(2904);
+        var (_, report) = world.Run(observedAt: observedAt);
+        var eta = report["rc"]!["eta"]!;
+        var finish = DateTimeOffset.Parse((string)eta["projectedFinishUtc"]!, System.Globalization.CultureInfo.InvariantCulture);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var host = QualificationEtaTests.Host(output, error, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(observedAt));
+        QualificationEta.Run(QualificationEtaOptions.Parse(["--timing-root", world.Timing]), host, new FileSystem()).ShouldBe(0, error.ToString());
+        output.ToString().ShouldContain("p50=2026-11-26T12:01:01.429Z");
+        finish.ShouldBe(Now.AddMilliseconds(61429));
+        output.ToString().ShouldContain("Sequential test time only.");
+        ((string)eta["startupOverheadNote"]!).ShouldContain("Sequential test time only.");
+    }
+
+    [Test]
     public void Live_trx_without_a_TestRun_root_is_unverified_not_a_crash()
     {
         // CARD-2087 D-1: a well-formed XML file that is not a TeamTest run.
@@ -329,10 +387,11 @@ public sealed class OperatorStatusTests
                 """);
         }
 
-        public (int Exit, JsonObject Report) Run(bool includeRc = true, bool autoDiscover = false, Action<StatusSnapshotOptions>? tune = null)
+        public (int Exit, JsonObject Report) Run(bool includeRc = true, bool autoDiscover = false,
+            Action<StatusSnapshotOptions>? tune = null, DateTimeOffset? observedAt = null)
         {
             using var output = new StringWriter();
-            var host = QualificationEtaTests.Host(output, output, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now));
+            var host = QualificationEtaTests.Host(output, output, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(observedAt ?? Now));
             var args = new List<string> { "--json", "--project-id", Project };
             if (autoDiscover || !includeRc) args.AddRange(["--rc-release-root", autoDiscover ? _root : Path.Combine(_root, "absent")]);
             else args.AddRange(["--rc-run-log-dir", Live, "--rc-state-dir", State, "--rc-heartbeat-path", Heartbeat]);

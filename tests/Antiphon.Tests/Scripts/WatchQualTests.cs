@@ -124,6 +124,26 @@ public sealed class WatchQualTests
     private static string[] Lines(StringWriter writer) =>
         writer.ToString().Split('\n').Select(line => line.TrimEnd('\r')).Where(line => line.Length > 0).ToArray();
 
+    [Test]
+    public void Well_formed_trx_stays_unfinished_in_eta_until_the_result_summary_arrives()
+    {
+        var world = new World();
+        var (timing, live) = PrepareEta(world);
+        var path = world.Files.Path.Combine(live, "suite-c.trx");
+        var complete = world.Files.File.ReadAllText(path);
+        world.Files.File.WriteAllText(path, complete.Replace("<ResultSummary outcome=\"Completed\" />", "", StringComparison.Ordinal));
+        var options = world.Options(timingRoot: timing, logDir: live);
+
+        var (_, partial) = world.Run(options);
+        partial.ShouldContain(line => line.StartsWith("TRX-PARSE-ERROR suite-c.trx:", StringComparison.Ordinal));
+        partial.ShouldContain(line => line.StartsWith("ETA outstanding=3 running=0 completed=0 unpriced=0 pointSeconds=350 ", StringComparison.Ordinal));
+
+        world.Files.File.WriteAllText(path, complete);
+        var (_, terminal) = world.Run(options);
+        terminal.ShouldNotContain(line => line.StartsWith("TRX-PARSE-ERROR", StringComparison.Ordinal));
+        terminal.ShouldContain(line => line.StartsWith("ETA outstanding=2 running=0 completed=1 unpriced=0 pointSeconds=300 ", StringComparison.Ordinal));
+    }
+
     private static (string Timing, string Live) PrepareEta(World world)
     {
         var files = world.Files;
