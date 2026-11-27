@@ -405,6 +405,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public bool DialogInputUncertain { get; set; }
     private readonly Guid _dialogEpoch = Guid.NewGuid();
     private long _dialogInputRevision;
+    private long _outputSequence;
     public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -433,25 +434,26 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public async Task<RunnerConditionalInputResult> SendConditionalInputAsync(
         RunnerConditionalInputRequest request, CancellationToken ct)
     {
+        var sequence = request.RequireClaudeDialogClear ? SnapshotSequence : Interlocked.Read(ref _outputSequence);
         if (ConditionalUnsupported)
             return new RunnerConditionalInputResult(Guid.Empty, ConditionalInputOutcomes.Unsupported, null, null);
         if (ConditionalOutcomeOverride is { } forced)
         {
             ConditionalInputs.Add(request.Input);
             return new RunnerConditionalInputResult(
-                Guid.Empty, forced, AcceptedStartedAt, SnapshotSequence);
+                Guid.Empty, forced, AcceptedStartedAt, sequence);
         }
         if (AcceptedStartedAt is { } bound
             && !SessionGeneration.Equal(bound, request.ExpectedAcceptedStartedAt))
         {
             return new RunnerConditionalInputResult(
-                Guid.Empty, ConditionalInputOutcomes.GenerationMismatch, bound, SnapshotSequence);
+                Guid.Empty, ConditionalInputOutcomes.GenerationMismatch, bound, sequence);
         }
 
-        if (SnapshotSequence != request.ExpectedLastSequence)
+        if (sequence != request.ExpectedLastSequence)
         {
             return new RunnerConditionalInputResult(
-                Guid.Empty, ConditionalInputOutcomes.StaleObservation, AcceptedStartedAt, SnapshotSequence);
+                Guid.Empty, ConditionalInputOutcomes.StaleObservation, AcceptedStartedAt, sequence);
         }
 
         if (request.RequireClaudeDialogClear)
@@ -479,9 +481,11 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
         ConditionalInputs.Add(request.Input);
         await SendInputAsync(request.Input, ct);
-        SnapshotSequence++;
+        // The dialog fake advances its synthetic redraw because it renders the
+        // composer in memory. A generic runner request observes actual output events.
+        sequence = request.RequireClaudeDialogClear ? ++SnapshotSequence : Interlocked.Read(ref _outputSequence);
         return new RunnerConditionalInputResult(
-            Guid.Empty, ConditionalInputOutcomes.Written, AcceptedStartedAt, SnapshotSequence);
+            Guid.Empty, ConditionalInputOutcomes.Written, AcceptedStartedAt, sequence);
     }
 
     public async Task SendInputAsync(string input, CancellationToken ct)
@@ -691,6 +695,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             return;
 
         _rawOutput.Append(text);
+        Interlocked.Increment(ref _outputSequence);
         OnTextDelta?.Invoke(text);
     }
 
