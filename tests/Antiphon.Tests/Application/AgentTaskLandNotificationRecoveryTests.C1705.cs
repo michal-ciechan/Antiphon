@@ -53,11 +53,14 @@ public sealed partial class AgentTaskLandNotificationRecoveryTests
         var released = false;
         var worker = new AgentTaskLandNotificationHostedService(h.Provider.GetRequiredService<IServiceScopeFactory>(), NullLogger<AgentTaskLandNotificationHostedService>.Instance);
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-        await worker.StartAsync(stop.Token);
         try
         {
-            (await scans.WaitForScanAsync(1, TimeSpan.FromSeconds(10)))
-                .ShouldBeTrue("one held caller lock must not keep the notification scan from returning");
+            using (TestTiming.BeginPhase(TestPhaseKind.OurCode, "land-notification-first-scan"))
+            {
+                await worker.StartAsync(stop.Token);
+                (await scans.WaitForScanAsync(1, TimeSpan.FromSeconds(10)))
+                    .ShouldBeTrue($"one held caller lock must not keep the notification scan from returning ({busyNotes.Count} busy notices)");
+            }
             var queued = await db.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == freeNote);
             queued.QueueMessageId.ShouldNotBeNull("the free caller's notice is enqueued within the same scan");
             queued.State.ShouldBe(LandNotificationState.AwaitingReceipt);
