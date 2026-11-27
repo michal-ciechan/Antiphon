@@ -116,11 +116,17 @@ namespace Antiphon.Nightly
             var root = files.Path.TrimEndingDirectorySeparator(files.Path.GetFullPath(options.TimingRoot));
             var active = OperatorRcStatus.ReadRecord(files, files.Path.Combine(root, "active-chunk.json"), issues, required: false);
             var localSchedule = files.Path.Combine(root, "dispatch-schedule.json");
+            const string prefix = "timing-";
+            var name = files.Path.GetFileName(root);
+            var rootRunId = name.StartsWith(prefix, StringComparison.Ordinal) && name.Length > prefix.Length
+                ? name.Substring(prefix.Length) : null;
+            var activeRunId = OperatorRcStatus.Text(active, "runId");
+            var hasExplicitLog = !string.IsNullOrWhiteSpace(options.RunLogDir);
             string logDir;
             JsonObject schedule;
-            if (!string.IsNullOrWhiteSpace(options.RunLogDir) || files.File.Exists(localSchedule))
+            if (hasExplicitLog || files.File.Exists(localSchedule))
             {
-                logDir = string.IsNullOrWhiteSpace(options.RunLogDir) ? root : files.Path.GetFullPath(options.RunLogDir);
+                logDir = hasExplicitLog ? files.Path.GetFullPath(options.RunLogDir) : root;
                 schedule = OperatorRcStatus.ReadRecord(files, files.Path.Combine(logDir, "dispatch-schedule.json"), issues);
                 if (schedule == null) return default;
             }
@@ -128,10 +134,7 @@ namespace Antiphon.Nightly
             {
                 // The log directory uses the first eight characters. Verify the full run id in the schedule
                 // so a collision with another attempt cannot select its timings.
-                const string prefix = "timing-";
-                var name = files.Path.GetFileName(root);
-                var runId = name.StartsWith(prefix, StringComparison.Ordinal) && name.Length > prefix.Length
-                    ? name.Substring(prefix.Length) : OperatorRcStatus.Text(active, "runId");
+                var runId = rootRunId ?? activeRunId;
                 var parent = files.Path.GetDirectoryName(root);
                 var candidates = string.IsNullOrEmpty(parent) || string.IsNullOrEmpty(runId)
                     ? Array.Empty<(string Dir, JsonObject Schedule)>()
@@ -150,6 +153,19 @@ namespace Antiphon.Nightly
             if (scheduledRun == null)
             {
                 issues.Add("rc dispatch schedule has no run id.");
+                return default;
+            }
+            var localRun = hasExplicitLog && !OperatorRcStatus.SamePath(files, root, logDir)
+                ? OperatorRcStatus.Text(OperatorRcStatus.ReadRecord(files, localSchedule, issues, required: false), "runId")
+                : null;
+            if ((rootRunId != null && rootRunId != scheduledRun) || (localRun != null && localRun != scheduledRun))
+            {
+                issues.Add("rc timing root and dispatch schedule belong to different runs.");
+                return default;
+            }
+            if (hasExplicitLog && activeRunId != null && activeRunId != scheduledRun)
+            {
+                issues.Add("rc active-chunk.json belongs to a different run.");
                 return default;
             }
             return (logDir, schedule, OperatorRcStatus.BindActive(active, scheduledRun, issues));
