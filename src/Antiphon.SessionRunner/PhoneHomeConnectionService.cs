@@ -1,6 +1,6 @@
 using Antiphon.Observability;
 using System.Collections.Concurrent;
-using System.Net.Http.Headers;
+using System.Net;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -80,10 +80,12 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         var backoff = _settings.ReconnectBackoffMs;
         while (!stoppingToken.IsCancellationRequested)
         {
+            Exception? failure = null;
             try
             {
-                await RunConnectionAsync(stoppingToken);
-                backoff = _settings.ReconnectBackoffMs;
+                var connectedFor = await RunConnectionAsync(stoppingToken);
+                if (connectedFor.TotalMilliseconds >= _settings.ReconnectBackoffMaxMs)
+                    backoff = _settings.ReconnectBackoffMs;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -91,28 +93,43 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             }
             catch (Exception ex)
             {
-                var reason = PhoneHomeReconnectReason.Classify(ex, stoppingToken);
+                failure = ex;
+            }
+
+            // Equal jitter keeps consecutive short connections and failures from retrying in lockstep.
+            var delayMs = Random.Shared.NextInt64(Math.Max(1, backoff / 2), (long)backoff + 1);
+            if (failure is RegistrationDeferredException deferred)
+                delayMs = (long)Math.Min(uint.MaxValue - 1L, Math.Ceiling(deferred.RetryAfter.TotalMilliseconds) + delayMs);
+            if (failure is not null)
+            {
+                var reason = PhoneHomeReconnectReason.Classify(failure, stoppingToken);
                 if (reason.StartsWith("other:", StringComparison.Ordinal))
                 {
                     _logger.LogWarning(
-                        ex,
+                        failure,
                         "Phone-home registration failed: reason={Reason} attempt={Attempt} backoffMs={Backoff}",
-                        reason, RegistrationAttempts, backoff);
+                        reason, RegistrationAttempts, delayMs);
                 }
                 else
                 {
                     _logger.LogWarning(
                         "Phone-home registration failed: reason={Reason} attempt={Attempt} backoffMs={Backoff}",
-                        reason, RegistrationAttempts, backoff);
+                        reason, RegistrationAttempts, delayMs);
                 }
-
-                await Task.Delay(TimeSpan.FromMilliseconds(backoff), _clock, stoppingToken);
-                backoff = Math.Min(backoff * 2, _settings.ReconnectBackoffMaxMs);
             }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(delayMs), _clock, stoppingToken);
+            backoff = (int)Math.Min((long)backoff * 2, _settings.ReconnectBackoffMaxMs);
         }
     }
 
-    internal async Task RunConnectionAsync(CancellationToken ct)
+    private sealed class RegistrationDeferredException(TimeSpan retryAfter)
+        : HttpRequestException("The server deferred runner registration.", null, HttpStatusCode.ServiceUnavailable)
+    {
+        public TimeSpan RetryAfter { get; } = retryAfter;
+    }
+
+    internal async Task<TimeSpan> RunConnectionAsync(CancellationToken ct)
     {
         using var registrationTiming = _timing?.BeginStartup(StartupOperation.RunnerRegistration);
         var storeId = PhoneHomeStoreIdentity.LoadOrCreate(_settings.StoreIdPath);
@@ -136,6 +153,13 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             // than from a separate Capabilities round trip the deploy row cannot make.
             _dispatcher.Capabilities()), options: PhoneHomeFraming.Json);
         using var registered = await http.SendAsync(register, ct);
+        if (registered.StatusCode == HttpStatusCode.ServiceUnavailable)
+        {
+            var hint = registered.Headers.RetryAfter;
+            var retryAfter = hint?.Delta ?? hint?.Date - _clock.GetUtcNow();
+            if (retryAfter is { } wait && wait > TimeSpan.Zero)
+                throw new RegistrationDeferredException(wait);
+        }
         registered.EnsureSuccessStatusCode();
         var ticket = await registered.Content.ReadFromJsonAsync<PhoneHomeRegistrationResponse>(PhoneHomeFraming.Json, ct)
             ?? throw new InvalidOperationException("Empty registration response.");
@@ -163,7 +187,9 @@ public sealed class PhoneHomeConnectionService : BackgroundService
         // did not match - the socket stayed open while heartbeats, requests and replies vanished.
         registrationTiming?.Complete();
         registrationTiming?.Dispose();
+        var connectedAt = _clock.GetTimestamp();
         await RunConnectedAsync(ws, ticket.Epoch, ticket.EventWindow, ct);
+        return _clock.GetElapsedTime(connectedAt);
     }
 
     /// <summary>

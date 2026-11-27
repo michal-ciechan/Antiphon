@@ -530,14 +530,43 @@ public class PhoneHomeConnectionServiceTests
             await WaitUntilAsync(() => logs.Warnings.Count >= 1);
             logs.Warnings.Count.ShouldBe(1);
             logs.Warnings[0].Exception.ShouldBeNull();
-            logs.Warnings[0].Message.ShouldBe(
-                "Phone-home registration failed: reason=http_502 attempt=1 backoffMs=1000");
+            const string prefix = "Phone-home registration failed: reason=http_502 attempt=1 backoffMs=";
+            logs.Warnings[0].Message.ShouldStartWith(prefix);
+            int.Parse(logs.Warnings[0].Message[prefix.Length..]).ShouldBeInRange(500, 1000);
         }
         finally
         {
             cts.Cancel();
             try { await running.WaitAsync(TimeSpan.FromSeconds(2)); }
             catch (OperationCanceledException) { /* stopping */ }
+        }
+    }
+
+    [Test]
+    public async Task Registration_retry_waits_for_retry_after_plus_jitter()
+    {
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var logs = new CapturingLogger<PhoneHomeConnectionService>();
+        var gate = new PhoneHomeAdoptionGate();
+        gate.SignalReady();
+        using var service = Service(new RecordingRuntime(), RunnableSettings(),
+            new StatusHandler(HttpStatusCode.ServiceUnavailable, TimeSpan.FromSeconds(7)), time, gate, logs);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            await WaitForFailureAsync(logs, 1);
+            const string prefix = "Phone-home registration failed: reason=http_503 attempt=1 backoffMs=";
+            logs.Warnings[0].Message.ShouldStartWith(prefix);
+            int.Parse(logs.Warnings[0].Message[prefix.Length..]).ShouldBeInRange(7500, 8000);
+            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(7));
+            service.RegistrationAttempts.ShouldBe(1);
+            time.Advance(TimeSpan.FromSeconds(1));
+            await WaitForFailureAsync(logs, 2);
+            service.RegistrationAttempts.ShouldBe(2);
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
         }
     }
 
@@ -802,11 +831,16 @@ public class PhoneHomeConnectionServiceTests
         }
     }
 
-    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    private sealed class StatusHandler(HttpStatusCode status, TimeSpan? retryAfter = null) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(status));
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(status);
+            if (retryAfter is { } delay)
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(delay);
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class TicketHandler : HttpMessageHandler
