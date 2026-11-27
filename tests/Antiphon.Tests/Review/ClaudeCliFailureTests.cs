@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Api;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review.Decisions;
@@ -93,6 +94,33 @@ public sealed class ClaudeCliFailureTests
         failure.Message.ShouldContain("CLI backend overloaded");
         failure.Message.ShouldContain("exit 7");
         failure.Message.Contains(sensitive, StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Test]
+    [Arguments("529", "CLI backend overloaded")]
+    [Arguments("overloaded", "CLI backend overloaded")]
+    [Arguments("429", "CLI request rate limited")]
+    [Arguments("rate\r\nlimit", "CLI request rate limited")]
+    [Arguments("rate-limited", "CLI request rate limited")]
+    [Arguments("ECONNREFUSED", "CLI backend connection failed")]
+    [Arguments("ECONNRESET", "CLI backend connection failed")]
+    [Arguments("ENOTFOUND", "CLI backend connection failed")]
+    [Arguments("connection\nrefused", "CLI backend connection failed")]
+    [Arguments("connection\r\nreset", "CLI backend connection failed")]
+    [Arguments("unknown\noption", "CLI reported an unknown option")]
+    [Arguments("unexpected backend response", "CLI output contained no recognized public diagnostic.")]
+    [Arguments("password='529 fixture-only value'", "CLI output contained no recognized public diagnostic.")]
+    public void Public_reasons_use_normalized_stderr_and_structured_errors(string reason, string expected)
+    {
+        var diagnostic = $"Backend detail\r\n{reason}\nx-api-key: fixture-only-key";
+        var json = JsonSerializer.Serialize(new { is_error = true, result = diagnostic });
+
+        var stderr = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(7, "", diagnostic));
+        var structured = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(7, json, ""));
+
+        (stderr.Message, structured.Message).ShouldBe((
+            $"claude -p printed no JSON result (exit 7): {expected}",
+            $"claude -p reported an error (exit 7): {expected}"));
     }
 
     [Test]
