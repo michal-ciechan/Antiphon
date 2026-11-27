@@ -23,7 +23,8 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
     [Test]
     [P2MatrixTimeout(30_000)]
-    public void TamperedBindingsRefuse(CancellationToken cancellationToken) => CheckAdmission(cancellationToken, receipts: false);
+    public void TamperedBindingsRefuse(CancellationToken cancellationToken) =>
+        CheckAdmission(cancellationToken, AdmissionCases.Proposal, nameof(TamperedBindingsRefuse));
 
     // ImpactedClasses.SelectorFiles, as literals the derived impact index reads.
     private static readonly string[] AlgorithmFiles =
