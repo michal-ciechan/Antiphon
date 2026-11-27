@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -94,7 +95,11 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             (await db.SessionQueuedMessages.CountAsync()).ShouldBe(0, "the interrupted queue transaction rolled back");
             (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId)).ShouldBe(0);
             queue.BeforeDispatchBriefRowLock = null;
-            await graph.Dispatcher.EnsureLaunchBriefAsync(task, sessionId, session.StartedAt, CancellationToken.None);
+            await RecoverThroughReconciliationAsync(schema.ConnectionString, host, peer, task.AgentId.ShouldNotBeNull(),
+                taskId, sessionId, session.StartedAt, goal);
+            peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(1);
+            sink.Specs.Count.ShouldBe(1, "recovery used the original recipient");
+            return;
         }
 
         var pending = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == taskId);
@@ -119,5 +124,71 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt);
         PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(pending.Body));
         peer.RequestCount(PhoneHomeOperation.WorkspaceMirror).ShouldBe(1);
+    }
+    private static async Task RecoverThroughReconciliationAsync(string connection, PhoneHomeTestHost host,
+        PhoneHomeScriptedPeer peer, Guid agentId, Guid taskId, Guid sessionId, DateTime generation, string goal)
+    {
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+        // The dispatch fixture captures the launch. Model the remote runner having accepted that same
+        // generation and persisted Running before the next reconciliation tick discovers brief debt.
+        var updated = await db.AgentSessions.Where(s => s.Id == sessionId && s.Status == SessionStatus.Starting)
+            .ExecuteUpdateAsync(set => set.SetProperty(s => s.Status, SessionStatus.Running));
+        updated.ShouldBe(1);
+        var listing = new RunnerSessionDto(sessionId, 1, generation, "Running", null, "", 0,
+            AcceptedStartedAt: generation);
+        peer.Reply = frame => frame.Operation switch
+        {
+            PhoneHomeOperation.List => Result(frame, new[] { listing }),
+            PhoneHomeOperation.Get => Result(frame, listing),
+            PhoneHomeOperation.Transcript => Result(frame,
+                new RunnerTranscriptDto(sessionId, [], 0, AcceptedStartedAt: generation)),
+            _ => AnswerDispatchSave(frame),
+        };
+
+        BridgeQueueHarness? bridge = null;
+        await using var recipient = await ClaudeDialogFixture.CreateBridgeAsync(new()
+        {
+            AlwaysOn = false,
+            ConnectionString = connection,
+            PreserveDatabaseOnDispose = true,
+            AttachSessionId = sessionId,
+            AttachAgentId = agentId,
+            Delegation = new DelegationSettings { PtySingleChunkBytes = 86_400, BriefInlineMaxBytes = 43_200 },
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<ISessionRunnerDirectory>(host.Directory);
+                services.AddSingleton<IAgentProtocolAdapterFactory>(new DiskRecoveryAdapterFactory(() => bridge!.Adapter));
+            },
+        });
+        bridge = recipient;
+        var launchQueue = recipient.Provider.GetRequiredService<AgentSessionLaunchQueue>();
+        var runner = recipient.Provider.GetRequiredService<ISessionRunnerClient>();
+        async Task ScanAsync()
+        {
+            await using var scan = new AppDbContext(TestDbFixture.CreateDbContextOptions(connection));
+            var reconciliation = SessionReconciliationServiceTests.BuildService(
+                scan, runner, recipient.EventBus, ownership: launchQueue, directory: host.Directory);
+            await reconciliation.ScanAsync(CancellationToken.None);
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await launchQueue.WaitForIdleAsync(TimeSpan.FromSeconds(10), budget.Token, TimeProvider.System);
+        }
+
+        await ScanAsync();
+        recipient.Adapter.Attached.ShouldBeTrue("the watchdog scheduled the production recovery handoff");
+        await ScanAsync();
+
+        var recovered = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.ExecutionTaskId == taskId);
+        recovered.AgentSessionId.ShouldBe(sessionId);
+        recovered.RemoteSpillBody.ShouldBeNull();
+        recovered.Body.ShouldContain(goal);
+        recipient.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        var prompt = await db.TranscriptEntries.AsNoTracking().SingleAsync(t =>
+            t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.UserPrompt);
+        PromptSubmissionMatch.Normalize(prompt.Text!).ShouldBe(PromptSubmissionMatch.Normalize(recovered.Body));
+    }
+
+    private sealed class DiskRecoveryAdapterFactory(Func<IAgentProtocolAdapter> create) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => create();
     }
 }
