@@ -14,6 +14,32 @@ namespace Antiphon.Messaging.Tests.Service;
 public sealed class InboxConversationMigrationTests
 {
     [Test]
+    public async Task Receipt_rollback_refuses_an_unmatched_acceptance_and_allows_an_empty_journal()
+    {
+        // Exercise real migration history, transactional DDL and provider error codes.
+        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
+        await postgres.StartAsync();
+        var options = new DbContextOptionsBuilder<MessagingDbContext>().UseNpgsql(postgres.GetConnectionString()).Options;
+        await using var db = new MessagingDbContext(options);
+        var migrator = db.GetService<IMigrator>();
+        const string previous = "20261014172813_ScopeInboxIdentityToConversation";
+        const string receiptMigration = "20261127101000_AddInboxAnswerReceipts";
+        await migrator.MigrateAsync(receiptMigration);
+        await db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO "InboxAnswerReceipts" VALUES ('telegram', '1', '2', NOW(), '3')
+            """);
+        var refused = await Should.ThrowAsync<PostgresException>(() => migrator.MigrateAsync(previous));
+        refused.MessageText.ShouldContain("InboxAnswerReceipts");
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(receiptMigration);
+        (await db.InboxAnswerReceipts.SingleAsync()).OutboundMessageId.ShouldBe("3");
+        await db.InboxAnswerReceipts.ExecuteDeleteAsync();
+        await migrator.MigrateAsync(previous);
+        (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(receiptMigration);
+        await migrator.MigrateAsync(receiptMigration);
+        (await db.InboxAnswerReceipts.CountAsync()).ShouldBe(0);
+    }
+
+    [Test]
     public async Task Upgrade_preserves_legacy_data_and_enforces_conversation_scoped_identity()
     {
         await using var postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();

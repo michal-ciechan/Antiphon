@@ -24,6 +24,19 @@ public sealed class WireContractTests
         => AssertRoundTrip<ChannelReply>("live-channel-reply.json");
 
     [Test]
+    public void Answered_ids_are_optional_and_nonempty_ids_survive_the_wire()
+    {
+        var reply = new ChannelReply { Channel = "telegram" };
+        foreach (var ids in new IReadOnlyList<string>?[] { [], null })
+        {
+            var json = JsonSerializer.SerializeToElement(reply with { AnsweredMessageIds = ids! }, MessagingJson.Options);
+            json.TryGetProperty("answeredMessageIds", out _).ShouldBeFalse();
+        }
+        var correlated = JsonSerializer.Serialize(reply with { AnsweredMessageIds = ["11", "12"] }, MessagingJson.Options);
+        JsonSerializer.Deserialize<ChannelReply>(correlated, MessagingJson.Options)!.AnsweredMessageIds.ShouldBe(["11", "12"]);
+    }
+
+    [Test]
     public void Unknown_channel_reply_kind_maps_to_answer()
     {
         const string json = """{"channel":"telegram","kind":"BrandNewKind","text":"hi"}""";
