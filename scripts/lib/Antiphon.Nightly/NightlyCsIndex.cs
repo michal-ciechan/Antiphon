@@ -46,7 +46,10 @@ namespace Antiphon.Nightly
         private static readonly Regex NamespaceRx = new Regex(@"\bnamespace\s+([A-Za-z_][A-Za-z0-9_\.]*)");
         private static readonly Regex MethodRx = new Regex(@"(?m)^[ \t]*(?:\[[^\]]*\][ \t\r\n]*)*(?:(?:" + Modifiers + @")[ \t]+)+", RegexOptions.Compiled);
         private static readonly Regex MethodNameRx = new Regex(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.IgnoreCase);
-        private static readonly Regex SkipRx = new Regex(@"Skip\.Test\(\s*""((?:\\.|[^""\\])*)""|SkipTestException\(\s*""((?:\\.|[^""\\])*)""|NativeLinuxGate\.Require\(\s*""((?:\\.|[^""\\])*)""|NativeLinuxOnly\(\s*""((?:\\.|[^""\\])*)""|new\s+LiveClaudeRefusal\(\s*""((?:\\.|[^""\\])*)""");
+        private static readonly Regex SkipRx = new Regex(
+            @"Skip\.Test\(\s*""((?:\\.|[^""\\])*)""|SkipTestException\(\s*""((?:\\.|[^""\\])*)""|" +
+            @"(?:Native(?:Linux|Windows)Gate\.Require\(\s*|Skip\.Unless\(\s*!\s*OperatingSystem\.IsWindows\(\s*\)\s*,\s*)""((?:\\.|[^""\\])*)""|" +
+            @"NativeLinuxOnly\(\s*""((?:\\.|[^""\\])*)""|new\s+LiveClaudeRefusal\(\s*""((?:\\.|[^""\\])*)""");
         private static readonly HashSet<string> CallKeywords = new HashSet<string>(new[] {
             "if", "for", "while", "switch", "catch", "using", "lock", "return", "new", "throw", "foreach", "sizeof",
             "typeof", "nameof", "when", "fixed", "checked", "unchecked" }, StringComparer.OrdinalIgnoreCase);

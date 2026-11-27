@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "24dc35290379aa4f5c945dc5313c4008b09630982990cac377c5515974503b7d",
+  "policyHash": "599aee1a23c48a3017e4b4845dcef6aea60da820527806dde110b08465aa916f",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -603,6 +603,29 @@
           "suite": "e2e",
           "class": "ChannelOutboundIsolatedTests",
           "owner": "CARD-1305"
+        },
+        {
+          "suite": "session-runner",
+          "class": "HerdrLabelFollowSchedulingTests",
+          "methods": [
+            "Saved_snapshot_reads_while_writer_holds_mutex_on_unix",
+            "Label_pump_readiness_waits_for_the_sweep_timer_on_unix"
+          ],
+          "platform": "windows",
+          "reason": "The unlocked snapshot read and Unix sweep-timer witnesses remain required on Linux.",
+          "owner": "CARD-0462"
+        },
+        {
+          "suite": "session-runner",
+          "class": "HerdrLabelFollowSchedulingTests",
+          "methods": [
+            "Saved_snapshot_read_times_out_while_writer_holds_mutex",
+            "Saved_snapshot_poll_expires_under_contention_and_rejects_late_success",
+            "Saved_snapshot_mutex_name_matches_production_writer"
+          ],
+          "platform": "linux",
+          "reason": "The Windows snapshot mutex wait, poll expiry, and mutex name witnesses remain required on Windows.",
+          "owner": "CARD-0462"
         },
         {
           "suite": "e2e",
