@@ -20,6 +20,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     private readonly Queue<SendHold> _holds = new();
     private Exception? _failNextSend;
     private Exception? _failNextReceive;
+    private bool _abortOnReceiveFailure;
     private bool _emitClose;
     private WebSocketCloseStatus? _closeStatus;
     private string? _closeDescription;
@@ -31,6 +32,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     public int Overlaps { get; private set; }
     public int PeakConcurrentSends { get; private set; }
     public Func<CancellationToken, Task>? BeforeClose { get; init; }
+    public Action? OnAbort { get; init; }
     public Action? OnDispose { get; init; }
 
     public IReadOnlyList<PhoneHomeFrame> Sent
@@ -64,9 +66,13 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     }
 
     /// <summary>CARD-0716 D-4: the next receive throws <paramref name="exception"/>.</summary>
-    public void FailNextReceive(Exception exception)
+    public void FailNextReceive(Exception exception, bool abortSocket = false)
     {
-        lock (_sync) _failNextReceive = exception;
+        lock (_sync)
+        {
+            _failNextReceive = exception;
+            _abortOnReceiveFailure = abortSocket;
+        }
         _incoming.Writer.TryWrite([]);
     }
 
@@ -102,6 +108,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     {
         lock (_sync) _state = WebSocketState.Aborted;
         _incoming.Writer.TryComplete(new WebSocketException(WebSocketError.ConnectionClosedPrematurely));
+        OnAbort?.Invoke();
     }
 
     public override async Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
@@ -131,6 +138,8 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
             {
                 fail = _failNextReceive;
                 _failNextReceive = null;
+                if (fail is not null && _abortOnReceiveFailure)
+                    _state = WebSocketState.Aborted;
                 if (_emitClose)
                 {
                     emitClose = true;

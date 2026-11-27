@@ -13,7 +13,14 @@ namespace Antiphon.Tests.Application;
 public sealed class PhoneHomeCloseRaceTests
 {
     [Test]
-    public async Task Superseded_close_does_not_warn_when_the_credit_writer_stop_aborts_the_socket()
+    public Task Superseded_close_does_not_warn_when_the_credit_writer_stop_aborts_the_socket() =>
+        AssertIntentionalCloseRaceAsync(new WebSocketException(WebSocketError.InvalidState));
+
+    [Test]
+    public Task Intentional_abort_during_close_send_logs_cancellation_at_debug() =>
+        AssertIntentionalCloseRaceAsync(new OperationCanceledException());
+
+    private static async Task AssertIntentionalCloseRaceAsync(Exception closeFailure)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         using var stopReceiving = new CancellationTokenSource();
@@ -27,12 +34,13 @@ public sealed class PhoneHomeCloseRaceTests
             BeforeClose = async ct =>
             {
                 closing.SetResult(socket.State);
-                // The canceled writer drives the production receive loop's Abort before the
-                // close checks state, as ManagedWebSocket does at handshake entry.
+                // The canceled writer drives the production receive loop's Abort while the
+                // handshake token is still live.
                 try { await receiving!.WaitAsync(ct); }
                 catch (OperationCanceledException) when (receiving!.IsCanceled) { }
+                ct.IsCancellationRequested.ShouldBeFalse();
                 rejectedClose.SetResult(socket.State);
-                throw new WebSocketException(WebSocketError.InvalidState);
+                throw closeFailure;
             },
         };
         await using var connection = NewConnection(socket, logger);
@@ -53,7 +61,7 @@ public sealed class PhoneHomeCloseRaceTests
 
             (await closing.Task.WaitAsync(deadline.Token)).ShouldBe(WebSocketState.Open);
             (await rejectedClose.Task.WaitAsync(deadline.Token)).ShouldBe(WebSocketState.Aborted);
-            logger.Entries.Where(entry => entry.Level == LogLevel.Warning).ShouldBeEmpty();
+            AssertCloseLog(connection, logger, LogLevel.Debug, closeFailure);
         }
         finally
         {
@@ -75,15 +83,78 @@ public sealed class PhoneHomeCloseRaceTests
         await connection.DisposeAsync("superseded");
         await connection.DisposeAsync("request_aborted");
 
-        var warning = logger.Entries.Where(entry => entry.Level == LogLevel.Warning).ShouldHaveSingleItem();
-        warning.Exception.ShouldBeSameAs(failure);
-        warning.State["RunnerId"].ShouldBe(connection.RunnerId);
-        warning.State["Epoch"].ShouldBe(connection.Epoch);
+        AssertCloseLog(connection, logger, LogLevel.Warning, failure);
     }
 
-    private static PhoneHomeLiveConnection NewConnection(WebSocket socket, ILogger logger) =>
+    [Test]
+    public async Task Close_after_transport_aborts_the_receive_logs_invalid_state_once_at_warning()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var receiveFailure = new WebSocketException(WebSocketError.ConnectionClosedPrematurely);
+        var closeFailure = new WebSocketException(WebSocketError.InvalidState);
+        var logger = new RecordingLogger<PhoneHomeLiveConnection>();
+        Task? receiving = null;
+        PhoneHomeTestWebSocket socket = null!;
+        socket = new PhoneHomeTestWebSocket
+        {
+            BeforeClose = async ct =>
+            {
+                socket.State.ShouldBe(WebSocketState.Open);
+                socket.FailNextReceive(receiveFailure, abortSocket: true);
+                var observed = await Should.ThrowAsync<WebSocketException>(() => receiving!.WaitAsync(ct));
+                observed.ShouldBeSameAs(receiveFailure);
+                socket.State.ShouldBe(WebSocketState.Aborted);
+                throw closeFailure;
+            },
+        };
+        await using var connection = NewConnection(socket, logger, useEventWindow: false);
+        receiving = connection.ReceiveLoopAsync(deadline.Token);
+
+        await connection.DisposeAsync("superseded");
+        await connection.DisposeAsync("transport_abort");
+
+        AssertCloseLog(connection, logger, LogLevel.Warning, closeFailure);
+    }
+
+    [Test]
+    public async Task Exception_thrown_by_intentional_abort_is_logged_once_at_warning()
+    {
+        var abortFailure = new OperationCanceledException("abort itself failed");
+        var closeFailure = new WebSocketException(WebSocketError.InvalidState);
+        var socket = new PhoneHomeTestWebSocket
+        {
+            BeforeClose = _ => Task.FromException(closeFailure),
+            OnAbort = () => throw abortFailure,
+        };
+        var logger = new RecordingLogger<PhoneHomeLiveConnection>();
+        await using var connection = NewConnection(socket, logger);
+
+        await connection.DisposeAsync("request_aborted");
+        await connection.DisposeAsync("superseded");
+
+        var warning = logger.Entries.ShouldHaveSingleItem();
+        warning.Level.ShouldBe(LogLevel.Warning);
+        warning.State["RunnerId"].ShouldBe(connection.RunnerId);
+        warning.State["Epoch"].ShouldBe(connection.Epoch);
+        var failures = warning.Exception.ShouldBeOfType<AggregateException>().Flatten().InnerExceptions;
+        failures.ShouldBe([closeFailure, abortFailure]);
+    }
+
+    private static void AssertCloseLog(PhoneHomeLiveConnection connection,
+        RecordingLogger<PhoneHomeLiveConnection> logger, LogLevel level, Exception failure)
+    {
+        var entry = logger.Entries.ShouldHaveSingleItem();
+        entry.Level.ShouldBe(level);
+        entry.Exception.ShouldBeSameAs(failure);
+        entry.State["RunnerId"].ShouldBe(connection.RunnerId);
+        entry.State["Epoch"].ShouldBe(connection.Epoch);
+        entry.State["ExceptionType"].ShouldBe(failure.GetType().Name);
+    }
+
+    private static PhoneHomeLiveConnection NewConnection(WebSocket socket, ILogger logger, bool useEventWindow = true) =>
         new("test-runner", Guid.NewGuid(), Guid.NewGuid(), 17, socket, new PhoneHomeLimits(),
-            TimeProvider.System, eventWindow: new PhoneHomeEventWindowOptions(1, 1, 4096), closeLogger: logger);
+            TimeProvider.System, eventWindow: useEventWindow ? new PhoneHomeEventWindowOptions(1, 1, 4096) : null,
+            closeLogger: logger);
 
     private sealed class CloseGateContext(Task closing) : SynchronizationContext
     {
