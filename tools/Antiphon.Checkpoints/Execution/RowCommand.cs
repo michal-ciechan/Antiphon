@@ -150,6 +150,10 @@ internal static class RowCommand
             if (lease.ExitCode != ExitCodes.Green)
                 return row.Fail(lease.ExitCode, null);
 
+            var layout = BuildConfinement.LayoutFor(repo, project, outputPath);
+            if (CheckpointDiskSpace.Refuse(console, runtime.DiskFreeBytes, repo, results, layout.Owned, Path.GetTempPath()))
+                return row.Fail(ExitCodes.DiskLow, CheckpointDiskSpace.LowReason);
+
             // (5) Build and run under the slot.
             var request = new RowRequest
             {

@@ -9,6 +9,7 @@ public sealed class SchedulerRequest
     public required RunState State { get; init; }
     public required IBuildSlotClient Slots { get; init; }
     internal Func<string, long?>? DiskFreeBytes { get; init; }
+    internal Action<string>? DiskDiagnostic { get; init; }
     public SlotSession? Session { get; init; }
     public string Commit { get; init; } = "";
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];
@@ -323,7 +324,8 @@ public sealed class RunScheduler
         var exit = cancellationToken.IsCancellationRequested
             ? request.OwnerBound ? ExitCodes.OwnerEnded : ExitCodes.Canceled
             : codes.Contains(ExitCodes.OwnerEnded) ? ExitCodes.OwnerEnded
-            : budget.Reason is not null && !codes.Contains(ExitCodes.Invalid) && !codes.Contains(ExitCodes.RestoreFailed) ? ExitCodes.Timeout
+            : budget.Reason is not null && !codes.Contains(ExitCodes.DiskLow)
+                && !codes.Contains(ExitCodes.Invalid) && !codes.Contains(ExitCodes.RestoreFailed) ? ExitCodes.Timeout
             : ExitCodes.FromRowStates(codes);
         request.State.Budget = budget.Snapshot(TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes));
         request.State.Reason = cancellationToken.IsCancellationRequested
@@ -496,6 +498,17 @@ public sealed class RunScheduler
 
             admittedAt = _buildTimeProvider.GetTimestamp();
             cancellationToken.ThrowIfCancellationRequested();
+            var layout = BuildConfinement.LayoutFor(request.WorkingDirectory, build.Project, build.OutputPath);
+            if (CheckpointDiskSpace.Diagnostic(request.DiskFreeBytes,
+                request.WorkingDirectory, request.RunDirectory, layout.Owned, Path.GetTempPath()) is { } diskWarning)
+            {
+                request.DiskDiagnostic?.Invoke(diskWarning);
+                progress.AdmissionExitCode = ExitCodes.DiskLow;
+                progress.TerminalReason = CheckpointDiskSpace.LowReason;
+                progress.State = "failed";
+                Publish(request);
+                return;
+            }
             if (lease.State == "granted" && !string.IsNullOrEmpty(lease.LeaseId) && candidate is not null)
             {
                 intermediate = candidate;
@@ -728,19 +741,31 @@ public sealed class RunScheduler
             TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes), value => progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, value), cancellationToken).ConfigureAwait(false);
         progress.Slot = lease.State;
         progress.SlotReason = lease.SlotReason;
+        progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, lease.WaitedSeconds);
         Publish(request);
-        if (lease.ExitCode != 0)
+        var build = spec.IsCommand ? null : request.Manifest.Builds.First(item => item.Id == spec.Build);
+        var workOutput = build is null ? request.WorkingDirectory
+            : BuildConfinement.LayoutFor(request.WorkingDirectory, build.Project, build.OutputPath).Owned;
+        var diskRefusal = lease.ExitCode == ExitCodes.Green
+            ? CheckpointDiskSpace.Diagnostic(request.DiskFreeBytes,
+                request.WorkingDirectory, request.RunDirectory, workOutput, Path.GetTempPath())
+            : null;
+        if (lease.ExitCode != ExitCodes.Green || diskRefusal is not null)
         {
+            if (diskRefusal is not null)
+                request.DiskDiagnostic?.Invoke(diskRefusal);
             return new RowRunResult
             {
                 Id = spec.Id,
-                ExitCode = lease.ExitCode,
-                State = lease.State == "timeout" ? "slot-timeout" : "slot-refused",
+                ExitCode = diskRefusal is null ? lease.ExitCode : ExitCodes.DiskLow,
+                State = diskRefusal is not null ? CheckpointDiskSpace.LowReason
+                    : lease.State == "timeout" ? "slot-timeout" : "slot-refused",
                 BuildState = "failed",
                 Slot = lease.State,
                 SlotReason = lease.SlotReason,
                 WaitedSeconds = progress.WaitedSeconds,
-                TerminalReason = lease.ExitCode == ExitCodes.SlotTimeout ? "slot-admission-deadline-exceeded" : null,
+                TerminalReason = diskRefusal is not null ? CheckpointDiskSpace.LowReason
+                    : lease.ExitCode == ExitCodes.SlotTimeout ? "slot-admission-deadline-exceeded" : null,
                 ExecutedSeconds = 0,
                 WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds,
                 Line = CheckpointLine.Format(new CheckpointLineModel
@@ -760,7 +785,6 @@ public sealed class RunScheduler
 
         admittedAt = _buildTimeProvider.GetTimestamp();
         cancellationToken.ThrowIfCancellationRequested();
-        var build = spec.IsCommand ? null : request.Manifest.Builds.First(item => item.Id == spec.Build);
         var rowSource = request.SourceGuard?.Copy(spec.IsCommand ? "notApplicable" : "unknown") ?? new SourceEvidence();
         bool Boundary()
         {

@@ -14,6 +14,18 @@ setlocal
 for %%I in ("%~dp0..") do set "root=%%~fI"
 set "cache=%root%\bin-launcher\antiphon-scripts"
 set "ANTIPHON_CLI_CHECK="
+if /i "%~1:%~2"=="checkpoints:row" goto :checkpoint_disk
+if /i "%~1:%~2"=="checkpoints:run" goto :checkpoint_disk
+if /i "%~1:%~2"=="checkpoints:start" goto :checkpoint_disk
+goto :launch
+
+:checkpoint_disk
+rem Measure before resolving or creating either bootstrap cache.
+set "ANTIPHON_CHECKPOINT_ENTRY_ROOT=%root%"
+powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$paths=@($env:ANTIPHON_CHECKPOINT_ENTRY_ROOT,(Get-Location -PSProvider FileSystem).ProviderPath,[IO.Path]::GetTempPath()); foreach($path in $paths) { try { $free=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($path)).AvailableFreeSpace } catch { continue }; if($free -lt 20GB) { [Console]::Error.WriteLine(('checkpoints: workspace_disk_low: {0} has {1} bytes available. Free at least 20 GiB before retrying.' -f $path,$free)); exit 9 } }; exit 0"
+if errorlevel 1 exit /b 9
+
+:launch
 call :resolve
 if defined dll goto :run
 call :bootstrap || exit /b 9

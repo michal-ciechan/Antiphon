@@ -95,8 +95,8 @@ public static class Program
             return Validate(options, options.Get("repo-root") ?? runtime.RepoRoot ?? TryFindRoot(context) ?? context.Io.CurrentDirectory, runtime);
         var repo = options.Get("repo-root") ?? runtime.RepoRoot ?? RepoPaths.FindRoot(context: context);
         var output = runtime.Output ?? Console.Error;
-        if ((verb is "row" or "run" or "start" && CheckpointDiskSpace.Refuse(output, repo, Path.GetTempPath()))
-            || (verb == "row" && CheckpointDiskSpace.Refuse(output, ResultsRoot(options, repo))))
+        if ((verb is "row" or "run" or "start" && CheckpointDiskSpace.Refuse(output, runtime.DiskFreeBytes, repo, Path.GetTempPath()))
+            || (verb == "row" && CheckpointDiskSpace.Refuse(output, runtime.DiskFreeBytes, ResultsRoot(options, repo))))
             return ExitCodes.DiskLow;
         switch (verb)
         {

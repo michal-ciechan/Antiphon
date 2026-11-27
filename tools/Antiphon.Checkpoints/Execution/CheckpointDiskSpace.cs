@@ -3,30 +3,41 @@ namespace Antiphon.Checkpoints;
 internal static class CheckpointDiskSpace
 {
     private const long MinimumFreeBytes = 20L << 30;
+    public const string LowReason = "workspace_disk_low";
 
-    public static bool Refuse(TextWriter output, params string[] paths)
+    public static bool Refuse(TextWriter output, Func<string, long?>? measure, params string[] paths)
     {
-        foreach (var path in paths)
+        if (Diagnostic(measure, paths) is not { } message)
+            return false;
+        output.WriteLine(message);
+        return true;
+    }
+
+    public static string? Diagnostic(Func<string, long?>? measure, params string[] paths)
+    {
+        measure ??= AvailableBytes;
+        foreach (var path in paths.Distinct(StringComparer.Ordinal))
         {
-            var full = Path.GetFullPath(path);
-            var existing = full;
-            while (!Directory.Exists(existing) && Path.GetDirectoryName(existing) is { } parent)
-                existing = parent;
-            try
-            {
-                // DriveInfo accepts a directory on Unix. Use the existing ancestor to account
-                // for a results root that the checkpoint will create on a separate mount.
-                var drive = new DriveInfo(OperatingSystem.IsWindows() ? Path.GetPathRoot(full)! : existing);
-                var free = drive.AvailableFreeSpace;
-                if (free >= MinimumFreeBytes)
-                    continue;
-                output.WriteLine($"checkpoints: workspace_disk_low: {path} has {free} bytes available. Free at least 20 GiB before retrying.");
-                return true;
-            }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            catch (ArgumentException) { }
+            if (measure(path) is long free && free < MinimumFreeBytes)
+                return $"checkpoints: {LowReason}: {path} has {free} bytes available. Free at least 20 GiB before retrying.";
         }
-        return false;
+        return null;
+    }
+
+    private static long? AvailableBytes(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var existing = full;
+        while (!Directory.Exists(existing) && Path.GetDirectoryName(existing) is { } parent)
+            existing = parent;
+        try
+        {
+            // The existing ancestor accounts for a destination on a separate mount.
+            return new DriveInfo(OperatingSystem.IsWindows() ? Path.GetPathRoot(full)! : existing).AvailableFreeSpace;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
     }
 }

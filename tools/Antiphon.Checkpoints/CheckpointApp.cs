@@ -225,6 +225,8 @@ public static class CheckpointApp
                 WorkingDirectory = repo,
                 State = state,
                 Slots = slots,
+                DiskFreeBytes = runtime.DiskFreeBytes,
+                DiskDiagnostic = Note,
                 Commit = request.Commit,
                 KnownFlaky = request.KnownFlaky.Count > 0 ? request.KnownFlaky : manifest.Rerun.KnownFlaky,
                 Width = width,
@@ -641,7 +643,7 @@ public static class CheckpointApp
         }
 
         var resultsPreview = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
-        if (CheckpointDiskSpace.Refuse(output, resultsPreview))
+        if (CheckpointDiskSpace.Refuse(output, runtime.DiskFreeBytes, resultsPreview))
             return new StartResult(ExitCodes.DiskLow, "");
 
         var writeRoots = new List<string> { resultsPreview };
