@@ -172,7 +172,12 @@ namespace Antiphon.Nightly
         /// launch returns the executed row (result, exitCode, trx, ...) for a chunk.
         /// </summary>
         public static RcIncrementalExecution Execute(NightlyRunOptions run, IReadOnlyList<RcPlannedChunk> roster, string attemptDirectory, Func<RcPlannedChunk, IDictionary> launch,
-            string platform = null)
+            string platform = null) =>
+            Execute(run, roster, attemptDirectory, launch, platform, deferFullFallback: false);
+
+        // A caller with a prepared dispatch can handle a Full selection itself, including recording its invariant prefix.
+        internal static RcIncrementalExecution Execute(NightlyRunOptions run, IReadOnlyList<RcPlannedChunk> roster, string attemptDirectory,
+            Func<RcPlannedChunk, IDictionary> launch, string platform, bool deferFullFallback)
         {
             var answer = new RcIncrementalExecution();
             // The qualification's own scope: a carried receipt must have run on this platform, architecture and profile.
@@ -208,7 +213,7 @@ namespace Antiphon.Nightly
             if (inventory.Refusal.Length > 0) return Refuse(answer, "incremental-plan-stale:" + inventory.Refusal);
             if (roster.Any(chunk => chunk.RequiresFreshInvariantExecution)
                 && inventory.Rows.Any(row => !RcChunkReceipt.IsDigest(PsValue.Str(row["contentDigest"]))))
-                return Execute(FullFallback(run), roster, attemptDirectory, launch, platform);
+                return deferFullFallback ? answer : Execute(FullFallback(run), roster, attemptDirectory, launch, platform);
             Directory.CreateDirectory(attemptDirectory);
             var planPath = Path.Combine(attemptDirectory, "incremental-plan.json");
             var digestPath = planPath + ".sha256";

@@ -272,7 +272,7 @@ namespace Antiphon.Nightly
                     var receipt = CopyRow(row);
                     receipt["chunk"] = planned.Id;
                     return receipt;
-                }, state.Platform);
+                }, state.Platform, deferFullFallback: true);
             if (execution.Receipts.Count > 0)
             {
                 // A carried or resumed chunk contributes its sealed receipt to the summary. Keep the

@@ -518,12 +518,17 @@ namespace Antiphon.Nightly
                             {
                                 dispatchFailure = null;
                                 var execution = NightlyDispatch.RunIncremental(state, runner, selectedSuites, incremental);
-                                if (execution.Refusal.Length > 0 || !execution.AllGreen)
+                                if (execution.CoverageScope == "Full")
+                                {
+                                    coverageScope = "Full";
+                                    NightlyDispatch.RunPrepared(state, runner.Steps(), state.DispatchSchedule);
+                                }
+                                else if (execution.Refusal.Length > 0 || !execution.AllGreen)
                                 {
                                     state.TestsPassed = false;
                                     throw new NightlyRefusal(execution.Refusal.Length > 0 ? execution.Refusal : "incremental-tests-incomplete");
                                 }
-                                coverageScope = execution.CoverageScope;
+                                else coverageScope = execution.CoverageScope;
                             }
                         }
                         finally
