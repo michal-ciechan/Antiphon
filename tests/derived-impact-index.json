@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 159,
+      "classes": 161,
       "reason": "cap",
-      "owed": 134,
+      "owed": 136,
       "first": [
         "CardFilePrivacyOwnershipTests",
         "CardFilePrivacyPersistenceTests",
@@ -2245,9 +2245,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 67,
+      "classes": 68,
       "reason": "cap",
-      "owed": 42,
+      "owed": 43,
       "first": [
         "NightlyRunParityTests",
         "NightlyRunTests",
@@ -2551,6 +2551,15 @@
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
         "MechanicalPcRehearsalTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/TestTiming.cs",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
@@ -26449,6 +26458,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/ProvenReplayWorld.cs",
+      "classes": [
+        "IncrementalSelectionSoundnessTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/PwshPrivateCacheTests.cs",
       "classes": [
         "LinuxOnlyExpectedSkipClosureTests"
@@ -26664,6 +26679,13 @@
       "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactRuntimeTests.cs",
       "classes": [
         "ReleaseImpactRuntimeTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactTypeProofFixture.cs",
+      "classes": [
+        "RcProjectSelectionTests",
+        "ReleaseImpactRelationTests"
       ]
     },
     {
@@ -27407,6 +27429,7 @@
         "ControlledLandingRemovalReadTests",
         "ExpectationObservationAdapterTests",
         "InterimVerificationReadinessTests",
+        "RcProjectSelectionTests",
         "ReleaseImpactEnvelopeTests",
         "StaleWorkingTranscriptWatchdogTests"
       ]
@@ -29579,13 +29602,13 @@
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
         "ProjectReadinessCollationTests",
+        "RcProjectSelectionTests",
         "ReleaseImpactEnvelopeTests",
         "RequestedModelAliasDatabaseMigrationTests",
         "ReviewEngineDatabaseMigrationTests",
         "TestTimingChokePointTests",
         "TestTimingRecorderTests",
         "TimingProbeTests",
-        "VolumeRetirementReceiptTests",
         "WorktreeNoFollowDeleteTests"
       ]
     },
@@ -29672,9 +29695,11 @@
         "ImpactedClassesCensusTests",
         "ImpactedClassesSelectorTests",
         "IncrementalSelectionSoundnessTests",
+        "LandGeneratedArtifactTests",
         "PostLandEarlyWarningTests",
         "RcInputManifestTests",
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "RcProjectSelectionTests"
       ]
     },
     {
