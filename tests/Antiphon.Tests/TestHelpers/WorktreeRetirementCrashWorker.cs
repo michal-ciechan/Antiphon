@@ -1,4 +1,5 @@
 using System.Text.Json;
+using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -19,6 +20,20 @@ internal static class WorktreeRetirementCrashWorker
     ];
 
     internal sealed record Request(string Root, Guid TaskId, string Cut, string Ready);
+
+    [Before(TestDiscovery)]
+    public static async Task RunBeforeDiscoveryAsync()
+    {
+        // These children use the parent's database and exit from the worker. They never run
+        // the selected test. Enter the worker before discovering the whole test assembly.
+        if (TestWorkerModes.Requested() is not { } worker || worker.Mode.Marker != Marker)
+            return;
+
+        ProductionRunnerGuard.PointEveryProgramBootAwayFromTheProductionRunner();
+        PtyBackendEnvGuard.ClearInheritedPtyBackend();
+        LibGit2ConfigIsolation.IsolateLibGit2Config();
+        await TestWorkerModes.RunAndExitAsync(worker.Mode, worker.Payload);
+    }
 
     internal static async Task RunAsync(string encoded)
     {
