@@ -7,6 +7,8 @@ Full task base: 561591c562f31dd4fe0fc8f940f2ea7e947ce965. The Code brief specifi
 - R-1: Keep affected prompt contracts and size budgets green, and run the instruction-file contracts.
 - R-2: Run the standing Final guards and live-gate companion.
 - R-3: Resolve the impacted-class rows, compare evidence to the full task base, and check mergeability.
+- V-3: A new Blocked report and its caller note commit together with parking disabled. The caller receives the complete structured note once after ordinary settlement, a crash after commit or a failed enqueue. A caller with an open turn receives it after TurnEnd.
+- V-4: A stop uses the observed generation, owner, last task revision and TurnEnd. Reassignment and attachment prevent a runner command. Success confirms the same exited generation and no open task.
 
 ### Checkpoints
 
@@ -23,6 +25,11 @@ Full task base: 561591c562f31dd4fe0fc8f940f2ea7e947ce965. The Code brief specifi
 | CP-9 | S3 | CP-2 | report-prompt-contract | `/*/*/DelegationReportFormatterTests/(a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt*)\|(a_blocked_note_without_authority_names_reply_not_continue*)\|(the_stage_handoff_contract_is_at_most_700_characters*)\|(the_handoff_block_paragraph_appears_for_every_stage_role*)` | R-1 | All four methods represented and pass | 8 | 1 | true |
 | CP-10 | S4 | `tests/Antiphon.Tests -> bin-2ae5-note-red/` | blocked-note-witness | `/*/*/AgentTaskReplyIntegrationTests/Structured_blocked_note_reaches_the_caller_once_with_parking_disabled` | V-3 | Missing durable Blocked obligation | 6 | 3 | true |
 | CP-11 | S4 | CP-10 | conditional-stop-witness | `/*/*/VerifiedSessionStopTests/Stop_binds_to_the_verified_unattached_and_unowned_seat` | V-4 | Unguarded stop reaches the runner or returns without proof | 3 | 2 | true |
+| CP-12 | S5 | CP-2 | named-methods | `/*/*/(LiveLaneInventoryTests*)\|(LandGraphLandRefreshTests*)\|(AdditiveMigrationRuleWitnessTests*)\|(DelegationReportFormatterTests*)\|(AgentTaskReplyIntegrationTests*)\|(BlockedReplyReportRetentionTests*)\|(VerifiedSessionStopTests*)\|(AgentTaskPoolTests*)/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)\|(instructions_say_the_land_path_refreshes_and_bare_update_stays_forbidden*)\|(stage_code_runs_the_downgrade_selector*)\|(stage_review_runs_the_downgrade_selector*)\|(stage_test_design_requires_existing_tests_affected*)\|(orchestrator_skill_requires_the_migration_blast_radius*)\|(a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt*)\|(a_blocked_note_without_authority_names_reply_not_continue*)\|(the_stage_handoff_contract_is_at_most_700_characters*)\|(the_handoff_block_paragraph_appears_for_every_stage_role*)\|(Structured_blocked_note_reaches_the_caller_once_with_parking_disabled*)\|(a_marked_blocked_parent_note_uses_reason_marked_blocked*)\|(unmarked_waiting_parent_note_carries_the_structured_blocked_lines*)\|(a_blocked_delegate_keeps_its_session_and_agent*)\|(Question_after_reply_notifies_the_caller_once*)\|(Question_note_receipt_binds_to_its_producer_settlement*)\|(First_unmarked_question_without_retained_report_is_unchanged*)\|(Stop_binds_to_the_verified_unattached_and_unowned_seat*)\|(a_queued_task_takes_over_a_warm_agent_in_its_directory*)` | V-3, V-4, R-1, R-2 | All 20 named methods represented and passing | 34 | 12 | true |
+| CP-13 | S5 | CP-2 | prompt-and-guard-classes | `/*/*/(AgentContextCheckTests*)\|(AgentContextContractTests*)\|(AgentPresetsTests*)\|(BlockedTaskParkProjectionTests*)\|(ChannelContractsTests*)\|(CheckpointManifestDocumentationTests*)\|(CheckpointRepeatDocumentationTests*)\|(CommitOnSettleDocumentationTests*)\|(D2AdvisoryDocumentationTests*)\|(InstructionBundleTests*)\|(InstructionFileStampTests*)\|(InstructionFragmentTests*)\|(KeepSixDocumentationTests*)\|(OrchestratorBundleOwnershipTests*)\|(OrchestratorInstructionsGuidanceTests*)\|(PerTaskFinalUnitLaneWitnessTests*)\|(PostLandMutationContractTests*)\|(PostLandRetrospectiveContractTests*)\|(RepairSourceDocumentationTests*)\|(ReviewRoundsPolicyTests*)\|(ReviewTestQualityChecklistWitnessTests*)\|(RunnerBranchContractDocumentationTests*)\|(RunnerDefaultGuidanceTests*)\|(SequentialOverrideWordingTests*)\|(StableBuildOutputDocumentationTests*)\|(StandingPipelinePolicyDocumentationTests*)\|(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)\|(ProcessSpawnLimitTests*)\|(DelegationQuestionDetectionTests*)\|(ServerGitProcessTests*)/*` | V-1, R-1, R-2, R-3 | All named classes represented and passing | 40 | 8 | true |
+| CP-14 | S5 | CP-2 | input-delivery-impact | `/*/*/(AgentTaskMidTurnRefineTests*)\|(AttentionServiceTests*)\|(CodexCliObservationGapTests*)\|(GrokRulesCompactionRecoveryTests*)\|(GrokRulesReadyOrderingTests*)\|(LandRefusalDeliveryWitnessTests*)\|(PhoneHomeOutageMentionTests*)\|(SessionMessageQueuePhoneHomeDropTests*)\|(SessionQueueAbandonTests*)\|(StandingSessionSwitchConcurrencyTests*)/*` | R-3 | All ten named classes represented and passing | 10 | 8 | true |
+| CP-15 | S5 | `tests/Antiphon.Server.Git.Tests -> bin-2ae5-git-final/` | git-start-site-impact | `/*/*/(GitIndexLockTests*)\|(ServerGitAssemblyTests*)/*` | R-3 | Both named classes represented and passing | 2 | 3 | true |
+| CP-16 | S5 | `tests/Antiphon.E2E -> bin-2ae5-contracts-final/` | api-contract-impact | `/*/*/ContractSnapshotTests/*` | R-3 | All five contract methods pass in the shared test app | 5 | 4 | true |
 
 ### Final rerun
 
@@ -36,4 +43,15 @@ The exact `PlanCheckpointClassSelectionGuardTests.Plan_checkpoint_rows_select_de
 
 CP-1 and CP-2 each take one cold `Antiphon.Tests` build. CP-3, CP-4 and CP-7 through CP-9 reuse the Final build. The checkpoint hash pin edit matches `spawn-limit-rosters`, which selects a source census in three projects. CP-5 and CP-6 each build their own project and run only the two census methods. The expected cold-build cost is about 14 minutes for `Antiphon.Tests` and a few minutes for each census project. The table estimates test execution on those builds separately from slot waits. The changes affect standing instructions and generated guidance text. They select bounded contract and guard tests with no full-assembly or native Windows run. The curated `test-lane-category` and `test-fixture-cleanup` matches are covered by CP-3.
 
-No positive controls were bound for this task. SourceLanding Mutation owns discovery.
+The current Final selection runs CP-5, CP-6 and CP-12 through CP-16 by project. CP-12
+combines the exact CP-4 and CP-7 through CP-9 methods with the new repair witnesses.
+CP-13 combines the CP-2 and CP-3 classes with the changed question and Git-process contracts.
+The earlier rows retain their historical selections. Consolidation reduces broker turns and
+keeps each project's checkpoint finalization independent. Inspect each operand in the TRX.
+
+The invariant is that a receipt binds one settlement or one session generation. The
+matched impact rows name bounded classes. The API contract row runs five methods
+against a shared isolated app. Nightly and rc own the full Unit lane.
+
+The [unbound Mutation candidate](../mutations/2026-11-27-standing-operator-rule-candidate.md)
+lists the pending controls. SourceLanding Mutation binds them to the landed snapshot.

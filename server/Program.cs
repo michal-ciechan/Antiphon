@@ -660,6 +660,8 @@ try
     builder.Services.AddScoped<OutputDistillerProvisioner>();
     builder.Services.AddSingleton<OutputDistillationQueue>();
     builder.Services.AddSingleton<CompletionNoteFlushQueue>();
+    builder.Services.AddSingleton<SessionTerminalAttachments>();
+    builder.Services.AddScoped<VerifiedSessionStopService>();
     builder.Services.AddSingleton<SpecialistFailureQueue>();
     builder.Services.AddScoped<OutputDistillationService>();
     builder.Services.AddScoped<DiagnoseService>();

@@ -16,14 +16,11 @@ A delegate that reports `StoppedBeforeFirstPrompt`, or a create/retry that comes
 `Blocked` naming that code, is a launch incident — not a failed work attempt.
 Report it and choose an eligible alternate. The blocked row bars retry of the same kind.
 
-A delegate that fails with `AuthenticationRequired` or `CompletedWithoutProgress`, or a
-create/retry that comes back `Blocked` naming those codes, is a terminal
-launch/completion incident. Surface the blocked or failed item, inspect the recorded
-terminal evidence (API error text, worktree path, zero-progress facts), and choose an
-allowed recovery explicitly under routing policy. Do not paste, log, or repeat credentials.
-`AuthenticationRequired` from a Grok pool launch means this host needs
-`grok login` (the OAuth store under `GROK_HOME` has no usable session). Do not retry
-Grok. Do not switch profile to hide it.
+Treat `AuthenticationRequired` and `CompletedWithoutProgress` as terminal launch or
+completion incidents, including on a `Blocked` create/retry. Report the recorded API,
+worktree or progress evidence and choose recovery under routing policy. Do not paste, log, or repeat credentials.
+A Grok pool authentication failure needs host `grok login` under `GROK_HOME`.
+Do not retry Grok or switch profiles to hide it.
 
 A pipeline report closes with `--- next stage ---` above the report token. Read the parsed
 `next=` and `handoff:` in the completion note to dispatch. Resolve `next=decide` under the
@@ -43,9 +40,7 @@ Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release
 Resolve it or surface the hard stop before leaving. At capacity read GET /api/session-runners/{id}/slots:
 a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.
 
-Missing `[task … done]` does not prove a delegate is running: completion/check notes are
-WhenIdle and can wait. Read the task row or `delegate status`; the note may arrive late
-and can withhold the report.
+A WhenIdle completion or Check note can arrive late or omit the report. Read the task row or `delegate status`.
 
 Child work uses `scripts/antiphon delegate`: pool by default, `--on-agent <taskId>` to retain context,
 `--agent <name>` for a named standing child. Never `POST /api/agents` per feature or invent
@@ -84,7 +79,7 @@ Never edit it.
 Operator standing operating rules: docs/orchestration-loop.md#standing-operating-rules. Failures get
 a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete report Blocked only by runner sync; for a delivery warning with a missing report, Reply for the full report. Own land-graph drift refreshes, never asks: #land-graph-refresh.
 
-Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts. Follow its verified stop rule for one session. Runner-wide --kill-sessions is human-only.
+Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts. For one session, use its conditional stop and exclude attached seats. Runner-wide --kill-sessions is human-only.
 
 Model-tier names are **not AgentKind values**. `--kind` selects `ClaudeCode`, `Grok`,
 or `Codex`; `--level` selects `Frontier`, `High`, `Medium`, or `Low`. Never pass a
@@ -118,10 +113,8 @@ condition and may page the configured operator if no answer arrives by its state
 Steer Queued, Dispatched or Working tasks with refine <taskId> "one sentence".
 Use reply for a Blocked task; refine returns 409 there.
 
-Work needing its own decomposition goes to a sub-orchestrator (--orchestrator).
-
-Fresh workers already use a worktree; --shared opts out of that default.
-Another repo: a delegate with --dir.
+Use --orchestrator for work needing decomposition. Workers use a worktree by default.
+Use --shared for the current checkout and --dir for another repo.
 
 Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
 Server :17202 /api/..., runner :17204 /sessions/... (no /api). No GET /api/sessions or /api/board;

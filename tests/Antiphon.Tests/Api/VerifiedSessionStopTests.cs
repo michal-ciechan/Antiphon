@@ -6,6 +6,7 @@ using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
@@ -16,6 +17,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -28,7 +30,10 @@ public sealed class VerifiedSessionStopTests
     [Test]
     [Arguments("reassigned")]
     [Arguments("attached")]
+    [Arguments("browser")]
     [Arguments("idle")]
+    [Arguments("unconfirmed")]
+    [Arguments("new-generation")]
     public async Task Stop_binds_to_the_verified_unattached_and_unowned_seat(string scenario)
     {
         var runner = new FakeSessionRunnerClient();
@@ -39,18 +44,19 @@ public sealed class VerifiedSessionStopTests
         });
         harness.Runtime.TryRemove(harness.SessionId, out _);
         var id = harness.SessionId;
-        var attached = scenario == "attached";
+        var nativeAttach = scenario == "attached";
+        var unowned = scenario is "idle" or "unconfirmed" or "new-generation";
         await using var db = harness.CreateObserverContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == id);
-        session.AgentKind = AgentKind.Codex;
-        session.SessionBackend = attached ? SessionBackend.Herdr : SessionBackend.PtyHost;
+        session.AgentKind = nativeAttach ? AgentKind.ClaudeCode : AgentKind.Codex;
+        session.SessionBackend = nativeAttach ? SessionBackend.Herdr : SessionBackend.PtyHost;
         var agent = await db.Agents.SingleAsync(a => a.Id == harness.AgentId);
         agent.IsPoolDelegate = true;
         agent.Status = AgentStatus.Idle;
         agent.PoolIdleSince = session.StartedAt;
         agent.BoardId = null;
         agent.RemoteControlEnabled = false;
-        if (scenario == "idle")
+        if (unowned)
             agent.PersistentSessionId = null;
         db.TranscriptEntries.Add(new TranscriptEntry
         {
@@ -61,9 +67,9 @@ public sealed class VerifiedSessionStopTests
         await db.Entry(session).ReloadAsync();
         var generation = session.StartedAt;
         runner.GetOverride = (_, _) => Task.FromResult(new SessionRunnerSessionDto(id, 123, generation,
-            runner.KillCalls + runner.KillGenerationCalls.Count == 0 ? "Running" : "Exited",
-            null, AgentExitReason.Unknown, 0, Backend: attached ? SessionBackends.Herdr : SessionBackends.PtyHost,
-            TranscriptBound: true, HerdrOrigin: attached ? "attached" : null, AcceptedStartedAt: generation));
+            scenario == "unconfirmed" || runner.KillCalls + runner.KillGenerationCalls.Count == 0 ? "Running" : "Exited",
+            null, AgentExitReason.Unknown, 0, Backend: nativeAttach ? SessionBackends.Herdr : SessionBackends.PtyHost,
+            TranscriptBound: true, HerdrOrigin: nativeAttach ? HerdrPaneOrigins.Attached : null, AcceptedStartedAt: generation));
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -73,13 +79,33 @@ public sealed class VerifiedSessionStopTests
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
         builder.Services.AddScoped(_ => harness.Scope.ServiceProvider.GetRequiredService<AgentSessionService>());
+        builder.Services.AddScoped(_ => harness.CreateObserverContext());
+        builder.Services.AddSingleton(harness.Runtime);
+        builder.Services.AddSingleton(harness.Queue);
+        builder.Services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        builder.Services.AddSingleton<SessionTerminalAttachments>();
+        builder.Services.AddScoped<VerifiedSessionStopService>();
         await using var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
         app.MapGroup("/api/sessions").MapSessionKill();
         await app.StartAsync();
+        if (scenario == "browser")
+            app.Services.GetRequiredService<SessionTerminalAttachments>().TryAttach(id, "open-terminal").ShouldBeTrue();
         using var client = app.GetTestClient();
-        var path = $"/api/sessions/{id}/kill?expectedGeneration={Uri.EscapeDataString(generation.ToString("O"))}&expectedTurnEndSequence=1";
-        if (scenario != "idle")
+        await using (var inspection = app.Services.CreateAsyncScope())
+        {
+            var snapshot = await inspection.ServiceProvider.GetRequiredService<VerifiedSessionStopService>()
+                .InspectAsync(id, CancellationToken.None);
+            snapshot.Generation.ShouldBe(generation);
+            snapshot.OwnerId.ShouldBe(unowned ? null : agent.Id);
+            snapshot.OpenTaskId.ShouldBeNull();
+            snapshot.TurnEndSequence.ShouldBe(1L);
+            snapshot.Attachment.ShouldBe(scenario is "attached" or "browser" ? "Attached" : "Unattached");
+        }
+        var expected = scenario == "new-generation" ? generation.AddSeconds(-1) : generation;
+        var path = $"/api/sessions/{id}/kill?expectedGeneration={Uri.EscapeDataString(expected.ToString("O"))}&expectedTurnEndSequence=1";
+        if (!unowned)
             path += $"&expectedOwnerId={agent.Id}";
 
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -98,8 +124,6 @@ public sealed class VerifiedSessionStopTests
             };
             newTask.RootTaskId = newTask.Id;
             db.AgentTasks.Add(newTask);
-            agent.Status = AgentStatus.Running;
-            agent.PoolIdleSince = null;
             await db.SaveChangesAsync(bound.Token);
             var stop = client.PostAsync(path, null, bound.Token);
             var holder = ((NpgsqlConnection)db.Database.GetDbConnection()).ProcessID;
@@ -145,7 +169,10 @@ public sealed class VerifiedSessionStopTests
             else
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-                runner.KillGenerationCalls.ShouldBeEmpty();
+                if (scenario == "unconfirmed")
+                    runner.KillGenerationCalls.ShouldBe([(id, generation)]);
+                else
+                    runner.KillGenerationCalls.ShouldBeEmpty();
                 session.Status.ShouldBe(SessionStatus.Running);
             }
             runner.KillCalls.ShouldBe(0);

@@ -17,15 +17,23 @@ public class AntiphonHub : Hub
     private static readonly Serilog.ILogger _logger = Log.ForContext<AntiphonHub>();
     private readonly IAuditService _auditService;
     private readonly AgentChannelService _agentChannelService;
+    private readonly SessionTerminalAttachments _attachments;
 
-    public AntiphonHub(IAuditService auditService, AgentChannelService agentChannelService)
+    public AntiphonHub(IAuditService auditService, AgentChannelService agentChannelService,
+        SessionTerminalAttachments attachments)
     {
         _auditService = auditService;
         _agentChannelService = agentChannelService;
+        _attachments = attachments;
     }
 
     public async Task JoinGroup(string groupName)
     {
+        var session = SessionGroupId(groupName);
+        if (session is Guid id && !_attachments.TryAttach(id, Context.ConnectionId))
+            throw new HubException("The session is being stopped.");
+        // If adding the group fails, retain the attachment until LeaveGroup or disconnect.
+        // A failed repeat join cannot prove an earlier membership is gone.
         await Groups.AddToGroupAsync(Context.ConnectionId, groupName);
         _logger.Information("Connection {ConnectionId} joined group {Group}", Context.ConnectionId, groupName);
     }
@@ -33,6 +41,7 @@ public class AntiphonHub : Hub
     public async Task LeaveGroup(string groupName)
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, groupName);
+        if (SessionGroupId(groupName) is Guid id) _attachments.Detach(id, Context.ConnectionId);
         _logger.Information("Connection {ConnectionId} left group {Group}", Context.ConnectionId, groupName);
     }
 
@@ -72,6 +81,7 @@ public class AntiphonHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        _attachments.Disconnect(Context.ConnectionId);
         _logger.Information("Client disconnected: {ConnectionId}, Exception: {Exception}",
             Context.ConnectionId, exception?.Message);
 
@@ -90,4 +100,8 @@ public class AntiphonHub : Hub
 
         await base.OnDisconnectedAsync(exception);
     }
+
+    private static Guid? SessionGroupId(string groupName) =>
+        groupName.StartsWith("session-", StringComparison.Ordinal)
+        && Guid.TryParseExact(groupName.AsSpan("session-".Length), "D", out var id) ? id : null;
 }

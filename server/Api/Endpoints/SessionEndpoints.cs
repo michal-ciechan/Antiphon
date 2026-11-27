@@ -136,6 +136,10 @@ public static class SessionEndpoints
         sessions.MapExpectationHoldRelease();
         sessions.MapQueuedMessageAbandon();
 
+        sessions.MapGet("/{id:guid}/stop-preconditions", async (
+            Guid id, VerifiedSessionStopService stops, CancellationToken cancellationToken) =>
+            Results.Ok(await stops.InspectAsync(id, cancellationToken)));
+
         sessions.MapPost("/{id:guid}/resize", async (
             Guid id,
             ResizeSessionRequest request,
@@ -175,10 +179,29 @@ public static class SessionEndpoints
 
     public static RouteHandlerBuilder MapSessionKill(this IEndpointRouteBuilder sessions) =>
         sessions.MapPost("/{id:guid}/kill", async (
+            HttpContext http,
             Guid id,
+            DateTime? expectedGeneration,
+            Guid? expectedOwnerId,
+            Guid? expectedLastTaskId,
+            Guid? expectedLastTaskRevision,
+            long? expectedTurnEndSequence,
             AgentSessionService service,
+            VerifiedSessionStopService stops,
             CancellationToken cancellationToken) =>
         {
+            var query = http.Request.Query;
+            if (http.Request.Headers.ContainsKey(AgentTaskEndpoints.TokenHeader)
+                || query.ContainsKey(nameof(expectedGeneration)) || query.ContainsKey(nameof(expectedOwnerId))
+                || query.ContainsKey(nameof(expectedLastTaskId)) || query.ContainsKey(nameof(expectedLastTaskRevision))
+                || query.ContainsKey(nameof(expectedTurnEndSequence)))
+            {
+                if (expectedGeneration is not { } generation || expectedTurnEndSequence is not long sequence || sequence <= 0
+                    || (expectedLastTaskId is null) != (expectedLastTaskRevision is null))
+                    throw new ValidationException("stopPreconditions", "Supply the generation and TurnEnd sequence, and pair the last task ID with its revision.");
+                return Results.Ok(await stops.StopAsync(id, new(generation, expectedOwnerId,
+                    expectedLastTaskId, expectedLastTaskRevision, sequence), cancellationToken));
+            }
             await service.KillAsync(id, SessionTerminationSource.OperatorRequest, cancellationToken);
             return Results.NoContent();
         });

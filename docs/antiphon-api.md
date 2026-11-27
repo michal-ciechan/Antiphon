@@ -312,7 +312,14 @@ POST   /api/sessions/{id}/messages/{messageId}/send-now
 POST   /api/sessions/{id}/expectation-hold/release  { "reason": "..." } (required); audited release of an expectation-watchdog composer hold (CARD-0650). Needs X-Antiphon-Operator-Token (403 operator_token_required otherwise); the audit names the authenticated operator. Types nothing; 422 without a reason, 404 unknown session, 200 with the released nudge ids (empty when nothing held).
 GET    /api/expectation-watchdog?boardId=<guid>&skip=0&take=20  read-only CARD-0650 status: directive/config faults, scan freshness, lane counts, paged episodes and nudge receipt/answer/operator evidence. boardId is required; task and capability tokens are constrained to their board/project. No channel address, transcript body or send/ACK route is returned.
 POST   /api/sessions/{id}/resize  |  /resume  |  /kill
+GET    /api/sessions/{id}/stop-preconditions   generation, task and owner binding, TurnEnd and attachment evidence
 ```
+
+The [verified single-session stop](orchestration-loop.md#verified-single-session-stop) uses
+`POST /api/sessions/{id}/kill` with `expectedGeneration`, `expectedTurnEndSequence` and
+the non-null `expectedOwnerId`, `expectedLastTaskId` and `expectedLastTaskRevision` query
+parameters. Success returns the runner-confirmed `Exited` generation and `openTaskId: null`.
+HTTP 409 means the preconditions or the exit proof failed.
 
 The delivery queue lists Pending rows and Sent rows with a null verdict and at least
 one attempt. `deliveryUnconfirmed`, `deliveryAttempts`, `lastDeliveryStartedAt` and

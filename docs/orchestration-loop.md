@@ -93,20 +93,28 @@ four-hour drain cap, under [that procedure](docker-stack.md#staged-server2-rolli
 <a id="verified-single-session-stop"></a>
 ### Verified single-session stop (operator, 2026-11-27)
 
-An orchestrator may stop one session after verifying all of the following immediately before
-calling `POST /api/sessions/{id}/kill` or using the authorized single-slot release path.
+An orchestrator may stop one session through the conditional `POST /api/sessions/{id}/kill`.
 
-1. The session still matches the current row in `GET /api/session-runners/{runnerId}/slots`.
-   It has no open task (`openTaskId: null`), and `GET /api/agent-tasks/{taskId}` confirms
-   its last task is terminal. Cross-check the session owner in `GET /api/agents` to verify that
-   it is neither a standing agent nor an AlwaysOn Check seat.
-2. The current transcript ends in `TurnEnd` with no subsequent activity. Read it with `GET /api/sessions/{id}/transcript?since={sequence}`.
-3. Verify that the task worktree is clean and its HEAD is in published history using a fresh
-   remote ref or the existing publication audit. There must be no unpublished work.
+1. Match the session to the current `GET /api/session-runners/{runnerId}/slots` row and read
+   `GET /api/sessions/{id}/stop-preconditions`. Require `runnerStatus: Running`, `openTaskId: null`,
+   `protectedOwner: false` and affirmative `attachment: Unattached`. Exclude operator-attached seats and open browser
+   terminals. Herdr panes and unobservable remote-control terminals lack the required evidence.
+   Cross-check any owner in `GET /api/agents` and exclude standing and AlwaysOn Check seats.
+2. Confirm any last task is terminal in `GET /api/agent-tasks/{taskId}`. Check its worktree is clean
+   and its HEAD is published using a fresh remote ref or publication audit. For a seat without a
+   last task, establish its workspace custody and absence of unpublished work before proceeding.
+3. Read `GET /api/sessions/{id}/transcript?since={sequence}` and verify its latest entry is
+   `TurnEnd` with no later activity. Re-read the preconditions and skip the stop if anything changed.
+   Pass `generation`, `ownerId`, `lastTaskId`, `lastTaskRevision` and `turnEndSequence` as
+   `expectedGeneration`, `expectedOwnerId`, `expectedLastTaskId`, `expectedLastTaskRevision`
+   and `expectedTurnEndSequence` query parameters. Omit null IDs. The server checks the
+   binding under the dispatch fence and returns 409 on a change.
+4. Require the receipt to show the same generation, `status: Exited` and `openTaskId: null`.
+   Confirm the slot state again. Record the session, slot, task, verification time and
+   outcome on the card or in the report.
 
-Record the session ID, slot row, task ID, verification time and outcome on the card or in the
-report. Skip the stop if any check is unknown or changes. Runner-wide `--kill-sessions`
-remains human-only.
+Unknown evidence or a refusal requires fresh verification before any stop. The
+unconditional kill, operator slot release and runner-wide `--kill-sessions` remain human-only.
 
 ---
 
