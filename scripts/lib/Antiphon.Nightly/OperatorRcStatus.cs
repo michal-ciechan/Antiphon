@@ -28,6 +28,7 @@ namespace Antiphon.Nightly
             {
                 // The desktop default is fully qualified only on Windows. Explicit paths
                 // also let a host read a copied run using its own filesystem conventions.
+                var comparable = false;
                 if (!string.IsNullOrEmpty(logDir))
                 {
                     logDir = files.Path.TrimEndingDirectorySeparator(files.Path.GetFullPath(logDir));
@@ -115,10 +116,8 @@ namespace Antiphon.Nightly
                         schedule = null;
                     }
                     var platform = Text(state, "platform");
-                    var comparable = (scope == null || scope == "Full") &&
+                    comparable = (scope == null || scope == "Full") &&
                         (platform == null || platform.Equals("windows", StringComparison.OrdinalIgnoreCase));
-                    OperatorTrxStatus.Read(report, files, logDir, schedule, now, started, completed, comparable,
-                        () => PreviousRun(files, logDir, options.RcPreviousRunLogDir, errors), errors);
                 }
                 else
                 {
@@ -147,16 +146,17 @@ namespace Antiphon.Nightly
                     {
                         var active = ReadRecord(files, files.Path.Combine(dir, "active-chunk.json"), errors, required: false);
                         if (active == null) continue;
-                        var activeRun = Text(active, "runId");
-                        if (activeRun != null && activeRun != runId)
-                            errors.Add("rc active-chunk.json belongs to a different run.");
-                        else
-                            report["activeChunk"] = active;
+                        report["activeChunk"] = BindActive(active, runId, errors);
                         break;
                     }
                     if (report["activeChunk"] == null && completed == null)
                         errors.Add("rc active chunk unavailable.");
                 }
+
+                if (!string.IsNullOrEmpty(logDir))
+                    OperatorTrxStatus.PopulateReport(report, OperatorTrxStatus.Read(files, logDir, schedule,
+                        report["activeChunk"] as JsonObject, now, started, completed.HasValue, comparable,
+                        options.RcPreviousRunLogDir, errors, reportFailures: true));
 
                 if (string.IsNullOrEmpty(heartbeatPath))
                     errors.Add("rc supervisor heartbeat path unavailable.");
@@ -204,7 +204,7 @@ namespace Antiphon.Nightly
                 errors.Add("rc supervisor-heartbeat.json observation time is ahead of this host's clock.");
         }
 
-        private static string PreviousRun(IFileSystem files, string live, string previous, List<string> errors)
+        internal static string PreviousRun(IFileSystem files, string live, string previous, List<string> errors)
         {
             if (!string.IsNullOrEmpty(previous))
             {
@@ -255,7 +255,7 @@ namespace Antiphon.Nightly
             return candidates?.Name == "candidates" ? candidates.Parent?.FullName : null;
         }
 
-        private static IEnumerable<string> Directories(IFileSystem files, string root, string pattern)
+        internal static IEnumerable<string> Directories(IFileSystem files, string root, string pattern)
         {
             if (!files.Directory.Exists(root)) return Array.Empty<string>();
             return files.Directory.EnumerateDirectories(root, pattern, new EnumerationOptions
@@ -265,12 +265,20 @@ namespace Antiphon.Nightly
             });
         }
 
-        private static JsonObject ReadRecord(IFileSystem files, string path, List<string> errors, bool required = true)
+        internal static JsonObject ReadRecord(IFileSystem files, string path, List<string> errors, bool required = true)
         {
             var read = RcQualificationRecords.Read(files, path);
             if (read.Ok) return JsonNode.Parse(read.Record.Value.GetRawText()).AsObject();
             if (required || read.Status != "missing")
                 errors.Add("rc " + files.Path.GetFileName(path) + " unavailable (" + read.Reason + ").");
+            return null;
+        }
+
+        internal static JsonObject BindActive(JsonObject active, string runId, List<string> errors)
+        {
+            var activeRun = Text(active, "runId");
+            if (activeRun == null || activeRun == runId) return active;
+            errors.Add("rc active-chunk.json belongs to a different run.");
             return null;
         }
 

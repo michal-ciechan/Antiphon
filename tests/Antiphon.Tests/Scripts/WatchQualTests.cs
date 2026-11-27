@@ -124,13 +124,23 @@ public sealed class WatchQualTests
     private static string[] Lines(StringWriter writer) =>
         writer.ToString().Split('\n').Select(line => line.TrimEnd('\r')).Where(line => line.Length > 0).ToArray();
 
-    // Two outstanding chunks and one settled chunk: outstanding=2 completed=1 pointSeconds=300 (one wall, ratio 1).
-    private static string NewTimingRoot(MockFileSystem files)
+    private static (string Timing, string Live) PrepareEta(World world)
     {
+        var files = world.Files;
         var root = QualificationEtaTests.NewRoot(files);
-        QualificationEtaTests.WritePlan(files, root, "antiphon", """{"chunk":"a","plannedSeconds":100},{"chunk":"b","plannedSeconds":200},{"chunk":"c","plannedSeconds":50}""");
-        QualificationEtaTests.WriteTiming(files, root, "antiphon", "c", "complete", "2026-11-10T11:00:00.000Z", "2026-11-10T11:01:00.000Z", "50");
-        return root;
+        var logs = files.Path.Combine(root, "candidates", "rc-2026-11-10-0123456789ab", "logs");
+        var live = files.Path.Combine(logs, "2026-11-10-1100-fixture");
+        var prior = files.Path.Combine(logs, "2026-11-09-1100-previous");
+        var timing = files.Path.Combine(logs, "timing-fixture");
+        files.Directory.CreateDirectory(timing);
+        QualificationEtaTests.WriteFixtureSchedule(files, live, "fixture", ["a", "b", "c"]);
+        QualificationEtaTests.WriteFixtureSchedule(files, prior, "previous", ["a", "b", "c"]);
+        QualificationEtaTests.WriteFixtureTrx(files, prior, "a", 100);
+        QualificationEtaTests.WriteFixtureTrx(files, prior, "b", 200);
+        QualificationEtaTests.WriteFixtureTrx(files, prior, "c", 50);
+        QualificationEtaTests.WriteFixtureTrx(files, live, "c", 50);
+        files.File.SetLastWriteTimeUtc(files.Path.Combine(live, "suite-c.trx"), Start.UtcDateTime.AddMinutes(-1));
+        return (timing, live);
     }
 
     private static string Repo(params string[] parts) => Path.Combine(new[] { DelegateScriptRunner.RepoRoot }.Concat(parts).ToArray());
@@ -139,31 +149,27 @@ public sealed class WatchQualTests
     public void OncePrintsOneEtaLine()
     {
         var world = new World();
-        var root = NewTimingRoot(world.Files);
+        var (root, live) = PrepareEta(world);
         world.Beat(0, hang: false);
         var before = QualificationEtaTests.TreeStamp(world.Files, root);
-        var (exit, lines) = world.Run(world.Options(timingRoot: root));
+        var (exit, lines) = world.Run(world.Options(timingRoot: root, logDir: live));
         exit.ShouldBe(0);
-        var eta = lines.Where(line => line.StartsWith("ETA", StringComparison.Ordinal)).ToArray();
-        eta.Length.ShouldBe(1, string.Join(" | ", lines));
-        var parsed = QualificationEtaTests.Parse(eta[0]);
-        (parsed.Outstanding + "/" + parsed.Running + "/" + parsed.Completed + "/" + parsed.Unpriced + "/" + parsed.PointSeconds + "/" + parsed.P95)
-            .ShouldBe("2/0/1/0/300/unavailable");
-        // The watcher's line is the read-only ETA's line for the same root at the same instant.
-        eta[0].ShouldBe(QualificationEta.Read(world.Files, root, Start.UtcDateTime, "").Line);
+        lines.ShouldBe([
+            "ETA outstanding=2 running=0 completed=1 unpriced=0 pointSeconds=300 p50=2026-11-10T12:05:00.000Z p95=unavailable confidence=provisional lowerBound=false",
+            "watch-qual window ended; re-arm",
+        ]);
         QualificationEtaTests.TreeStamp(world.Files, root).ShouldBe(before, "timing root changed");
-        lines.ShouldBe(new[] { eta[0], "watch-qual window ended; re-arm" }, "an empty log directory and a fresh heartbeat print only the ETA and the window line");
     }
 
     [Test]
     public void OmittedTimingRootStaysSilent()
     {
         var world = new World();
-        var root = NewTimingRoot(world.Files);
+        var (root, live) = PrepareEta(world);
         world.Beat(0, hang: false);
         // Control: the same watcher prints the line when the root is passed, so silence below is not a missing feature.
-        world.Run(world.Options(timingRoot: root)).Lines.Count(line => line.StartsWith("ETA", StringComparison.Ordinal)).ShouldBe(1, "control eta lines");
-        var (_, lines) = world.Run(world.Options());
+        world.Run(world.Options(timingRoot: root, logDir: live)).Lines.Count(line => line.StartsWith("ETA ", StringComparison.Ordinal)).ShouldBe(1, "control eta lines");
+        var (_, lines) = world.Run(world.Options(logDir: live));
         lines.Where(line => line.Contains("ETA", StringComparison.Ordinal)).ShouldBeEmpty("eta without a root");
         lines.Count(line => line.StartsWith("watch-qual window ended", StringComparison.Ordinal)).ShouldBe(1, "window line");
     }

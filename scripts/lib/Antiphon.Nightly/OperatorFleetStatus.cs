@@ -276,6 +276,7 @@ namespace Antiphon.Nightly
                 var bound = Field(eta, "lowerBound")?.ToJsonString() == "true" ? "at least " : "";
                 output.WriteLine("rc ETA " + (Text(eta, "status") ?? bound + Show(eta, "projectedFinishUtc"))
                     + " remaining=" + Duration(Field(eta, "projectedRemainingSeconds")) + " ratio=" + Show(eta, "ratio")
+                    + " p95=" + Show(eta, "p95FinishUtc") + " confidence=" + Show(eta, "confidence")
                     + " unknownRemaining=" + Show(eta, "unknownRemaining") + " finishedWithoutBaseline=" + Show(eta, "finishedWithoutBaseline")
                     + " previous=" + Show(eta, "previousRunLogDir"));
                 output.WriteLine("rc ETA " + Show(eta, "startupOverheadNote")

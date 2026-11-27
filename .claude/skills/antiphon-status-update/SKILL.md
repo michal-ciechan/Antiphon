@@ -53,6 +53,7 @@ newest earlier attempt whose TRX files cover its own `dispatch-schedule.json`.
   `knownRemaining`, `unknownRemaining`, `unknownRemainingChunks`,
   `finishedWithoutBaseline`, `baselineRemainingSeconds`,
   `projectedRemainingSeconds`, `projectedFinishUtc`, `lowerBound`,
+  `p95FinishUtc`, `confidence`,
   `observedStartupSeconds`, `startupOverheadNote`, `biggestRemaining`.
 
 Use a task's parsed next-stage and handoff fields. A task absent from the

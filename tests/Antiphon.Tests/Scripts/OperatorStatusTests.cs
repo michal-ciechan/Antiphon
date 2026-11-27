@@ -20,8 +20,8 @@ public sealed class OperatorStatusTests
     public void Exact_eta_matches_finished_chunks_and_lists_failures_and_unknowns()
     {
         using var world = new Fixture();
-        // Only the shared finished chunk calibrates the ratio: 30 / 20. The 40-second
-        // unfinished chunk takes 60 seconds. The 900-second removed chunk takes zero.
+        // The shared finished chunk's ratio of 1.5 gets 1/21 of the weight. The
+        // 40-second unfinished chunk takes 40.952 seconds. The removed chunk takes zero.
         world.Trx(world.Previous, "suite-a", 20);
         world.Trx(world.Previous, "suite-b", 40);
         world.Trx(world.Previous, "suite-removed", 900);
@@ -32,9 +32,11 @@ public sealed class OperatorStatusTests
         var rc = report["rc"]!;
         var eta = rc["eta"];
         eta.ShouldNotBeNull("the status command must project elapsed TRX timings");
-        ((double)eta["ratio"]!).ShouldBe(1.5);
-        ((double)eta["projectedRemainingSeconds"]!).ShouldBe(60);
-        ((string)eta["projectedFinishUtc"]!).ShouldBe("2026-11-26T12:01:00.0000000+00:00");
+        ((double)eta["ratio"]!).ShouldBe(1.0238095238095237);
+        ((double)eta["projectedRemainingSeconds"]!).ShouldBe(40.952);
+        ((string)eta["projectedFinishUtc"]!).ShouldBe("2026-11-26T12:00:40.9520000+00:00");
+        ((string)eta["confidence"]!).ShouldBe("provisional");
+        eta["p95FinishUtc"].ShouldBeNull();
         ((int)eta["unknownRemaining"]!).ShouldBe(1);
         // CARD-2087 D-2: unknown remaining work makes the projection a flagged lower bound.
         ((bool)eta["lowerBound"]!).ShouldBeTrue();
@@ -55,6 +57,15 @@ public sealed class OperatorStatusTests
         report["errors"]!.AsArray().Select(error => (string?)error).ShouldHaveSingleItem()
             .ShouldBe("rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): suite-newWaiting.");
         exit.ShouldBe(2);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var host = QualificationEtaTests.Host(output, error, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now));
+        QualificationEta.Run(QualificationEtaOptions.Parse(["--timing-root", world.Timing]), host, new FileSystem()).ShouldBe(0, error.ToString());
+        output.ToString().Trim().Split(Environment.NewLine).ShouldBe([
+            "ETA outstanding=1 running=1 completed=2 unpriced=1 pointSeconds=40.952 p50=2026-11-26T12:00:40.952Z p95=unavailable confidence=provisional lowerBound=true",
+            "UNVERIFIED rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): suite-newWaiting.",
+        ]);
     }
 
     [Test]
@@ -70,8 +81,8 @@ public sealed class OperatorStatusTests
         var (exit, report) = world.Run(autoDiscover: true);
         var eta = report["rc"]!["eta"]!;
         ((string)eta["previousRunLogDir"]!).ShouldBe(world.Previous);
-        ((double)eta["ratio"]!).ShouldBe(1.5);
-        ((double)eta["projectedRemainingSeconds"]!).ShouldBe(90);
+        ((double)eta["ratio"]!).ShouldBe(1.0238095238095237);
+        ((double)eta["projectedRemainingSeconds"]!).ShouldBe(61.429);
         ((bool)eta["lowerBound"]!).ShouldBeFalse();
         report["errors"]!.AsArray().ShouldBeEmpty();
         exit.ShouldBe(0);
@@ -167,7 +178,7 @@ public sealed class OperatorStatusTests
     [
         "status", "previousRunLogDir", "ratio", "matchedFinished", "knownRemaining", "unknownRemaining", "unknownRemainingChunks",
         "finishedWithoutBaseline", "baselineRemainingSeconds", "projectedRemainingSeconds", "projectedFinishUtc", "lowerBound",
-        "observedStartupSeconds", "startupOverheadNote", "biggestRemaining",
+        "p95FinishUtc", "confidence", "observedStartupSeconds", "startupOverheadNote", "biggestRemaining",
     ];
 
     [Test]
@@ -196,7 +207,7 @@ public sealed class OperatorStatusTests
         ((string)rc["runLogDir"]!).ShouldBe(world.Live);
         ((double)rc["heartbeatAgeSeconds"]!).ShouldBe(60);
         ((string)rc["stateDir"]!).ShouldBe(world.State);
-        ((double)rc["eta"]!["projectedRemainingSeconds"]!).ShouldBe(90);
+        ((double)rc["eta"]!["projectedRemainingSeconds"]!).ShouldBe(61.429);
     }
 
     [Test]
@@ -233,6 +244,7 @@ public sealed class OperatorStatusTests
         public Func<string, NightlyReportHttpResponse?>? Override;
         public readonly string Live;
         public readonly string Heartbeat;
+        public readonly string Timing;
 
         public Fixture()
         {
@@ -247,9 +259,9 @@ public sealed class OperatorStatusTests
             Directory.CreateDirectory(Path.GetDirectoryName(Heartbeat)!);
             File.WriteAllText(Path.Combine(Live, "dispatch-schedule.json"),
                 $$$"""{"runId":"{{{RunId}}}","entries":[{"suite":"suite","chunk":"a"},{"suite":"suite","chunk":"b"},{"suite":"suite","chunk":"newDone"},{"suite":"suite","chunk":"newWaiting"}]}""");
-            var timing = Path.Combine(Path.GetDirectoryName(Live)!, "timing-" + RunId);
-            Directory.CreateDirectory(timing);
-            File.WriteAllText(Path.Combine(timing, "active-chunk.json"), $$$"""{"runId":"{{{RunId}}}","suite":"suite","chunk":"b","state":"Active"}""");
+            Timing = Path.Combine(Path.GetDirectoryName(Live)!, "timing-" + RunId);
+            Directory.CreateDirectory(Timing);
+            File.WriteAllText(Path.Combine(Timing, "active-chunk.json"), $$$"""{"runId":"{{{RunId}}}","suite":"suite","chunk":"b","state":"Active"}""");
             File.WriteAllText(Path.Combine(State, "last-run.json"), System.Text.Json.JsonSerializer.Serialize(new
             {
                 runId = RunId, lane = "rc", profile = "rc", candidateId = "rc-2026-12-06-0123456789ab", expectedSha = Pin,

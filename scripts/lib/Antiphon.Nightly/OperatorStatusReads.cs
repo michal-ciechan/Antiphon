@@ -33,7 +33,7 @@ namespace Antiphon.Nightly
         {
             "status", "previousRunLogDir", "ratio", "matchedFinished", "knownRemaining", "unknownRemaining", "unknownRemainingChunks",
             "finishedWithoutBaseline", "baselineRemainingSeconds", "projectedRemainingSeconds", "projectedFinishUtc", "lowerBound",
-            "observedStartupSeconds", "startupOverheadNote", "biggestRemaining",
+            "p95FinishUtc", "confidence", "observedStartupSeconds", "startupOverheadNote", "biggestRemaining",
         };
 
         internal const string OverheadNote = "Sequential test time only. Build and startup overhead are outside the projection.";

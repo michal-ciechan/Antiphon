@@ -1,4 +1,4 @@
-// CARD-2087: sequential rc ETA from matching TRX chunk durations.
+// CARD-2093: scheduled TRX progress and ETA shared by status, qualification-eta and watch-qual.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -14,12 +14,18 @@ namespace Antiphon.Nightly
     {
         private const int TimesPrefixBytes = 6000;
         private const int BiggestChunkCount = 8;
+        private const double PriorMatches = 20;
+        private const double MinimumPercentileMatches = 20;
+        private const double NormalP95 = 1.645;
         private static readonly StringComparer ChunkNames = StringComparer.OrdinalIgnoreCase;
 
         private sealed record ChunkTime(DateTimeOffset Start, DateTimeOffset Finish)
         {
             public double Seconds => (Finish - Start).TotalSeconds;
         }
+
+        internal sealed record Observation(int TrxCount, int FinishedChunks, int? ScheduledEntries, JsonArray Failures,
+            double? StartupSeconds, bool RunCompleted, QualificationEtaReading Eta);
 
         internal static IEnumerable<IFileInfo> TrxFiles(IFileSystem files, string directory) =>
             files.DirectoryInfo.New(directory).EnumerateFiles("*.trx", new EnumerationOptions
@@ -29,12 +35,9 @@ namespace Antiphon.Nightly
                 IgnoreInaccessible = false,
             });
 
-        internal static void Read(JsonObject report, IFileSystem files, string logDir, JsonObject schedule, DateTimeOffset now,
-            DateTimeOffset? started, DateTimeOffset? completed, bool comparable, Func<string> previousRun, List<string> errors)
+        internal static Observation Read(IFileSystem files, string logDir, JsonObject schedule, JsonObject active, DateTimeOffset now,
+            DateTimeOffset? started, bool completed, bool comparable, string previousRunLogDir, List<string> errors, bool reportFailures)
         {
-            // The report carries every OperatorStatusShape key already (D-3); failures stay null until the directory is read.
-            var eta = report["eta"] as JsonObject ?? OperatorStatusShape.RcSkeleton()["eta"].AsObject();
-            report["eta"] = eta;
             IFileInfo[] current;
             try
             {
@@ -43,12 +46,10 @@ namespace Antiphon.Nightly
             catch (Exception error) when (OperatorRcStatus.ReadError(error))
             {
                 errors.Add("rc TRX directory could not be read; progress, failures and ETA are unknown.");
-                return;
+                return null;
             }
 
-            var failures = new JsonArray();
-            report["failures"] = failures;
-            report["trxCount"] = current.Length;
+            var failures = reportFailures ? new JsonArray() : null;
             var live = new Dictionary<string, ChunkTime>(ChunkNames);
             var duplicate = new HashSet<string>(ChunkNames);
             foreach (var file in current)
@@ -56,14 +57,15 @@ namespace Antiphon.Nightly
                 var name = files.Path.GetFileNameWithoutExtension(file.Name);
                 try
                 {
-                    var (time, failed) = ReadLive(files, file.FullName);
+                    var (time, failed) = ReadLive(files, file.FullName, reportFailures);
                     if (!live.TryAdd(name, time))
                     {
                         duplicate.Add(name);
                         errors.Add("rc live TRX has a duplicate chunk identity: " + name + ".");
                     }
-                    foreach (var failure in failed)
-                        failures.Add(new JsonObject { ["chunk"] = name, ["testName"] = failure, ["fixes"] = null });
+                    if (reportFailures)
+                        foreach (var failure in failed)
+                            failures.Add(new JsonObject { ["chunk"] = name, ["testName"] = failure, ["fixes"] = null });
                 }
                 catch (Exception error) when (OperatorRcStatus.ReadError(error) || error is XmlException || error is InvalidDataException)
                 {
@@ -71,107 +73,162 @@ namespace Antiphon.Nightly
                 }
             }
             foreach (var name in duplicate) live.Remove(name);
-            report["finishedChunks"] = live.Count;
-            var liveStarts = live.Values.Where(time => time != null).Select(time => time.Start).ToArray();
-            if (started != null && liveStarts.Length > 0 && liveStarts.Min() >= started && liveStarts.Min() <= now)
-                eta["observedStartupSeconds"] = (liveStarts.Min() - started.Value).TotalSeconds;
+            var firstStart = live.Values.Where(time => time != null).Select(time => (DateTimeOffset?)time.Start).Min();
+            var startup = started.HasValue && firstStart >= started && firstStart <= now
+                ? (firstStart - started)?.TotalSeconds : null;
 
-            var entries = schedule?["entries"] as JsonArray;
-            report["scheduledEntries"] = entries?.Count;
-            var planned = entries?.Select(entry => ScheduleKey(entry)).ToArray();
-            if (planned == null || planned.Any(string.IsNullOrEmpty) || planned.Distinct(ChunkNames).Count() != planned.Length
-                || schedule["preparationComplete"]?.ToJsonString() == "false")
+            var planned = ScheduleKeys(schedule);
+            var observation = new Observation(current.Length, live.Count, (schedule?["entries"] as JsonArray)?.Count,
+                failures, startup, completed && planned != null, null);
+            if (planned == null)
             {
                 errors.Add("rc dispatch schedule is unavailable, incomplete or has invalid chunk identities; ETA is unknown.");
-                return;
+                return observation;
             }
-            if (completed.HasValue)
-            {
-                eta["status"] = "run-completed";
-                return;
-            }
+            if (completed) return observation;
             if (!comparable)
             {
                 errors.Add("rc historical ETA requires a sequential Windows Full run.");
-                return;
+                return observation;
             }
 
+            var previous = ReadPrevious(files, logDir, previousRunLogDir, errors, out var path);
+            return observation with { Eta = Project(planned, live, previous, path, active, now, errors) };
+        }
+
+        private static Dictionary<string, ChunkTime> ReadPrevious(
+            IFileSystem files, string logDir, string supplied, List<string> errors, out string path)
+        {
             var previous = new Dictionary<string, ChunkTime>(ChunkNames);
+            path = null;
             try
             {
-                var path = previousRun();
+                path = OperatorRcStatus.PreviousRun(files, logDir, supplied, errors);
                 if (path == null)
                 {
-                    errors.Add("Previous rc run not found; supply --rc-previous-run-log-dir if its logs are available.");
+                    errors.Add("Previous rc run not found; supply --previous-run-log-dir (status: --rc-previous-run-log-dir) if its logs are available.");
+                    return previous;
                 }
-                else
+
+                var buffer = new byte[TimesPrefixBytes];
+                foreach (var file in TrxFiles(files, path))
                 {
-                    eta["previousRunLogDir"] = path;
-                    var buffer = new byte[TimesPrefixBytes];
-                    foreach (var file in TrxFiles(files, path))
+                    var name = files.Path.GetFileNameWithoutExtension(file.Name);
+                    ChunkTime time = null;
+                    try { time = ReadPrior(files, file.FullName, buffer); }
+                    catch (Exception error) when (OperatorRcStatus.ReadError(error))
                     {
-                        var name = files.Path.GetFileNameWithoutExtension(file.Name);
-                        ChunkTime time = null;
-                        try { time = ReadPrior(files, file.FullName, buffer); }
-                        catch (Exception error) when (OperatorRcStatus.ReadError(error))
-                        {
-                            errors.Add("Previous rc TRX " + file.Name + " could not be read.");
-                        }
-                        if (!previous.TryAdd(name, time)) previous[name] = null;
+                        errors.Add("Previous rc TRX " + file.Name + " could not be read.");
                     }
-                    if (previous.Count == 0) errors.Add("Previous rc run has no TRX records; ETA is unknown.");
+                    if (!previous.TryAdd(name, time)) previous[name] = null;
                 }
+                if (previous.Count == 0) errors.Add("Previous rc run has no TRX records; ETA is unknown.");
             }
             catch (Exception error) when (OperatorRcStatus.ReadError(error))
             {
-                errors.Add("Previous rc run cannot be read; ETA is unknown.");
-                // Keep the readable prefix if the directory changed during enumeration.
+                errors.Add("Previous rc run could not be fully read; historical timings may be incomplete.");
             }
+            return previous;
+        }
 
+        private static QualificationEtaReading Project(string[] planned, Dictionary<string, ChunkTime> live,
+            Dictionary<string, ChunkTime> previous, string previousPath, JsonObject active, DateTimeOffset now, List<string> errors)
+        {
             var remaining = planned.Where(chunk => !live.ContainsKey(chunk)).ToArray();
             var known = remaining.Where(chunk => previous.GetValueOrDefault(chunk) != null)
                 .Select(chunk => (Chunk: chunk, Seconds: previous[chunk].Seconds))
                 .OrderByDescending(chunk => chunk.Seconds).ThenBy(chunk => chunk.Chunk, ChunkNames).ToArray();
             var unknown = remaining.Where(chunk => previous.GetValueOrDefault(chunk) == null).ToArray();
-            eta["unknownRemaining"] = unknown.Length;
-            eta["unknownRemainingChunks"] = new JsonArray(unknown.Select(chunk => (JsonNode)chunk).ToArray());
-            eta["knownRemaining"] = known.Length;
-            eta["finishedWithoutBaseline"] = live.Keys.Count(chunk => previous.GetValueOrDefault(chunk) == null);
-            eta["biggestRemaining"] = new JsonArray(known.Take(BiggestChunkCount).Select(chunk => (JsonNode)new JsonObject
+            var finishedWithoutBaseline = planned.Count(chunk => live.ContainsKey(chunk) && previous.GetValueOrDefault(chunk) == null);
+            var matched = planned.Where(chunk => live.GetValueOrDefault(chunk) != null && previous.GetValueOrDefault(chunk)?.Seconds > 0)
+                .Select(chunk => (Live: live[chunk].Seconds, Prior: previous[chunk].Seconds)).ToArray();
+
+            double ratio = 1;
+            double? upperRatio = null;
+            if (matched.Length > 0)
+            {
+                var priorSeconds = matched.Sum(chunk => chunk.Prior);
+                var rawRatio = matched.Sum(chunk => chunk.Live) / priorSeconds;
+                // The effective count discounts unequal weights. One long chunk can dominate the ratio
+                // even when many short chunks have finished.
+                var effective = priorSeconds * priorSeconds / matched.Sum(chunk => chunk.Prior * chunk.Prior);
+                ratio += (rawRatio - 1) * effective / (effective + PriorMatches);
+                if (effective >= MinimumPercentileMatches)
+                {
+                    // Use elapsed-second residuals so a very short historical chunk cannot inflate
+                    // the interval just by putting a tiny denominator under its individual ratio.
+                    var squaredResiduals = matched.Sum(chunk =>
+                    {
+                        var residual = chunk.Live - rawRatio * chunk.Prior;
+                        return residual * residual;
+                    });
+                    var standardError = Math.Sqrt(squaredResiduals / (1 - 1 / effective)) / priorSeconds;
+                    upperRatio = ratio + NormalP95 * standardError;
+                }
+            }
+
+            var baselineSeconds = known.Sum(chunk => chunk.Seconds);
+            var activeKey = OperatorRcStatus.Text(active, "state") == "Active" ? ScheduleKey(active) : null;
+            var running = activeKey != null && remaining.Contains(activeKey, ChunkNames) ? 1 : 0;
+            double? point = null;
+            DateTimeOffset? p50 = null;
+            DateTimeOffset? p95 = null;
+            if (unknown.Length > 0)
+                errors.Add("rc ETA is a lower bound: no previous timing for " + unknown.Length + " remaining chunk(s): "
+                    + string.Join(", ", unknown.Take(BiggestChunkCount)) + (unknown.Length > BiggestChunkCount ? " and " + (unknown.Length - BiggestChunkCount) + " more" : "") + ".");
+            if (known.Length > 0 || remaining.Length == 0)
+            {
+                var projected = Math.Round(baselineSeconds * ratio, 3);
+                p50 = Finish(now, projected, errors);
+                if (p50 != null) point = projected;
+                if (upperRatio.HasValue)
+                    p95 = Finish(now, Math.Round(baselineSeconds * upperRatio.Value, 3), errors);
+            }
+
+            var confidence = point == null ? "unavailable" : upperRatio == null ? "provisional" : "matched";
+            return new QualificationEtaReading(remaining.Length - running, running, planned.Length - remaining.Length,
+                unknown, known, finishedWithoutBaseline, matched.Length, previousPath, ratio, baselineSeconds, point, p50, p95, confidence);
+        }
+
+        private static DateTimeOffset? Finish(DateTimeOffset now, double seconds, List<string> errors)
+        {
+            if (seconds < (DateTimeOffset.MaxValue - now).TotalSeconds)
+                return now.AddSeconds(seconds);
+            errors.Add("rc projected duration is outside the representable time range.");
+            return null;
+        }
+
+        internal static void PopulateReport(JsonObject report, Observation observed)
+        {
+            if (observed == null) return;
+            report["trxCount"] = observed.TrxCount;
+            report["finishedChunks"] = observed.FinishedChunks;
+            report["scheduledEntries"] = observed.ScheduledEntries;
+            report["failures"] = observed.Failures;
+
+            var eta = report["eta"].AsObject();
+            eta["observedStartupSeconds"] = observed.StartupSeconds;
+            if (observed.RunCompleted) eta["status"] = "run-completed";
+            var projected = observed.Eta;
+            if (projected == null) return;
+            eta["previousRunLogDir"] = projected.PreviousRunLogDir;
+            eta["ratio"] = projected.Ratio;
+            eta["matchedFinished"] = projected.MatchedFinished;
+            eta["knownRemaining"] = projected.KnownRemaining.Length;
+            eta["unknownRemaining"] = projected.UnknownRemaining.Length;
+            eta["unknownRemainingChunks"] = new JsonArray(projected.UnknownRemaining.Select(chunk => (JsonNode)chunk).ToArray());
+            eta["finishedWithoutBaseline"] = projected.FinishedWithoutBaseline;
+            eta["baselineRemainingSeconds"] = projected.BaselineSeconds;
+            eta["projectedRemainingSeconds"] = projected.PointSeconds;
+            eta["projectedFinishUtc"] = projected.P50Utc?.ToString("O", CultureInfo.InvariantCulture);
+            eta["p95FinishUtc"] = projected.P95Utc?.ToString("O", CultureInfo.InvariantCulture);
+            eta["confidence"] = projected.Confidence;
+            eta["lowerBound"] = projected.LowerBound;
+            eta["biggestRemaining"] = new JsonArray(projected.KnownRemaining.Take(BiggestChunkCount).Select(chunk => (JsonNode)new JsonObject
             {
                 ["chunk"] = chunk.Chunk,
                 ["previousSeconds"] = chunk.Seconds,
             }).ToArray());
-            var matched = planned.Where(chunk => live.GetValueOrDefault(chunk) != null && previous.GetValueOrDefault(chunk)?.Seconds > 0).ToArray();
-            eta["matchedFinished"] = matched.Length;
-            if (matched.Length == 0)
-            {
-                if (previous.Count > 0) errors.Add("rc ETA has no comparable finished chunk timings in the previous run.");
-                return;
-            }
-
-            var ratio = matched.Sum(chunk => live[chunk].Seconds) / matched.Sum(chunk => previous[chunk].Seconds);
-            var remainingSeconds = known.Sum(chunk => chunk.Seconds);
-            eta["ratio"] = ratio;
-            eta["baselineRemainingSeconds"] = remainingSeconds;
-            eta["lowerBound"] = unknown.Length > 0;
-            if (known.Length == 0 && remaining.Length != 0)
-            {
-                errors.Add("rc ETA has no previous timings for the remaining chunks.");
-                return;
-            }
-            var projected = remainingSeconds * ratio;
-            if (projected > (DateTimeOffset.MaxValue - now).TotalSeconds)
-            {
-                errors.Add("rc projected duration is outside the representable time range.");
-                return;
-            }
-            eta["projectedRemainingSeconds"] = projected;
-            eta["projectedFinishUtc"] = now.AddSeconds(projected).ToString("O", CultureInfo.InvariantCulture);
-            // D-2: remaining chunks without a previous timing make the projection a lower bound, never a silent ETA.
-            if (unknown.Length > 0)
-                errors.Add("rc ETA is a lower bound: no previous timing for " + unknown.Length + " remaining chunk(s): "
-                    + string.Join(", ", unknown.Take(BiggestChunkCount)) + (unknown.Length > BiggestChunkCount ? " and " + (unknown.Length - BiggestChunkCount) + " more" : "") + ".");
         }
 
         /// <summary>
@@ -182,13 +239,22 @@ namespace Antiphon.Nightly
         {
             var read = RcQualificationRecords.Read(files, files.Path.Combine(directory, "dispatch-schedule.json"));
             if (!read.Ok) return "its dispatch-schedule.json is unavailable (" + read.Reason + ")";
-            var schedule = JsonNode.Parse(read.Record.Value.GetRawText());
-            var planned = (schedule?["entries"] as JsonArray)?.Select(ScheduleKey).ToArray();
-            if (planned == null || planned.Length == 0 || planned.Any(string.IsNullOrEmpty) || schedule["preparationComplete"]?.ToJsonString() == "false")
+            var schedule = JsonNode.Parse(read.Record.Value.GetRawText()).AsObject();
+            var planned = ScheduleKeys(schedule);
+            if (planned == null)
                 return "its dispatch schedule is incomplete or invalid";
             var timed = new HashSet<string>(TrxFiles(files, directory).Select(file => files.Path.GetFileNameWithoutExtension(file.Name)), ChunkNames);
             var missing = planned.Count(chunk => !timed.Contains(chunk));
             return missing == 0 ? null : missing + " of its " + planned.Length + " scheduled chunks have no TRX";
+        }
+
+        private static string[] ScheduleKeys(JsonObject schedule)
+        {
+            var planned = (schedule?["entries"] as JsonArray)?.Select(ScheduleKey).ToArray();
+            if (planned == null || planned.Length == 0 || planned.Any(string.IsNullOrEmpty) || planned.Distinct(ChunkNames).Count() != planned.Length
+                || schedule["preparationComplete"]?.ToJsonString() == "false")
+                return null;
+            return planned;
         }
 
         private static string ScheduleKey(JsonNode entry)
@@ -218,17 +284,17 @@ namespace Antiphon.Nightly
             return null;
         }
 
-        private static (ChunkTime Time, List<string> Failures) ReadLive(IFileSystem files, string path)
+        private static (ChunkTime Time, List<string> Failures) ReadLive(IFileSystem files, string path, bool reportFailures)
         {
             using var stream = RcQualificationRecords.OpenSharedRead(files, path);
             using var reader = XmlReader.Create(stream, ReaderSettings());
             if (!IsTrx(reader)) throw new InvalidDataException("Not a TeamTest TestRun.");
             ChunkTime time = null;
-            var failures = new List<string>();
+            var failures = reportFailures ? new List<string>() : null;
             while (reader.Read())
             {
                 if (reader.Depth == 1 && IsElement(reader, "Times")) time = Time(reader);
-                if (IsElement(reader, "UnitTestResult") && reader.GetAttribute("outcome") is "Failed" or "Error" or "Timeout" or "Aborted")
+                if (reportFailures && IsElement(reader, "UnitTestResult") && reader.GetAttribute("outcome") is "Failed" or "Error" or "Timeout" or "Aborted")
                     failures.Add(reader.GetAttribute("testName") ?? "(test name missing)");
             }
             return (time, failures);

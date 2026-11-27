@@ -162,6 +162,18 @@ does not prove a hang or supply an ETA. The batch ETA is the one line from
 `scripts/antiphon watch-qual` when `--timing-root` is passed (`scripts/antiphon
 qualification-eta --timing-root <dir>` prints it once). This status reader
 does not walk a timing root, and lastActivityAt does not supply an ETA.
+
+`qualification-eta`, `watch-qual` and the operator's `antiphon status` use the
+same sequential forecast. It prices the unfinished entries in
+`dispatch-schedule.json` from the previous run's TRX elapsed times. The matched
+live/previous duration ratio is damped toward 1 early in the run. From 20
+effective matches, P95 includes the observed uncertainty in that ratio.
+Until then, the estimate is provisional. Unpriced work is named in an
+`UNVERIFIED` line and the known portion is marked as a lower bound. The default
+timing root locates the run by the full run ID. For copied logs, pass
+`--run-log-dir` and optionally `--previous-run-log-dir` to `qualification-eta`.
+The current and previous logs should be from comparable sequential runs.
+
 `ownerObservation` distinguishes `alive`
 (matching PID and start), `absent` (definitive PID not found), `reused` (different
 start), and `unknown` (invalid identity or inaccessible probe). `alive` describes
