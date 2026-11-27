@@ -90,9 +90,19 @@ public sealed class ReleaseCutTests
         var testsHops = new List<NightlyTestsOptions>();
         var results = new List<NightlyTestsResult>();
         var executed = new List<string>();
+        var prefixAtOrdinaryStart = new List<bool>();
         var withholdGuard = true;
         var interruptGuard = false;
         var interruptOrdinary = true;
+        var observePrefix = false;
+        var blockPrefixWrite = false;
+        static bool HasCompletedPrefix(string schedulePath)
+        {
+            using var schedule = JsonDocument.Parse(File.ReadAllText(schedulePath));
+            return schedule.RootElement.TryGetProperty("invariantPrefix", out var prefix)
+                && prefix.GetProperty("complete").GetBoolean();
+        }
+
         NightlyHost nightly = null!;
         var launcher = new RecordingLauncher(launch =>
         {
@@ -133,6 +143,8 @@ public sealed class ReleaseCutTests
                 var isInvariant = trxName.StartsWith("antiphon-invariant-", StringComparison.Ordinal);
                 var type = isMessaging ? owedClass : isInvariant ? invariantClass : ordinaryClass;
                 executed.Add(type);
+                if (observePrefix && !isInvariant)
+                    prefixAtOrdinaryStart.Add(HasCompletedPrefix(Path.Combine(testsHops.Last().LogRoot, "dispatch-schedule.json")));
                 if (isInvariant && interruptGuard) throw new OperationCanceledException("fixture interrupted before the invariant produced a receipt");
                 if (isMessaging && interruptOrdinary) throw new OperationCanceledException("fixture interrupted before messaging produced a receipt");
                 string[] ids = isMessaging ? [owed] : isInvariant ? withholdGuard ? [guardA] : [guardA, guardB] : [ordinary];
@@ -140,6 +152,14 @@ public sealed class ReleaseCutTests
                     ids.Select((_, index) => new NightlyTrxRow("adapter-id-" + index, type, "Check")));
                 NightlyFixture.WriteExecution(Path.Combine(Value("--diagnostic-output-directory"), "run.diag"),
                     ids.Select(id => new NightlyTestNode(id, type, "Check")));
+                if (isInvariant && blockPrefixWrite)
+                {
+                    var schedulePath = Path.Combine(testsHops.Last().LogRoot, "dispatch-schedule.json");
+                    // File.Replace cannot back up the readable schedule over this directory.
+                    HasCompletedPrefix(schedulePath).ShouldBeFalse();
+                    Directory.CreateDirectory(schedulePath + ".bak");
+                    File.WriteAllText(Path.Combine(schedulePath + ".bak", "fixture-owner"), "fixture");
+                }
             }
             return RecordingLauncher.Passed();
         });
@@ -208,12 +228,14 @@ public sealed class ReleaseCutTests
         PsValue.Str(fresh["attempt"]).ShouldBe("2");
         PsValue.Str(fresh["sha"]).ShouldBe(world.Sha);
 
+        observePrefix = true;
         executed.Clear();
         Cut("c2082-full", "Full").Tested.ShouldBeTrue(string.Join('\n', results.Last().Reasons));
         testsHops.Last().RequestedSelectionMode.ShouldBeEmpty();
         testsHops.Last().IncrementalInventoryDigest.ShouldBeEmpty();
         results.Last().CoverageScope.ShouldBe("Full");
         executed.ShouldBe([invariantClass, ordinaryClass, owedClass], ignoreOrder: true);
+        prefixAtOrdinaryStart.ShouldBe([true, true]);
 
         var opaqueInventory = Path.Combine(root, "opaque-inventory.json");
         var opaque = Prior("client", "client", "prior-opaque", "Client", []);
@@ -223,6 +245,7 @@ public sealed class ReleaseCutTests
         JsonElement RunFallback(string id, bool tested, string[] expectedStarts)
         {
             executed.Clear();
+            prefixAtOrdinaryStart.Clear();
             var cut = Cut(id);
             cut.Tested.ShouldBe(tested, string.Join('\n', results.Last().Reasons));
             cut.Published.ShouldBeFalse();
@@ -258,9 +281,34 @@ public sealed class ReleaseCutTests
             ["Antiphon.Tests/" + guardA, "Antiphon.Tests/" + guardB]);
         interruptGuard = false;
         var completed = RunFallback("c2082-opaque-complete", true, [invariantClass, ordinaryClass, owedClass]);
+        prefixAtOrdinaryStart.ShouldBe([true, true]);
         completed.GetProperty("complete").GetBoolean().ShouldBeTrue();
         completed.GetProperty("executedGroups").GetInt32().ShouldBe(1);
         completed.TryGetProperty("outstanding", out _).ShouldBeFalse();
+
+        blockPrefixWrite = true;
+        foreach (var mode in new[] { "Incremental", "Full" })
+        {
+            executed.Clear();
+            prefixAtOrdinaryStart.Clear();
+            var refused = Cut("c2082-prefix-write-failure-" + mode, mode);
+            executed.ShouldBe([invariantClass], $"{mode} Tested={refused.Tested}, prefix at ordinary starts: [{string.Join(", ", prefixAtOrdinaryStart)}]");
+            prefixAtOrdinaryStart.ShouldBeEmpty();
+            refused.Tested.ShouldBeFalse();
+            refused.Published.ShouldBeFalse();
+            refused.ExitCode.ShouldBe(1);
+            refused.Refusal.ShouldBe("repository-invariant-prefix-write-failed");
+            var result = results.Last();
+            result.Reasons.ShouldContain("repository-invariant-prefix-write-failed");
+            result.CoverageScope.ShouldBe("Full");
+            result.CoverageComplete.ShouldBeFalse();
+            result.TestsPassed.ShouldBeFalse();
+            using var summary = JsonDocument.Parse(File.ReadAllText(result.SummaryPath));
+            summary.RootElement.GetProperty("succeeded").GetBoolean().ShouldBeFalse();
+            summary.RootElement.GetProperty("preflight").GetProperty("unhandledError").GetString()
+                .ShouldBe("repository-invariant-prefix-write-failed");
+            HasCompletedPrefix(Path.Combine(testsHops.Last().LogRoot, "dispatch-schedule.json")).ShouldBeFalse();
+        }
 
         probe.PlatformName = "linux";
         executed.Clear();
