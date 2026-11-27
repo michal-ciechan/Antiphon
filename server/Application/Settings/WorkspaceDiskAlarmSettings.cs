@@ -33,4 +33,7 @@ public sealed class WorkspaceDiskAlarmSettings
     /// code default could never be removed by an operator. <c>appsettings.json</c> lists server2.
     /// </summary>
     public Dictionary<string, string> Runners { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Additional runner IDs protected by the dispatch floor, including temporary rollout routes.</summary>
+    public Dictionary<string, string> AdmissionRunners { get; set; } = new(StringComparer.Ordinal);
 }
