@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -189,6 +192,7 @@ public class HerdrLabelFollowSchedulingTests
     [Test]
     public async Task Saved_snapshot_read_times_out_while_writer_holds_mutex()
     {
+        NativeWindowsGate.Require("Windows snapshot replacement sharing requires a bounded writer mutex wait in the reader.");
         await using var f = new HerdrLabelFollowFixture();
         f.Binding.SaveAtomic(f.Path);
         var deadline = TimeSpan.FromSeconds(1);
@@ -221,6 +225,7 @@ public class HerdrLabelFollowSchedulingTests
     [Test]
     public async Task Saved_snapshot_poll_expires_under_contention_and_rejects_late_success()
     {
+        NativeWindowsGate.Require("Only the Windows snapshot poll waits for the writer mutex within its deadline.");
         await using var f = new HerdrLabelFollowFixture();
         f.Binding.SaveAtomic(f.Path);
         var handoff = TimeSpan.FromSeconds(1);
@@ -273,6 +278,7 @@ public class HerdrLabelFollowSchedulingTests
     [Test]
     public async Task Saved_snapshot_mutex_name_matches_production_writer()
     {
+        NativeWindowsGate.Require("Only the Windows fixture opens the writer's named snapshot mutex.");
         await using var f = new HerdrLabelFollowFixture();
         var alias = Path.Combine(Path.GetDirectoryName(f.Path)!, ".", Path.GetFileName(f.Path));
         using var writer = HerdrSnapshotFile.Acquire(f.Path);
@@ -352,7 +358,8 @@ public class HerdrLabelFollowSchedulingTests
         finally { release.TrySetResult(); await stopping.WaitAsync(TimeSpan.FromSeconds(2)); }
     }
 
-    private static async Task CheckAndStopPumpAsync(HerdrEventPumpService pump, Func<Task> check)
+    private static async Task CheckAndStopPumpAsync(HerdrEventPumpService pump, Func<Task> check,
+        [CallerMemberName] string testMethod = "")
     {
         Exception? bodyFailure = null;
         try
@@ -369,7 +376,8 @@ public class HerdrLabelFollowSchedulingTests
             try
             {
                 using var shutdownDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                await pump.StopAsync(shutdownDeadline.Token);
+                using (TestTrace.Span("Herdr pump StopAsync", "test.method", testMethod))
+                    await pump.StopAsync(shutdownDeadline.Token);
                 // StopAsync can return on cancellation with the stream or timer still running.
                 var execution = pump.ExecuteTask;
                 if (execution is null || !execution.IsCompleted)

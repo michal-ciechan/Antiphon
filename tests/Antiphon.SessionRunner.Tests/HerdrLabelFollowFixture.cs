@@ -34,8 +34,11 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 
     public HerdrPaneSidecar? TryReadSaved(TimeSpan remaining)
     {
-        // The timer can replace the snapshot while a test polls it. Read under the writer's path lock.
         var path = Path;
+        if (!OperatingSystem.IsWindows())
+            return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
+
+        // Windows replacement can fail with a sharing violation while the reader has the file open.
         var millisecondsTimeout = (int)Math.Clamp(remaining.TotalMilliseconds, 0, SnapshotMutexWaitMs);
         using var mutex = new Mutex(false, SnapshotMutexName(path));
         try
@@ -98,6 +101,14 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 
     public static async Task WaitAsync(Func<TimeSpan, bool> condition, TimeProvider? timeProvider = null)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (!condition(Timeout.InfiniteTimeSpan))
+                await Task.Delay(5, limit.Token);
+            return;
+        }
+
         timeProvider ??= TimeProvider.System;
         var timeout = TimeSpan.FromSeconds(2);
         var interval = TimeSpan.FromMilliseconds(5);
