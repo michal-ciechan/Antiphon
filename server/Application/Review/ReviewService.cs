@@ -264,8 +264,7 @@ public sealed class ReviewService(
         var now = Now();
         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
         {
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"""SELECT 1 FROM "ReviewRuns" WHERE "Id" = {id} FOR NO KEY UPDATE""", ct);
+            await ReviewRunWrites.LockAsync(db, id, ct);
             var outstanding = await db.ReviewNodeExecutions.Where(n => n.RunId == id
                 && (n.Status == ReviewNodeStatus.Pending || n.Status == ReviewNodeStatus.Running || n.Status == ReviewNodeStatus.Waiting))
                 .ToListAsync(ct);
@@ -334,7 +333,7 @@ public sealed class ReviewService(
         db.Entry(run).Property(r => r.UpdatedAt).IsModified = true;
         try
         {
-            await db.SaveChangesAsync(ct);
+            await ReviewRunWrites.SaveAsync(db, run.Id, ct);
         }
         catch (DbUpdateConcurrencyException ex) when (ex.Entries.Any(entry => entry.Entity is ReviewRun))
         {

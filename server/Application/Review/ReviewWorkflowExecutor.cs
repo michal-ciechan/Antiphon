@@ -183,6 +183,7 @@ public sealed class ReviewWorkflowExecutor(
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = Now();
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
             var updated = await db.ReviewRuns.Where(r => r.Id == runId
                     && (r.Status == ReviewRunStatus.Running || r.Status == ReviewRunStatus.Approved))
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Failed)
@@ -192,6 +193,7 @@ public sealed class ReviewWorkflowExecutor(
             await db.ReviewNodeExecutions.Where(n => n.RunId == runId && n.Status == ReviewNodeStatus.Running)
                 .ExecuteUpdateAsync(s => s.SetProperty(n => n.Status, ReviewNodeStatus.Failed)
                     .SetProperty(n => n.Summary, reason).SetProperty(n => n.CompletedAt, now), ct);
+            await transaction.CommitAsync(ct);
             await scope.ServiceProvider.GetRequiredService<IEventBus>()
                 .PublishToAllAsync(ReviewService.RunChangedEvent, new ReviewRunChangedEvent(runId), ct);
         }
@@ -550,7 +552,14 @@ public sealed class ReviewWorkflowExecutor(
                     entry.State = EntityState.Detached;
             }
 
-            await walk.Db.SaveChangesAsync(ct);
+            await using (var transaction = await walk.Db.Database.BeginTransactionAsync(ct))
+            {
+                await ReviewRunWrites.LockAsync(walk.Db, walk.Run.Id, ct);
+                if (await walk.Db.ReviewRuns.AnyAsync(r => r.Id == walk.Run.Id && r.Status == ReviewRunStatus.Closed, ct))
+                    return true;
+                await walk.Db.SaveChangesAsync(ct);
+                await transaction.CommitAsync(ct);
+            }
             await PublishAsync(walk, ct);
         }
 
@@ -566,7 +575,7 @@ public sealed class ReviewWorkflowExecutor(
             execution.Status = ReviewNodeStatus.Pending;
             execution.StartedAt = null;
             walk.Run.Status = ReviewRunStatus.Queued;
-            await walk.Db.SaveChangesAsync(budget.Token);
+            await ReviewRunWrites.SaveAsync(walk.Db, walk.Run.Id, budget.Token);
         }
         catch (Exception ex)
         {
@@ -600,7 +609,7 @@ public sealed class ReviewWorkflowExecutor(
 
     private static async Task SaveAndPublishAsync(ReviewWalk walk, CancellationToken ct)
     {
-        await walk.Db.SaveChangesAsync(ct);
+        await ReviewRunWrites.SaveAsync(walk.Db, walk.Run.Id, ct);
         await PublishAsync(walk, ct);
     }
 

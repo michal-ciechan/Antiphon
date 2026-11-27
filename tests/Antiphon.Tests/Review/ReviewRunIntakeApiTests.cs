@@ -157,7 +157,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Reviewer_progress_obeys_close_lock_order(CancellationToken ct)
     {
-        const int number = 209668;
+        const int number = 209677;
         using var client = OpenPullRequest(number);
         var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
         var runId = Id(created);

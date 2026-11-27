@@ -165,7 +165,7 @@ public static class ReviewReviewSteps
         // Include the run's status check when admitting the reviewer and saving its result.
         walk.Run.UpdatedAt = walk.Now();
         walk.Db.Entry(walk.Run).Property(run => run.UpdatedAt).IsModified = true;
-        return walk.Db.SaveChangesAsync(ct);
+        return ReviewRunWrites.SaveAsync(walk.Db, walk.Run.Id, ct);
     }
 
     /// <summary>
