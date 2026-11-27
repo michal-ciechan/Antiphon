@@ -27,7 +27,8 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
         const long floor = 20L << 30;
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var host = await PhoneHomeTestHost.StartAsync();
-        await using var peer = await host.ConnectPeerAsync();
+        await using var peer = await host.ConnectPeerAsync(capabilities: new RunnerCapabilitiesDto(
+            "UnixPty", "unix", "fixture", false, Platform: "linux"));
         host.Directory.MarkRecovered(await host.WaitLiveAsync());
         peer.Reply = AnswerDispatchSave;
         using var workspace = new TempWorkspace();
@@ -100,6 +101,7 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
         pending.AgentSessionId.ShouldBe(sessionId);
         pending.Status.ShouldBe(QueuedMessageStatus.Pending);
         pending.DeliveryAttempts.ShouldBe(0);
+        pending.RemoteSpillBody.ShouldBeNull("the reported runner backend supports the complete inline brief");
         pending.Body.ShouldContain(goal);
         await using var recipient = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {
@@ -108,6 +110,7 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
             PreserveDatabaseOnDispose = true,
             AttachSessionId = sessionId,
             AttachAgentId = task.AgentId.ShouldNotBeNull(),
+            Delegation = new DelegationSettings { PtySingleChunkBytes = 86_400, BriefInlineMaxBytes = 43_200 },
         });
         await QueuedReceiptAssertions.ConfirmQueuedReceiptAsync(
             schema.ConnectionString, recipient, pending, sessionId, busy: scenario == "busy");

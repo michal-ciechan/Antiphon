@@ -12,7 +12,7 @@ The attention item has its own percentage and free-space settings.
 |---|---|---|---|
 | V-1 | A cwd-only holder prevents removal. | WorkingDirectoryAloneRetainsEvidence | PC-1 omit the cwd link. |
 | V-2 | The protected-component policy covers every descendant. | ProtectedDescendantRetainsWholeEvidenceDirectory | PC-2 omit the protected names from the descent. |
-| V-3 | A release binds its full owner to one directory identity. | AReplacementAtTheReleasedPathIsRetained | PC-3 skip the pre-move directory identity check. |
+| V-3 | A release binds its full owner to one directory identity. | AReplacementAtTheReleasedPathIsRetained | PC-3 derive the candidate identity from the current directory instead of the release entry. |
 | V-4 | A new reference on an already queued task after quarantine restores the same directory. | ReferenceAddedByAnExistingTaskDuringRenameRestoresEvidence | PC-4 omit the post-move task detail check. |
 | R-1 | Paths outside the five roots refuse even when listed. | ReleaseOutsideEvidenceRootsIsRejected | PC-5 add the sibling retained root to the allowlist. |
 | R-2 | Apply considers only explicit release entries. | ApplyRemovesOnlyListedEvidence | PC-6 enumerate a sibling and submit it as released. |

@@ -284,14 +284,17 @@ public static class BuildConfinement
             if (status.Paths.Count > 0)
                 return new Prepared("dirty-tracked", DirtyText(status.Paths), [], null);
 
+            // The SDK evaluates the same output layout it will build into. Include our own
+            // reservation marker in the snapshot so a refused evaluation cannot blame it.
+            var fresh = SafeWrite.WasCreated(layout.Owned) ? null : SafeWrite.CreateFreshDirectory(layout.Owned, SafeWrite.Under(layout.Owned));
+            if (fresh is not null)
+                return Refuse(fresh, layout.Owned);
             captured = Capture(repository, ledger);
         }
         if (captured.Error is not null || captured.Value is null)
             return Refuse("tracked-snapshot", captured.Error ?? "git-ls-files");
         var baseline = captured.Value;
 
-        var fresh = SafeWrite.WasCreated(layout.Owned) ? null : SafeWrite.CreateFreshDirectory(layout.Owned, SafeWrite.Under(layout.Owned));
-        if (fresh is not null) return Refuse(fresh, layout.Owned);
         var rewritten = Rewrite(arguments, layout.Owned, layout.Artifacts);
         var properties = rewritten.Where(token => TryReadProperty(token, out _, out _)).ToArray();
         WalkResult walked;
