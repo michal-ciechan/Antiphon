@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 370,
+      "classes": 369,
       "reason": "allowlist"
     },
     {
@@ -2133,18 +2133,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 145,
+      "classes": 144,
       "reason": "cap",
-      "owed": 120,
+      "owed": 119,
       "first": [
+        "DelegateScriptKindTests",
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
         "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
         "RunnerLinuxCompilerPolicyTests",
-        "VolumeRetirementApplyGateTests",
-        "AntiphonLogsTests"
+        "Server2RollingDriverTests"
       ]
     },
     {
@@ -2277,9 +2277,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 60,
+      "classes": 61,
       "reason": "cap",
-      "owed": 35,
+      "owed": 36,
       "first": [
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
@@ -3124,7 +3124,11 @@
         "HangfireStorageSelectionTests",
         "PostgresPoolConfigurationTests",
         "Server2ProductionServerContractTests",
-        "Server2StagingServerContractTests"
+        "Server2StagingServerContractTests",
+        "TestSelectionCatalogTests",
+        "TestSelectionDependencyTests",
+        "TestSelectionExecutionTests",
+        "TestSelectionTests"
       ]
     },
     {
@@ -3739,7 +3743,6 @@
         "C1008PlatformContractTests",
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
-        "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
         "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
@@ -3772,7 +3775,6 @@
       "path": "scripts/c1609-host-proof.ps1",
       "classes": [
         "DockerStackDocumentationTests",
-        "HostJqFixtureClosureTests",
         "VolumeRetirementHostProofTests"
       ]
     },
@@ -3785,7 +3787,6 @@
     {
       "path": "scripts/c1609-read-packet.ps1",
       "classes": [
-        "HostJqFixtureClosureTests",
         "VolumeRetirementReceiptTests"
       ]
     },
@@ -3800,7 +3801,6 @@
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
         "C1364BoundLandWaitProofTests",
-        "HostJqPrerequisiteScriptTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
@@ -3820,8 +3820,6 @@
         "C1364BoundLandWaitProofTests",
         "ClaudeTokenRefreshOptInTests",
         "DockerStackContractTests",
-        "HostJqFixtureClosureTests",
-        "HostJqPrerequisiteScriptTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RetiredTempContainerScriptTests",
@@ -3864,35 +3862,6 @@
       ]
     },
     {
-      "path": "scripts/deploy-server2.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1008HostFixtureSetupInsertionTests",
-        "C1008PlatformContractTests",
-        "C1364BoundLandWaitProofTests",
-        "CheckpointImportTests",
-        "HostJqFixtureClosureTests",
-        "HostJqPrerequisiteScriptTests",
-        "ProcessSpawnLimitTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
-        "RollingProductionMountTests",
-        "RollingVolumeRecycleCensusChurnTests",
-        "RollingVolumeRecycleScriptTests",
-        "Server2ProductionServerContractTests",
-        "Server2StagingServerContractTests",
-        "TestSelectionCatalogTests",
-        "TestSelectionDependencyTests",
-        "TestSelectionExecutionTests",
-        "TestSelectionTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
       "path": "scripts/fixtures/c1008-fake-docker.sh",
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
@@ -3922,7 +3891,6 @@
         "C1008PlatformContractTests",
         "C1364BoundLandWaitProofTests",
         "CheckpointImportTests",
-        "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
         "ProcessSpawnLimitTests",
         "RemoteScriptContractTests",
@@ -4011,50 +3979,6 @@
       "classes": [
         "BuildSlotScriptTests",
         "ProcessSpawnLimitTests"
-      ]
-    },
-    {
-      "path": "scripts/fixtures/c727-fake-http.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1008HostFixtureSetupInsertionTests",
-        "C1008PlatformContractTests",
-        "C1364BoundLandWaitProofTests",
-        "CheckpointImportTests",
-        "HostJqPrerequisiteScriptTests",
-        "ProcessSpawnLimitTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
-        "RollingProductionMountTests",
-        "RollingVolumeRecycleCensusChurnTests",
-        "RollingVolumeRecycleScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
-      "path": "scripts/fixtures/c727-fake-verify.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1008HostFixtureSetupInsertionTests",
-        "C1008PlatformContractTests",
-        "C1364BoundLandWaitProofTests",
-        "CheckpointImportTests",
-        "HostJqPrerequisiteScriptTests",
-        "ProcessSpawnLimitTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
-        "RollingProductionMountTests",
-        "RollingVolumeRecycleCensusChurnTests",
-        "RollingVolumeRecycleScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -4439,6 +4363,30 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs",
+      "classes": [
+        "RetiredTempContainerHostTests",
+        "RetiredTempContainerScriptTests",
+        "Server2ProductionServerContractTests",
+        "Server2StagingServerContractTests",
+        "VolumeRetirementApplyGateTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/Server2RollingOs.cs",
+      "classes": [
+        "Server2ProductionServerContractTests",
+        "Server2StagingServerContractTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/Server2RollingPs.cs",
+      "classes": [
+        "RetiredTempContainerHostTests",
+        "RetiredTempContainerScriptTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/Server2ServerDeploy.cs",
       "classes": [
         "Server2ProductionServerContractTests",
@@ -4718,12 +4666,6 @@
       ]
     },
     {
-      "path": "scripts/lib/runner-operator-token.ps1",
-      "classes": [
-        "HostJqFixtureClosureTests"
-      ]
-    },
-    {
       "path": "scripts/nightly-run.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4782,7 +4724,6 @@
     {
       "path": "scripts/server2-host-jq.sh",
       "classes": [
-        "HostJqFixtureClosureTests",
         "HostJqPrerequisiteScriptTests",
         "ProcessSpawnLimitTests"
       ]
@@ -4803,28 +4744,6 @@
       "path": "scripts/test-client.ps1",
       "classes": [
         "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "scripts/test-deploy-server2-jq.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1008HostFixtureSetupInsertionTests",
-        "C1008PlatformContractTests",
-        "C1364BoundLandWaitProofTests",
-        "CheckpointImportTests",
-        "HostJqPrerequisiteScriptTests",
-        "ProcessSpawnLimitTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
-        "RollingProductionMountTests",
-        "RollingVolumeRecycleCensusChurnTests",
-        "RollingVolumeRecycleScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -24293,7 +24212,6 @@
         "DelegatePlatformScriptTests",
         "DelegateScriptAdoptTests",
         "DelegateScriptCapabilityTests",
-        "DelegateScriptKindTests",
         "DelegateScriptLandCompatibilityTests",
         "DelegateScriptLandStatusTests",
         "DelegateScriptStartRefTests",
@@ -24306,6 +24224,7 @@
         "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "RoutingPinScriptTests",
+        "VolumeRetirementContentTests",
         "VolumeRetirementHostProofTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests",
@@ -24926,7 +24845,8 @@
         "BlockedTaskParkReleaseTests",
         "CodexCliObservationGapTests",
         "CodexCliObservationTests",
-        "DelegateBranchDeliveryTests"
+        "DelegateBranchDeliveryTests",
+        "Server2RollingDriverTests"
       ]
     },
     {
@@ -26088,7 +26008,6 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/HostJqPrerequisiteScriptTests.cs",
       "classes": [
-        "HostJqFixtureClosureTests",
         "ProcessSpawnLimitTests",
         "ScriptModelSpawnLaneTests"
       ]
@@ -26908,6 +26827,35 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/Server2RollingCaptures.cs",
+      "classes": [
+        "Server2RollingDeployTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2RollingCapturesC1008.cs",
+      "classes": [
+        "Server2RollingDeployTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2RollingCapturesDriver.cs",
+      "classes": [
+        "Server2RollingDeployTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2RollingWorld.cs",
+      "classes": [
+        "DeployServer2ApiDefaultTests",
+        "RemoteScriptContractTests",
+        "RetiredTempContainerScriptTests",
+        "Server2RollingDriverTests",
+        "Server2RollingWitnessTests",
+        "VolumeRetirementWrapperTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/Server2ServerDeployWorld.cs",
       "classes": [
         "C1744G1DesktopWinComposeTests",
@@ -26944,7 +26892,6 @@
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
         "C1364BoundLandWaitProofTests",
-        "HostJqPrerequisiteScriptTests",
         "RemoteScriptContractTests",
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
