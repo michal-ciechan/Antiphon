@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Messaging.Service;
+using Antiphon.Messaging.Tests.Gateway;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -40,7 +41,8 @@ public sealed class EfInboxReceiptStoreTests
         await using var harness = await StoreHarness.CreateAsync();
         await harness.InsertAsync(Row("chat-1"));
         await harness.InsertAsync(Row("chat-2"));
-        await harness.InsertIgnoringDuplicateAsync(Row("chat-2"));
+        var failure = await Should.ThrowAsync<DbUpdateException>(() => harness.InsertAsync(Row("chat-2")));
+        failure.InnerException.ShouldBeOfType<SqliteException>().SqliteExtendedErrorCode.ShouldBe(2067);
         (await harness.LoadAsync()).Select(x => x.ConversationId).Order().ShouldBe(["chat-1", "chat-2"]);
     }
 
@@ -116,7 +118,8 @@ public sealed class EfInboxReceiptStoreTests
     [Test]
     public async Task Redelivery_preserves_the_original_envelope_and_first_non_null_offset()
     {
-        await using var harness = await StoreHarness.CreateAsync();
+        var logs = new CapturingLogger<EfInboxReceiptStore>();
+        await using var harness = await StoreHarness.CreateAsync(logs);
         var message = Sample("662");
         await harness.Store.RecordAsync(message, "original", "channels.inbound", 1, 10, CancellationToken.None);
         await harness.Store.RecordAsync(message with { Text = "edited" }, "redelivery",
@@ -126,6 +129,7 @@ public sealed class EfInboxReceiptStoreTests
         receipt.Text.ShouldBe(message.Text);
         receipt.Partition.ShouldBe(1);
         receipt.Offset.ShouldBe(10);
+        logs.Entries.ShouldHaveSingleItem().Level.ShouldBe(LogLevel.Debug);
     }
 
     [Test]
@@ -198,14 +202,14 @@ public sealed class EfInboxReceiptStoreTests
         private SqliteConnection Connection { get; }
         public EfInboxReceiptStore Store => Services.GetRequiredService<EfInboxReceiptStore>();
 
-        public static async Task<StoreHarness> CreateAsync()
+        public static async Task<StoreHarness> CreateAsync(ILogger<EfInboxReceiptStore>? logger = null)
         {
             var connection = new SqliteConnection(
                 $"Data Source=file:inbox-{Guid.NewGuid():N}?mode=memory&cache=shared");
             await connection.OpenAsync();
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddSingleton<ILogger<EfInboxReceiptStore>>(NullLogger<EfInboxReceiptStore>.Instance);
+            services.AddSingleton(logger ?? NullLogger<EfInboxReceiptStore>.Instance);
             services.AddDbContext<MessagingDbContext>(options => options.UseSqlite(connection));
             services.AddSingleton<EfInboxReceiptStore>();
             var provider = services.BuildServiceProvider();
