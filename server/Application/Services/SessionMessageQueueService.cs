@@ -1690,10 +1690,9 @@ public sealed partial class SessionMessageQueueService
                     "This remote-control maintenance request cannot be forced through SendNow.");
             }
 
-            if (message is { Origin: QueuedMessageOrigin.Channel, DeliveryAttempts: > 0,
-                LastDeliveryStartedAt: not null, DeliveryVerdict: null })
+            if (message.Origin == QueuedMessageOrigin.Channel
+                && await ReconcileUnknownInputLockedAsync(db, sessionId, ct) is { } reconciliation)
             {
-                var reconciliation = await ReconcileUnknownInputLockedAsync(db, sessionId, ct);
                 var queue = await GetQueueAsync(sessionId, ct);
                 if (reconciliation is FlushResult.LateConfirmed or FlushResult.Failed)
                     await PublishQueueChangedAsync(queue, ct);
@@ -3416,11 +3415,14 @@ public sealed partial class SessionMessageQueueService
                     && m.Origin != QueuedMessageOrigin.Channel)
                 || (m.DeliveryAttempts == 0 && !(pointer && m.LastDeliveryStartedAt != null)))
                 continue;
-            if (!PromptSubmissionMatch.RequiresTextMatch(m.Body) && !StandingResumeNote.IsNote(m))
+            if (!PromptSubmissionMatch.RequiresTextMatch(m.Body) && !StandingResumeNote.IsNote(m)
+                && m.Origin != QueuedMessageOrigin.Channel)
                 continue;
 
             TranscriptConfirm match;
-            if (pointer)
+            if (m.Origin == QueuedMessageOrigin.Channel)
+                match = await FindOwningChannelReceiptAsync(db, m, tolerance, ct);
+            else if (pointer)
             {
                 if (currentGeneration is not { } generation || DeliveryGenerationChanged(m, generation)) continue;
                 match = await ReadPointerReceiptAsync(sessionId, m.Body, PointerFor(kind, m, generation)!, ct);
@@ -3648,7 +3650,12 @@ public sealed partial class SessionMessageQueueService
     // A channel attempt can have submitted before the server durably observed the verdict.
     // An empty composer, passage of time or even a new process cannot rule that out.
     private static IQueryable<SessionQueuedMessage> UnresolvedInputAttempts(AppDbContext db) =>
-        db.SessionQueuedMessages.Where(m => m.DeliveryVerdict == null && m.DeliveryAttempts > 0
+        db.SessionQueuedMessages.Where(m => m.DeliveryAttempts > 0
+            && (m.DeliveryVerdict == null || (m.Origin == QueuedMessageOrigin.Channel
+                && m.LastDeliveryStartedAt != null
+                && (m.DeliveryVerdict == DeliveryVerdict.NoTranscriptRecord
+                    || m.DeliveryVerdict == DeliveryVerdict.NoSubmitOutput
+                    || m.DeliveryVerdict == DeliveryVerdict.NoComposerEvidence)))
             // Older recovery could commit Pending while keeping the ambiguous attempt and its floor.
             && (m.Status == QueuedMessageStatus.Sent || (m.Origin == QueuedMessageOrigin.Channel
                 && m.Status == QueuedMessageStatus.Pending && m.LastDeliveryStartedAt != null))
@@ -3656,6 +3663,30 @@ public sealed partial class SessionMessageQueueService
             && db.AgentSessions.Any(s => s.Id == m.AgentSessionId && s.Status == SessionStatus.Running
                 && (m.Origin == QueuedMessageOrigin.Channel
                     || (s.AgentKind != AgentKind.ClaudeCode && s.AgentKind != AgentKind.Codex))));
+
+    private async Task<TranscriptConfirm> FindOwningChannelReceiptAsync(
+        AppDbContext db, SessionQueuedMessage message, TimeSpan tolerance, CancellationToken ct)
+    {
+        var prompts = db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == message.AgentSessionId && t.Kind == TranscriptKinds.UserPrompt);
+        if (message.LastDeliveryBaselineSequence is { } floor)
+            prompts = prompts.Where(t => t.Sequence > floor);
+        else if ((message.LastDeliveryStartedAt ?? message.SentAt) is { } started)
+        {
+            var earliest = started - tolerance;
+            prompts = prompts.Where(t => t.Timestamp >= earliest);
+        }
+        else return TranscriptConfirm.None;
+
+        foreach (var prompt in await prompts.OrderBy(t => t.Sequence).ToListAsync(ct))
+        {
+            if (ChannelPromptCorrelation.Matches(message, prompt, tolerance, out _)
+                && (await ChannelPromptCorrelation.MatchChannelRowsAsync(db, prompt, tolerance, _logger, message.Id, ct))
+                    .Any(row => row.Id == message.Id))
+                return new TranscriptConfirm(true, true, prompt.Text);
+        }
+        return TranscriptConfirm.None;
+    }
 
     private async Task<FlushResult?> ReconcileUnknownInputLockedAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct, LateConfirmCollector? lateConfirmed = null)
@@ -3665,13 +3696,17 @@ public sealed partial class SessionMessageQueueService
         if (unknown.Count == 0) return null;
 
         // Restore the canonical hold before catch-up, which may confirm or park a truncated attempt.
-        var legacyPending = unknown.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
-        if (legacyPending.Count > 0)
+        var legacy = unknown.Where(m => m.Status == QueuedMessageStatus.Pending || m.DeliveryVerdict is not null).ToList();
+        if (legacy.Count > 0)
         {
-            foreach (var message in legacyPending)
+            foreach (var message in legacy)
             {
-                message.Status = QueuedMessageStatus.Sent;
-                message.SentAt = message.LastDeliveryStartedAt;
+                if (message.Status == QueuedMessageStatus.Pending)
+                {
+                    message.Status = QueuedMessageStatus.Sent;
+                    message.SentAt = message.LastDeliveryStartedAt;
+                }
+                ClearAttemptVerdict(message);
             }
             await db.SaveChangesAsync(ct);
         }

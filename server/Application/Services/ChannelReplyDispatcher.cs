@@ -1081,55 +1081,9 @@ public sealed class ChannelReplyDispatcher
         return (LossReason.TurnUnmatched, prompt, text.Length);
     }
 
-    // Include settled rows: they still own their turn after a process restart. Limit candidates
-    // to this session and the attempt window before looking at text, including in machine gate 2.
-    private async Task<List<SessionQueuedMessage>> MatchChannelRowsAsync(
-        AppDbContext db, TranscriptEntry prompt, CancellationToken ct)
-    {
-        var latestStart = prompt.Timestamp?.Add(_correlationTolerance);
-        var rows = await db.SessionQueuedMessages.AsNoTracking()
-            .Where(m => m.AgentSessionId == prompt.AgentSessionId && m.Origin == QueuedMessageOrigin.Channel
-                && m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0
-                && ((m.LastDeliveryBaselineSequence != null && m.LastDeliveryBaselineSequence < prompt.Sequence)
-                    || (m.LastDeliveryBaselineSequence == null && latestStart != null
-                        && (m.LastDeliveryStartedAt ?? m.SentAt) <= latestStart)))
-            .ToListAsync(ct);
-        var matches = new List<SessionQueuedMessage>();
-        foreach (var row in rows)
-        {
-            if (ChannelPromptCorrelation.Matches(row, prompt, _correlationTolerance, out var reason))
-                matches.Add(row);
-            else
-                _logger.LogDebug("Channel correlation {MessageId} on session {SessionId}: {Reason}; prompt {Sequence}, floor {Floor}",
-                    row.Id, row.AgentSessionId, reason, prompt.Sequence, row.LastDeliveryBaselineSequence);
-        }
-        // A complete earlier Channel body can occur inside a genuine task/Check report. Its
-        // marker and lower floor alone do not give that historical row ownership of this turn.
-        // Require the outer machine delivery's own full receipt and attempt evidence. Keep this
-        // decision here so main routing, TTL and machine gate 2 cannot disagree about ownership.
-        if (matches.Count > 0 && !ChannelPromptCorrelation.HasMarkedTransportFrame(prompt.Text!))
-        {
-            var machines = await db.SessionQueuedMessages.AsNoTracking()
-                .Where(m => m.AgentSessionId == prompt.AgentSessionId
-                    && (m.Origin == QueuedMessageOrigin.Delegation || m.Origin == QueuedMessageOrigin.Check
-                        || m.Origin == QueuedMessageOrigin.System || m.Origin == QueuedMessageOrigin.Scheduled)
-                    && m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0
-                    && ((m.LastDeliveryBaselineSequence != null && m.LastDeliveryBaselineSequence < prompt.Sequence)
-                        || (m.LastDeliveryBaselineSequence == null && latestStart != null
-                            && m.LastDeliveryStartedAt <= latestStart)))
-                .ToListAsync(ct);
-            if (machines.Any(m => ChannelPromptCorrelation.MatchesMachineDelivery(m, prompt, _correlationTolerance)))
-                return [];
-        }
-        var legacy = matches.Where(m => ChannelPromptCorrelation.OpeningMarker(m.Body) is null).ToList();
-        if (legacy.Count > 1 && !legacy.All(m => ChannelPromptCorrelation.SameDeliveredBatch(legacy[0], m)))
-        {
-            _logger.LogWarning("Ambiguous legacy channel correlation on session {SessionId}, prompt {Sequence}: {Count} rows remain unclaimed",
-                prompt.AgentSessionId, prompt.Sequence, legacy.Count);
-            matches.RemoveAll(m => legacy.Contains(m));
-        }
-        return matches;
-    }
+    private Task<List<SessionQueuedMessage>> MatchChannelRowsAsync(
+        AppDbContext db, TranscriptEntry prompt, CancellationToken ct) =>
+        ChannelPromptCorrelation.MatchChannelRowsAsync(db, prompt, _correlationTolerance, _logger, null, ct);
 
     /// <summary>
     /// The end of silent loss. Logs at Error and records a Critical

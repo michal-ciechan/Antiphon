@@ -1,6 +1,9 @@
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -194,6 +197,59 @@ internal static class ChannelPromptCorrelation
 
         reason = "eligible-attempt";
         return true;
+    }
+
+    // Include settled rows: they still own their turn after a process restart. Limit candidates
+    // to this session and the attempt window before looking at text, including in machine gate 2.
+    internal static async Task<List<SessionQueuedMessage>> MatchChannelRowsAsync(
+        AppDbContext db, TranscriptEntry prompt, TimeSpan tolerance, ILogger logger,
+        Guid? pendingCandidateId, CancellationToken ct)
+    {
+        var latestStart = prompt.Timestamp?.Add(tolerance);
+        var rows = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == prompt.AgentSessionId && m.Origin == QueuedMessageOrigin.Channel
+                && (m.Status == QueuedMessageStatus.Sent
+                    || (m.Status == QueuedMessageStatus.Pending && m.Id == pendingCandidateId))
+                && m.DeliveryAttempts > 0
+                && ((m.LastDeliveryBaselineSequence != null && m.LastDeliveryBaselineSequence < prompt.Sequence)
+                    || (m.LastDeliveryBaselineSequence == null && latestStart != null
+                        && (m.LastDeliveryStartedAt ?? m.SentAt) <= latestStart)))
+            .ToListAsync(ct);
+        var matches = new List<SessionQueuedMessage>();
+        foreach (var row in rows)
+        {
+            if (ChannelPromptCorrelation.Matches(row, prompt, tolerance, out var reason))
+                matches.Add(row);
+            else
+                logger.LogDebug("Channel correlation {MessageId} on session {SessionId}: {Reason}; prompt {Sequence}, floor {Floor}",
+                    row.Id, row.AgentSessionId, reason, prompt.Sequence, row.LastDeliveryBaselineSequence);
+        }
+        // A complete earlier Channel body can occur inside a genuine task/Check report. Its
+        // marker and lower floor alone do not give that historical row ownership of this turn.
+        // Require the outer machine delivery's own full receipt and attempt evidence. Keep this
+        // decision here so main routing, TTL and machine gate 2 cannot disagree about ownership.
+        if (matches.Count > 0 && !ChannelPromptCorrelation.HasMarkedTransportFrame(prompt.Text!))
+        {
+            var machines = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.AgentSessionId == prompt.AgentSessionId
+                    && (m.Origin == QueuedMessageOrigin.Delegation || m.Origin == QueuedMessageOrigin.Check
+                        || m.Origin == QueuedMessageOrigin.System || m.Origin == QueuedMessageOrigin.Scheduled)
+                    && m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0
+                    && ((m.LastDeliveryBaselineSequence != null && m.LastDeliveryBaselineSequence < prompt.Sequence)
+                        || (m.LastDeliveryBaselineSequence == null && latestStart != null
+                            && m.LastDeliveryStartedAt <= latestStart)))
+                .ToListAsync(ct);
+            if (machines.Any(m => ChannelPromptCorrelation.MatchesMachineDelivery(m, prompt, tolerance)))
+                return [];
+        }
+        var legacy = matches.Where(m => ChannelPromptCorrelation.OpeningMarker(m.Body) is null).ToList();
+        if (legacy.Count > 1 && !legacy.All(m => ChannelPromptCorrelation.SameDeliveredBatch(legacy[0], m)))
+        {
+            logger.LogWarning("Ambiguous legacy channel correlation on session {SessionId}, prompt {Sequence}: {Count} rows remain unclaimed",
+                prompt.AgentSessionId, prompt.Sequence, legacy.Count);
+            matches.RemoveAll(m => legacy.Contains(m));
+        }
+        return matches;
     }
 
     public static bool SameDeliveredBatch(SessionQueuedMessage a, SessionQueuedMessage b) =>
