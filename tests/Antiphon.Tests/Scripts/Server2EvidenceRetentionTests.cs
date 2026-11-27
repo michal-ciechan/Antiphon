@@ -59,6 +59,50 @@ public sealed class Server2EvidenceRetentionTests
         finally { folder.Delete(recursive: true); }
     }
 
+    [Test]
+    public async Task ReleaseOutsideEvidenceRootsIsRejected()
+    {
+        var result = await RunSweepAsync("root");
+        result.ShouldContain("outside the task's evidence directory");
+        result.ShouldContain("listed=True;unlisted=True");
+    }
+
+    [Test]
+    public async Task ApplyRemovesOnlyListedEvidence()
+    {
+        var result = await RunSweepAsync("release");
+        result.ShouldContain("removed ");
+        result.ShouldContain("listed=False;unlisted=True");
+    }
+
+    [Test]
+    public async Task ReferenceAddedByAnExistingTaskDuringRenameRestoresEvidence()
+    {
+        var result = await RunSweepAsync("race");
+        result.ShouldContain("active-reference");
+        result.ShouldContain("listed=True;unlisted=True");
+    }
+
+    [Test]
+    public async Task AReplacementAtTheReleasedPathIsRetained()
+    {
+        var result = await RunSweepAsync("identity");
+        result.ShouldContain("directory-identity");
+        result.ShouldContain("listed=True;unlisted=True");
+    }
+
+    private static async Task<string> RunSweepAsync(string scenario)
+    {
+        var folder = Directory.CreateTempSubdirectory("retention-sweep-");
+        try
+        {
+            return await RunAsync(folder.FullName,
+                "& (Join-Path $env:RETENTION_REPOSITORY 'tests/Antiphon.Tests/Fixtures/Server2EvidenceRetention.ps1') " +
+                "-Fixture $env:RETENTION_FIXTURE -Repository $env:RETENTION_REPOSITORY -Scenario " + scenario);
+        }
+        finally { folder.Delete(recursive: true); }
+    }
+
     private static async Task<string> RunAsync(string fixture, string command)
     {
         var start = new ProcessStartInfo("pwsh")
@@ -68,6 +112,7 @@ public sealed class Server2EvidenceRetentionTests
             RedirectStandardError = true,
         };
         start.Environment["RETENTION_FIXTURE"] = fixture;
+        start.Environment["RETENTION_REPOSITORY"] = CheckpointFixtures.RepoRoot;
         start.Environment["RETENTION_LIBRARY"] =
             Path.Combine(CheckpointFixtures.RepoRoot, "scripts", "lib", "server2-retention-files.ps1");
         foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-Command",
