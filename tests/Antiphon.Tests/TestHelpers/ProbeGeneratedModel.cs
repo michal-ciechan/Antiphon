@@ -41,6 +41,10 @@ internal static class ProbeGeneratedModel
 
     public static async Task<string?> PathAsync() => (await Generated.Value).Path;
 
+    // A child consumes the parent's verified cache entry without spawning another generator.
+    internal static string CachedPath() => Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe-model",
+        Key(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe")), AssemblyName + ".dll");
+
     /// <summary>
     /// Adds the compiled model to a probe config a test wrote itself, once the model is ready (the caller's class asks
     /// for it in its Before(Class)); before that, or without one, the config is left as it is and the probe builds

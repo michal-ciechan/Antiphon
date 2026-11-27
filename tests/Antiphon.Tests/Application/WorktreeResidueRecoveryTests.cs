@@ -277,10 +277,11 @@ public sealed class WorktreeResidueRecoveryTests
     [Arguments("run-projection")]
     public async Task C459_WorkerDeathAtEveryRetirementHandoff(string cut)
     {
+        var useCompiledModel = await WorktreeRetirementCrashWorker.PrepareCompiledModelAsync();
         await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
         var ready = Path.Combine(h.Host.Fixture.Root, "worker-ready.json");
         AssertRetirementAdmission(h, cut, ready);
-        await using var worker = StartRetirementWorker(h, cut, ready);
+        await using var worker = StartRetirementWorker(h, cut, ready, useCompiledModel);
         try
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -347,7 +348,7 @@ public sealed class WorktreeResidueRecoveryTests
             var resumeJson = System.Text.Json.JsonSerializer.Serialize(resumeRequest);
             System.Text.Json.JsonDocument.Parse(resumeJson).RootElement.GetProperty("Cut").GetString()
                 .ShouldBe("resume", "worker-typed-resume");
-            await using var resumed = StartRetirementWorker(h, "resume", resumeReady, resumeJson);
+            await using var resumed = StartRetirementWorker(h, "resume", resumeReady, useCompiledModel, resumeJson);
             try
             {
                 using var resumeBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -405,7 +406,7 @@ public sealed class WorktreeResidueRecoveryTests
     }
 
     private static CrashWorkerProcess.Running StartRetirementWorker(
-        SettledRemovalHarness h, string cut, string ready, string? requestJson = null)
+        SettledRemovalHarness h, string cut, string ready, bool useCompiledModel, string? requestJson = null)
     {
         var request = new WorktreeRetirementCrashWorker.Request(
             h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
@@ -417,6 +418,9 @@ public sealed class WorktreeResidueRecoveryTests
             "/*/*/WorktreeResidueRecoveryTests/C459_WorkerDeathAtEveryRetirementHandoff",
             ready,
             cut));
+        prepared.Start.Environment.Remove(WorktreeRetirementCrashWorker.CompiledModelVariable);
+        if (useCompiledModel)
+            prepared.Start.Environment[WorktreeRetirementCrashWorker.CompiledModelVariable] = "1";
         var present = TestWorkerModes.All
             .Select(mode => mode.Marker)
             .Where(key => prepared.Start.Environment.ContainsKey(key))

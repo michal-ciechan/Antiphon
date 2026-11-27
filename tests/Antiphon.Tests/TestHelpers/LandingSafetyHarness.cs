@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -16,6 +17,8 @@ namespace Antiphon.Tests.TestHelpers;
 
 internal sealed class LandingSafetyHarness : IAsyncDisposable
 {
+    private IModel? _retirementWorkerModel;
+
     public LandingGitFixture Fixture { get; }
     public LandingSafetyHarness(string? root = null, Guid? taskId = null, string? sourceBranch = null) =>
         Fixture = new(root, taskId, sourceBranch);
@@ -178,11 +181,11 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         throw new InvalidOperationException("Crash boundary was not reached: " + cut);
     }
 
-    public static async Task RunRetirementCrashWorkerAsync(string root, string taskId, string cut, string ready)
+    public static async Task RunRetirementCrashWorkerAsync(string root, string taskId, string cut, string ready, IModel? model)
     {
         var connection = Environment.GetEnvironmentVariable("ANTIPHON_C459_TEST_CONNECTION")
             ?? throw new InvalidOperationException("Missing private fixture database");
-        var h = new LandingSafetyHarness(root, Guid.Parse(taskId));
+        var h = new LandingSafetyHarness(root, Guid.Parse(taskId)) { _retirementWorkerModel = model };
         h.Schema = new IsolatedTestSchema("worker-observer-only", connection);
         h.BuildServices();
         async Task PauseAsync()
@@ -272,6 +275,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         var options = new DbContextOptionsBuilder<AppDbContext>(
             TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(
             Fault, new TransactionFault(Fault), RetirementCut, new RetirementTransactionPause(RetirementCut));
+        if (_retirementWorkerModel is not null) options.UseModel(_retirementWorkerModel);
         if (LandCutInterceptor is not null) options.AddInterceptors(LandCutInterceptor);
         if (CommandInterceptor is not null) options.AddInterceptors(CommandInterceptor);
         if (TransactionInterceptor is not null) options.AddInterceptors(TransactionInterceptor);

@@ -1,5 +1,10 @@
+using System.Reflection;
 using System.Text.Json;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using TUnit.Core;
+using ReflectionAssembly = System.Reflection.Assembly;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -10,7 +15,9 @@ namespace Antiphon.Tests.TestHelpers;
 internal static class WorktreeRetirementCrashWorker
 {
     internal const string Marker = "ANTIPHON_C459_RETIREMENT_WORKER";
+    internal const string CompiledModelVariable = "ANTIPHON_C459_COMPILED_MODEL";
 
+    private static readonly Lazy<Task<bool>> CompiledModelReady = new(VerifyCompiledModelAsync);
     internal static readonly string[] AllowedCuts =
     [
         "release-before", "release-after", "claim-before", "claim-after",
@@ -20,6 +27,47 @@ internal static class WorktreeRetirementCrashWorker
     ];
 
     internal sealed record Request(string Root, Guid TaskId, string Cut, string Ready);
+
+    // The generator checks the model in the staged probe. Compare it again in the test host
+    // using the retirement fixture's options before handing it to any crash or resume child.
+    internal static Task<bool> PrepareCompiledModelAsync() => CompiledModelReady.Value;
+
+    private static async Task<bool> VerifyCompiledModelAsync()
+    {
+        using var span = TestTrace.ChunkSpan("retirement worker prepare compiled model");
+        try
+        {
+            var path = await ProbeGeneratedModel.PathAsync();
+            if (path is null)
+                return false;
+
+            var options = TestDbFixture.CreateDbContextOptions("Host=unused");
+            using var runtime = new AppDbContext(options);
+            using var compiled = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(options)
+                .UseModel(LoadCompiledModel(path)).Options);
+            var differences = ProbeModelComparison.Differences(runtime.Model, compiled.Model);
+            if (differences.Count == 0)
+                return true;
+
+            Console.WriteLine("Retirement worker uses the runtime model: " + differences[0]);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TypeLoadException
+            or TypeInitializationException or TargetInvocationException or InvalidOperationException
+            or BadImageFormatException or MissingMemberException or NotSupportedException)
+        {
+            Console.WriteLine("Retirement worker uses the runtime model: " + ex.GetType().Name);
+        }
+        return false;
+    }
+
+    private static IModel LoadCompiledModel(string path)
+    {
+        using var span = TestTrace.ChunkSpan("retirement worker load compiled model");
+        // The generated model uses the probe's Npgsql element-mapping resolver.
+        ReflectionAssembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
+            "Antiphon.ChannelOutbound.Probe.dll"));
+        return ProbeModel.Load(ReflectionAssembly.LoadFrom(path));
+    }
 
     [Before(TestDiscovery)]
     public static async Task RunBeforeDiscoveryAsync()
@@ -44,8 +92,11 @@ internal static class WorktreeRetirementCrashWorker
             throw new InvalidOperationException(CrashWorkerProcess.StderrSentinel + ": " + rejection);
 
         CrashWorkerProcess.WriteStdoutSentinel();
+        var model = Environment.GetEnvironmentVariable(CompiledModelVariable) == "1"
+            ? LoadCompiledModel(ProbeGeneratedModel.CachedPath())
+            : null;
         await LandingSafetyHarness.RunRetirementCrashWorkerAsync(
-            Path.GetFullPath(request.Root), request.TaskId.ToString("D"), request.Cut, Path.GetFullPath(request.Ready));
+            Path.GetFullPath(request.Root), request.TaskId.ToString("D"), request.Cut, Path.GetFullPath(request.Ready), model);
     }
 
     /// <summary>Null when the request is owned. Does not open a database or a process.</summary>
