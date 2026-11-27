@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 367,
+      "classes": 369,
       "reason": "allowlist"
     },
     {
@@ -3748,18 +3748,6 @@
       ]
     },
     {
-      "path": "scripts/c1609-manual.ps1",
-      "classes": [
-        "VolumeRetirementApplyGateTests"
-      ]
-    },
-    {
-      "path": "scripts/c1609-read-packet.ps1",
-      "classes": [
-        "VolumeRetirementReceiptTests"
-      ]
-    },
-    {
       "path": "scripts/c1893-runner-hold.sh",
       "classes": [
         "DockerStackContractTests"
@@ -4040,6 +4028,12 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/C849CacheFrontDoor.cs",
+      "classes": [
+        "RemoteScriptContractTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/CapabilityCli.cs",
       "classes": [
         "ImpactedClassesSelectorTests"
@@ -4303,6 +4297,13 @@
       "path": "scripts/lib/Antiphon.Nightly/ReleaseSelectionAttempt.cs",
       "classes": [
         "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/RetireRunnerVolumes.cs",
+      "classes": [
+        "VolumeRetirementApplyGateTests",
+        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -4665,13 +4666,6 @@
       ]
     },
     {
-      "path": "scripts/retire-runner-volumes.ps1",
-      "classes": [
-        "VolumeRetirementCloseExemptionTests",
-        "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
       "path": "scripts/run-daemon.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
@@ -4701,12 +4695,6 @@
       "path": "scripts/test-client.ps1",
       "classes": [
         "AntiphonCliLauncherTests"
-      ]
-    },
-    {
-      "path": "scripts/verify-card0849-caches.ps1",
-      "classes": [
-        "RemoteScriptContractTests"
       ]
     },
     {
@@ -25888,7 +25876,9 @@
         "DockerStackSmokeCommandTests",
         "DockerStackVerifyTests",
         "DockerTestCommandTests",
-        "LinuxTestRosterTests"
+        "LinuxTestRosterTests",
+        "RetireRunnerVolumesCaptureTests",
+        "RetireRunnerVolumesTests"
       ]
     },
     {
@@ -25896,6 +25886,19 @@
       "classes": [
         "C1733AllocatorFixtureTests",
         "ReleaseTagAllocatorTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/C849FrontDoorCaptures.cs",
+      "classes": [
+        "C849FrontDoorCaptureTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/C849FrontDoorWorld.cs",
+      "classes": [
+        "C849FrontDoorCaptureTests",
+        "RemoteScriptContractTests"
       ]
     },
     {
@@ -26671,6 +26674,21 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/RetireRunnerVolumesCaptures.cs",
+      "classes": [
+        "RetireRunnerVolumesCaptureTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/RetireRunnerVolumesWorld.cs",
+      "classes": [
+        "RetireRunnerVolumesCaptureTests",
+        "RetireRunnerVolumesTests",
+        "VolumeRetirementCloseExemptionTests",
+        "VolumeRetirementWrapperTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/RetiredTempContainerScriptTests.cs",
       "classes": [
         "RetiredTempContainerHostTests"
@@ -26883,7 +26901,6 @@
         "RetiredTempContainerHostTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementApplyGateTests",
-        "VolumeRetirementCloseExemptionTests",
         "VolumeRetirementContentTests",
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
