@@ -67,15 +67,17 @@ public sealed class PhoneHomeDirectoryTests
         await using var host = await PhoneHomeTestHost.StartAsync();
         var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var failure = new IOException("superseded socket dispose fault");
+        var closeFailure = new WebSocketException(WebSocketError.Faulted, "superseded socket handshake fault");
+        var disposeFailure = new IOException("superseded socket dispose fault");
         var previous = new PhoneHomeTestWebSocket
         {
-            BeforeClose = ct =>
+            BeforeClose = async ct =>
             {
                 closing.SetResult();
-                return finishClose.Task.WaitAsync(ct);
+                await finishClose.Task.WaitAsync(ct);
+                throw closeFailure;
             },
-            OnDispose = () => throw failure,
+            OnDispose = () => throw disposeFailure,
         };
         var first = await host.RegisterAsync();
         await using var old = await host.Directory.AcceptConnectAsync(host.AllowedRunnerId, first.Ticket, previous);
@@ -99,9 +101,15 @@ public sealed class PhoneHomeDirectoryTests
             finishClose.TrySetResult();
             await stopping;
         }
-        host.Logs.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning
-            && ReferenceEquals(entry.Exception, failure));
-        previous.State.ShouldBe(WebSocketState.Closed);
+        previous.State.ShouldBe(WebSocketState.Aborted);
+        var warning = host.Logs.Entries.Where(entry => entry.Level == LogLevel.Warning
+            && Equals(entry["RunnerId"], old.RunnerId)
+            && Equals(entry["Epoch"], old.Epoch)).ShouldHaveSingleItem();
+        var faults = warning.Exception is AggregateException aggregate
+            ? aggregate.Flatten().InnerExceptions
+            : (IReadOnlyList<Exception>)[warning.Exception!];
+        faults.ShouldContain(closeFailure, "the close-handshake fault must survive cleanup");
+        faults.ShouldContain(disposeFailure, "the socket must still be disposed after the handshake fault");
     }
 
     [Test]
