@@ -8,6 +8,28 @@ This note lists every tracked `.ps1` that is left and the order in which they mo
 W2-nightly plan (`2026-11-21-w2-nightly-port-slices.md`), which moved the nightly run, its tests, health, report,
 seeds, timing and live-lane manifest into `scripts/lib/Antiphon.Nightly` and the `antiphon-scripts` CLI.
 
+## Stopped (owner, 2026-11-27, after unit 68)
+
+**Owner direction, 2026-11-27:** "Continue, after current set maybe let's stop with powershell". Unit 68 was the last
+porting unit; no further units are planned. From 356 tracked `.ps1` files on 2026-11-22 there are **32** left, and
+none of them is on a normal-operations path that has no C# command:
+
+| Kept | Files | Why |
+|---|---:|---|
+| Thin launchers and `lib/antiphon-cli.ps1` | 25 | Started by path from outside the repository (Scheduled Tasks, Windmill, the AppHost's `run-daemon.ps1`, machine config's `validate-checkpoint-receipt.ps1`), by a kept one-off (the cutover's four, `c590-real.ps1`'s `verify-docker-stack.ps1`), or named by existing plans, servers deployed before unit 63 and the c590 nested lane (`run-checkpoint.ps1`, `build-slot.ps1`, `test-client.ps1`). Each hands its parameters to the CLI. |
+| One-offs (owner, 2026-11-26) | 4 | The Postgres cutover, its monitor and driver, and the CARD-2082 export. |
+| W10 finished card fixtures | 3 | `c590-real.ps1` (the CARD-0590 checkpoint entry), `fixtures/c589-slot-shim.ps1`, `fixtures/c889-c578-observation.ps1`. |
+
+Left open when the port stopped (none blocks normal operations):
+- `test-client.ps1` could go once the c590 nested lane runs the command and the nightly script census row moves.
+- `build-slot.ps1` and `run-checkpoint.ps1` can go after `BuildSlotLauncherTests` and `RunnerLinuxCompilerPolicyTests`
+  stop launching `build-slot.ps1` (two tests that still start a `.ps1`) and after a server deploy past unit 63.
+- The other launchers go when their registration changes (End state, item 5).
+- Unit 68 kept a defect as it was: the saved-donor import refuses a zero-length archive member (`CacheSavedDonorReadFailed`,
+  for example NuGet's `_._`), exactly as the script did. A directory donor is the workaround.
+- Supervised real runs on server2 are owed for the commands of units 64-68 (Progress rows 64-68).
+- End state item 4 (commands hosted in process by SessionRunner or a remote host) stays the direction for future
+  work; the commands already take a host.
 ## Where we are
 
 Snapshot: `wip/next` after W2-nightly S27 (`782034998`). There are **356 tracked `.ps1` files, 93,083 lines**.

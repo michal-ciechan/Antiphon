@@ -569,6 +569,29 @@ opaque fingerprint, so the evidence can be checked per axis."
 
 ---
 
+## 2026-11-27 - Stop the PowerShell port after the current unit
+
+**Context:** Units 63-67 had landed and unit 68 (the last live W10 server2 harness files) was running. The plan's
+remaining `.ps1` files were thin launchers kept for outside registrations, owner-kept one-offs and finished card
+fixtures. The agent was planning more units after 68 (the `test-client.ps1` launcher, then the launchers that wait
+on owner events).
+
+**What the agent did:** It kept queuing one porting unit after another, each scoped from the plan's "What is left"
+table, and was preparing the next brief while integrating the previous unit.
+
+**Why the agent picked it:** The standing goal said to carry on removing `.ps1` files one by one, and every unit so
+far had found more to move.
+
+**What the owner preferred:** "Continue, after current set maybe let's stop with powershell". Finish and land unit 68,
+then stop: no new porting units. What is left stays PowerShell, as recorded in the plan.
+
+**Principle (the agent's reading):** A migration has a point of diminishing returns. Once the live paths call the C#
+and what remains is launchers for outside registrations and kept one-offs, further units cost more than they buy.
+
+**Candidate guidance:** "When the remaining items of a migration are only kept launchers, one-offs or work gated on
+owner events, report the end state and ask whether to stop instead of scoping another unit."
+
+---
 ## Where the agent's recommendation matched (for contrast)
 
 These were offered as multiple-choice questions and the owner chose the agent's recommendation. They show the
