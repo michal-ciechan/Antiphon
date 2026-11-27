@@ -561,17 +561,17 @@ public sealed partial class ReleaseImpactEnvelopeTests
     }
 
     [Test]
-    [P2MatrixTimeout(30_000)]
+    [P2MatrixTimeout(6_000)]
     public void ReceiptBindingsRefuse(CancellationToken cancellationToken) =>
         CheckAdmission(cancellationToken, AdmissionCases.Receipt, nameof(ReceiptBindingsRefuse));
 
     [Test]
-    [P2MatrixTimeout(30_000)]
+    [P2MatrixTimeout(6_000)]
     public void OriginBindingsRefuse(CancellationToken cancellationToken) =>
         CheckAdmission(cancellationToken, AdmissionCases.Origin, nameof(OriginBindingsRefuse));
 
     [Test]
-    [P2MatrixTimeout(30_000, windowsMilliseconds: 30_000)]
+    [P2MatrixTimeout(6_000, windowsMilliseconds: 30_000)]
     public void GlobalContractChangesRefuse(CancellationToken cancellationToken)
     {
         using var timing = new P2MatrixTiming(nameof(GlobalContractChangesRefuse), cancellationToken);
@@ -610,14 +610,17 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 new MemoryStream(bytes ?? throw new InvalidOperationException("admission rejected the inputs before opening a proposal")), proof);
             var reason = change == ContractChange.Runtime ? "p2-incomplete:trust-global" : "p2-incomplete:selection";
             roster.Add(id);
-            rows.Check(Full(result, world.Chunks, reason), id,
-                $"mode={result.EffectiveMode} carry=[{string.Join(",", Ids(result.CarryCandidates))}] reason={result.Reason}");
+            var refused = Full(result, world.Chunks, reason);
+            var detail = $"mode={result.EffectiveMode} carry=[{string.Join(",", Ids(result.CarryCandidates))}] reason={result.Reason}";
+            rows.Check(refused, id, refused ? detail : $"{detail} {timing.Diagnostic}");
             if (change == ContractChange.Runtime) continue;
             var reasons = bytes is null ? [] : JsonNode.Parse(bytes)!["projections"]!["compatibility"]!["globalReasons"]!
                 .AsArray().Select(value => value!.GetValue<string>()).ToArray();
             var expectedReasons = hashes.Select(hash => "contract-changed:" + hash);
             roster.Add(id + ".reasons");
-            rows.Check(reasons.SequenceEqual(expectedReasons), id + ".reasons", $"compatibility=[{string.Join(",", reasons)}]");
+            var hasExpectedReasons = reasons.SequenceEqual(expectedReasons);
+            var compatibility = $"compatibility=[{string.Join(",", reasons)}]";
+            rows.Check(hasExpectedReasons, id + ".reasons", hasExpectedReasons ? compatibility : $"{compatibility} {timing.Diagnostic}");
         }
         CheckAdmissionRoster("contract", rows, roster, timing);
     }
@@ -656,11 +659,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
     }
 
     [Test]
-    [P2MatrixTimeout(30_000)]
+    [P2MatrixTimeout(5_000)]
     public void GraphAndTrustBindingsRefuse(CancellationToken cancellationToken) => CheckGraphAndTrustBindings(cancellationToken, trustScenarios: false);
 
     [Test]
-    [P2MatrixTimeout(30_000)]
+    [P2MatrixTimeout(6_000)]
     public void TrustedProjectBindingsRefuse(CancellationToken cancellationToken) => CheckGraphAndTrustBindings(cancellationToken, trustScenarios: true);
 
     private static void CheckGraphAndTrustBindings(CancellationToken cancellationToken, bool trustScenarios)
