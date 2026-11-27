@@ -13,14 +13,30 @@ namespace Antiphon.Messaging.Tests.Service;
 [Category("Slow")]
 public sealed class InboxConversationMigrationTests
 {
+    private static readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
+
+    [Before(Class)]
+    public static Task StartDatabaseAsync() => Postgres.StartAsync();
+
+    [After(Class)]
+    public static async Task StopDatabaseAsync() => await Postgres.DisposeAsync();
+
+    private static async Task<MessagingDbContext> CreateDatabaseAsync()
+    {
+        var name = "migration_" + Guid.NewGuid().ToString("N");
+        await using var admin = new NpgsqlConnection(Postgres.GetConnectionString());
+        await admin.OpenAsync();
+        await using var create = new NpgsqlCommand($"CREATE DATABASE {name}", admin);
+        await create.ExecuteNonQueryAsync();
+        var connection = new NpgsqlConnectionStringBuilder(Postgres.GetConnectionString()) { Database = name };
+        return new MessagingDbContext(new DbContextOptionsBuilder<MessagingDbContext>().UseNpgsql(connection.ConnectionString).Options);
+    }
+
     [Test]
     public async Task Receipt_rollback_refuses_an_unmatched_acceptance_and_allows_an_empty_journal()
     {
         // Exercise real migration history, transactional DDL and provider error codes.
-        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
-        await postgres.StartAsync();
-        var options = new DbContextOptionsBuilder<MessagingDbContext>().UseNpgsql(postgres.GetConnectionString()).Options;
-        await using var db = new MessagingDbContext(options);
+        await using var db = await CreateDatabaseAsync();
         var migrator = db.GetService<IMigrator>();
         const string previous = "20261014172813_ScopeInboxIdentityToConversation";
         const string receiptMigration = "20261127101000_AddInboxAnswerReceipts";
@@ -42,10 +58,7 @@ public sealed class InboxConversationMigrationTests
     [Test]
     public async Task Upgrade_preserves_legacy_data_and_enforces_conversation_scoped_identity()
     {
-        await using var postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
-        await postgres.StartAsync();
-        var options = new DbContextOptionsBuilder<MessagingDbContext>().UseNpgsql(postgres.GetConnectionString()).Options;
-        await using var db = new MessagingDbContext(options);
+        await using var db = await CreateDatabaseAsync();
         var migrator = db.GetService<IMigrator>();
         const string previous = "20260830190000_AddInboxLagMetadata";
         await migrator.MigrateAsync(previous);

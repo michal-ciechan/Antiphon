@@ -89,6 +89,8 @@ A delivered queue row and its matching complete UserPrompt close a withheld inci
 
 A channel answer carries the native IDs it answers in `answeredMessageIds`, scoped to its channel and conversation. The gateway records provider acceptance before it marks those inbox receipts Answered. Early acceptance is retained until the inbound receipt arrives. The existing gateway `POST /api/channels/messages/{id}/ack` records manual handling of a legacy receipt after the operator verifies provider delivery.
 
+Before activating `20261127101000_AddInboxAnswerReceipts`, take and verify a backup of the messaging database. The upgrade adds the receipt journal with a composite primary key. A downgrade takes an exclusive lock on the journal and refuses while any receipt exists, including an acceptance whose inbound has yet to arrive.
+
 The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
 are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each
 pass records its completion (`GET /api/channels/wake-worker`) and logs a summary at Information when it
