@@ -31,7 +31,7 @@ The prior Final took 31m54s, including four serial builds. This round budgets tw
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | S1 | `tests/Antiphon.Tests -> bin-ph2-red-server/` | server-red | `/*/*/PhoneHomeQueuedTurnTests/Open_replacement_recovers_and_confirms_queued_prompt_while_old_socket_closes` | V-1 | One failure before the repair | 1 | 9 |
+| CP-1 | S1 | `tests/Antiphon.Tests -> bin-ph2-red-server-retry/` | server-red | `/*/*/PhoneHomeQueuedTurnTests/Open_replacement_recovers_and_confirms_queued_prompt_while_old_socket_closes` | V-1 | One failure before the repair | 1 | 11 |
 | CP-2 | S1 | `tests/Antiphon.SessionRunner.Tests -> bin-ph2-red-runner/` | runner-red | `/*/*/PhoneHomeConnectionServiceTests/Oversized_retry_after_arms_a_timer_of_at_most_thirty_seconds` | V-2 | Both hint arms fail before the repair | 2 | 2 |
 | CP-3 | S2 | `tests/Antiphon.Tests -> bin-ph2-server/` | replacement | `/*/*/(PhoneHomeQueuedTurnTests*)\|(PhoneHomeDirectoryTests*)\|(RunnerEligibilityObserverTests*)\|(C1744G2HostLoadKeyTests*)/*` | V-1, V-3, R-1, R-2 | All listed, 0 failed | 4 | 10 |
 | CP-4 | S2 | `tests/Antiphon.SessionRunner.Tests -> bin-ph2-runner/` | reconnect | `/*/*/(PhoneHomeConnectionServiceTests*)\|(Card1619RunnerExitTests*)/*` | V-2 | All listed, 0 failed | 28 | 3 |
