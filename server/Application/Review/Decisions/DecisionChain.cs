@@ -19,7 +19,11 @@ public sealed record DecisionCall(
     long OutputTokens,
     decimal CostUsd,
     string CostBasis,
-    TimeSpan Latency);
+    TimeSpan Latency)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    internal string? PublicDiagnostic { get; init; }
+}
 
 /// <summary>The merged answers of a chain, one per question, and every call it made.</summary>
 public sealed record DecisionChainResult(IReadOnlyDictionary<string, DecisionAnswer> Answers, IReadOnlyList<DecisionCall> Calls)
@@ -28,7 +32,7 @@ public sealed record DecisionChainResult(IReadOnlyDictionary<string, DecisionAns
 }
 
 /// <summary>
-/// A chain stopped: a provider rejected the request (400/401/403/422, fail loudly), or every entry
+/// A chain stopped: a provider rejected the request (including a CLI launch or sign-in failure), or every entry
 /// was skipped. The node fails and an attention item opens (design 7.4).
 /// </summary>
 public sealed class DecisionChainException(string message, IReadOnlyList<DecisionCall> calls, DecisionFailureKind? kind = null)
@@ -36,6 +40,9 @@ public sealed class DecisionChainException(string message, IReadOnlyList<Decisio
 {
     public IReadOnlyList<DecisionCall> Calls { get; } = calls;
     public DecisionFailureKind? Kind { get; } = kind;
+
+    internal static string SummarizeCalls(IReadOnlyList<DecisionCall> calls) => string.Join(", ", calls.Select(c =>
+        c.PublicDiagnostic is { } detail ? $"{c.Provider}={c.Outcome} ({detail})" : $"{c.Provider}={c.Outcome}"));
 }
 
 /// <summary>
@@ -110,7 +117,7 @@ public sealed class DecisionChain(
         if (accepted.Count == 0 && fallback.Count == 0)
         {
             throw new DecisionChainException(
-                $"Decision chain '{chain}' has no usable entry: {string.Join(", ", calls.Select(c => $"{c.Provider}={c.Outcome}"))}.",
+                $"Decision chain '{chain}' has no usable entry: {DecisionChainException.SummarizeCalls(calls)}.",
                 calls);
         }
 
@@ -152,7 +159,11 @@ public sealed class DecisionChain(
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    throw new DecisionProviderException(DecisionFailureKind.Timeout, $"No answer within {timeout.TotalSeconds:0}s.");
+                    var message = $"No answer within {timeout.TotalSeconds:0}s.";
+                    throw new DecisionProviderException(DecisionFailureKind.Timeout, message)
+                    {
+                        PublicDiagnostic = message,
+                    };
                 }
 
                 calls.Add(new DecisionCall(chain, index, entry.Provider, entry.Transport, result.ServedBy.ResolvedModel, "ok", asked,
@@ -163,13 +174,14 @@ public sealed class DecisionChain(
             {
                 var outcome = Outcome(ex.Kind);
                 calls.Add(new DecisionCall(chain, index, entry.Provider, entry.Transport, null, outcome, asked, 0, 0, 0m, "actual",
-                    Stopwatch.GetElapsedTime(started)));
+                    Stopwatch.GetElapsedTime(started)) { PublicDiagnostic = ex.PublicDiagnostic });
                 if (ex.Kind == DecisionFailureKind.Rejected)
                 {
                     logger.LogError("Decision chain {Chain} entry {Entry} ({Provider}) rejected the request: {Status} {Message}",
                         chain, index, entry.Provider, ex.StatusCode, ex.Message);
+                    var status = ex.StatusCode is { } code ? $" ({code})" : "";
                     throw new DecisionChainException(
-                        $"Provider '{entry.Provider}' rejected the request ({ex.StatusCode}): {ex.Message}", calls, ex.Kind);
+                        $"Provider '{entry.Provider}' rejected the request{status}: {ex.Message}", calls, ex.Kind);
                 }
 
                 if (ex.Kind == DecisionFailureKind.RateLimited && attempt == 0 && !provider.ProxyManagedRetry)

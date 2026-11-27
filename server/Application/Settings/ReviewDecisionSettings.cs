@@ -104,10 +104,16 @@ public sealed class ReviewDecisionProvider
 
 public sealed class ReviewDecisionChainEntry
 {
+    public const string OneShotTransport = "OneShot";
+
     public string Provider { get; set; } = "";
 
     /// <summary><c>Http</c>, <c>Seat</c> or <c>OneShot</c>.</summary>
     public string Transport { get; set; } = "Http";
+
+    public bool HasValidOneShotDialect(string? dialect) =>
+        !string.Equals(Transport, OneShotTransport, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(dialect, ReviewDecisionSettings.ClaudeCliDialect, StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>

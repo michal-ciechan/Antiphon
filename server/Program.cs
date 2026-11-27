@@ -213,7 +213,11 @@ try
                 if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
                     provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
             }
-        });
+        })
+        .Validate(s => s.Chains.Values.SelectMany(entries => entries)
+                .All(entry => entry.HasValidOneShotDialect(s.Providers.GetValueOrDefault(entry.Provider)?.Dialect)),
+            "Review:Decisions:Chains entries with Transport=OneShot require a configured provider with Dialect=claude-cli.")
+        .ValidateOnStart();
     builder.Services.AddOptions<ReviewCodeHostSettings>()
         .Bind(builder.Configuration.GetSection(ReviewCodeHostSettings.SectionName))
         .PostConfigure(s =>
@@ -247,7 +251,11 @@ try
             }
 
             s.ApplyDefaultChain();
-        });
+        })
+        .Validate(s => s.Chains.Values.SelectMany(entries => entries)
+                .All(entry => entry.HasValidOneShotDialect(s.Providers.GetValueOrDefault(entry.Provider)?.Dialect)),
+            "Review:Completions:Chains entries with Transport=OneShot require a configured provider with Dialect=claude-cli.")
+        .ValidateOnStart();
     builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
     builder.Services.Configure<ReviewPollingSettings>(builder.Configuration.GetSection(ReviewPollingSettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));

@@ -34,7 +34,7 @@ public sealed class ClaudeCliCompletionModel(IClaudeCli cli, IOptions<ReviewComp
         }
         catch (ClaudeCliException ex)
         {
-            throw new CompletionProviderException(ex.TimedOut ? DecisionFailureKind.Timeout : DecisionFailureKind.Unavailable, ex.Message);
+            throw new CompletionProviderException(ClaudeCliScratch.FailureKind(ex.Kind), ex.Message) { PublicDiagnostic = ex.Message };
         }
 
         return new CompletionResult(result.Text, new DecisionUsage(result.InputTokens, result.OutputTokens), result.CostUsd, "api-equivalent",
@@ -77,7 +77,7 @@ public sealed class ClaudeCliDecisionModel(IClaudeCli cli, IOptions<ReviewDecisi
         }
         catch (ClaudeCliException ex)
         {
-            throw new DecisionProviderException(ex.TimedOut ? DecisionFailureKind.Timeout : DecisionFailureKind.Unavailable, ex.Message);
+            throw new DecisionProviderException(ClaudeCliScratch.FailureKind(ex.Kind), ex.Message) { PublicDiagnostic = ex.Message };
         }
 
         var servedBy = new DecisionServedBy(options.ProviderId, ClaudeCliScratch.Transport, result.Model);
@@ -295,7 +295,14 @@ public sealed class ClaudeCliDecisionModel(IClaudeCli cli, IOptions<ReviewDecisi
 internal static class ClaudeCliScratch
 {
     /// <summary>The <see cref="DecisionServedBy.Transport"/> of every one-shot call.</summary>
-    public const string Transport = "OneShot";
+    public const string Transport = ReviewDecisionChainEntry.OneShotTransport;
+
+    public static DecisionFailureKind FailureKind(ClaudeCliFailureKind kind) => kind switch
+    {
+        ClaudeCliFailureKind.Start or ClaudeCliFailureKind.Authentication => DecisionFailureKind.Rejected,
+        ClaudeCliFailureKind.Timeout => DecisionFailureKind.Timeout,
+        _ => DecisionFailureKind.Unavailable,
+    };
 
     public static async Task<ClaudeCliResult> RunAsync(IClaudeCli cli, string prompt, string model, TimeSpan timeout, CancellationToken ct)
     {

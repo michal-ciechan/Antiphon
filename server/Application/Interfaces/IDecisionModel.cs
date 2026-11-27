@@ -94,4 +94,6 @@ public sealed class DecisionProviderException(DecisionFailureKind kind, string m
 {
     public DecisionFailureKind Kind { get; } = kind;
     public int? StatusCode { get; } = statusCode;
+    /// <summary>An explicitly sanitized diagnostic suitable for a review node summary.</summary>
+    public string? PublicDiagnostic { get; init; }
 }

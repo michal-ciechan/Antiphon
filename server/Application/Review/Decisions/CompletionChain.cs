@@ -59,7 +59,11 @@ public sealed class CompletionChain(
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
                 {
-                    throw new CompletionProviderException(DecisionFailureKind.Timeout, $"No answer within {timeout.TotalSeconds:0}s.");
+                    var message = $"No answer within {timeout.TotalSeconds:0}s.";
+                    throw new CompletionProviderException(DecisionFailureKind.Timeout, message)
+                    {
+                        PublicDiagnostic = message,
+                    };
                 }
 
                 calls.Add(new DecisionCall(chain, index, entry.Provider, entry.Transport, result.ServedBy.ResolvedModel, "ok", asked,
@@ -69,15 +73,18 @@ public sealed class CompletionChain(
             catch (CompletionProviderException ex)
             {
                 calls.Add(new DecisionCall(chain, index, entry.Provider, entry.Transport, null, ex.Kind.ToString(), asked, 0, 0, 0m, "actual",
-                    Stopwatch.GetElapsedTime(started)));
+                    Stopwatch.GetElapsedTime(started)) { PublicDiagnostic = ex.PublicDiagnostic });
                 if (ex.Kind == DecisionFailureKind.Rejected)
-                    throw new DecisionChainException($"Provider '{entry.Provider}' rejected the completion ({ex.StatusCode}): {ex.Message}", calls, ex.Kind);
+                {
+                    var status = ex.StatusCode is { } code ? $" ({code})" : "";
+                    throw new DecisionChainException($"Provider '{entry.Provider}' rejected the completion{status}: {ex.Message}", calls, ex.Kind);
+                }
                 logger.LogWarning("Completion chain {Chain} entry {Entry} ({Provider}) skipped: {Kind} {Message}",
                     chain, index, entry.Provider, ex.Kind, ex.Message);
             }
         }
 
         throw new DecisionChainException(
-            $"Completion chain '{chain}' has no usable entry: {string.Join(", ", calls.Select(c => $"{c.Provider}={c.Outcome}"))}.", calls);
+            $"Completion chain '{chain}' has no usable entry: {DecisionChainException.SummarizeCalls(calls)}.", calls);
     }
 }

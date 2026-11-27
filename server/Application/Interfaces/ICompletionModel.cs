@@ -32,6 +32,8 @@ public sealed class CompletionProviderException(DecisionFailureKind kind, string
 {
     public DecisionFailureKind Kind { get; } = kind;
     public int? StatusCode { get; } = statusCode;
+    /// <summary>An explicitly sanitized diagnostic suitable for a review node summary.</summary>
+    public string? PublicDiagnostic { get; init; }
 }
 
 /// <summary>

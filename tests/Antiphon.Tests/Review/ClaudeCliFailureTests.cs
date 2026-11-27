@@ -21,7 +21,7 @@ public sealed class ClaudeCliFailureTests
     public async Task Missing_executable_rejects_the_chain_and_names_the_command()
     {
         var settings = new ReviewAgentSettings();
-        settings.Cli.Command = Path.Combine(Path.GetTempPath(), $"missing-claude-{Guid.NewGuid():N}.exe");
+        settings.Cli.Command = Path.Combine(Path.GetTempPath(), $"missing-claude-{Guid.NewGuid():N}", "claude-for-test.exe");
         var cli = new ClaudeCliProcess(Options.Create(settings), NullLogger<ClaudeCliProcess>.Instance);
 
         await RejectsAsync(cli, Path.GetFileName(settings.Cli.Command), "could not be started");
@@ -66,7 +66,8 @@ public sealed class ClaudeCliFailureTests
         // All credentials in the fixture are invented.
         var token = "sk-ant-" + new string('z', 530);
         const string key = "fixtureValueOnly";
-        var stderr = $"CLI backend overloaded\r\n{token}\u001b[0m x-api-key: {key}\n" + new string('D', 700) + "TAIL";
+        var stderr = $"CLI backend overloaded\r\n{token}\u001b[0m x-api-key: {key}\n"
+            + string.Concat(Enumerable.Repeat("Additional diagnostic text. ", 30)) + "TAIL";
         var cliFailure = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(7, "", stderr));
         IsSafeExcerpt(cliFailure.Message, key);
 
@@ -96,6 +97,16 @@ public sealed class ClaudeCliFailureTests
         Task<DecisionChainException> FailureAsync(IClaudeCli cli) => Should.ThrowAsync<DecisionChainException>(() =>
             new CompletionChain([new ClaudeCliCompletionModel(cli, settings)], settings, NullLogger<CompletionChain>.Instance)
                 .CompleteAsync(ChainName, request, CancellationToken.None));
+    }
+
+    [Test]
+    [Arguments("OneShot", "litellm-systemone", false)]
+    [Arguments("OneShot", null, false)]
+    [Arguments("oneshot", "Claude-CLI", true)]
+    [Arguments("Http", "litellm-systemone", true)]
+    public void OneShot_requires_a_configured_Claude_CLI_provider(string transport, string? dialect, bool valid)
+    {
+        new ReviewDecisionChainEntry { Transport = transport }.HasValidOneShotDialect(dialect).ShouldBe(valid);
     }
 
     private static async Task RejectsAsync(IClaudeCli cli, string reason, string detail)
