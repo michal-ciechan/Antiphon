@@ -42,15 +42,11 @@ public sealed partial class ChannelBridgeService
             }
         }
 
-        var closing = await ChannelWithheldResolution.Candidates(db)
-            .Where(c => c.IncidentId.CompareTo(_withheldClosureCursor) > 0)
-            .OrderBy(c => c.IncidentId).Take(WithheldIncidentPageSize).ToListAsync(ct);
-        foreach (var candidate in closing)
+        try { await CloseDeliveredWithholdsAsync(db, now, ct); }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            if (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate, null, now, ct) is Guid closed)
-                await _eventBus.PublishToAllAsync("AgentChanged", new { agentId = candidate.AgentId, incidentId = closed }, ct);
+            _logger.LogWarning(ex, "Withheld closure scan failed; retrying");
         }
-        _withheldClosureCursor = closing.Count == WithheldIncidentPageSize ? closing[^1].IncidentId : Guid.Empty;
 
         // Pre-upgrade withheld incidents used independent IDs. Match the committed stamp,
         // agent, session and complete native identity before attaching a recovery route.
@@ -58,13 +54,15 @@ public sealed partial class ChannelBridgeService
             SELECT a."Id", a."AgentId", q."AgentSessionId" AS "SessionId", q."Id" AS "QueueId",
                    a."Message", a."FailureReason", a."CreatedAt"
             FROM "AgentIncidents" AS a
-            JOIN "ChannelInbounds" AS i ON i."Id" = a."Id" OR (
+            JOIN "ChannelInbounds" AS i ON i."Id" = a."Id" OR (a."FailureReason" = {NoOutboundReason}
+                AND a."Id" = md5('channel-no-outbound/' || i."Id"::text)::uuid) OR (
                 a."FailureReason" = {WithheldReason} AND i."AgentId" = a."AgentId"
                 AND i."InputWithheldIncidentAt" = a."CreatedAt"
                 AND starts_with(a."Message", 'Inbound message ' || i."Provider" || ':' || i."ConversationId" ||
                     '/' || i."NativeMessageId" || ' is withheld:'))
             LEFT JOIN "SessionQueuedMessages" AS q ON q."Id" = i."QueueMessageId"
             LEFT JOIN "ChatChannels" AS c ON c."Id" = i."ChatChannelId"
+            LEFT JOIN "ChannelOutboundDeliveries" AS d ON d."Id" = q."ChannelOutboundDeliveryId"
             WHERE a."Kind" = {(int)AgentIncidentKind.ChannelReplyLost}
               AND a."Severity" = {(int)AlertSeverity.Critical} AND a."HumanNotifiedAt" IS NULL
               AND a."FailureReason" IN ({WithheldReason}, {NoOutboundReason})
@@ -73,7 +71,8 @@ public sealed partial class ChannelBridgeService
               AND (a."SessionId" IS NULL OR a."SessionId" = q."AgentSessionId")
               AND ((a."FailureReason" = {WithheldReason} AND q."Status" = 0 AND q."DeliveryAttempts" = 0)
                 OR (a."FailureReason" = {NoOutboundReason} AND c."Enabled" AND c."AgentId" = i."AgentId" AND
-                    (c."LastReplyAt" IS NULL OR c."LastReplyAt" < i."AcceptedAt")))
+                    q."DirectReplyThroughSequence" IS NULL AND (d."State" IS NULL OR d."State" NOT IN
+                    ({(int)ChannelOutboundDeliveryState.Published},{(int)ChannelOutboundDeliveryState.Suppressed}))))
             ORDER BY a."CreatedAt", a."Id" LIMIT {WithheldIncidentPageSize}
             """).ToListAsync(ct);
         foreach (var page in pending)
@@ -103,6 +102,19 @@ public sealed partial class ChannelBridgeService
         }
     }
 
+    private async Task CloseDeliveredWithholdsAsync(AppDbContext db, DateTime now, CancellationToken ct)
+    {
+        var closing = await ChannelWithheldResolution.Candidates(db)
+            .Where(c => c.IncidentId.CompareTo(_withheldClosureCursor) > 0)
+            .OrderBy(c => c.IncidentId).Take(WithheldIncidentPageSize).ToListAsync(ct);
+        foreach (var candidate in closing)
+        {
+            if (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate, null, now, ct) is Guid closed)
+                await _eventBus.PublishToAllAsync("AgentChanged", new { agentId = candidate.AgentId, incidentId = closed }, ct);
+        }
+        _withheldClosureCursor = closing.Count == WithheldIncidentPageSize ? closing[^1].IncidentId : Guid.Empty;
+    }
+
     private async Task RecordOverdueGroupsAsync(AppDbContext db, DateTime now, CancellationToken ct)
     {
         var cutoff = now.AddMinutes(-_settings.GroupReplyDeadlineMinutes);
@@ -110,22 +122,31 @@ public sealed partial class ChannelBridgeService
         await db.Database.ExecuteSqlRawAsync(
             "SET LOCAL lock_timeout = '100ms'; SET LOCAL statement_timeout = '2s'", ct);
         var overdue = await db.Database.SqlQuery<ReplyDeadlineRow>($"""
-            SELECT i."Id", i."AgentId", i."Provider", i."ConversationId", i."NativeMessageId",
+            SELECT identity."Id", i."AgentId", i."Provider", i."ConversationId", i."NativeMessageId",
                    q."AgentSessionId" AS "SessionId",
                    CASE WHEN q."Status" = 0 AND q."DeliveryAttempts" = 0 THEN q."Id" END AS "PendingId"
             FROM "ChatChannels" AS c
             JOIN LATERAL (
                 SELECT r."Id" FROM "ChannelInbounds" AS r
+                LEFT JOIN "SessionQueuedMessages" AS source ON source."Id" = r."QueueMessageId"
+                LEFT JOIN "ChannelOutboundDeliveries" AS delivery ON delivery."Id" = source."ChannelOutboundDeliveryId"
                 WHERE r."Provider" = c."Provider" AND r."ConversationId" = c."ExternalId"
                   AND r."AgentId" = c."AgentId" AND r."ChatChannelId" = c."Id"
-                  AND (c."LastReplyAt" IS NULL OR r."AcceptedAt" > c."LastReplyAt")
+                  AND (r."QueueMessageId" IS NULL OR source."Id" IS NOT NULL)
+                  AND source."DirectReplyThroughSequence" IS NULL
+                  AND (delivery."State" IS NULL OR delivery."State" NOT IN
+                      ({(int)ChannelOutboundDeliveryState.Published},{(int)ChannelOutboundDeliveryState.Suppressed}))
                 ORDER BY r."AcceptanceSequence" LIMIT 1
             ) AS head ON true
             JOIN "ChannelInbounds" AS i ON i."Id" = head."Id"
             LEFT JOIN "SessionQueuedMessages" AS q ON q."Id" = i."QueueMessageId"
+            CROSS JOIN LATERAL (SELECT CASE WHEN i."InputWithheldIncidentAt" IS NULL THEN i."Id"
+                ELSE md5('channel-no-outbound/' || i."Id"::text)::uuid END AS "Id") AS identity
             WHERE c."Enabled" AND c."Provider" = 'telegram' AND c."Kind" = {(int)ChatChannelKind.Group}
-              AND i."AcceptedAt" <= {cutoff} AND i."InputWithheldIncidentAt" IS NULL
-              AND NOT EXISTS (SELECT 1 FROM "AgentIncidents" AS a WHERE a."Id" = i."Id")
+              AND i."AcceptedAt" <= {cutoff}
+              AND (i."InputWithheldIncidentAt" IS NULL OR (q."Status" = {(int)QueuedMessageStatus.Sent}
+                  AND q."DeliveryVerdict" IN ({(int)DeliveryVerdict.Delivered},{(int)DeliveryVerdict.LateConfirmed})))
+              AND NOT EXISTS (SELECT 1 FROM "AgentIncidents" AS a WHERE a."Id" = identity."Id")
             ORDER BY i."AcceptanceSequence" LIMIT {WithheldIncidentPageSize}
             FOR UPDATE OF i SKIP LOCKED
             """).ToListAsync(ct);

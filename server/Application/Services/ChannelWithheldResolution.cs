@@ -11,7 +11,12 @@ namespace Antiphon.Server.Application.Services;
 /// <summary>The original incident stays in the audit trail. A second, idempotent incident points to its evidence.</summary>
 internal static class ChannelWithheldResolution
 {
-    internal sealed record Candidate(Guid IncidentId, Guid AgentId, Guid QueueId);
+    internal sealed class Candidate
+    {
+        public Guid IncidentId { get; init; }
+        public Guid AgentId { get; init; }
+        public Guid QueueId { get; init; }
+    }
 
     internal static IQueryable<Candidate> Candidates(AppDbContext db)
     {
@@ -26,7 +31,7 @@ internal static class ChannelWithheldResolution
                    && (q.DeliveryVerdict == DeliveryVerdict.Delivered || q.DeliveryVerdict == DeliveryVerdict.LateConfirmed)
                    && !db.AgentIncidents.Any(c => c.Kind == AgentIncidentKind.ChannelInputWithheldClosed
                        && c.FailureReason == a.Id.ToString())
-               select new Candidate(a.Id, a.AgentId.Value, q.Id);
+               select new Candidate { IncidentId = a.Id, AgentId = a.AgentId.Value, QueueId = q.Id };
     }
 
     internal static Guid ClosureId(Guid incidentId) =>
