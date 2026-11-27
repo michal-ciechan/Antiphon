@@ -182,11 +182,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         throw new InvalidOperationException("Crash boundary was not reached: " + cut);
     }
 
-    public static async Task RunRetirementCrashWorkerAsync(string root, string taskId, string cut, string ready, IModel? model)
+    public static async Task RunRetirementCrashWorkerAsync(string root, Guid taskId, string cut, string ready,
+        IModel? model, ReleaseWorktreeRetirementRequest? releaseBody)
     {
         var connection = Environment.GetEnvironmentVariable("ANTIPHON_C459_TEST_CONNECTION")
             ?? throw new InvalidOperationException("Missing private fixture database");
-        var h = new LandingSafetyHarness(root, Guid.Parse(taskId)) { _retirementWorkerModel = model };
+        var h = new LandingSafetyHarness(root, taskId) { _retirementWorkerModel = model };
         h.Schema = new IsolatedTestSchema("worker-observer-only", connection);
         h.BuildServices();
         async Task PauseAsync()
@@ -213,16 +214,12 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             await using var scope = h.Services.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
-            var release = await db.TaskWorktreeRetirements.SingleOrDefaultAsync(r => r.TaskId == task.Id && r.Active);
+            var release = await db.TaskWorktreeRetirements.SingleOrDefaultAsync(r => r.TaskId == taskId && r.Active);
             if (release is null)
             {
-                var sha = (await h.Fixture.RequiredAsync(task.WorktreePath ?? h.Fixture.Source, "rev-parse", "HEAD")).Trim();
-                await service.ReleaseAsync(task.Id, new ReleaseWorktreeRetirementRequest(
-                    task.ConcurrencyToken, sha,
-                    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(task.Result ?? ""))),
-                    true, "reviewed no further use"), new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
-                release = await db.TaskWorktreeRetirements.SingleAsync(r => r.TaskId == task.Id && r.Active);
+                var approval = await WorktreeRetirementCrashWorker.ReadReleaseAsync(h, db);
+                await service.ReleaseAsync(taskId, approval, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                release = await db.TaskWorktreeRetirements.SingleAsync(r => r.TaskId == taskId && r.Active);
             }
 
             await service.TryRetireAsync(release, null, CancellationToken.None);
@@ -234,19 +231,14 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
-            var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Fixture.TaskId);
-            var sha = (await h.Fixture.RequiredAsync(task.WorktreePath ?? h.Fixture.Source, "rev-parse", "HEAD")).Trim();
-            var body = new ReleaseWorktreeRetirementRequest(
-                task.ConcurrencyToken, sha,
-                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(task.Result ?? ""))),
-                true, "reviewed no further use");
+            var body = releaseBody ?? throw new InvalidOperationException("Missing retirement release request");
             if (cut.StartsWith("release-", StringComparison.Ordinal))
             {
-                await service.ReleaseAsync(task.Id, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                await service.ReleaseAsync(taskId, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
             }
             else if (cut == "run-projection")
             {
-                var release = await service.ReleaseAsync(task.Id, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                var release = await service.ReleaseAsync(taskId, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
                 var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == release.Id);
                 await service.TryRetireAsync(row, null, CancellationToken.None);
                 var sweep = new WorktreeResidueSweepService(
@@ -261,7 +253,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             }
             else
             {
-                var release = await service.ReleaseAsync(task.Id, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
+                var release = await service.ReleaseAsync(taskId, body, new AgentTaskService.Caller(null, null, ""), CancellationToken.None);
                 var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == release.Id);
                 await service.TryRetireAsync(row, null, CancellationToken.None);
             }

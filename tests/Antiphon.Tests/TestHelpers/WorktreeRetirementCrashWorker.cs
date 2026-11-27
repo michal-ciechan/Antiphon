@@ -1,5 +1,9 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -26,7 +30,20 @@ internal static class WorktreeRetirementCrashWorker
         "run-projection", "resume",
     ];
 
-    internal sealed record Request(string Root, Guid TaskId, string Cut, string Ready);
+    internal sealed record Request(string Root, Guid TaskId, string Cut, string Ready,
+        ReleaseWorktreeRetirementRequest? Release = null);
+
+    internal static ReleaseWorktreeRetirementRequest ReleaseBody(AgentTask task, string sha) =>
+        new(task.ConcurrencyToken, sha,
+            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result ?? ""))),
+            true, "reviewed no further use");
+
+    internal static async Task<ReleaseWorktreeRetirementRequest> ReadReleaseAsync(LandingSafetyHarness harness, AppDbContext db)
+    {
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == harness.Fixture.TaskId);
+        var sha = (await harness.Fixture.RequiredAsync(task.WorktreePath ?? harness.Fixture.Source, "rev-parse", "HEAD")).Trim();
+        return ReleaseBody(task, sha);
+    }
 
     // The generator checks the model in the staged probe. Compare it again in the test host
     // using the retirement fixture's options before handing it to any crash or resume child.
@@ -96,7 +113,7 @@ internal static class WorktreeRetirementCrashWorker
             ? LoadCompiledModel(ProbeGeneratedModel.CachedPath())
             : null;
         await LandingSafetyHarness.RunRetirementCrashWorkerAsync(
-            Path.GetFullPath(request.Root), request.TaskId.ToString("D"), request.Cut, Path.GetFullPath(request.Ready), model);
+            Path.GetFullPath(request.Root), request.TaskId, request.Cut, Path.GetFullPath(request.Ready), model, request.Release);
     }
 
     /// <summary>Null when the request is owned. Does not open a database or a process.</summary>
