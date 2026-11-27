@@ -44,7 +44,7 @@ public sealed partial class ChannelBridgeService
         // agent, session and complete native identity before attaching a recovery route.
         var pending = await db.Database.SqlQuery<PendingChannelPage>($"""
             SELECT a."Id", a."AgentId", q."AgentSessionId" AS "SessionId", q."Id" AS "QueueId",
-                   a."Message", a."FailureReason"
+                   a."Message", a."FailureReason", a."CreatedAt"
             FROM "AgentIncidents" AS a
             JOIN "ChannelInbounds" AS i ON i."Id" = a."Id" OR (
                 a."FailureReason" = {WithheldReason} AND i."AgentId" = a."AgentId"
@@ -64,13 +64,22 @@ public sealed partial class ChannelBridgeService
             """).ToListAsync(ct);
         foreach (var page in pending)
         {
+            var detail = page.Message;
             if (page.FailureReason == WithheldReason && !page.Message.Contains("/send-now", StringComparison.Ordinal))
             {
-                var message = ColumnText.Clip(page.Message + ". " + ChannelRecoveryRoute(page.AgentId, page.SessionId,
+                detail = ColumnText.Clip(page.Message + ". " + ChannelRecoveryRoute(page.AgentId, page.SessionId,
                     page.QueueId), AgentIncident.MessageMaxLength);
                 await db.AgentIncidents.Where(i => i.Id == page.Id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.Message, message), ct);
+                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.Message, detail), ct);
             }
+            // AlertRaised displays the operator toast and, for a hidden tab, a desktop notification.
+            // The append-only incident owns persistence. Chat alert routers do not participate.
+            await _eventBus.PublishToAllAsync("AlertRaised", new
+            {
+                id = page.Id, severity = nameof(AlertSeverity.Critical), source = "ChannelBridge",
+                title = page.FailureReason == WithheldReason ? "Channel input withheld" : "Channel reply overdue",
+                detail, agentId = page.AgentId, createdAt = page.CreatedAt,
+            }, ct);
             // The attention client subscribes to AgentChanged. A crash after publishing may
             // repeat the invalidation. Clients refetch the same durable incident ID.
             await _eventBus.PublishToAllAsync("AgentChanged",
@@ -143,5 +152,6 @@ public sealed partial class ChannelBridgeService
         public Guid? QueueId { get; set; }
         public string Message { get; set; } = "";
         public string FailureReason { get; set; } = "";
+        public DateTime CreatedAt { get; set; }
     }
 }

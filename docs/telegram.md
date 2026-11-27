@@ -77,7 +77,7 @@ scan inspects at most 64 indexed queue heads per pass and advances a wrapping cu
 it never takes the session semaphore or writes input. No-charge dialog, remote-control
 menu and missing-snapshot holds remain outside this incident. Herdr, capacity and wake-timeout
 paths keep their existing incident policies.
-The bridge pushes aged withheld incidents to operator attention through `AgentChanged`.
+The bridge pushes aged withheld incidents to operator attention through `AgentChanged` and the existing Critical `AlertRaised` toast and desktop notification.
 Each incident includes the guarded retry and bound-session resume routes. For enabled,
 agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinutes` (10 by default,
 zero disables) starts with the first accepted inbound after the last outbound. A missed

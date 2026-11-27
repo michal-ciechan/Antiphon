@@ -105,10 +105,18 @@ public sealed partial class ChannelInputWithheldIncidentTests
         await bridge.ScanChannelReplyAlertsAsync(ct);
         (await db.AgentIncidents.CountAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct)).ShouldBe(0);
         clock.Advance(TimeSpan.FromSeconds(1));
+        h.EventBus.ThrowOnceOnEvent = "AlertRaised";
+        await Should.ThrowAsync<InvalidOperationException>(() => bridge.ScanChannelReplyAlertsAsync(ct));
+        (await db.AgentIncidents.AsNoTracking().SingleAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct))
+            .HumanNotifiedAt.ShouldBeNull();
         await bridge.ScanChannelReplyAlertsAsync(ct);
         await bridge.ScanChannelReplyAlertsAsync(ct);
         var incident = await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct);
         incident.HumanNotifiedAt.ShouldBe(h.Now);
+        var push = h.EventBus.PublishedEvents.Single(e => e.EventName == "AlertRaised");
+        var payload = JsonSerializer.SerializeToElement(push.Payload);
+        payload.GetProperty("id").GetGuid().ShouldBe(incident.Id);
+        payload.GetProperty("severity").GetString().ShouldBe("Critical");
         incident.Message.ShouldContain(seed.NativeMessageId);
         h.EventBus.PublishedEvents.Count(e => e.EventName == "AgentChanged"
             && JsonSerializer.Serialize(e.Payload).Contains(incident.Id.ToString())).ShouldBe(1);
@@ -627,6 +635,8 @@ public sealed partial class ChannelInputWithheldIncidentTests
         h.Messaging.SentReplies.ShouldBeEmpty("an operational page must never be sent to the family chat");
         h.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentChanged"
             && JsonSerializer.Serialize(e.Payload, (JsonSerializerOptions?)null).Contains(incident.Id.ToString()));
+        var pushed = h.EventBus.PublishedEvents.Single(e => e.EventName == "AlertRaised");
+        JsonSerializer.SerializeToElement(pushed.Payload).GetProperty("detail").GetString().ShouldBe(incident.Message);
         incident.Message.ShouldContain("/send-now");
     }
 

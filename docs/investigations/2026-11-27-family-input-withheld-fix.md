@@ -12,7 +12,7 @@ If the session remains withheld, inspect `GET /api/sessions/fb38e751-dfbd-4b8d-9
 
 ## Operator notification
 
-A committed Critical withheld incident now triggers the attention client's existing `AgentChanged` push. The monitor records `HumanNotifiedAt` after publication. This records a feed push, not human acknowledgement. Legacy incidents with a pending input are matched on their committed timestamp, native message identity, agent and session. The incident carries the recovery route. These alerts bypass digest-chat paging.
+A committed Critical withheld incident now triggers the operator's Critical `AlertRaised` toast and the attention client's `AgentChanged` push. A hidden tab can show the existing desktop notification when browser permission is granted. The monitor records `HumanNotifiedAt` after publication. This records a feed push, not human acknowledgement. Legacy incidents with a pending input are matched on their committed timestamp, native message identity, agent and session. The incident carries the recovery route. These alerts bypass digest-chat paging.
 
 For enabled, agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinutes` defaults to 10. The oldest accepted inbound after the last outbound starts the clock. Additional inbound messages do not postpone it. The same attention path reports a missed deadline and uses the inbound ID to associate both monitors with one incident.
 
