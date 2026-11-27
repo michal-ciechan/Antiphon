@@ -535,7 +535,8 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
     private static DispatchGraph CreateDispatcher(
         IsolatedTestSchema schema, PhoneHomeTestHost host, RecordingLaunchSink sink,
         PushGit? git = null, bool allowDelegatedTasks = true,
-        bool grokCredentialProbe = false, string? grokHome = null, RemoteSpillCourier? spills = null)
+        bool grokCredentialProbe = false, string? grokHome = null, RemoteSpillCourier? spills = null,
+        WorkspaceDiskAdmission? diskAdmission = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -591,6 +592,8 @@ public sealed partial class PhoneHomeTaskDispatchProjectionTests
         services.AddSingleton<RemoteWorkspaceService>();
         services.AddSingleton<RemoteWorkspacePreparer>();
         services.AddSingleton<IAgentTaskLaunchSink>(sink);
+        if (diskAdmission is not null)
+            services.AddSingleton(diskAdmission);
         services.AddScoped<AgentTaskService>();
         services.AddScoped<AgentTaskDispatcher>();
         var provider = services.BuildServiceProvider();
