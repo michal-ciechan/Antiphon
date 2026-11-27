@@ -62,8 +62,22 @@ public sealed class ChannelOutboundUnifiedTransportTests
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
         var broker = await SharedBrokerAsync();
-        foreach (var lateGateway in new[] { false, true })
-        foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
+        string[] cuts = ["queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save"];
+        var scenarios = from lateGateway in new[] { false, true }
+                        from cut in cuts
+                        select (LateGateway: lateGateway, Cut: cut);
+        bool StartsWorker(string cut) => kind == "main" && cut == "refusal-save";
+
+        // Every scenario has its own schema, topic, consumer group and fake gateway.
+        // Overlap the in-process worlds inside this test's seat. Join them before
+        // running scenarios that start a recovery child, one child at a time.
+        await Parallel.ForEachAsync(scenarios.Where(scenario => !StartsWorker(scenario.Cut)),
+            new ParallelOptions { MaxDegreeOfParallelism = 4 },
+            (scenario, _) => new ValueTask(RunScenarioAsync(scenario.LateGateway, scenario.Cut)));
+        foreach (var scenario in scenarios.Where(scenario => StartsWorker(scenario.Cut)))
+            await RunScenarioAsync(scenario.LateGateway, scenario.Cut);
+
+        async Task RunScenarioAsync(bool lateGateway, string cut)
         {
             using var timing = TestTrace.ChunkSpan("C519 queue-to-adapter scenario");
             timing?.SetTag("c519.kind", kind);
