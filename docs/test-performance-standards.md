@@ -100,7 +100,9 @@ authorize repeating expensive work or crediting missing verification.
    Plans without tests MUST explicitly say so. TestDesign MUST refine this budget into the
    checkpoint costs. Review MUST check new/changed tests for per-test/per-class setup that should
    be shared, timeouts beyond about 2x measured p95 without justification/card, missing phase or
-   external-call recording, category/dependency gaps and any over-30-minute Debug obligation.
+   external-call recording, category/dependency gaps and any over-30-minute Debug obligation,
+   plus the R10 checks: process starts per test, assertions on exact command text, real CLI
+   processes outside a CLI-contract project, and pass/fail that depends on host speed.
    Rationale: make performance a design and acceptance concern on every change.
    Enforcement: [Plan format and Review checklist](testing-and-build.md#performance-standards)
    and source Plan/Review bundle pointers; this is a human review obligation, not a new guard.
@@ -114,6 +116,39 @@ authorize repeating expensive work or crediting missing verification.
    their existing explicit authorization; task-branch commit/push authorization remains valid.
    Rationale: remove routine delays while preserving ownership and publication boundaries.
    Enforcement: orchestrator standing rule 10 and existing operational/custody gates.
+
+10. <a id="r10-cheap-seams"></a>**R10 - Count process starts; keep tests host-speed independent.**
+    Child processes (git, dotnet, shells, CLIs) are usually the cost of a test, not its body: on
+    the slowest Windows hosts a git start cost about 0.6 s (example, measured 2026-11-27), so a
+    test's time is roughly its starts times that. A TestDesign SHOULD estimate the starts each new
+    or changed test spends, setup and code under test alike, and keep them proportional to what
+    the test proves. Plan owns the seams and budgets this needs; a TestDesign that finds one
+    missing records the gap and routes back to Plan rather than redesigning the fix.
+    - Build fixture state in process or once: use the library (libgit2), a per-run template that
+      is cloned, or a shared world. Fixtures SHOULD NOT replay a CLI script per test.
+    - When the code under test asks one question through several commands, the design SHOULD
+      prefer an intent-level seam that the implementation answers the fastest correct way (for
+      example `IGitRepository` from `ILandingGit.Open`: libgit2 first, git as fallback). It is
+      correct enough when it agrees with the slow path on the caller's decision; it need not
+      match byte for byte. A differential test pins that agreement, including the fallback cases.
+    - Most of the repository's tests SHOULD use that interface rather than the CLI. Use a fake
+      when the behaviour under test is ours. Use the in-process (libgit2) implementation when real
+      repository state matters. Build on libgit2 by default, so tests stay fast.
+    - Assert on intent, not command text. A test that counts or matches exact command lines
+      blocks every speedup; record the question asked, or the outcome, instead.
+    - Code under test that has a wall-clock deadline or budget MUST NOT make a test pass or fail
+      by host speed. Fix the time with a fake clock, or make the work fit the budget on the
+      slowest supported host. Raising the product budget for a test is not a fix.
+    - Real CLI processes belong only in tests whose subject is the CLI behaviour. Those tests live
+      in their own top-level test project, so they form their own slice. An interface's behaviour
+      is pinned by one shared contract: the same methods, the same expectations and shared
+      assertions. One project runs the contract against the in-process implementation; a separate
+      project runs it against the real CLI. A design that keeps a real process elsewhere says why.
+    Rationale: process count, not assertions, decides whether a chunk fits its budget, and
+    intent-level seams let the implementation get faster without rewriting tests or losing
+    coverage.
+    Enforcement: Plan seam and budget design, TestDesign Cost section (stage-test-design bundle)
+    and the R8 Review checklist; no automated guard.
 
 ## Existing work and measurement provenance
 

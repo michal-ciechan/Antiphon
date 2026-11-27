@@ -929,7 +929,14 @@ public class InstructionBundleTests
         var text = InstructionBundles.TextOf(key);
         // CARD-1647: stage-review alone carries the review-rounds evidence lines (reviewRound,
         // reviewedRange) on top of pinned verbatim instructions, so its cap is raised to 2,600.
-        var cap = key == InstructionBundles.StageReview ? 2_600 : 2_500;
+        // stage-test-design is capped at 10,000 (operator, 2026-11-27): it carries the verification design guidance,
+        // including the R10 process-start cost rule (test-performance-standards); the composed argv budget still applies.
+        var cap = key switch
+        {
+            InstructionBundles.StageReview => 2_600,
+            InstructionBundles.StageTestDesign => 10_000,
+            _ => 2_500,
+        };
 
         text.Length.ShouldBeLessThanOrEqualTo(cap, $"{key} is {text.Length} chars; stage bundles cap at {cap:N0}");
         foreach (var ch in text)
