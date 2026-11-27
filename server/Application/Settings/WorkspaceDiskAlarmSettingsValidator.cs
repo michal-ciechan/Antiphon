@@ -16,6 +16,13 @@ public sealed class WorkspaceDiskAlarmSettingsValidator : IValidateOptions<Works
             failures.Add($"WorkspaceDiskAlarm:MinFreeGiB must be between 0 and {WorkspaceDiskAlarmSettings.MaxMinFreeGiB}.");
         ValidateRunners(nameof(options.Runners), options.Runners, failures);
         ValidateRunners(nameof(options.AdmissionRunners), options.AdmissionRunners, failures);
+        foreach (var (runnerId, filesystem) in options.AdmissionFilesystems)
+        {
+            if (!options.AdmissionRunners.ContainsKey(runnerId) && !options.Runners.ContainsKey(runnerId))
+                failures.Add($"WorkspaceDiskAlarm:AdmissionFilesystems:{runnerId} must name a configured admission runner.");
+            if (string.IsNullOrWhiteSpace(filesystem))
+                failures.Add($"WorkspaceDiskAlarm:AdmissionFilesystems:{runnerId} must name a backing filesystem.");
+        }
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

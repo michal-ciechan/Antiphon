@@ -63,6 +63,21 @@ public sealed class HostStatsCache(HostStatsSettings settings, TimeProvider time
         }
     }
 
+    public IReadOnlyDictionary<string, HostStatsSample> LatestFor(IEnumerable<string> hostIds)
+    {
+        var samples = new Dictionary<string, HostStatsSample>(StringComparer.Ordinal);
+        lock (_gate)
+        {
+            foreach (var hostId in hostIds)
+            {
+                if (_entries.TryGetValue(hostId, out var entry)
+                    && entry.Snapshot is { } snapshot && entry.ObservedAt is { } observedAt)
+                    samples[hostId] = new HostStatsSample(snapshot, observedAt);
+            }
+        }
+        return samples;
+    }
+
     public bool Changed { get { lock (_gate) return _changed; } }
     public void Published() { lock (_gate) _changed = false; }
 

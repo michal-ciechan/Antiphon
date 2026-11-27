@@ -36,4 +36,7 @@ public sealed class WorkspaceDiskAlarmSettings
 
     /// <summary>Additional runner IDs protected by the dispatch floor, including temporary rollout routes.</summary>
     public Dictionary<string, string> AdmissionRunners { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Runner IDs that report the same backing filesystem share a host/mount key.</summary>
+    public Dictionary<string, string> AdmissionFilesystems { get; set; } = new(StringComparer.Ordinal);
 }
