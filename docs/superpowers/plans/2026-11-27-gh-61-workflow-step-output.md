@@ -20,6 +20,12 @@ S1 publishes the regression tests before implementation. S2 publishes the client
 
 Budget 19 minutes of ordinary checkpoint execution including a cold client install and one isolated TUnit build. Any inherited guard failure is confirmed against the full task base using only the failed methods. Native placement and a full-assembly run have no role in this change.
 
+## Performance budget
+
+The row estimates are provisional for CARD-2108. Budget four minutes for the cold client install, typecheck, lint and one fixture file, then three minutes for the warm client run. Budget eleven minutes for the isolated TUnit build and guards, plus one minute for the reused build's two live-inventory cases. The client run installs dependencies once and each component fixture renders in a fresh DOM. The guard run shares one build. These fixtures use no real application or database host.
+
+The first runs record wall time and build-slot admission in the checkpoint receipts, per-case time in Vitest JSON and TRX, and build and host phase timing in each checkpoint report. Default derived checkpoint deadlines apply. The initial sample can inform a later estimate.
+
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |

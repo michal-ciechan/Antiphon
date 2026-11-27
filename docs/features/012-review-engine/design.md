@@ -378,6 +378,12 @@ fan-outs are never continued past.
 - A run that fails sets `antiphon/review` to `error` with the failed step and reason, best effort,
   so the PR does not stay pending.
 
+In the Workflow tab, graph cards show the selected iteration's execution outcome. A continued
+failure has a warning badge and shows its recorded fallback route when present. A failed step
+has a failure badge. A successful step shows its recorded route or a one-line output preview.
+The step window preserves the summary's line breaks and lists refused commit statuses under
+Warnings. The execution table scrolls horizontally inside the window and accepts keyboard focus.
+
 ### 3.5 Other workflows on the same engine
 
 | Workflow | Trigger | Shape |

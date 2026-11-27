@@ -1,4 +1,4 @@
-# GH-61 Workflow step output mutation candidates
+# GH-61 Workflow step output unbound mutation candidates
 
 Original Code and landing owner `243d3d7d`. The candidate witnesses are in `WorkflowStepOutput.test.tsx`. Each name below selects one Vitest case. SourceLanding Mutation owns binding, execution and restoration.
 

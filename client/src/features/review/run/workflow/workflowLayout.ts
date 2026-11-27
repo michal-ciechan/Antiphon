@@ -9,7 +9,7 @@ import type { WorkflowEdgeDto, WorkflowGraphDto, WorkflowNodeDto } from '../../.
  */
 
 export const NODE_W = 172
-export const NODE_H = 66
+export const NODE_H = 82
 const STEP_X = NODE_W + 52
 const STEP_Y = NODE_H + 22
 const BAND_PAD = 14

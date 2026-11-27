@@ -16,6 +16,7 @@ import {
 import type { NodeExecutionDto, NodeKind, NodeStatus, WorkflowNodeDto } from '../../../../api/reviewEngine'
 import { NODE_KIND_META, NODE_STATUS_META, modelColor, modelShort } from '../../reviewMeta'
 import { fmtTokens } from '../../reviewFormat'
+import { splitExecutionOutput } from './executionOutput'
 import { NODE_H, NODE_W, type Dir } from './workflowLayout'
 
 const KIND_ICON: Record<NodeKind, ReactNode> = {
@@ -30,6 +31,13 @@ const KIND_ICON: Record<NodeKind, ReactNode> = {
 }
 
 const hidden = { opacity: 0, width: 6, height: 6, minWidth: 0, minHeight: 0, border: 0 }
+
+const OUTCOME_BADGES: Partial<Record<NodeStatus, { label: string; color: string }>> = {
+  Succeeded: { label: 'Succeeded', color: 'success' },
+  Failed: { label: 'Failed', color: 'danger' },
+  Skipped: { label: 'Skipped', color: 'gray' },
+  FailedContinued: { label: 'Failed, continued', color: 'warning' },
+}
 
 /** Every handle the layout routes through; side handles flip with the band's direction. */
 function StepHandles({ dir }: { dir: Dir }) {
@@ -101,6 +109,15 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
   const done = units.filter((u) => u.status === 'Succeeded').length
   const model = execs.find((e) => e.model)?.model ?? null
   const tokens = execs.reduce((s, e) => s + e.inputTokens, 0)
+  const badge = OUTCOME_BADGES[status]
+  const routes = badge && status !== 'Failed'
+    ? [...new Set(execs.filter((e) => e.status === status && e.outcome).map((e) => e.outcome))]
+    : []
+  const outcome = routes.length > 0
+    ? routes.join(', ')
+    : status === 'Succeeded' && execs.length === 1
+      ? splitExecutionOutput(execs[0].summary).body.trim().split('\n', 1)[0]
+      : ''
   return (
     <Box
       w={NODE_W}
@@ -114,7 +131,6 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
         borderBottom: side,
         borderLeft: `4px solid ${meta.hex}`,
         borderRadius: def.kind === 'Gate' || def.kind === 'Wait' ? 14 : 6,
-        opacity: status === 'NotReached' ? 0.5 : 1,
         animation: status === 'Running' ? 'reviewPulse 1.6s infinite' : undefined,
         overflow: 'hidden',
         cursor: 'pointer',
@@ -143,6 +159,16 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
           )}
         </Group>
       </Group>
+      <Group gap={4} wrap="nowrap" my={2} mih={16}>
+        {badge ? (
+          <Badge size="xs" variant="light" radius="sm" color={badge.color} tt="none" px={5} style={{ flexShrink: 0 }}>
+            {badge.label}
+          </Badge>
+        ) : (
+          <Text size="10px" fw={600} c={status === 'Running' ? 'active.3' : 'dimmed'}>{meta.label}</Text>
+        )}
+        {outcome && <Text size="10px" c="blue.3" truncate title={outcome}>{outcome}</Text>}
+      </Group>
       {item ? (
         <Text size="10px" c="dimmed" truncate>
           agent of {def.id}
@@ -170,21 +196,25 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
           {def.run ?? kind.label}
         </Text>
       )}
-      <Group gap={4} wrap="nowrap" mt={2}>
-        <Text size="10px" fw={600} style={{ color: status === 'NotReached' ? undefined : meta.hex }} c={status === 'NotReached' ? 'dimmed' : undefined}>
-          {fan ? `×${units.length} · ${done}/${units.length} done` : meta.label}
-        </Text>
-        {model && (
-          <Text size="10px" ff="monospace" c={`${modelColor(model)}.4`} truncate>
-            {modelShort(model)}
-          </Text>
-        )}
-        {tokens > 0 && (
-          <Text size="10px" ff="monospace" c="dimmed">
-            {fmtTokens(tokens)}
-          </Text>
-        )}
-      </Group>
+      {(fan || model || tokens > 0) && (
+        <Group gap={4} wrap="nowrap" mt={2}>
+          {fan && (
+            <Text size="10px" fw={600} c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+              ×{units.length} · {done}/{units.length} done
+            </Text>
+          )}
+          {model && (
+            <Text size="10px" ff="monospace" c={`${modelColor(model)}.4`} truncate>
+              {modelShort(model)}
+            </Text>
+          )}
+          {tokens > 0 && (
+            <Text size="10px" ff="monospace" c="dimmed">
+              {fmtTokens(tokens)}
+            </Text>
+          )}
+        </Group>
+      )}
     </Box>
   )
 }
