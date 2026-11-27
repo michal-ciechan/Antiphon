@@ -45,6 +45,13 @@ public interface IOutboundAnswerReceiptSink
     Task RecordAnswerAsync(ChannelReply reply, SendResult accepted, CancellationToken ct);
 }
 
+/// <summary>Durable send admission and provider acceptance for one source broker record.</summary>
+public interface IOutboundOperationJournal : IOutboundAnswerReceiptSink
+{
+    Task<bool> TryBeginSendAsync(string operationId, ChannelReply reply, CancellationToken ct);
+    Task<bool> ConfirmSendAsync(string operationId, SendResult accepted, CancellationToken ct);
+}
+
 public interface IInboundUnconsumedEventPublisher
 {
     Task PublishAsync(InboundUnconsumedEvent evt, CancellationToken cancellationToken);

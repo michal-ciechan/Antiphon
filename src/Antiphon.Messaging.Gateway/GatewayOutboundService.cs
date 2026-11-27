@@ -36,7 +36,8 @@ public sealed class GatewayOutboundService(
             BootstrapServers = _options.BootstrapServers,
             GroupId = $"{_options.ConsumerGroup}-outbound",
             AutoOffsetReset = offsetReset,
-            EnableAutoCommit = true,
+            EnableAutoCommit = false,
+            EnableAutoOffsetStore = false,
             // Attachment-bearing replies can be up to the bus cap (20 MB); the per-partition
             // fetch default (1 MB) would stall on them.
             MaxPartitionFetchBytes = _options.MaxMessageBytes,
@@ -62,24 +63,25 @@ public sealed class GatewayOutboundService(
                     continue;
                 }
 
-                if (result?.Message?.Value is null)
-                    continue;
+                if (result is null) continue;
 
                 ChannelReply? reply;
                 try
                 {
-                    reply = JsonSerializer.Deserialize<ChannelReply>(result.Message.Value, MessagingJson.Options);
+                    reply = result.Message?.Value is { } value
+                        ? JsonSerializer.Deserialize<ChannelReply>(value, MessagingJson.Options) : null;
                 }
-                catch (JsonException ex)
+                catch (JsonException)
                 {
-                    logger.LogWarning(ex, "[outbound] could not parse reply, skipping");
-                    continue;
+                    logger.LogWarning("[outbound] malformed reply at {Position}", result.TopicPartitionOffset);
+                    reply = null;
                 }
 
-                if (reply is null)
-                    continue;
-
-                await DispatchAsync(reply, ct);
+                if (reply is not null)
+                    await DispatchAsync(reply, $"{result.Topic}/{result.Partition.Value}/{result.Offset.Value}", ct);
+                // Includes explicitly discarded tombstones and malformed records. A journal
+                // or commit failure exits this loop so a later record cannot skip this offset.
+                consumer.Commit(result);
             }
         }
         finally
@@ -88,11 +90,20 @@ public sealed class GatewayOutboundService(
         }
     }
 
-    internal async Task DispatchAsync(ChannelReply reply, CancellationToken ct)
+    internal Task DispatchAsync(ChannelReply reply, CancellationToken ct) => DispatchAsync(reply, null, ct);
+
+    private async Task DispatchAsync(ChannelReply reply, string? operationId, CancellationToken ct)
     {
+        var journal = receipts as IOutboundOperationJournal;
+        if (operationId != null && journal != null && !await journal.TryBeginSendAsync(operationId, reply, ct))
+        {
+            logger.LogInformation("[outbound] previously admitted operation {OperationId}; retaining its provider disposition", operationId);
+            return;
+        }
+
         if (!_byChannel.TryGetValue(reply.Channel, out var adapter))
         {
-            logger.LogWarning("[outbound] no adapter registered for channel {Channel}", reply.Channel);
+            logger.LogWarning("[outbound] no adapter registered for channel {Channel}, operation {OperationId}", reply.Channel, operationId);
             return;
         }
 
@@ -100,14 +111,24 @@ public sealed class GatewayOutboundService(
         if (send.Ok)
         {
             logger.LogInformation("[outbound] sent via {Channel} -> {MessageId}", reply.Channel, send.ChannelMessageId);
-            if (receipts != null && reply.Kind == ChannelReplyKind.Answer && reply.ConversationId is { Length: > 0 }
-                && reply.AnsweredMessageIds is { Count: > 0 })
+            if ((operationId != null && journal != null) || (receipts != null && reply.Kind == ChannelReplyKind.Answer
+                && reply.ConversationId is { Length: > 0 } && reply.AnsweredMessageIds is { Count: > 0 }))
             {
                 // The provider has accepted the send. Retry only the idempotent receipt write.
                 var delay = TimeSpan.FromSeconds(1);
                 while (true)
                 {
-                    try { await receipts.RecordAnswerAsync(reply, send, ct); break; }
+                    try
+                    {
+                        if (operationId != null && journal != null)
+                        {
+                            if (!await journal.ConfirmSendAsync(operationId, send, ct))
+                                logger.LogCritical("[outbound] conflicting native receipt for operation {OperationId}", operationId);
+                        }
+                        else
+                            await receipts!.RecordAnswerAsync(reply, send, ct);
+                        break;
+                    }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         logger.LogError(ex, "Recording provider acceptance for {Channel} {MessageId} failed", reply.Channel, send.ChannelMessageId);
@@ -118,6 +139,6 @@ public sealed class GatewayOutboundService(
             }
         }
         else
-            logger.LogError("[outbound] send failed via {Channel}: {Error}", reply.Channel, send.Error);
+            logger.LogError("[outbound] provider did not confirm {Channel} operation {OperationId}", reply.Channel, operationId);
     }
 }

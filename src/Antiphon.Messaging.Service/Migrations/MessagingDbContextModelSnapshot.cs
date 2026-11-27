@@ -22,14 +22,55 @@ namespace Antiphon.Messaging.Service.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Antiphon.Messaging.Service.GatewayOutboundOperation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("AcceptedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AnsweredMessageIdsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConversationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderMessageId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GatewayOutboundOperations");
+                });
+
             modelBuilder.Entity("Antiphon.Messaging.Service.InboxAnswerReceipt", b =>
                 {
-                    b.Property<string>("Channel").HasColumnType("text");
-                    b.Property<string>("ConversationId").HasColumnType("text");
-                    b.Property<string>("ChannelMessageId").HasColumnType("text");
-                    b.Property<DateTimeOffset>("AnsweredAt").HasColumnType("timestamp with time zone");
-                    b.Property<string>("OutboundMessageId").HasColumnType("text");
+                    b.Property<string>("Channel")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConversationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ChannelMessageId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("AnsweredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OutboundMessageId")
+                        .HasColumnType("text");
+
                     b.HasKey("Channel", "ConversationId", "ChannelMessageId");
+
                     b.ToTable("InboxAnswerReceipts");
                 });
 

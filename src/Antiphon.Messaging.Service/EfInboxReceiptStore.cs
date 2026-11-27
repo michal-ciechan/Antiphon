@@ -4,9 +4,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Messaging.Service;
 
-public sealed class EfInboxReceiptStore(
+public sealed partial class EfInboxReceiptStore(
     IServiceScopeFactory scopeFactory,
-    ILogger<EfInboxReceiptStore> logger) : IInboxReceiptStore, IInboundReceiptSink, IOutboundAnswerReceiptSink
+    ILogger<EfInboxReceiptStore> logger) : IInboxReceiptStore, IInboundReceiptSink, IOutboundOperationJournal
 {
     public async Task RecordAsync(
         ChannelMessage message, string envelopeJson, string topic, int partition, long offset, CancellationToken cancellationToken)
@@ -37,15 +37,21 @@ public sealed class EfInboxReceiptStore(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
-        var now = DateTimeOffset.UtcNow;
-        foreach (var native in reply.AnsweredMessageIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct())
+        await RecordAnswerIdsAsync(db, reply.Channel, reply.ConversationId, reply.AnsweredMessageIds,
+            accepted.ChannelMessageId, DateTimeOffset.UtcNow, ct);
+    }
+
+    private static async Task RecordAnswerIdsAsync(MessagingDbContext db, string channel, string? conversation,
+        IReadOnlyList<string> ids, string? providerId, DateTimeOffset now, CancellationToken ct)
+    {
+        foreach (var native in ids.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct())
         {
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO "InboxAnswerReceipts" ("Channel", "ConversationId", "ChannelMessageId", "AnsweredAt", "OutboundMessageId")
-                VALUES ({reply.Channel}, {reply.ConversationId}, {native}, {now}, {accepted.ChannelMessageId})
+                VALUES ({channel}, {conversation}, {native}, {now}, {providerId})
                 ON CONFLICT ("Channel", "ConversationId", "ChannelMessageId") DO NOTHING
                 """, ct);
-            await ApplyAnswersAsync(db, reply.Channel, reply.ConversationId!, native, ct);
+            await ApplyAnswersAsync(db, channel, conversation, native, ct);
         }
     }
 

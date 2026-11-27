@@ -7,6 +7,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     public DbSet<InboxMessage> Inbox => Set<InboxMessage>();
 
     public DbSet<InboxAnswerReceipt> InboxAnswerReceipts => Set<InboxAnswerReceipt>();
+    public DbSet<GatewayOutboundOperation> GatewayOutboundOperations => Set<GatewayOutboundOperation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

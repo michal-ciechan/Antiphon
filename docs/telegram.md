@@ -91,6 +91,10 @@ A channel answer carries the native IDs it answers in `answeredMessageIds`, scop
 
 Before activating `20261127101000_AddInboxAnswerReceipts`, take and verify a backup of the messaging database. The upgrade adds the receipt journal with a composite primary key. A downgrade takes an exclusive lock on the journal and refuses while any receipt exists, including an acceptance whose inbound has yet to arrive.
 
+The gateway identifies a consumed outbound record by its Kafka topic, partition and offset. The messaging database admits that operation before the provider call. A replay consults the same row. A returned native acceptance and its correlated receipt IDs commit together before the consumer commits the offset. If the host loses the response, the operation remains unconfirmed and replay makes no further provider call.
+
+For a missing result, inspect `GET /api/channels/outbound-operations/unconfirmed` on the messaging gateway. Pass the last returned operation ID as `after` for the next page. After independently verifying the native send, post `operationId`, `channel`, `conversationId` and `providerMessageId` to `/api/channels/outbound-operations/confirm`. Repeating that confirmation is safe. A conflicting native ID returns 409. Leave the operation unconfirmed while provider evidence is unavailable.
+
 The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
 are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each
 pass records its completion (`GET /api/channels/wake-worker`) and logs a summary at Information when it

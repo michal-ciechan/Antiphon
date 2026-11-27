@@ -202,7 +202,8 @@ public sealed class EfInboxReceiptStoreTests
         private SqliteConnection Connection { get; }
         public EfInboxReceiptStore Store => Services.GetRequiredService<EfInboxReceiptStore>();
 
-        public static async Task<StoreHarness> CreateAsync(ILogger<EfInboxReceiptStore>? logger = null)
+        public static async Task<StoreHarness> CreateAsync(ILogger<EfInboxReceiptStore>? logger = null,
+            Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor? interceptor = null)
         {
             var connection = new SqliteConnection(
                 $"Data Source=file:inbox-{Guid.NewGuid():N}?mode=memory&cache=shared");
@@ -210,7 +211,11 @@ public sealed class EfInboxReceiptStoreTests
             var services = new ServiceCollection();
             services.AddLogging();
             services.AddSingleton(logger ?? NullLogger<EfInboxReceiptStore>.Instance);
-            services.AddDbContext<MessagingDbContext>(options => options.UseSqlite(connection));
+            services.AddDbContext<MessagingDbContext>(options =>
+            {
+                options.UseSqlite(connection);
+                if (interceptor != null) options.AddInterceptors(interceptor);
+            });
             services.AddSingleton<EfInboxReceiptStore>();
             var provider = services.BuildServiceProvider();
             using (var scope = provider.CreateScope())

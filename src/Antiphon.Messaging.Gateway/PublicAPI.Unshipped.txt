@@ -165,4 +165,7 @@ Antiphon.Messaging.Gateway.InboundUnconsumedMonitorSnapshot.InboundUnconsumedMon
 Antiphon.Messaging.Gateway.PartitionOffsetObservation.PartitionOffsetObservation(int Partition, Antiphon.Messaging.Gateway.PartitionOffsetStatus Status, long? CommittedNextOffset, string? ReasonCode) -> void
 Antiphon.Messaging.Gateway.GatewayOutboundService.GatewayOutboundService(System.Collections.Generic.IEnumerable<Antiphon.Messaging.IChannelAdapter!>! adapters, Microsoft.Extensions.Options.IOptions<Antiphon.Messaging.Gateway.AntiphonGatewayOptions!>! options, Microsoft.Extensions.Logging.ILogger<Antiphon.Messaging.Gateway.GatewayOutboundService!>! logger, Antiphon.Messaging.Gateway.IOutboundAnswerReceiptSink? receipts) -> void
 Antiphon.Messaging.Gateway.IOutboundAnswerReceiptSink
+Antiphon.Messaging.Gateway.IOutboundOperationJournal
+Antiphon.Messaging.Gateway.IOutboundOperationJournal.TryBeginSendAsync(string! operationId, Antiphon.Messaging.ChannelReply! reply, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task<bool>!
+Antiphon.Messaging.Gateway.IOutboundOperationJournal.ConfirmSendAsync(string! operationId, Antiphon.Messaging.SendResult! accepted, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task<bool>!
 Antiphon.Messaging.Gateway.IOutboundAnswerReceiptSink.RecordAnswerAsync(Antiphon.Messaging.ChannelReply! reply, Antiphon.Messaging.SendResult! accepted, System.Threading.CancellationToken ct) -> System.Threading.Tasks.Task!

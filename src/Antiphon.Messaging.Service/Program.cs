@@ -78,6 +78,23 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+// Telegram and other adapters may be unable to look up a lost send response by client ID.
+// An operator can bind independently verified native acceptance without calling the provider.
+app.MapGet("/api/channels/outbound-operations/unconfirmed", async (MessagingDbContext db, string? after, CancellationToken ct) =>
+    Results.Ok(await db.GatewayOutboundOperations.AsNoTracking()
+        .Where(o => o.AcceptedAt == null && (after == null || string.Compare(o.Id, after) > 0))
+        .OrderBy(o => o.Id).Take(100)
+        .Select(o => new { o.Id, o.Channel, o.ConversationId, o.StartedAt }).ToListAsync(ct)));
+app.MapPost("/api/channels/outbound-operations/confirm", async (ConfirmOperation request, MessagingDbContext db,
+    EfInboxReceiptStore store, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(request.ProviderMessageId)) return Results.BadRequest();
+    var op = await db.GatewayOutboundOperations.AsNoTracking().SingleOrDefaultAsync(o => o.Id == request.OperationId
+        && o.Channel == request.Channel && o.ConversationId == request.ConversationId, ct);
+    if (op is null) return Results.NotFound();
+    return await store.ConfirmSendAsync(op.Id, SendResult.Sent(request.ProviderMessageId), ct)
+        ? Results.NoContent() : Results.Conflict();
+});
 app.MapGet("/health/inbound-unconsumed", (IInboundUnconsumedMonitorStatus status) =>
 {
     var snapshot = status.GetSnapshot();
@@ -178,3 +195,4 @@ internal sealed record InboxSummary(
     string? Text, bool MentionsMe, bool HasAttachments, string Status, DateTimeOffset ReceivedAt);
 
 internal sealed record ReplyRequest(string? Text, string? ReplyToMessageId, JsonElement? RawOverrides);
+internal sealed record ConfirmOperation(string OperationId, string Channel, string? ConversationId, string ProviderMessageId);

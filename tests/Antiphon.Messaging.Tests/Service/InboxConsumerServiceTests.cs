@@ -102,8 +102,10 @@ public sealed class InboxConsumerServiceTests
         {
             Key = "11", Value = JsonSerializer.Serialize(reply, MessagingJson.Options),
         });
-        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync();
+        var afterJournal = new PauseAfterAcceptanceCommit();
+        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync(interceptor: afterJournal);
         await store.Store.RecordAsync(EfInboxReceiptStoreTests.Sample("12", "11"), "{}", "in", 0, 0, CancellationToken.None);
+        afterJournal.Armed = !lostResponse;
         var adapter = new AcceptanceProbe(lostResponse);
         GatewayOutboundService NewConsumer(string group) => new([adapter], Options.Create(new AntiphonGatewayOptions
         {
@@ -111,18 +113,21 @@ public sealed class InboxConsumerServiceTests
         }), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayOutboundService>.Instance, store.Store);
         // A new group reads the exact same record even if the first host committed its offset.
         // The second record is a barrier proving the replay was actually examined.
-        using (var first = NewConsumer(Guid.NewGuid().ToString("N")))
+        var group = Guid.NewGuid().ToString("N");
+        using (var first = NewConsumer(group))
         {
             await first.StartAsync(CancellationToken.None);
             try
             {
                 await adapter.Accepted.Task.WaitAsync(TimeSpan.FromSeconds(45));
                 if (!lostResponse)
+                    await afterJournal.Committed.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                using var observer = new ConsumerBuilder<string, string>(new ConsumerConfig
                 {
-                    using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                    while ((await store.LoadAsync()).Single().Status != InboxStatus.Answered)
-                        await Task.Delay(10, bound.Token);
-                }
+                    BootstrapServers = bootstrap, GroupId = group + "-outbound", EnableAutoCommit = false,
+                }).Build();
+                var partition = new TopicPartition(topic, new Partition(0));
+                observer.Committed([partition], TimeSpan.FromSeconds(5)).Single().Offset.ShouldBe(Offset.Unset);
             }
             finally { await first.StopAsync(CancellationToken.None); }
         }
@@ -138,6 +143,22 @@ public sealed class InboxConsumerServiceTests
         }
         adapter.Calls.ShouldBe(1, "one broker operation can enter the provider only once");
         (await store.LoadAsync()).Single().Status.ShouldBe(lostResponse ? InboxStatus.Pending : InboxStatus.Answered);
+        // Reconcile the interrupted operation using independently observed native acceptance.
+        (await store.Store.ConfirmSendAsync(topic + "/0/0", SendResult.Sent("14"), CancellationToken.None)).ShouldBeTrue();
+        (await store.Store.ConfirmSendAsync(topic + "/0/0", SendResult.Sent("15"), CancellationToken.None)).ShouldBeFalse();
+        (await store.LoadAsync()).Single().Status.ShouldBe(InboxStatus.Answered);
+        adapter.Calls.ShouldBe(1);
+    }
+
+    private sealed class PauseAfterAcceptanceCommit : Microsoft.EntityFrameworkCore.Diagnostics.DbTransactionInterceptor
+    {
+        public bool Armed;
+        public TaskCompletionSource Committed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override async Task TransactionCommittedAsync(System.Data.Common.DbTransaction transaction,
+            Microsoft.EntityFrameworkCore.Diagnostics.TransactionEndEventData eventData, CancellationToken cancellationToken = default)
+        {
+            if (Armed && Committed.TrySetResult()) await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
     }
 
     private sealed class AcceptanceProbe(bool loseFirstResponse) : IChannelAdapter
