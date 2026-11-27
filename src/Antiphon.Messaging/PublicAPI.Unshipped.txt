@@ -1,10 +1,4 @@
 #nullable enable
-
-Antiphon.Messaging.Attachment.InlineLimitBytes.get -> long?
-Antiphon.Messaging.Attachment.InlineLimitBytes.init -> void
-Antiphon.Messaging.AttachmentSize
-Antiphon.Messaging.ChannelReply.AnsweredMessageIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
-Antiphon.Messaging.ChannelReply.AnsweredMessageIds.init -> void
 Antiphon.Messaging.InboundUnconsumedEvent
 Antiphon.Messaging.InboundUnconsumedEvent.Acknowledged.get -> bool
 Antiphon.Messaging.InboundUnconsumedEvent.Acknowledged.init -> void
@@ -28,5 +22,11 @@ Antiphon.Messaging.InboundUnconsumedEvent.Provider.get -> string!
 Antiphon.Messaging.InboundUnconsumedEvent.Provider.init -> void
 Antiphon.Messaging.InboundUnconsumedEvent.Topic.get -> string!
 Antiphon.Messaging.InboundUnconsumedEvent.Topic.init -> void
+
+Antiphon.Messaging.Attachment.InlineLimitBytes.get -> long?
+Antiphon.Messaging.Attachment.InlineLimitBytes.init -> void
+Antiphon.Messaging.AttachmentSize
 static Antiphon.Messaging.AttachmentSize.Format(long bytes) -> string!
 static Antiphon.Messaging.AttachmentSize.FormatOver(long bytes, long limit) -> string!
+Antiphon.Messaging.ChannelReply.AnsweredMessageIds.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Antiphon.Messaging.ChannelReply.AnsweredMessageIds.init -> void
