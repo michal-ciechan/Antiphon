@@ -1721,7 +1721,7 @@ public sealed class VolumeRetirementContentTests
             (proof.Exit, proof.Stdout).ShouldBe((0, reply), "OUTPUT proof count=1 types=System.String");
             Should.NotThrow(() => Antiphon.Nightly.Server2RollingDeploy.CheckTempRetirementCensus(census.Stdout), "OUTPUT clearable ok");
         }
-        finally { Directory.Delete(root, recursive: true); }
+        finally { ReadOnlyDirectory.Delete(root); }
     }
     // CARD-1689: the temp-retirement exchange refused three different causes as the
     // same bare RecycleGitAuditUnknown, and the coordinator console shows only that

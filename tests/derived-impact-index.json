@@ -2539,9 +2539,9 @@
     },
     {
       "path": "tests/Shared/ReadOnlyDirectory.cs",
-      "classes": 44,
+      "classes": 45,
       "reason": "cap",
-      "owed": 19,
+      "owed": 20,
       "first": [
         "ContractSnapshotTests",
         "DelegateCheckProbeTests",

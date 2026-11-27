@@ -84,7 +84,8 @@ public sealed class RetiredTempContainerScriptTests
             accepted.ShouldBe(v["good"]!.GetValue<bool>(),(main?"c994-wrapper-main":"c994-wrapper-retirement")+": "+v["key"]);
         }
         await Task.CompletedTask;
-    }    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    }
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Wrapper_retirement_proof_is_typed()=>TypedStatus(false);
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Wrapper_main_admission_is_required(){await TypedStatus(true);using var f=new C1008WrapperFixture();f.State["statuses"]!["server2"]!["buildVersion"]=new string('b',40);var run=await f.Run("drain-temp");run.Exit.ShouldBe(2,"c994-drain-sha");Cases(run.Trace).ShouldBeEmpty();}
@@ -134,7 +135,8 @@ public sealed class RetiredTempContainerScriptTests
         accepted.ShouldBeFalse("c994-shared-null");
         s["runnerSessions"]=0L;Antiphon.Nightly.Server2RollingDeploy.AssertZeroCounters(s,"server2-temp");
         await Task.CompletedTask;
-    }    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+    }
+    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_strict_volume_admission_remains_independent(){
         C1008HostFixture.RequireNativeLinux();
