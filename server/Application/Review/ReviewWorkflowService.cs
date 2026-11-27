@@ -33,7 +33,7 @@ public sealed class ReviewWorkflowService
         var validation = ReviewWorkflowValidator.Validate(FromDto(graph));
         return new WorkflowValidationDto(validation.Valid, validation.Diagnostics
             .Select(d => new WorkflowDiagnosticDto(d.Code, d.Severity.ToString(), d.Message, d.NodeIds,
-                d.Edge is { } e ? new WorkflowEdgeRefDto(e.From, e.To) : null))
+                d.Edge is { } e ? new WorkflowEdgeRefDto(e.From, e.To) : null) { Field = d.Field })
             .ToList());
     }
 

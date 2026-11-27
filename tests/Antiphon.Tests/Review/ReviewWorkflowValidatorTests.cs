@@ -6,7 +6,7 @@ namespace Antiphon.Tests.Review;
 
 /// <summary>The default pr-review workflow and the graph rules of design 3.2.</summary>
 [Category("Unit")]
-public class ReviewWorkflowValidatorTests
+public partial class ReviewWorkflowValidatorTests
 {
     private const string Header = "workflow: t\nversion: 1\n";
 

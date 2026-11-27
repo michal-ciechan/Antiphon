@@ -14,7 +14,10 @@ public sealed record WorkflowDiagnostic(
     WorkflowDiagnosticSeverity Severity,
     string Message,
     IReadOnlyList<string> NodeIds,
-    (string From, string To)? Edge = null);
+    (string From, string To)? Edge = null)
+{
+    public string? Field { get; init; }
+}
 
 public sealed record WorkflowValidation(IReadOnlyList<WorkflowDiagnostic> Diagnostics)
 {
@@ -72,6 +75,7 @@ public static class ReviewWorkflowValidator
         foreach (var node in workflow.Nodes)
         {
             ValidateNode(node, ids, diagnostics);
+            ReviewPublishConfiguration.Validate(workflow, node, diagnostics);
             if (node.Kind == ReviewNodeKind.Wait || (node.Kind == ReviewNodeKind.Gate && GateBreaksCycles(node)))
                 bounded.Add(node.Id);
         }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Review;
@@ -221,7 +222,11 @@ public sealed record WorkflowEdgeDto(
 public sealed record WorkflowEdgeRefDto(string From, string To);
 
 /// <summary><c>Severity</c> is <c>Error</c> or <c>Warning</c>; a missing description is a warning (design 3.3).</summary>
-public sealed record WorkflowDiagnosticDto(string Code, string Severity, string Message, IReadOnlyList<string> NodeIds, WorkflowEdgeRefDto? Edge);
+public sealed record WorkflowDiagnosticDto(string Code, string Severity, string Message, IReadOnlyList<string> NodeIds, WorkflowEdgeRefDto? Edge)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Field { get; init; }
+}
 
 public sealed record WorkflowValidationDto(bool Valid, IReadOnlyList<WorkflowDiagnosticDto> Diagnostics);
 

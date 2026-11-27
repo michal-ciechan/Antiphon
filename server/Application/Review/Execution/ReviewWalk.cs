@@ -146,6 +146,9 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
 
     public ICodeHost Host => Binding.Host;
 
+    public string? PublicRunUrl =>
+        ReviewRunUrl.Create(Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl, Run.Id);
+
     /// <summary>The head the run accepts now: the pinned head, moved forward by a base-only branch update.</summary>
     public string HeadSha => Run.Subject.HeadSha.Length > 0 ? Run.Subject.HeadSha : Iteration.HeadSha ?? "";
 

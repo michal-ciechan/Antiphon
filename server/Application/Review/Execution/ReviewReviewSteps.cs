@@ -330,9 +330,29 @@ public static class ReviewReviewSteps
     /// </summary>
     public static async Task<NodeResult> PublishAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var collated = ReviewWalk.Output<CollateOutput>(walk.LatestOf("CollateFindings"));
-        var verify = walk.LatestOf("VerifyFindings");
-        var keptIds = ReviewWalk.Output<VerifyOutput>(verify)?.Kept ?? collated?.Candidates.Select(c => c.Cid).ToList() ?? [];
+        if (!ReviewPublishConfiguration.TryRead(walk.Workflow, node, out var configuration))
+            return NodeResult.Fail("Publish has invalid declared inputs.");
+
+        ReviewPublishInputs? inputs = null;
+        CollateOutput? collated;
+        VerifyOutput? verification;
+        ReviewNodeExecution? verify;
+        if (configuration is null)
+        {
+            collated = ReviewWalk.Output<CollateOutput>(walk.LatestOf("CollateFindings"));
+            verify = walk.LatestOf("VerifyFindings");
+            verification = ReviewWalk.Output<VerifyOutput>(verify);
+        }
+        else
+        {
+            if (!ReviewPublishInputs.TryResolve(walk, execution, configuration, out inputs, out var failure))
+                return NodeResult.Fail(failure!);
+            collated = inputs!.Collate;
+            verify = inputs.VerifyRow;
+            verification = inputs.Verify;
+        }
+
+        var keptIds = verification?.Kept ?? collated?.Candidates.Select(c => c.Cid).ToList() ?? [];
         var candidates = (collated?.Candidates ?? []).Where(c => keptIds.Contains(c.Cid)).ToList();
         var policy = walk.Policy;
         var run = walk.Run;
@@ -410,9 +430,12 @@ public static class ReviewReviewSteps
         var canPost = walk.Host.Capabilities.CanPostReviews && run.Subject.PrNumber is not null;
         if (canPost && (inline.Count > 0 || summaryOnly.Count > 0))
         {
-            var body = SummaryBody(walk, inline.Select(i => i.Finding).ToList(), summaryOnly, belowBar.Count,
-                ReviewWalk.Output<VerifyOutput>(verify), verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued);
-            var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding))).ToList();
+            var body = ReviewSummaryRenderer.Render(walk, node, configuration, inputs, inline.Select(i => i.Finding).ToList(),
+                summaryOnly, belowBar.Count, verification, verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued);
+            var runLink = walk.PublicRunUrl is { } url ? $"[View this review in Antiphon](<{url}>)" : null;
+            if (runLink is not null)
+                body = ReviewSummaryRenderer.WithRunLink(body, runLink);
+            var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding, runLink))).ToList();
             var posted = await walk.Host.PostReviewAsync(walk.Binding.Target, new CodeHostReview(walk.Iteration.HeadSha ?? walk.HeadSha, body, comments), ct);
             reviewId = posted.ReviewId;
             reviewUrl = posted.Url;
@@ -480,38 +503,7 @@ public static class ReviewReviewSteps
         child.CostBasis = usage.CostBasis;
     }
 
-    private static string SummaryBody(ReviewWalk walk, IReadOnlyList<ReviewFinding> inline, IReadOnlyList<ReviewFinding> summaryOnly, int belowBar,
-        VerifyOutput? verify, bool verifySkipped)
-    {
-        var text = new StringBuilder()
-            .Append("**Antiphon review**, round ").Append(walk.Run.Round).Append(" (iteration ").Append(walk.Iteration.Iteration).AppendLine(")")
-            .AppendLine();
-        if (inline.Count > 0)
-        {
-            text.AppendLine("Findings:");
-            foreach (var finding in inline)
-                text.Append("- **").Append(finding.Key).Append("** ").Append(finding.Severity.ToString().ToLowerInvariant()).Append(" · `")
-                    .Append(finding.FilePath).Append("`: ").AppendLine(finding.Title);
-        }
-
-        if (summaryOnly.Count > 0)
-        {
-            text.AppendLine().AppendLine("Listed here only:");
-            foreach (var finding in summaryOnly)
-                text.Append("- ").Append(finding.Key).Append(' ').Append(finding.Severity.ToString().ToLowerInvariant()).Append(" · `")
-                    .Append(finding.FilePath).Append(':').Append(finding.LineStart).Append("`: ").AppendLine(finding.Title);
-        }
-
-        if (belowBar > 0)
-            text.AppendLine().Append(belowBar).AppendLine(" more below this round's bar are kept in Antiphon.");
-        if (verifySkipped)
-            text.AppendLine().AppendLine("_These findings were not verified: no verifier is configured._");
-        else if (verify is { Dropped.Count: > 0 })
-            text.AppendLine().Append(verify.Dropped.Count).AppendLine(" findings were disproved by the verifier and dropped.");
-        return text.ToString();
-    }
-
-    private static string CommentBody(ReviewFinding finding)
+    private static string CommentBody(ReviewFinding finding, string? runLink)
     {
         var text = new StringBuilder()
             .Append("**").Append(finding.Key).Append(" · ").Append(finding.Severity.ToString().ToLowerInvariant()).Append("** ")
@@ -522,6 +514,8 @@ public static class ReviewReviewSteps
             text.AppendLine().AppendLine("```suggestion").AppendLine(finding.Suggestion.TrimEnd()).AppendLine("```");
         if (finding.CheckId is { } check)
             text.AppendLine().Append("_Check ").Append(check).AppendLine("_");
+        if (runLink is not null)
+            text.AppendLine().AppendLine(runLink);
         return text.ToString();
     }
 
