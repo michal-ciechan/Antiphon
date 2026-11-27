@@ -26,6 +26,7 @@ namespace Antiphon.Tests.Review;
 
 [Category("Integration")]
 [NotInParallel("review-intake-api")]
+[ParallelLimiter<ProcessSpawnLimit>]
 [ClassDataSource<ReviewRunIntakeApiTests.Factory>(Shared = SharedType.PerClass)]
 public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory factory)
 {
