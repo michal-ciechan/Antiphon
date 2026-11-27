@@ -187,6 +187,8 @@ public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> setti
             return "CLI request rate limited";
         if (reason.Groups["network"].Success)
             return "CLI backend connection failed";
+        if (reason.Groups["unknownOption"].Success)
+            return "CLI reported an unknown option";
         return "CLI output contained no recognized public diagnostic.";
     }
 
@@ -223,7 +225,7 @@ public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> setti
 
     [GeneratedRegex("""
         \b(?:(?<overload>(?:529|overloaded))|(?<rateLimit>(?:429|rate[ -]limit(?:ed)?))|
-        (?<network>(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|connection (?:refused|reset))))\b
+        (?<network>(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|connection (?:refused|reset)))|(?<unknownOption>unknown option))\b
         """, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PublicDiagnosticReason();
 

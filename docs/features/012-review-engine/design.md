@@ -924,7 +924,7 @@ work (OQ-3).
   decision or completion chain. Other non-zero exits and missing CLI results are `Unavailable`,
   and timeouts are `Timeout`. Those outcomes allow fallback. If the chain runs out of entries,
   the node summary includes the CLI diagnostic. Exit diagnostics include the exit code and a
-  fixed reason for recognized overload, rate-limit, or connection errors. The diagnostic
+  fixed reason for recognized overload, rate-limit, connection, or unknown-option errors. The diagnostic
   masks sensitive values before clipping its private input and publishes only those fixed reasons.
 - **Escalate by confidence.** An answer below its question's per-provider threshold escalates
   **that question only** to the next entry. A refused answer escalates the same way.
