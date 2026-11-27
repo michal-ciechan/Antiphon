@@ -148,7 +148,7 @@ public sealed class ReviewWorkflowExecutor(
             }
             catch (DbUpdateConcurrencyException)
             {
-                logger.LogDebug("Review run {RunId} changed during execution; stopping this walk.", runId);
+                logger.LogDebug("Review run {RunId} changed during execution. Stopping this walk.", runId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {

@@ -59,7 +59,13 @@ internal static class MigrationTestDatabase
 
     private static readonly string ReviewEngineDetachSql =
         string.Concat(ReviewEngineTables.Select(t => $"DROP TABLE IF EXISTS \"{t}\";\n"))
-        + $"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '{ReviewEngineMigration}';";
+        + """
+          DROP FUNCTION IF EXISTS "FillReviewRunGitHubIdentity"();
+          DROP FUNCTION IF EXISTS "NormalizeReviewGitHubRepo"(text);
+          """
+        + $"\nDELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" IN ('{ReviewEngineMigration}', '{OpenReviewRunMigration}');";
+
+    private const string OpenReviewRunMigration = "20261127142459_EnforceOneOpenReviewRunPerPullRequest";
 
     public static string[] Names()
     {
@@ -154,7 +160,8 @@ internal static class MigrationTestDatabase
 
     /// <summary>
     /// <c>AddReviewEngine.Down</c> always throws. A tip clone whose review engine tables are all
-    /// empty drops every one of them and the history row here. A stored review row in any of them is
+    /// empty drops every one of them, the review identity functions, and their history rows here.
+    /// A stored review row in any of them is
     /// refused with that same message; this helper does not call Down and does not discard the rows.
     /// </summary>
     public static async Task DetachReviewEngineAsync(AppDbContext db, CancellationToken ct = default)

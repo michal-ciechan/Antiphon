@@ -46,8 +46,8 @@ public partial class AppDbContext
             e.ToTable("ReviewRuns", table => table.HasTrigger("TR_ReviewRuns_FillGitHubIdentity"));
             e.HasKey(r => r.Id);
             e.Property(r => r.Status).HasConversion<string>().HasMaxLength(32).IsConcurrencyToken();
-            e.Property(r => r.GitHubRepo).HasMaxLength(256).ValueGeneratedOnAdd();
-            e.Property(r => r.GitHubPrNumber).ValueGeneratedOnAdd();
+            // The insert trigger derives these nullable columns from the subject.
+            e.Property(r => r.GitHubRepo).HasMaxLength(256);
             // Close compares the full row version. Workflow saves compare Status so a metadata
             // edit need not interrupt a node already running.
             e.Property(r => r.ConcurrencyToken).HasColumnName("xmin").HasColumnType("xid").ValueGeneratedOnAddOrUpdate();

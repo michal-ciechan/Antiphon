@@ -8469,9 +8469,21 @@ namespace Antiphon.Server.Migrations
                         .IsRequired()
                         .HasColumnType("text[]");
 
+                    b.Property<uint>("ConcurrencyToken")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.Property<decimal>("CostUsd")
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");
+
+                    b.Property<int?>("GitHubPrNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("GitHubRepo")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
 
                     b.Property<bool?>("NeedsHumanApproval")
                         .HasColumnType("boolean");
@@ -8488,6 +8500,7 @@ namespace Antiphon.Server.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
@@ -8523,9 +8536,17 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("WorkflowRevisionId");
 
+                    b.HasIndex("GitHubRepo", "GitHubPrNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReviewRuns_GitHubRepo_GitHubPrNumber_Open")
+                        .HasFilter("\"Status\" <> 'Closed' AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+
                     b.HasIndex("Status", "UpdatedAt");
 
-                    b.ToTable("ReviewRuns", (string)null);
+                    b.ToTable("ReviewRuns", null, t =>
+                        {
+                            t.HasTrigger("TR_ReviewRuns_FillGitHubIdentity");
+                        });
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewSubject", b =>
