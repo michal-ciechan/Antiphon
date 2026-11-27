@@ -1768,14 +1768,16 @@ public sealed partial class SessionMessageQueueService
             if (await CancelJustClaimedExpiredBriefsAsync(db, [message], ct))
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
             DeliveryOutcome outcome;
-            var capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
+            var capturedGeneration = message.Origin == QueuedMessageOrigin.Channel
+                ? message.LastDeliveryGeneration : await CaptureSessionGenerationAsync(sessionId, ct);
             try
             {
                 outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
                     firstInputDeadlineAt: FirstInputDeadline([message]),
                     pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message),
                     resumeNote: StandingResumeNote.IsNote(message),
-                    channelDelivery: message.Origin == QueuedMessageOrigin.Channel);
+                    channelDelivery: message.Origin == QueuedMessageOrigin.Channel,
+                    claimedGeneration: message.LastDeliveryGeneration);
             }
             catch (OptionalBriefExpiredException)
             {
@@ -3091,10 +3093,12 @@ public sealed partial class SessionMessageQueueService
                     await landBoundary.ReachedAsync("queue-before-typing", landRow.SourceTaskId!.Value, landRow.Id, ct);
             if (await CancelJustClaimedExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
             using var observation = new RuntimePhase(_logger, _timeProvider, sessionId, "queue.delivery-confirm");
-            capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
+            capturedGeneration = channelDelivery
+                ? sessionGeneration : await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
                 pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration),
-                resumeNote: StandingResumeNote.IsNote(head), channelDelivery: channelDelivery);
+                resumeNote: StandingResumeNote.IsNote(head), channelDelivery: channelDelivery,
+                claimedGeneration: sessionGeneration);
         }
         catch (OptionalBriefExpiredException)
         {
@@ -4355,9 +4359,12 @@ public sealed partial class SessionMessageQueueService
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
         bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
-        bool channelDelivery = false)
+        bool channelDelivery = false, DateTime? claimedGeneration = null)
     {
-        if (pointerAttempt is not null) overlayRecovery = false;
+        if (channelDelivery && claimedGeneration is null)
+            return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, ConditionalInputOutcomes.GenerationMismatch);
+        if (pointerAttempt is not null || channelDelivery) overlayRecovery = false;
+        var writeGeneration = channelDelivery ? claimedGeneration : null;
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
         // Claude (probe runs 2026-07-31): a \n in written input is ALWAYS a literal newline in the
         // composer, while a \r MID-body acts as Enter and SUBMITS the fragment before it — and
@@ -4378,7 +4385,6 @@ public sealed partial class SessionMessageQueueService
         // for any future caller that reaches DeliverAsync without going through EnqueueAsync.
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var guardComposer = channelDelivery && kind == AgentKind.ClaudeCode;
-        if (guardComposer) overlayRecovery = false;
         if (kind is { } refusedKind && TryGetForbiddenReason(refusedKind, trimmed, out var forbiddenReason))
         {
             _logger.LogError(
@@ -4557,7 +4563,8 @@ public sealed partial class SessionMessageQueueService
         if (pointerAttempt is not null) PointerMilestone(sessionId, pointerAttempt, "write-start", trimmed.Length);
         try
         {
-            await _runtime.SendInputAsync(sessionId, payload, ct, expectedComposer: guardComposer ? "" : null);
+            await _runtime.SendInputAsync(sessionId, payload, ct, expectedComposer: guardComposer ? "" : null,
+                expectedGeneration: writeGeneration);
         }
         catch (ProviderDialogInputRefusedException ex)
         {
@@ -4639,7 +4646,8 @@ public sealed partial class SessionMessageQueueService
             // CARD-0693: the body already left, so an unreachable runner here is not a refund (see
             // the body write above): it propagates and the attempt keeps its floor.
             await _runtime.SendInputAsync(sessionId, "\r", ct,
-                expectedComposer: guardComposer ? trimmed : null, requireOwnedComposer: guardComposer);
+                expectedComposer: guardComposer ? trimmed : null, requireOwnedComposer: guardComposer,
+                expectedGeneration: writeGeneration);
 
             if (confirmTranscript)
             {
@@ -4664,7 +4672,7 @@ public sealed partial class SessionMessageQueueService
         }
         catch (ProviderDialogInputRefusedException)
         {
-            if (guardComposer) throw new InputDeliveryUncertainException(sessionId);
+            if (channelDelivery) throw new InputDeliveryUncertainException(sessionId);
             // The body has custody even when Enter/retry wrote zero bytes. Never refund,
             // Esc or retype it; the existing receipt/composer reconciliation owns the hold.
             return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);

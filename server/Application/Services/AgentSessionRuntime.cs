@@ -2382,25 +2382,36 @@ public sealed partial class AgentSessionRuntime
 
     public async Task SendInputAsync(
         Guid sessionId, string input, CancellationToken ct, bool trackManualTurn = true,
-        string? expectedComposer = null, bool requireOwnedComposer = false)
+        string? expectedComposer = null, bool requireOwnedComposer = false, DateTime? expectedGeneration = null)
     {
         if (string.IsNullOrEmpty(input)) return;
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var session = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
+        if (expectedGeneration is { } claimed && !SessionGeneration.Equal(claimed, session.StartedAt))
+            throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.GenerationMismatch);
         if (session.AgentKind != AgentKind.ClaudeCode)
         {
             if (expectedComposer is not null || requireOwnedComposer)
                 throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.GenerationMismatch);
-            await SendInteractiveInputAsync(sessionId, input, ct, trackManualTurn);
+            if (expectedGeneration is not { } generation)
+            {
+                await SendInteractiveInputAsync(sessionId, input, ct, trackManualTurn);
+                return;
+            }
+            var sequence = await GetRunnerSequenceOrDefaultAsync(sessionId, ct);
+            ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId,
+                new RunnerConditionalInputRequest(generation, sequence, input), ct));
+            if (RecordTerminalInput(sessionId, input) && trackManualTurn)
+                TryStartManualTurnTracking(sessionId, sequence);
             return;
         }
         var observation = await ObserveDialogAsync(sessionId, ct);
         if ((expectedComposer is not null || requireOwnedComposer) && observation?.ComposerGuardSupported != true)
             throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
         var request = ProviderDialogObservationService.Request(observation, sessionId,
-            SessionGeneration.Normalize(session.StartedAt), input)
+            expectedGeneration ?? SessionGeneration.Normalize(session.StartedAt), input)
             with
             {
                 ExpectedComposerDigest = expectedComposer is { Length: > 0 }
