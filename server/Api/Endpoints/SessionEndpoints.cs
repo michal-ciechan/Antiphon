@@ -170,6 +170,10 @@ public static class SessionEndpoints
             return Results.Accepted($"/api/sessions/{id}", await service.ResumeAsync(id, spec, request.Mode, cancellationToken));
         });
 
+        sessions.MapSessionKill();
+    }
+
+    public static RouteHandlerBuilder MapSessionKill(this IEndpointRouteBuilder sessions) =>
         sessions.MapPost("/{id:guid}/kill", async (
             Guid id,
             AgentSessionService service,
@@ -178,7 +182,6 @@ public static class SessionEndpoints
             await service.KillAsync(id, SessionTerminationSource.OperatorRequest, cancellationToken);
             return Results.NoContent();
         });
-    }
 
     /// <summary>
     /// CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.
