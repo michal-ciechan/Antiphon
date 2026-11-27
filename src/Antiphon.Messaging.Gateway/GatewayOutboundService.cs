@@ -11,8 +11,11 @@ public sealed class GatewayOutboundService(
     IEnumerable<IChannelAdapter> adapters,
     IOptions<AntiphonGatewayOptions> options,
     ILogger<GatewayOutboundService> logger,
-    IOutboundAnswerReceiptSink? receipts = null) : BackgroundService
+    IOutboundAnswerReceiptSink? receipts) : BackgroundService
 {
+    public GatewayOutboundService(IEnumerable<IChannelAdapter> adapters, IOptions<AntiphonGatewayOptions> options,
+        ILogger<GatewayOutboundService> logger) : this(adapters, options, logger, null) { }
+
     private readonly AntiphonGatewayOptions _options = options.Value;
     private readonly Dictionary<string, IChannelAdapter> _byChannel =
         adapters.ToDictionary(a => a.Channel, StringComparer.OrdinalIgnoreCase);

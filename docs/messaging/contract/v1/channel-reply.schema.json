@@ -30,6 +30,12 @@
         "null"
       ]
     },
+    "answeredMessageIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "text": {
       "type": [
         "string",
