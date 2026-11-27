@@ -128,19 +128,165 @@ The change in this Plan is documentation. The code and real replay measurements 
 | Qualification | Reuse each shared endpoint across adjacent comparisons. Target ≤5 minutes per comparison including scoring, ≤25 minutes for the five-run offline measurement. Record the delta in full index-build and proof verification cost against wall/launch time saved, including instances with no savings. Store phase JSON, prediction hashes, maximum RSS and per-run results in the external replay directory. Use retained native outcome evidence for replay. |
 | Timeouts | For CARD-2076 provisionally budget 4 minutes per cold endpoint operation, 30 s per small method (60 s for the replay fixture), and a 24-minute cold row override. Keep the slot-wait clock separate. From the first five comparable already-commissioned observations per method/row and index phase, publish sample size, p50/p95/max and set each timeout near **2 × measured p95** with measured exceptions. A bound that is reached retains candidates or refuses selection. A selection, batch or run forecast or observed over 30 minutes goes to Debug with phase evidence before another run. |
 
+### Round 2 server2 calibration
+
+The recorded round-1 CP-4 timeout was 60.8 s (Review `9c3d5d74`, run `20261126-161311-a2b8`).
+Splitting the scenarios alone still left the gate-and-debt scenario at 31.029 s with
+29.223 s of setup on `bb6d6d5178e74c9c7c332e54cf735eebee9e9b4b`. Each split replay
+now shares its world within its scenario and builds only the extra endpoints it uses.
+The S3/S4 fixtures reuse the staged graph driver's actual entry point in one test
+process. S1 exercises the standalone graph driver and evaluator.
+
+Five fresh serial TUnit hosts under granted build slots tested
+`e089267bdf75aa123ef7324d87edc3e28478ad65` on server2, Debian Linux x64,
+24 visible CPUs, .NET SDK 10.0.404 and runtime 9.0.23. All five ran the same
+17 methods. Slot wait was zero. Samples 1, 4 and 5 were ordinary admissions
+with one-minute loads 20.69→15.84, 19.20→10.66 and 11.89→11.93.
+The loaded samples 2 and 3 had observed in-run one-minute loads 27.47 and 31.47,
+with start→end loads 15.51→22.84 and 21.81→19.57. Lease hold times were
+92, 123, 110, 76 and 93 s. The timings below are whole-method TRX durations in
+seconds, including fixture work, with the nearest-rank p95 equal to the max at
+this sample size. The limits round up at approximately twice that provisional
+p95, subject to the existing 30 s CP-1 ceiling. CP-1's 18.025 s loaded sample
+exceeded the initial 15 s target. Its 30 s limit is 1.66× the observed p95.
+Discovery, teardown and other unattributed time remain outside the method
+measurements where the host did not expose separate spans.
+
+| Method | Samples 1–5 (s) | p50 (s) | p95/max (s) | Timeout (s) |
+|---|---|---:|---:|---:|
+| `ArchivedWrongAliasWinnerUsesTheReplayScorerAndLeavesAnOpenRepair` | 3.569, 6.458, 3.648, 3.790, 3.250 | 3.648 | 6.458 | 13 |
+| `ProvenSubtractionReplayPreservesRepairAndRenameEvidence` | 6.252, 10.774, 11.063, 4.409, 4.203 | 6.252 | 11.063 | 23 |
+| `ProvenSubtractionReplayRecordsEverySkippedFailure` | 9.679, 9.315, 13.711, 5.099, 6.941 | 9.315 | 13.711 | 28 |
+| `ProvenSubtractionReplayRefusesUnverifiableOutcomes` | 5.509, 9.331, 12.313, 3.415, 5.357 | 5.509 | 12.313 | 25 |
+| `ProvenSubtractionReplayRejectsInvalidArtifactsAndCohorts` | 2.657, 3.962, 4.240, 2.046, 2.833 | 2.833 | 4.240 | 9 |
+| `ProvenSubtractionReplayResolvesGateAndFailureDebt` | 5.290, 8.567, 8.658, 5.651, 4.939 | 5.651 | 8.658 | 18 |
+| `BothEndpointProofsPreserveIndependentlyOwedChunks` | 3.120, 3.624, 3.106, 2.800, 3.296 | 3.120 | 3.624 | 8 |
+| `EndpointProofsPreserveIndependentReadersAndAddedConsumers` | 1.775, 3.309, 2.046, 1.880, 2.377 | 2.046 | 3.309 | 7 |
+| `EndpointProofsPreserveOwnedAndUnownedCaps` | 1.609, 2.947, 2.011, 1.866, 1.499 | 1.866 | 2.947 | 6 |
+| `ProofRequiresBoundCompilerInputs` | 12.823, 18.025, 10.573, 9.689, 14.560 | 12.823 | 18.025 | 30 |
+| `ConfiguredBindingsPreserveEveryAmbiguousCandidate` | 4.107, 5.783, 8.007, 3.808, 6.421 | 5.783 | 8.007 | 17 |
+| `ScopedBindingsPreserveEveryAmbiguousCandidate` | 4.879, 5.611, 5.163, 5.711, 4.738 | 5.163 | 5.711 | 12 |
+| `SdkGeneratedUsingsRetainOnlyPinnedBindings` | 3.195, 2.597, 2.257, 4.239, 2.989 | 2.989 | 4.239 | 9 |
+| `UniqueBindingsPruneOnlyTheirOwnContributions` | 8.545, 5.101, 6.000, 4.490, 6.968 | 6.000 | 8.545 | 18 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners` | 2.395, 3.903, 2.834, 2.359, 3.119 | 2.834 | 3.903 | 8 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds` | 3.646, 4.950, 4.020, 4.725, 4.163 | 4.163 | 4.950 | 10 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsThroughForwarders` | 3.757, 2.373, 1.832, 1.753, 2.009 | 2.009 | 3.757 | 8 |
+
+#### Cold CP-2 follow-up
+
+Final run `20261126-183901-012c` canceled the original combined owner scenario
+at 8.955 s in a cold test host. The first compiler binding alone took 2.745 s.
+The test now has independent global-using, linked-owner and extern-alias
+scenarios with the same assertions and capture orders. The calibrated cold
+follow-up ran at `7a5459226f88930a1a6291a68e8627938202984f` on server2. Every
+slot was granted with zero wait. Samples 1, 4 and 5 began at one-minute loads
+21.88, 22.07 and 22.40. Sample 2 ended at 36.79. Sample 3 selected each method
+in its own cold host at one-minute loads 33.36, 32.50 and 30.13. Each method
+passed all five samples. The linked-owner limit stays at the existing 8 s
+ceiling (1.59× its observed p95).
+
+| Method | Samples 1–5 (s) | p50 (s) | p95/max (s) | Timeout (s) |
+|---|---|---:|---:|---:|
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossGlobalUsings` | 4.387, 5.688, 5.635, 6.629, 3.840 | 5.635 | 6.629 | 14 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossOwners` | 0.773, 1.111, 5.043, 1.999, 0.692 | 1.111 | 5.043 | 8 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossExternAliases` | 2.485, 3.354, 4.658, 3.905, 1.876 | 3.354 | 4.658 | 10 |
+
+### Round 3 regression evidence
+
+Review `6c753207` observed the combined type-kind method at 3.957, 4.476,
+4.591, 6.314 and 9.054 s. The final observation left 0.946 s at the original
+10 s limit. The five declaration kinds now have separate case deadlines. The
+attribute winner and ambiguous spelling share their own method. Every case
+still checks both capture orders and the positive and ambiguous worlds.
+
+Round 3 run `20261126-212133-bd50` built
+`5410a2eb6db67fa176665d853872d19ee26a9ad2` on Debian 12 Linux x64 with 24
+visible CPUs and SDK 10.0.404. Its five fresh type-kind and attribute hosts ran
+30/30 cases green. The first three hosts observed one-minute loads in
+26.39–30.53, 23.31–30.30 and 25.75–35.99 respectively. The last two added two
+low-priority CPU workers during execution and observed 29.33–33.90 and
+20.73–24.92. All test and build slots were granted with zero wait. The table
+uses the slowest case per host for the parameterized method and provisional
+nearest-rank p95. The attribute limit stays at the original 10 s ceiling,
+1.82× the observed maximum.
+
+| Method | Samples 1–5 (s) | p50 (s) | p95/max (s) | Timeout (s) |
+|---|---|---:|---:|---:|
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossTypeKinds` | 3.074, 2.995, 4.672, 3.760, 2.175 | 3.074 | 4.672 | 9.5 |
+| `UniqueBindingsPruneOnlyTheirOwnContributionsAcrossAttributeSpellings` | 5.483, 1.381, 1.327, 1.129, 1.027 | 1.327 | 5.483 | 10 |
+
+The same run recorded 2/5 passes for the cohort test. Three cold hosts
+canceled at 9.085, 9.335 and 9.226 s in fixture setup, before the roster
+assertions. The cohort test now reuses one real graph from one commit for six
+distinct attempts and uses clean fixture outcomes. The other replay tests
+still build their distinct endpoints and observe their failed cases. The
+cohort deadline stays at 9 s.
+
+The official land-graph refresh advanced the topic digest from `2D9312A5…`
+to `49BA60B0…` at count 80. The target pin blob remained
+`5c6bebb9830976468ea54c20c640127ab452931d`. Review's original ten-case results
+remain in its retained evidence. [Round 2 base red](/work/review-evidence/task-6c753207/base/.antiphon/checkpoints/20261126-200816-4a0e/report.md) · [Round 2 topic red](/work/review-evidence/task-6c753207/tip-impacts/.antiphon/checkpoints/20261126-203714-ca7f/report.md) · [Refetched master green](/work/review-evidence/task-6c753207/master-final/.antiphon/checkpoints/20261126-210209-747a/report.md)
+
+`P.roster` reseals run three with one duplicated content digest in place of
+the other required digest. The roster count and the planned chunk files stay
+the same. `ProvenSubtractionReplayRejectsInvalidArtifactsAndCohorts` requires
+`proof-cohort-roster-mismatch:r3000000`. The count-only control and the M2,
+preview and evaluation-target controls remain pending method-scoped Mutation.
+[Candidate methods and expected failures](../mutations/2026-11-26-card-2076-candidates.md)
+
+The replay's proof-dependent carry counter can include a carry caused by a
+difference between the planned class list and member roster. Inspect the
+matched roster and recorded removed contributions before treating a counted
+carry as a subtraction witness.
+
+### Round 4 deadline repair
+
+Review `b77a4f86` reproduced a CP-3 deadline cancellation at 8.177 s and observed
+a replay setup cancellation at 124.896 s. The replay trace records the first graph
+finishing in 371 ms and cancellation before the second graph begins. This brackets
+the stall to writing the next fixture input and preparing its commit, where the
+fixture used three Git children with unbounded output and exit waits. The trace
+does not identify the precise command or distinguish host scheduling from local I/O.
+The staged graph driver executes in process, and the checkpoint lease covers the host.
+
+Calibration run `20261126-235222-b80f` at
+`a0cab7b58db509542b68dffb09e8bb9e4174a360` used ten separate cold hosts per exact
+method on Debian 12 Linux x64 with 24 visible CPUs and SDK 10.0.404. Review
+`b77a4f86` supplies the demonstrated flake for the ten-loaded-sample exception.
+The competing workload repeatedly rebuilt a 24-project C# compilation pack under
+a separate host slot. One-minute load during the case windows ranged from 18.78 to 40.69.
+Build drivers were visible during 20/20 cases, with a controlled build
+worker directly identified during 19/20. All case slots were granted.
+Maximum admission wait was 30 s, outside the whole-method TRX durations.
+Nearest-rank p95 is the maximum at ten observations. A canceled run bounds its
+unobserved completion time from below. The aggregate outcome retains the cancellations.
+
+| Method | Whole-method samples (s) | Median (s) | Observed p95/max (s) | Deadline (s) |
+|---|---|---:|---:|---:|
+| `BothEndpointProofsPreserveIndependentlyOwedChunks` | 9.143 canceled, 7.123, 4.885, 4.839, 8.280 canceled, 8.240 canceled, 5.022, 5.938, 10.108 canceled, 4.014 | 6.531 | 10.108 | 8 per case |
+| `ProvenSubtractionReplayRefusesUnverifiableOutcomes` | 9.170, 15.559, 13.837, 10.150, 16.239, 7.517, 10.979, 7.556, 16.870, 8.677 | 10.564 | 16.870 | 25 |
+
+Both fixtures prepare their real commits in process. The staged graph driver,
+pinned input validation and replay probe still exercise their existing entry points.
+CP-3 uses three cases for composition and strict origins, roster and proof identity,
+and the independently changed index and removed link. The latter case builds only
+the endpoint graphs those checks consume. Commit, compiler input, graph and probe
+phase timings identify the work around cancellation. The original method deadlines
+apply to each case. The cancellation rows retain their red outcomes.
+
 ### Checkpoints
 
-Portable managed lane for every row, with target-specific compilations/Windows-profile evidence supplied by small fixtures. Both placement routes were checked. Omit runner and platform pins. Each filter names one planned, nonparameterized method in an existing class. Named fixture variants inside the method contribute one TUnit result. Exact class/method operands avoid suffix expansion. At TestDesign keep each decisive positive and its ambiguous or unbound twin reachable through the production entry point.
+Portable managed lane for every row, with target-specific compilations/Windows-profile evidence supplied by small fixtures. Both placement routes were checked. Omit runner and platform pins. Each filter binds a known method roster in one class. CP-1 and CP-3 each execute a single exact method. CP-2 and CP-4 select the scenario methods by their shared prefixes. Check every intended method in the fresh TRX. The same-tip S1–S4 Final can reuse one isolated build while preserving the filters and execution floors. At TestDesign keep each decisive positive and its ambiguous or unbound twin reachable through the production entry point.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2076-inputs/` | portable-compiler-inputs | `/*/*/ReleaseImpactEvaluationTests/ProofRequiresBoundCompilerInputs` | D-1/2, complete and tampered compiler inputs | 1 passed, 0 failed or skipped | 1 | 12 | true |
-| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions` | D-2, paired matrix and overlapping reasons | 1 passed, 0 failed or skipped | 1 | 12 | true |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c2076-compose/` | portable-chunk-selection | `/*/*/RcProjectSelectionTests/BothEndpointProofsPreserveIndependentlyOwedChunks` | D-3, two trees, chunk and receipt joins | 1 passed, 0 failed or skipped | 1 | 12 | true |
-| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c2076-replay/` | portable-miss-replay | `/*/*/IncrementalSelectionSoundnessTests/ProvenSubtractionReplayRecordsEverySkippedFailure` | D-4, blind score, nonvacuity and miss records | 1 passed, 0 failed or skipped | 1 | 12 | true |
+| CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions*` | D-2, paired matrix and overlapping reasons | 11 passed, 0 failed or skipped | 11 | 12 | true |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c2076-compose/` | portable-chunk-selection | `/*/*/RcProjectSelectionTests/BothEndpointProofsPreserveIndependentlyOwedChunks` | D-3, two trees, chunk and receipt joins | 3 passed, 0 failed or skipped | 3 | 12 | true |
+| CP-4 | S4 | `tests/Antiphon.Tests -> bin-c2076-replay/` | portable-miss-replay | `/*/*/IncrementalSelectionSoundnessTests/ProvenSubtractionReplay*` | D-4, blind score, nonvacuity and miss records | 5 passed, 0 failed or skipped | 5 | 12 | true |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c2076-cut/` | portable-cut-withdrawal | `/*/*/ReleaseCutTests/WithdrawnTypeProofRequiresFullOnResume` | Default off, approval, miss withdrawal and repaired version | 1 passed, 0 failed or skipped | 1 | 12 | true |
 
-Commit the compiling regression witness against the conservative seam first. Each red must be the named behavioral assertion from the slice table. Keep its SHA and observed vs expected value. Implement, commit, then execute the same row once green through the checkpoint runner with `--after S1` through `--after S5` as applicable, `--expected-source-sha <commit>` and `--row-timeout 24`. Wait for the terminal receipt. Compile failures, unknown flags, zero tests and missing prerequisites cannot establish red. Keep the per-case mutation roster for method-scoped controls on the reviewed source. The retained historical replay and two prospective Full shadows are qualification evidence outside the short Code rows.
+Commit the compiling regression witness against the conservative seam first. Each red must be the named behavioral assertion from the slice table. Keep its SHA and observed vs expected value. Implement, commit, then execute the same row once green through the checkpoint runner with `--after S1` through `--after S5` as applicable, `--expected-source-sha <commit>` and `--row-timeout 24m`. Wait for the terminal receipt. Compile failures, unknown flags, zero tests and missing prerequisites cannot establish red. Keep the per-case mutation roster for method-scoped controls on the reviewed source. The retained historical replay and two prospective Full shadows are qualification evidence outside the short Code rows.
 
 ### Cost
 

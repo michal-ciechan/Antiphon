@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Antiphon.ReleaseSelection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -14,7 +15,17 @@ namespace Antiphon.Tests.Scripts;
 /// </summary>
 internal static class ReleaseImpactGraphBuilder
 {
-    internal static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs)
+    internal static ReleaseImpactTypeProof BuildWithTypeProof(IReadOnlyDictionary<string, string> inputs, ReleaseCompilerBinding binding,
+        int maximumCandidates = 4096)
+    {
+        var origins = new List<ReleaseImpactTypeOrigin>();
+        var conservative = Build(inputs, origins.Add) with { Schema = "antiphon-release-relation-v2" };
+        return ReleaseImpactTypeResolver.Resolve(inputs, conservative, origins, binding, maximumCandidates);
+    }
+
+    internal static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs) => Build(inputs, null);
+
+    private static ReleaseImpactGraph Build(IReadOnlyDictionary<string, string> inputs, Action<ReleaseImpactTypeOrigin>? observe)
     {
         var reasons = new SortedSet<string>(StringComparer.Ordinal)
         {
@@ -99,7 +110,12 @@ internal static class ReleaseImpactGraphBuilder
                 // subtracts a conservative project edge supplied by later composition.
                 foreach (var name in type.DescendantNodes().OfType<SimpleNameSyntax>())
                     if (typeFiles.TryGetValue(name.Identifier.ValueText, out var targets))
+                    {
                         foreach (var target in targets) Hit(target, id, "type");
+                        if (observe is not null)
+                            observe(new(id, path, name.SpanStart, name.Span.Length, name.Identifier.ValueText,
+                                targets.Order(StringComparer.Ordinal).ToArray()));
+                    }
                 foreach (var literal in type.DescendantNodes().OfType<LiteralExpressionSyntax>())
                 {
                     if (!literal.IsKind(SyntaxKind.StringLiteralExpression)) continue;
@@ -133,7 +149,7 @@ internal static class ReleaseImpactGraphBuilder
 
     private static string DirectoryOf(string path) => path.Contains('/') ? path[..(path.LastIndexOf('/') + 1)] : "";
 
-    private static string FullName(BaseTypeDeclarationSyntax type)
+    internal static string FullName(BaseTypeDeclarationSyntax type)
     {
         var spaces = type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse()
             .Select(ns => string.Join('.', ns.Name.DescendantTokens().Where(t => t.IsKind(SyntaxKind.IdentifierToken)).Select(t => t.ValueText)));
@@ -155,3 +171,11 @@ internal sealed record ReleaseImpactConsumer(string Project, string FullName, st
 internal sealed record ReleaseImpactEdge(string Path, ReleaseImpactConsumer[] Classes);
 internal sealed record ReleaseImpactGraph(string Schema, bool Complete, string Fallback, string[] IncompleteReasons,
     ReleaseImpactClass[] Universe, ReleaseImpactEdge[] Edges);
+internal sealed record ReleaseImpactTypeOrigin(ReleaseImpactIdentity Consumer, string Source, int Start, int Length, string Name, string[] Candidates);
+internal sealed record ReleaseImpactTypeSite(ReleaseImpactTypeOrigin Origin, string SourceSha256, string ContextDigest,
+    string Rule, string? Assembly, string? MetadataName, string[] Winners, string[] Retained,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] ReleaseImpactForwardingEvidence? Forwarding = null);
+internal sealed record ReleaseImpactForwardingEvidence(string LibrarySha256, string FacadeSha256, string DestinationSha256,
+    string LibraryMethod, string ReturnType, string LibraryAssembly, string FacadeAssembly, string DestinationAssembly);
+internal sealed record ReleaseImpactTypeProof(ReleaseImpactGraph Conservative, ReleaseImpactGraph Refined,
+    ReleaseImpactTypeSite[] Sites, string? ManifestDigest);
