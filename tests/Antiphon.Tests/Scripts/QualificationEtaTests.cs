@@ -47,6 +47,7 @@ public sealed class QualificationEtaTests
         // The known 100 seconds therefore project 150 seconds and 150 + 164.5/sqrt(19) = 187.739 seconds.
         lines[0].ShouldBe("ETA outstanding=2 running=0 completed=20 unpriced=1 pointSeconds=150 "
             + "p50=2026-11-10T12:02:30.000Z p95=2026-11-10T12:03:07.739Z confidence=matched lowerBound=true");
+        lines.Length.ShouldBe(2, "the lower bound must carry its missing-chunk warning");
         lines[1].ShouldBe("UNVERIFIED rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): suite-unknown.");
     }
 
