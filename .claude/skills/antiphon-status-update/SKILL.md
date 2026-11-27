@@ -38,7 +38,10 @@ The call is bounded: API reads run concurrently, each with its own deadline (the
 attention feed a shorter one), inside one overall budget; a read that misses it is an
 `UNVERIFIED` line, never a stall. Unknown remaining chunks make the ETA a lower
 bound (`lowerBound`, an `UNVERIFIED` line naming them). The previous run is the
-newest earlier attempt whose TRX files cover its own `dispatch-schedule.json`.
+newest earlier attempt with terminal evidence for each entry in its
+`dispatch-schedule.json`. Native chunks use complete TRXs. The `client/all` and
+`scripts/all` chunks use terminal timing sidecars. The estimate prices native TRX
+durations and treats any unpriced unfinished chunks as unknown work.
 
 `--json` always carries every key below, `null` when the fact is unknown:
 - top level: `observedAtUtc`, `projectId`, `runner`, `counts`, `pipeline`,
