@@ -21,6 +21,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -149,6 +150,74 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         var replacement = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
         Id(replacement).ShouldNotBe(Id(created));
         await AssertStoredRunsAsync(number, 2, ct);
+    }
+
+    [Test]
+    public async Task Reviewer_progress_obeys_close_lock_order(CancellationToken ct)
+    {
+        const int number = 209668;
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        var nodeId = Guid.NewGuid();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var run = await db.ReviewRuns.Include(r => r.Subject).Include(r => r.Iterations).SingleAsync(r => r.Id == runId, ct);
+        var node = new ReviewNodeExecution
+        {
+            Id = nodeId, RunId = runId, NodeId = "reviewer", Kind = ReviewNodeKind.Agent,
+            ItemKey = "concurrency", Iteration = 1, Sequence = 2, Status = ReviewNodeStatus.Running,
+        };
+        db.ReviewNodeExecutions.Add(node);
+        await db.SaveChangesAsync(ct);
+        await db.Database.OpenConnectionAsync(ct);
+        var progressPid = ((NpgsqlConnection)db.Database.GetDbConnection()).ProcessID;
+        var walk = new ReviewWalk(scope.ServiceProvider, db, run, run.Iterations.Single(),
+            scope.ServiceProvider.GetRequiredService<ReviewWorkflowService>().Default, TimeProvider.System);
+
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(15));
+        var stop = budget.Token;
+        await using var close = new NpgsqlConnection(db.Database.GetConnectionString());
+        await close.OpenAsync(stop);
+        await using var tx = await close.BeginTransactionAsync(stop);
+        await using var runLock = new NpgsqlCommand("""
+            SET LOCAL deadlock_timeout = '50ms';
+            SELECT 1 FROM "ReviewRuns" WHERE "Id" = @id FOR NO KEY UPDATE;
+            """, close, tx);
+        runLock.Parameters.AddWithValue("id", runId);
+        await runLock.ExecuteNonQueryAsync(stop);
+
+        node.Status = ReviewNodeStatus.Waiting;
+        var progress = ReviewReviewSteps.SaveReviewerProgressAsync(walk, stop);
+        try
+        {
+            // Start the other half of Close only once the production progress save is waiting
+            // for this transaction's run lock. Before the fix progress already owns the node.
+            await using var blocked = new NpgsqlCommand("SELECT pg_backend_pid() = ANY(pg_blocking_pids(@waiter))", close, tx);
+            blocked.Parameters.AddWithValue("waiter", progressPid);
+            while (!(bool)(await blocked.ExecuteScalarAsync(stop))!)
+            {
+                if (progress.IsCompleted)
+                {
+                    await progress;
+                    throw new InvalidOperationException("Progress completed without waiting for the held run lock.");
+                }
+                await Task.Delay(20, stop);
+            }
+            await using var nodeWrite = new NpgsqlCommand("""
+                UPDATE "ReviewNodeExecutions" SET "Summary" = 'close-side write' WHERE "Id" = @id
+                """, close, tx);
+            nodeWrite.Parameters.AddWithValue("id", nodeId);
+            (await nodeWrite.ExecuteNonQueryAsync(stop)).ShouldBe(1);
+        }
+        finally
+        {
+            await tx.RollbackAsync(CancellationToken.None);
+            await progress;
+        }
+
+        (await db.ReviewNodeExecutions.AsNoTracking().SingleAsync(n => n.Id == nodeId, ct)).Status.ShouldBe(ReviewNodeStatus.Waiting);
     }
 
     [Test]

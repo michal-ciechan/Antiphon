@@ -160,7 +160,7 @@ public static class ReviewReviewSteps
             + string.Join(", ", children.Select(c => $"{c.Group.Key} {ReviewWalk.Output<ReviewerOutput>(c.Child)?.Findings.Count ?? 0}")));
     }
 
-    private static Task SaveReviewerProgressAsync(ReviewWalk walk, CancellationToken ct)
+    internal static Task SaveReviewerProgressAsync(ReviewWalk walk, CancellationToken ct)
     {
         // Include the run's status check when admitting the reviewer and saving its result.
         walk.Run.UpdatedAt = walk.Now();
