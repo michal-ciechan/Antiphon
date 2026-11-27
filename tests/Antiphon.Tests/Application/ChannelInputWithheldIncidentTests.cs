@@ -126,6 +126,69 @@ public sealed partial class ChannelInputWithheldIncidentTests
 
     [Test]
     [Timeout(120_000)]
+    public async Task SendNowAndAutomaticAdmissionPreserveChannelRetryOrderAcrossRestart(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        await using var db = Db(schema.ConnectionString);
+        Guid sessionId;
+        Guid agentId;
+        string chat;
+        await using (var original = await OpenProducerAsync(schema.ConnectionString, clock))
+        {
+            sessionId = original.SessionId;
+            agentId = original.AgentId;
+            await original.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+            chat = await original.BindChannelAsync();
+            original.Adapter.DialogAdopted = true;
+            using var bridge = Bridge(original);
+            await ReceiveAsync(bridge, "fixture head");
+        }
+
+        var pending = db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId);
+        var first = await pending.SingleAsync(ct);
+        var elapsed = 0;
+        foreach (var (age, delay) in new[] { (0, 10), (60, 30), (300, 120) })
+        {
+            clock.Advance(TimeSpan.FromSeconds(age - elapsed));
+            if (age > 0)
+            {
+                await using var withheld = await OpenProducerAsync(schema.ConnectionString, clock, sessionId, agentId);
+                withheld.Adapter.DialogAdopted = true;
+                using var bridge = Bridge(withheld);
+                await bridge.DrainPendingAsync(ct);
+            }
+            (await pending.SingleAsync(m => m.Id == first.Id, ct)).HoldUntil
+                .ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(delay));
+
+            await using var recovered = await OpenProducerAsync(schema.ConnectionString, clock, sessionId, agentId);
+            using var recovery = Bridge(recovered);
+            recovered.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.ModalBlocked;
+            clock.Advance(TimeSpan.FromSeconds(delay - 1));
+            await ReceiveAsync(recovery, $"fixture newer {age}");
+            var newer = await pending.OrderByDescending(m => m.Sequence).FirstAsync(ct);
+            await recovered.Queue.SendNowAsync(sessionId, first.Id, ct);
+            await recovered.Queue.SendNowAsync(sessionId, newer.Id, ct);
+            await recovered.Queue.FlushSessionAsync(sessionId, ct);
+            await recovered.Queue.FlushStrandedQueuesAsync(ct);
+            recovered.Adapter.ConditionalInputs.ShouldBeEmpty($"age {age}: writes before the persisted deadline");
+
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await recovered.Queue.SendNowAsync(sessionId, newer.Id, ct);
+            recovered.Adapter.ConditionalInputs.ShouldBeEmpty($"age {age}: newer row passed the oldest row");
+            await recovered.Queue.SendNowAsync(sessionId, first.Id, ct);
+            recovered.Adapter.ConditionalInputs.ShouldHaveSingleItem().ShouldContain("fixture head");
+            recovered.Adapter.Inputs.ShouldBeEmpty();
+            elapsed = age + delay;
+        }
+
+        Task ReceiveAsync(ChannelBridgeService bridge, string body) =>
+            bridge.HandleInboundAsync(Message(chat, Guid.NewGuid().ToString("N"), body)
+                with { Timestamp = clock.GetUtcNow() }, ct);
+    }
+
+    [Test]
+    [Timeout(120_000)]
     public async Task ChannelEnterAcceptedBeforeInterruptionReconcilesWithoutRetyping(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -174,6 +237,93 @@ public sealed partial class ChannelInputWithheldIncidentTests
             && t.Kind == TranscriptKinds.UserPrompt && t.Text == body, ct)).ShouldBe(1);
         h.Messaging.SentReplies.ShouldHaveSingleItem().AnsweredMessageIds.ShouldBe([inbound.ChannelMessageId]);
         h.Adapter.Inputs.Count(input => input != "\r").ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [Timeout(120_000)]
+    public async Task RecreatedServerConfirmsOnlyOwningChannelPromptAtOriginalFloor(
+        bool legacyPending, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new OutageQueueClock();
+        await using var db = Db(schema.ConnectionString);
+        Guid sessionId;
+        Guid agentId;
+        ChannelMessage inbound;
+        SessionQueuedMessage attempt;
+        string body;
+        await using (var original = await OpenProducerAsync(schema.ConnectionString, clock))
+        {
+            sessionId = original.SessionId;
+            agentId = original.AgentId;
+            await original.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+            inbound = Message(await original.BindChannelAsync(), "fixture-restart-receipt", "fixture inbound");
+            original.Adapter.OnSubmitted = _ => throw new InputDeliveryUncertainException(sessionId);
+            using var bridge = Bridge(original);
+            await bridge.HandleInboundAsync(inbound, ct);
+            body = original.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+            original.Adapter.Inputs.Count(input => input != "\r").ShouldBe(1);
+            attempt = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == sessionId, ct);
+            attempt.DeliveryAttempts.ShouldBe(1);
+            attempt.LastDeliveryBaselineSequence.ShouldNotBeNull();
+        }
+
+        if (legacyPending)
+            await db.SessionQueuedMessages.Where(m => m.Id == attempt.Id).ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.Status, QueuedMessageStatus.Pending)
+                .SetProperty(m => m.SentAt, (DateTime?)null)
+                .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.NoTranscriptRecord), ct);
+        var machine = $"Synthetic system report quoting the inbound:\n{body}";
+        await using var recovered = await OpenProducerAsync(schema.ConnectionString, clock, sessionId, agentId);
+        recovered.Adapter.OnSubmitted = submitted => recovered.InsertStoreVisibleTurnAsync(submitted, "fixture duplicate");
+        await recovered.SeedPendingMessageAsync(machine, origin: QueuedMessageOrigin.System,
+            status: QueuedMessageStatus.Sent, deliveryAttempts: 1, deliveryVerdict: DeliveryVerdict.Delivered,
+            lastDeliveryStartedAt: recovered.Now, baselineSequence: await recovered.CurrentTranscriptMaxSequenceAsync());
+        clock.Advance(TimeSpan.FromSeconds(45));
+        if (legacyPending)
+        {
+            await recovered.Queue.FlushStrandedQueuesAsync(ct);
+            recovered.Adapter.Inputs.ShouldBeEmpty("legacy timeout did not prove Enter failed");
+        }
+
+        await recovered.InsertStoreVisibleTurnAsync(machine, "fixture unrelated answer");
+        await recovered.Queue.FlushStrandedQueuesAsync(ct);
+        var held = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == attempt.Id, ct);
+        held.Status.ShouldBe(QueuedMessageStatus.Sent);
+        held.DeliveryVerdict.ShouldNotBe(DeliveryVerdict.LateConfirmed);
+        held.LastDeliveryBaselineSequence.ShouldBe(attempt.LastDeliveryBaselineSequence);
+        held.LastDeliveryStartedAt.ShouldBe(attempt.LastDeliveryStartedAt);
+        held.LastDeliveryGeneration.ShouldBe(attempt.LastDeliveryGeneration);
+        held.DeliveryAttempts.ShouldBe(1);
+
+        var sequence = (await recovered.CurrentTranscriptMaxSequenceAsync()) + 1;
+        var at = clock.GetUtcNow();
+        recovered.Runner.SetTranscript(new SessionRunnerTranscriptDto(sessionId,
+        [
+            new(sessionId, sequence, TranscriptKinds.UserPrompt, "fixture-recovered-owner", null, at,
+                "user", body, null, null, null, null, null),
+            new(sessionId, sequence + 1, TranscriptKinds.AssistantText, "fixture-recovered-answer", null, at,
+                "assistant", "fixture recovered answer", null, null, null, null, null),
+            new(sessionId, sequence + 2, TranscriptKinds.TurnEnd, "fixture-recovered-end", null, at,
+                "assistant", null, null, null, null, null, "end_turn"),
+        ], sequence + 2));
+        await recovered.Queue.FlushStrandedQueuesAsync(ct);
+        await recovered.Dispatcher.OnTurnEndAsync(sessionId, ct);
+        await recovered.DrainOutboundAsync();
+        await recovered.Dispatcher.OnTurnEndAsync(sessionId, ct);
+        await recovered.DrainOutboundAsync();
+        var confirmed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == attempt.Id, ct);
+        confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        confirmed.DeliveryAttempts.ShouldBe(1);
+        confirmed.LastDeliveryBaselineSequence.ShouldBe(attempt.LastDeliveryBaselineSequence);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == body, ct)).ShouldBe(1);
+        var reply = recovered.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.Text.ShouldBe("fixture recovered answer");
+        reply.AnsweredMessageIds.ShouldBe([inbound.ChannelMessageId]);
+        recovered.Adapter.Inputs.ShouldBeEmpty();
     }
 
     [Test]
