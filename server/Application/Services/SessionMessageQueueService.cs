@@ -1899,6 +1899,20 @@ public sealed partial class SessionMessageQueueService
     /// </summary>
     public async Task<int> FlushStrandedQueuesAsync(CancellationToken ct)
     {
+        // A prior-generation resume obligation expires even if the current pane never admits input.
+        await using (var scope = _scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var candidates = await db.SessionQueuedMessages.AsNoTracking()
+                .Where(m => m.Status == QueuedMessageStatus.Pending && m.Origin == QueuedMessageOrigin.System
+                    && m.RuntimeActionKey != null && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix)
+                    && m.CreatedAt < m.AgentSession.StartedAt)
+                .Select(m => new { m.AgentSessionId, m.AgentSession.StartedAt }).Distinct().ToListAsync(ct);
+            foreach (var session in candidates)
+                if (await RetirePriorResumeNotesAsync(db, session.AgentSessionId, session.StartedAt, UtcNow(), ct) > 0)
+                    await PublishQueueChangedAsync(await GetQueueAsync(session.AgentSessionId, ct), ct);
+        }
+
         // CARD-1892: receipt/attention work must outlive the retry discovery window
         // and must not depend on an idle screen, a rules ACK, or an always-on owner.
         List<Guid> unknownSessions;

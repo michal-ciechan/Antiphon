@@ -246,7 +246,11 @@ public sealed class AgentService
             .OrderByDescending(i => i.CreatedAt)
             .Take(Math.Clamp(take, 1, 200))
             .Select(i => new AgentIncidentDto(
-                i.Id, i.AgentId!.Value, i.SessionId, i.Kind, i.Severity, i.Message, i.ExitCode, i.FailureReason, i.CreatedAt, i.ExitSignal))
+                i.Id, i.AgentId!.Value, i.SessionId, i.Kind, i.Severity, i.Message, i.ExitCode, i.FailureReason, i.CreatedAt, i.ExitSignal,
+                i.FailureReason == ChannelBridgeService.WithheldReason
+                    ? _db.AgentIncidents.Where(c => c.Kind == AgentIncidentKind.ChannelInputWithheldClosed
+                        && c.FailureReason == i.Id.ToString()).Select(c => (Guid?)c.Id).FirstOrDefault()
+                    : null))
             .ToListAsync(ct);
     }
 

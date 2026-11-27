@@ -80,10 +80,14 @@ paths keep their existing incident policies.
 The bridge pushes aged withheld incidents to operator attention through `AgentChanged` and the existing Critical `AlertRaised` toast and desktop notification.
 Each incident includes the guarded retry and bound-session resume routes. For enabled,
 agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinutes` (10 by default,
-zero disables) starts with the first accepted inbound after the last outbound. A missed
+zero disables) starts with the oldest accepted inbound still awaiting its own reply. Unrelated outbound traffic leaves that deadline running. A missed
 deadline uses the same operator feed. The incident pager excludes both reasons from
 digest-chat delivery. The wake worker retries withheld input after 10 seconds, then
 at 30-second intervals after one minute and two-minute intervals after five minutes.
+
+A delivered queue row and its matching complete UserPrompt close a withheld incident. The monitor appends a closure with the original incident, queue and transcript IDs and the prompt sequence. The operator can submit the same sequence through the close route in the API guide. Pending group replies retain their own deadline after input delivery.
+
+A channel answer carries the native IDs it answers in `answeredMessageIds`, scoped to its channel and conversation. The gateway records provider acceptance before it marks those inbox receipts Answered. Early acceptance is retained until the inbound receipt arrives. The existing gateway `POST /api/channels/messages/{id}/ack` records manual handling of a legacy receipt after the operator verifies provider delivery.
 
 The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
 are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each

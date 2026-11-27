@@ -303,6 +303,7 @@ export type AgentIncidentKind =
   | 'PolicyDriftNotified'
   | 'StandingAutomaticFreshStarted'
   | 'StandingAutomaticFreshRefused'
+  | 'ChannelInputWithheldClosed'
 
 export type AlertSeverity = 'Info' | 'Warning' | 'Error' | 'Critical'
 
@@ -317,6 +318,7 @@ export interface AgentIncidentDto {
   exitSignal?: number | null
   failureReason: string | null
   createdAt: string
+  closureIncidentId?: string | null
 }
 
 export interface AgentQueueCardDto {

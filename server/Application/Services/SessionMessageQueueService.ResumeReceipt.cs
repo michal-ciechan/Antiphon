@@ -20,7 +20,7 @@ internal static class StandingResumeNote
 
 public sealed partial class SessionMessageQueueService
 {
-    internal static async Task RetirePriorResumeNotesAsync(AppDbContext db, Guid sessionId, DateTime generation,
+    internal static async Task<int> RetirePriorResumeNotesAsync(AppDbContext db, Guid sessionId, DateTime generation,
         DateTime now, CancellationToken ct)
     {
         var pending = await db.SessionQueuedMessages.AsNoTracking()
@@ -32,8 +32,8 @@ public sealed partial class SessionMessageQueueService
         var expired = pending.Where(m => long.TryParse(m.RuntimeActionKey!.AsSpan(StandingResumeNote.KeyPrefix.Length),
                 NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) && ticks > 0 && ticks < current)
             .Select(m => m.Id).ToArray();
-        if (expired.Length > 0)
-            await db.SessionQueuedMessages.Where(m => expired.Contains(m.Id) && m.Status == QueuedMessageStatus.Pending
+        if (expired.Length == 0) return 0;
+        return await db.SessionQueuedMessages.Where(m => expired.Contains(m.Id) && m.Status == QueuedMessageStatus.Pending
                     && m.AgentSession.StartedAt == generation)
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled)
                     .SetProperty(m => m.CanceledAt, now), ct);

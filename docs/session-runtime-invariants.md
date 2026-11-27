@@ -1937,6 +1937,8 @@ permission/question nudge witnesses remain qualification gates per backend;
 CARD-1517/1518 alone owns subsequent intervention policy. No release deadline,
 automatic key, deployment, or parking setting is introduced here.
 
+The launch remote-control bootstrap holds the session queue writer through `/rename` and its first output. Queue delivery resumes after the writer releases. The session health sweep cancels older generation-keyed standing resume notes while retaining their attempts. A restart boundary ends the previous channel reply window, including late assistant output before a new prompt.
+
 ## Provider input diagnostics (CARD-1518)
 
 The dispatcher reads current Claude dialog observations at a 60-second cadence,
