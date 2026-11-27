@@ -89,9 +89,16 @@ public sealed class PhoneHomeDirectoryTests
 
         var hostedDirectory = host.App.Services.GetServices<IHostedService>()
             .OfType<PhoneHomeRunnerDirectory>().ShouldHaveSingleItem();
-        var stopping = ((IHostedService)hostedDirectory).StopAsync(deadline.Token);
+        var lifetime = (IHostedService)hostedDirectory;
+        using var stopCancellation = new CancellationTokenSource();
+        var canceledStop = lifetime.StopAsync(stopCancellation.Token);
+        var stopping = lifetime.StopAsync(deadline.Token);
         try
         {
+            canceledStop.IsCompleted.ShouldBeFalse("shutdown must join the held cleanup");
+            stopCancellation.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => canceledStop.WaitAsync(deadline.Token));
+            canceledStop.IsCanceled.ShouldBeTrue("canceling shutdown must release its own drain wait");
             stopping.IsCompleted.ShouldBeFalse("shutdown must join the held cleanup");
             Should.Throw<ServiceUnavailableException>(() => host.Directory.Register(host.Registration()))
                 .Code.ShouldBe(PhoneHomeRunnerDirectory.RegistrationBusy);

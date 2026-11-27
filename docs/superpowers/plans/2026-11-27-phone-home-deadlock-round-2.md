@@ -6,7 +6,7 @@ Round 2 starts at `d2c192f3dfe3c74fbce53d608b6547d635942d93`. The full repair st
 
 - V-1. An open replacement publishes its epoch and notifies eligibility observers, answers the recovery List, and confirms a queued prompt from a complete UserPrompt on that epoch while the previous close remains held. A late old Disconnect preserves the live connection and dispatch eligibility.
 - V-2. The runner bounds Retry-After delta-seconds, HTTP-date and total reconnect delay to 30 seconds. It preserves the one-second busy hint and equal jitter, ignores a malformed hint, and delays the first retry after a normal close. The clock inspects the actual timer.
-- V-3. Shutdown drains superseded socket cleanup. Cleanup faults are observed and logged.
+- V-3. Shutdown drains superseded socket cleanup and cancellation releases the shutdown wait. An unexpected close-handshake or abort fault survives cleanup and is logged once with the runner ID and epoch.
 - R-1. Registration remains bounded at the directory gate and does not mint a ticket while busy. Existing eligibility observer notifications remain correct.
 - R-2. Check the prior HostLoad ingest timeout on the narrow scope and report the original batch duration and available load evidence. Apply both R5 checks before changing a budget.
 - R-3. Run the policy, checkpoint selection, mechanical, platform and layering guards and their companion inventory check.
@@ -16,7 +16,7 @@ The changed behavior is shared across runner platforms. The narrow round-2 selec
 
 ## Positive controls for SourceLanding Mutation
 
-See the [unbound candidates](../mutations/2026-11-27-phone-home-deadlock-round-2-candidate.md) for the four controls and their method filters.
+See the [unbound candidates](../mutations/2026-11-27-phone-home-deadlock-round-2-candidate.md) for the four round-2 controls, the round-3 handshake control and their method filters.
 
 ### Cost
 
