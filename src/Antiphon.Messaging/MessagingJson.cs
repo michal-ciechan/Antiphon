@@ -18,7 +18,7 @@ public static class MessagingJson
         {
             if (type.Type == typeof(ChannelReply))
                 type.Properties.Single(p => p.Name == "answeredMessageIds").ShouldSerialize =
-                    static (_, ids) => ids is IReadOnlyList<string> { Count: > 0 };
+                    static (_, _) => true;
         }),
     };
 }

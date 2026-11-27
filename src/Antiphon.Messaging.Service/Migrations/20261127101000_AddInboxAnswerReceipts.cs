@@ -14,14 +14,5 @@ public sealed class AddInboxAnswerReceipts : Migration
             CONSTRAINT "PK_InboxAnswerReceipts" PRIMARY KEY ("Channel", "ConversationId", "ChannelMessageId"));
         """);
 
-    protected override void Down(MigrationBuilder migrationBuilder) => migrationBuilder.Sql("""
-        LOCK TABLE "InboxAnswerReceipts" IN ACCESS EXCLUSIVE MODE;
-        DO $guard$
-        BEGIN
-            IF EXISTS (SELECT FROM "InboxAnswerReceipts") THEN
-                RAISE EXCEPTION 'Rollback refused: InboxAnswerReceipts contains provider acceptance evidence.';
-            END IF;
-        END; $guard$;
-        DROP TABLE "InboxAnswerReceipts";
-        """);
+    protected override void Down(MigrationBuilder migrationBuilder) => migrationBuilder.DropTable("InboxAnswerReceipts");
 }

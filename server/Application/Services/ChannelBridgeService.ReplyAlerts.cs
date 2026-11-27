@@ -95,7 +95,7 @@ public sealed partial class ChannelBridgeService
                 detail, agentId = page.AgentId, createdAt = page.CreatedAt,
             };
             var open = db.AgentIncidents.Where(i => i.Id == page.Id && i.HumanNotifiedAt == null);
-            if (await open.Where(i => i.OperatorToastClaimedAt == null)
+            if (await open
                     .ExecuteUpdateAsync(s => s.SetProperty(i => i.OperatorToastClaimedAt, now), ct) == 1)
             {
                 try { await _eventBus.PublishToAllAsync("AlertRaised", alert, ct); }

@@ -108,7 +108,6 @@ public sealed class GatewayOutboundService(
         if (operationId != null && journal != null && !await journal.TryBeginSendAsync(operationId, reply, ct))
         {
             logger.LogInformation("[outbound] previously admitted operation {OperationId}; retaining its provider disposition", operationId);
-            return;
         }
 
         if (!_byChannel.TryGetValue(reply.Channel, out var adapter))
