@@ -42,8 +42,14 @@ public sealed class CodeHostRouter(IEnumerable<ICodeHost> hosts, IOptions<Review
     /// A stored subject. A local subject keeps the refs it was asked for (a branch can move); a
     /// GitHub subject is found by its PR number.
     /// </summary>
-    public CodeHostBinding Resolve(ReviewSubject subject) =>
-        Resolve(subject.Host, subject.Repo, subject.PrNumber, Blank(subject.BaseRef), Blank(subject.HeadRef));
+    public CodeHostBinding Resolve(ReviewSubject subject)
+    {
+        var repo = subject.Repo;
+        var prNumber = subject.PrNumber;
+        if (subject.Host == ReviewHost.GitHub)
+            (repo, prNumber) = GitHubReviewIdentity.Parse(repo.Trim(), prNumber);
+        return Resolve(subject.Host, repo, prNumber, Blank(subject.BaseRef), Blank(subject.HeadRef));
+    }
 
     /// <summary>A code host failure as the API reports it to a caller.</summary>
     public static HttpException ToHttp(CodeHostException ex) => ex.Kind switch

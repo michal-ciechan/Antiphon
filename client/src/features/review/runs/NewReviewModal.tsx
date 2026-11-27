@@ -22,11 +22,13 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
   const fields = getApiFieldErrors(create.error)
 
   const pr = typeof prNumber === 'number' ? prNumber : Number.parseInt(prNumber, 10)
-  const ready = repo.trim() !== '' && (host === 'GitHub' ? Number.isInteger(pr) && pr > 0 : baseRef.trim() !== '')
+  const ready = repo.trim() !== '' && (host === 'GitHub' ? prNumber === '' || (Number.isInteger(pr) && pr > 0) : baseRef.trim() !== '')
   const request: CreateReviewRunRequest = {
     host,
     repo: repo.trim(),
-    ...(host === 'GitHub' ? { prNumber: pr } : { baseSha: baseRef.trim(), ...(headRef.trim() ? { headSha: headRef.trim() } : {}) }),
+    ...(host === 'GitHub'
+      ? prNumber === '' ? {} : { prNumber: pr }
+      : { baseSha: baseRef.trim(), ...(headRef.trim() ? { headSha: headRef.trim() } : {}) }),
     ...(title.trim() ? { title: title.trim() } : {}),
   }
 
@@ -57,7 +59,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
         <TextInput
           size="xs"
           label="Repository"
-          placeholder="owner/name"
+          placeholder={host === 'GitHub' ? 'owner/name or PR URL' : 'owner/name'}
           description={host === 'Local' ? 'A repo configured under Review:CodeHosts:Repos with its local path.' : undefined}
           required
           data-autofocus
@@ -71,7 +73,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
             size="xs"
             label="PR number"
             placeholder="612"
-            required
+            description="Required with owner/name."
             min={1}
             allowDecimal={false}
             allowNegative={false}
@@ -126,7 +128,7 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
   )
 }
 
-/** Manual intake (`POST /api/review-runs`): GitHub needs a PR number; Local needs a base ref and defaults head to HEAD. */
+/** Manual intake. A GitHub PR URL can supply the PR number. */
 export function NewReviewModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   return (
     <Modal opened={opened} onClose={onClose} title={<Text fw={700}>New review</Text>} size="md">

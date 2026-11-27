@@ -40,12 +40,15 @@ public sealed class ReviewSubject
     public DateTime CreatedAt { get; set; }
 }
 
-/// <summary>A review run: one per subject, kept open until merge or close (design 3.2).</summary>
+/// <summary>A review run: one per pull request until Closed (design 3.2).</summary>
 public sealed class ReviewRun
 {
     public Guid Id { get; set; }
     public Guid SubjectId { get; set; }
     public ReviewSubject Subject { get; set; } = null!;
+    public string? GitHubRepo { get; private set; }
+    public int? GitHubPrNumber { get; private set; }
+    public uint ConcurrencyToken { get; private set; }
     public ReviewRunStatus Status { get; set; }
     public ReviewStage Stage { get; set; }
     public int Round { get; set; } = 1;

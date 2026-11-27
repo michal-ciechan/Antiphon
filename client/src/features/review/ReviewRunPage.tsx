@@ -11,6 +11,7 @@ import { useReviewLiveUpdates } from './reviewApi'
 import { FindingsTab } from './run/findings/FindingsTab'
 import { openGate, viewerBlockReason } from './run/gateRules'
 import { RequestRoundModal } from './run/RequestRoundModal'
+import { CloseReviewRunModal } from './run/CloseReviewRunModal'
 import { RunHeader } from './run/RunHeader'
 import { TimelineTab } from './run/TimelineTab'
 import { WorkflowTab } from './run/workflow/WorkflowTab'
@@ -56,6 +57,7 @@ export function ReviewRunPage() {
   const findings = useReviewFindings(runId)
   const refresh = useRefreshReviewRun(runId ?? '')
   const [roundOpen, setRoundOpen] = useState(false)
+  const [closeOpen, setCloseOpen] = useState(false)
   const requestRefresh = () =>
     refresh.mutate(undefined, {
       onSuccess: () => notifications.show({ color: 'gray', message: 'Refresh requested: Antiphon re-reads the change from the code host.' }),
@@ -100,8 +102,12 @@ export function ReviewRunPage() {
     <Stack gap="sm" p="md">
       <FakeApiBanner />
       {run.error && <QueryErrorAlert title="Could not refresh the run; showing the last copy" error={run.error} onRetry={() => void run.refetch()} retrying={run.isFetching} />}
-      <RunHeader run={r} now={now} onRefresh={requestRefresh} refreshing={refresh.isPending} onRequestRound={() => setRoundOpen(true)} />
+      <RunHeader run={r} now={now} onRefresh={requestRefresh} refreshing={refresh.isPending}
+        onRequestRound={() => setRoundOpen(true)} onCloseRun={() => setCloseOpen(true)} />
       <RequestRoundModal runId={r.id} opened={roundOpen} onClose={() => setRoundOpen(false)} />
+      {r.concurrencyToken !== undefined && (
+        <CloseReviewRunModal runId={r.id} concurrencyToken={r.concurrencyToken} opened={closeOpen} onClose={() => setCloseOpen(false)} />
+      )}
       {gate && tab !== 'findings' && (
         <Paper withBorder p={6} radius="md" style={{ borderLeft: '3px solid var(--mantine-color-pink-6)' }}>
           <Group justify="space-between" wrap="wrap" gap="xs">

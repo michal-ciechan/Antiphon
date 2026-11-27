@@ -4,6 +4,7 @@ import { ApiError } from '../../api/client'
 import {
   reviewEngineKeys,
   reviewRunChangedKeys,
+  type CloseReviewRunRequest,
   type CreateReviewRunRequest,
   type FindingResponseRequest,
   type GateDecisionRequest,
@@ -104,12 +105,15 @@ export function useReviewMe() {
   return useQuery({ queryKey: reviewEngineKeys.me, queryFn: () => reviewApi().getMe(), staleTime: isHttp() ? 5 * 60_000 : 0 })
 }
 
-/** Manual intake (`POST /api/review-runs`); the caller navigates to the new run. */
+/** Manual intake (`POST /api/review-runs`); the caller navigates to the returned run. */
 export function useCreateReviewRun() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (request: CreateReviewRunRequest) => reviewApi().createRun(request),
-    onSuccess: (run) => queryClient.setQueryData(reviewEngineKeys.run(run.id), run),
+    onSuccess: (run) => {
+      queryClient.setQueryData(reviewEngineKeys.run(run.id), run)
+      if (run.existing) notifications.show({ color: 'gray', message: 'Opened the existing review run.' })
+    },
     onError: (error) => notifyReviewError('Review not started', error),
     onSettled: (run) => invalidateRun(queryClient, run?.id),
   })
@@ -204,6 +208,15 @@ export function useRequestReviewRound(runId: string) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (request: ReviewRoundRequest) => reviewApi().requestRound(runId, request),
+    onSuccess: (run) => queryClient.setQueryData(reviewEngineKeys.run(runId), run),
+    onSettled: () => invalidateRun(queryClient, runId),
+  })
+}
+
+export function useCloseReviewRun(runId: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (request: CloseReviewRunRequest) => reviewApi().closeRun(runId, request),
     onSuccess: (run) => queryClient.setQueryData(reviewEngineKeys.run(runId), run),
     onSettled: () => invalidateRun(queryClient, runId),
   })

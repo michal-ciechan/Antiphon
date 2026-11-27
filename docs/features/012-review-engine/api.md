@@ -82,6 +82,9 @@ interface ReviewIterationDto {
 }
 
 interface ReviewRunDetailDto extends ReviewRunSummaryDto {
+  existing?: boolean                       // intake responses only
+  concurrencyToken: number                 // opaque PostgreSQL row version
+  closure: { actor: string; reason: string; at: string } | null
   categories: string[]
   workflowRevisionId: string | null
   iterations: ReviewIterationDto[]
@@ -170,11 +173,12 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 |---|---|---|---|
 | GET | `/api/review-runs` | `?status=&repo=&stage=&q=` | `{ items: ReviewRunSummaryDto[], total }` |
 | GET | `/api/review-runs/kpis` | | `ReviewKpisDto` |
-| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }` (manual intake through `ICodeHost`). `GitHub` needs `prNumber`. `Local` needs `baseSha` (any ref); `headSha` defaults to `HEAD`. The title defaults to the PR or commit title. | `ReviewRunDetailDto` (201) |
+| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub accepts `owner/name` with `prNumber`, `owner/name/number` or a github.com PR URL in `repo`. If both forms supply a number, they must match. Local requires `baseSha` and defaults `headSha` to `HEAD`. | `ReviewRunDetailDto` with `existing: false` and `Location` (201), or the same detail with `existing: true` (200) for a GitHub run whose status is other than `Closed`. |
 | POST | `/api/review-runs/demo` | | `{ items: ReviewRunSummaryDto[], total }`. Seeds about 10 realistic runs. Enabled only when `Review:DemoSeedEnabled` is true (on in Development); otherwise 404, which the UI uses to hide "Load demo data". The executor never picks up demo runs. |
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` |
 | GET | `/api/review-runs/{id}/findings` | `?status=` | `{ items: ReviewFindingDto[], total }` |
 | POST | `/api/review-runs/{id}/refresh` | | 202. Re-reads the PR (the manual Refresh): a moved head starts a `push` iteration (next round); a failed run with an unchanged head starts a `recheck` iteration; demo runs are only re-announced. |
+| POST | `/api/review-runs/{id}/close` | `{ concurrencyToken, reason }`. Use the run detail token and a reason of up to 4,000 characters. When GitHub sign-in is enabled, the viewer needs the repository write grant. | 200 `ReviewRunDetailDto` with `Closed`, stage `Done` and the closure audit. Repeat closes return the existing detail and preserve the original audit. A stale token on a run that is still open returns 409 `review_run_changed`. |
 | POST | `/api/review-runs/{id}/rounds` | `ReviewRoundRequest` (body optional) | `ReviewRunDetailDto`. A manual review round, same round, the steer stored on the run for the packs. A run waiting at `await-fixes` completes it with `recheck`; an approved, awaiting-merge or failed run starts a `recheck` iteration at the current head (the parked wait is superseded and `antiphon/approval` goes back to pending, as a push revokes it). 409 `review_run_at_gate` at a gate (decide it with `AnotherRound` and a steer instead), `review_run_finished` (merged or closed), `review_run_busy` (queued or running), `review_run_not_walked` (demo data); 422 for a steer over 4,000 characters; 503 when the code host fails. |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` | `ReviewFindingDto` |
 | POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` (one submitted review) | `{ items: ReviewFindingDto[] }` |

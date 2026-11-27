@@ -146,6 +146,10 @@ public sealed class ReviewWorkflowExecutor(
             {
                 await WalkAsync(scope.ServiceProvider, runId, ct);
             }
+            catch (DbUpdateConcurrencyException)
+            {
+                logger.LogDebug("Review run {RunId} changed during execution; stopping this walk.", runId);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 logger.LogError(ex, "Review run {RunId}: the executor failed outside a node", runId);
@@ -179,12 +183,15 @@ public sealed class ReviewWorkflowExecutor(
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = Now();
+            var updated = await db.ReviewRuns.Where(r => r.Id == runId
+                    && (r.Status == ReviewRunStatus.Running || r.Status == ReviewRunStatus.Approved))
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Failed)
+                    .SetProperty(r => r.WaitingOn, (ReviewWaitingOn?)null).SetProperty(r => r.UpdatedAt, now), ct);
+            if (updated == 0)
+                return;
             await db.ReviewNodeExecutions.Where(n => n.RunId == runId && n.Status == ReviewNodeStatus.Running)
                 .ExecuteUpdateAsync(s => s.SetProperty(n => n.Status, ReviewNodeStatus.Failed)
                     .SetProperty(n => n.Summary, reason).SetProperty(n => n.CompletedAt, now), ct);
-            await db.ReviewRuns.Where(r => r.Id == runId)
-                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Failed)
-                    .SetProperty(r => r.WaitingOn, (ReviewWaitingOn?)null).SetProperty(r => r.UpdatedAt, now), ct);
             await scope.ServiceProvider.GetRequiredService<IEventBus>()
                 .PublishToAllAsync(ReviewService.RunChangedEvent, new ReviewRunChangedEvent(runId), ct);
         }
@@ -517,6 +524,8 @@ public sealed class ReviewWorkflowExecutor(
         var current = await walk.Db.ReviewRuns.AsNoTracking().Where(r => r.Id == walk.Run.Id)
             .Select(r => new { r.Status, Latest = r.Iterations.Max(i => i.Iteration) })
             .SingleAsync(ct);
+        if (current.Status == ReviewRunStatus.Closed)
+            return true;
         if (current.Latest <= walk.Iteration.Iteration && current.Status is ReviewRunStatus.Running or ReviewRunStatus.Approved)
             return false;
 

@@ -1228,6 +1228,19 @@ GET    /api/agents/{agentId}/review/threads    POST …/review/threads
 POST   /api/review/threads/{threadId}/comments | /dispatch | /resolve
 ```
 
+### Review runs
+
+| Method | Route | Contract |
+|---|---|---|
+| GET | `/api/review-runs` | Filter by `status`, `repo`, `stage` or `q`. |
+| POST | `/api/review-runs` | Intake `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub `owner/name` is case-insensitive and a PR URL or `owner/name/number` can supply the number. Returns the run detail with `existing: false` (201) or the same detail with `existing: true` (200) while the PR has a run in any status other than `Closed`. |
+| GET | `/api/review-runs/{id}` | Get run detail and its `concurrencyToken`. |
+| POST | `/api/review-runs/{id}/refresh` | Re-read the code host. A failed run rechecks on the same run ID. |
+| POST | `/api/review-runs/{id}/rounds` | Request a further round on the same run. |
+| POST | `/api/review-runs/{id}/close` | Send `{ concurrencyToken, reason }`. Returns 200 with the `Closed` run and closure audit. Retry on a closed run returns its current detail. 409 `review_run_changed` for a stale token on an open run. |
+
+See the [review engine API](features/012-review-engine/api.md) for request details, gates and polling.
+
 ### Issue-tracker sync
 
 `TrackerSyncEndpoints.cs` — see [workflow-tracker-block.md](workflow-tracker-block.md).

@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Review;
 
@@ -39,14 +40,39 @@ public sealed class ReviewDemoSeeder(AppDbContext db, IEventBus events, TimeProv
             FailedVerify(),
             LocalDisputed(),
         };
-        foreach (var run in runs)
+        var demoRepos = runs.Where(r => r.Subject.Host == ReviewHost.GitHub).Select(r => r.Subject.Repo).Distinct().ToArray();
+        while (true)
         {
-            run.CostUsd = run.Nodes.Sum(n => n.CostUsd);
-            db.ReviewSubjects.Add(run.Subject);
-            db.ReviewRuns.Add(run);
-        }
+            var keys = await db.ReviewRuns.Where(r => r.GitHubRepo != null && demoRepos.Contains(r.GitHubRepo)
+                    && r.GitHubPrNumber != null && r.Status != ReviewRunStatus.Closed)
+                .Select(r => new { r.GitHubRepo, r.GitHubPrNumber }).ToListAsync(ct);
+            var occupied = keys.Select(k => (k.GitHubRepo!, k.GitHubPrNumber!.Value)).ToHashSet();
+            foreach (var run in runs)
+            {
+                var subject = run.Subject;
+                if (subject.Host == ReviewHost.GitHub && subject.PrNumber is { } number && run.Status != ReviewRunStatus.Closed)
+                {
+                    // Demo calls create new examples. Keep using the sample number until it
+                    // is occupied, then pick an unused number for the new fictional PR.
+                    while (!occupied.Add((subject.Repo, number)))
+                        number = number == int.MaxValue ? 1 : number + 1;
+                    subject.PrNumber = number;
+                    subject.Url = $"https://github.com/{subject.Repo}/pull/{number}";
+                }
+                run.CostUsd = run.Nodes.Sum(n => n.CostUsd);
+                db.ReviewRuns.Add(run);
+            }
 
-        await db.SaveChangesAsync(ct);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                break;
+            }
+            catch (DbUpdateException ex) when (ReviewService.IsOpenRunConflict(ex))
+            {
+                db.ChangeTracker.Clear();
+            }
+        }
         foreach (var run in runs)
             await events.PublishToAllAsync(ReviewService.RunChangedEvent, new ReviewRunChangedEvent(run.Id), ct);
         return runs.Select(r => r.Id).ToList();

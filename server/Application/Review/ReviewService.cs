@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace Antiphon.Server.Application.Review;
 
@@ -31,6 +32,8 @@ public sealed class ReviewService(
     IOptions<ReviewPolicySettings> policy)
 {
     public const string RunChangedEvent = "ReviewRunChanged";
+    private const string CloseAuditNode = "review-run-close";
+    private const int MaxCloseReasonLength = 4000;
 
     /// <summary>Working minutes after which a queue item warns, and is breached (design 11.3).</summary>
     public const int SlaWarnWorkingMinutes = 240;
@@ -64,7 +67,10 @@ public sealed class ReviewService(
         if (stage is { } st)
             query = query.Where(r => r.Stage == st);
         if (!string.IsNullOrWhiteSpace(repo))
-            query = query.Where(r => r.Subject.Repo == repo);
+        {
+            var canonicalRepo = repo.Trim().ToLowerInvariant();
+            query = query.Where(r => r.GitHubRepo == canonicalRepo || (r.GitHubRepo == null && r.Subject.Repo == repo));
+        }
         if (!string.IsNullOrWhiteSpace(q))
         {
             var pattern = "%" + q.Trim().Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
@@ -86,7 +92,10 @@ public sealed class ReviewService(
         return new ReviewListDto<ReviewRunSummaryDto>(summaries, summaries.Count);
     }
 
-    public async Task<ReviewRunDetailDto> GetRunAsync(Guid id, CancellationToken ct)
+    public Task<ReviewRunDetailDto> GetRunAsync(Guid id, CancellationToken ct) =>
+        GetRunAsync(id, existing: null, ct);
+
+    private async Task<ReviewRunDetailDto> GetRunAsync(Guid id, bool? existing, CancellationToken ct)
     {
         var run = await db.ReviewRuns.AsNoTracking()
             .Include(r => r.Subject)
@@ -98,7 +107,7 @@ public sealed class ReviewService(
             ?? throw new NotFoundException("Review run", id);
         var counts = await FindingCountsAsync([id], ct);
         var costs = await CostsAsync([id], ct);
-        return ToDetail(run, counts.GetValueOrDefault(id), costs.GetValueOrDefault(id));
+        return ToDetail(run, counts.GetValueOrDefault(id), costs.GetValueOrDefault(id), existing);
     }
 
     /// <summary>
@@ -120,16 +129,23 @@ public sealed class ReviewService(
         var steer = Steer(steerPrompt);
         if (string.IsNullOrWhiteSpace(request.Repo))
             throw new ValidationException("repo", "A repo (owner/name) is required.");
-        if (request.Host == ReviewHost.GitHub && request.PrNumber is null)
-            throw new ValidationException("prNumber", "A GitHub review needs a PR number.");
         if (request.PrNumber is <= 0)
             throw new ValidationException("prNumber", "A PR number is positive.");
         if (request.Host == ReviewHost.Local && string.IsNullOrWhiteSpace(request.BaseSha))
             throw new ValidationException("baseSha", "A local review needs a base commit or ref.");
 
         var repo = request.Repo.Trim();
+        var prNumber = request.PrNumber;
+        var github = request.Host == ReviewHost.GitHub;
+        if (github)
+        {
+            (repo, prNumber) = GitHubReviewIdentity.Parse(repo, prNumber);
+            if (await FindOpenRunAsync(repo, prNumber, ct) is { } existingRun)
+                return await GetRunAsync(existingRun, existing: true, ct);
+        }
+
         var snapshot = await ReadIntakeAsync(
-            () => intake.ReadAsync(request.Host, repo, request.PrNumber, request.BaseSha?.Trim(), request.HeadSha?.Trim(), ct));
+            () => intake.ReadAsync(request.Host, repo, prNumber, request.BaseSha?.Trim(), request.HeadSha?.Trim(), ct));
         var pr = snapshot.PullRequest;
         var now = Now();
         var local = request.Host == ReviewHost.Local;
@@ -138,10 +154,10 @@ public sealed class ReviewService(
             Id = Guid.NewGuid(),
             Host = request.Host,
             Repo = repo,
-            PrNumber = request.PrNumber,
+            PrNumber = prNumber,
             Title = !string.IsNullOrWhiteSpace(request.Title) ? request.Title.Trim()
                 : pr.Title.Length > 0 ? pr.Title
-                : request.PrNumber is { } number ? $"{repo} #{number}" : $"{repo} local review",
+                : prNumber is { } number ? $"{repo} #{number}" : $"{repo} local review",
             AuthorLogin = local ? viewer.Login : pr.AuthorLogin,
             AuthorDisplayName = local ? viewer.DisplayName : pr.AuthorDisplayName,
             OpenedByLogin = local ? viewer.Login : pr.AuthorLogin,
@@ -169,12 +185,122 @@ public sealed class ReviewService(
         run.BaseTipSha = pr.BaseSha;
         run.Iterations.Add(iteration);
         run.Nodes.Add(intakeNode);
-        db.ReviewSubjects.Add(subject);
-        db.ReviewRuns.Add(run);
-        await db.SaveChangesAsync(ct);
+        while (true)
+        {
+            db.ReviewRuns.Add(run);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                break;
+            }
+            catch (DbUpdateException ex) when (github && IsOpenRunConflict(ex))
+            {
+                // SaveChanges rolled back the whole new graph, including its subject. If the
+                // winner closed before this read, it is now legitimate to insert a new run.
+                db.ChangeTracker.Clear();
+                if (await FindOpenRunAsync(repo, prNumber, ct) is { } winner)
+                    return await GetRunAsync(winner, existing: true, ct);
+            }
+        }
         await PublishAsync(run.Id, ct);
         executor.Wake();
-        return await GetRunAsync(run.Id, ct);
+        return await GetRunAsync(run.Id, existing: false, ct);
+    }
+
+    private Task<Guid?> FindOpenRunAsync(string repo, int? number, CancellationToken ct) =>
+        db.ReviewRuns.Where(r => r.GitHubRepo == repo && r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed)
+            .Select(r => (Guid?)r.Id).SingleOrDefaultAsync(ct);
+
+    internal static bool IsOpenRunConflict(DbUpdateException error) =>
+        error.InnerException is PostgresException
+            { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: AppDbContext.OpenReviewRunIndex };
+
+    /// <summary>Close the run and its outstanding work, with a compare-and-swap on the displayed version.</summary>
+    public async Task<ReviewRunDetailDto> CloseAsync(Guid id, CloseReviewRunRequest request, CancellationToken ct)
+    {
+        var run = await db.ReviewRuns.AsNoTracking().Include(r => r.Subject).SingleOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new NotFoundException("Review run", id);
+        if (!viewer.MayDecideOn(run.GitHubRepo ?? run.Subject.Repo))
+            throw new ForbiddenException($"You need write access to {run.Subject.Repo} to close its review runs.", "review_run_close_forbidden");
+        if (run.Status == ReviewRunStatus.Closed)
+            return await GetRunAsync(id, ct);
+
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrEmpty(reason) || reason.Length > MaxCloseReasonLength)
+            throw new ValidationException("reason", $"A close reason is required and may contain up to {MaxCloseReasonLength} characters.");
+        if (request.ConcurrencyToken == 0)
+            throw new ValidationException("concurrencyToken", "A review run concurrency token is required.");
+        if (run.ConcurrencyToken != request.ConcurrencyToken)
+            throw RunChanged(id);
+
+        var now = Now();
+        await using (var transaction = await db.Database.BeginTransactionAsync(ct))
+        {
+            var outstanding = await db.ReviewNodeExecutions.Where(n => n.RunId == id
+                && (n.Status == ReviewNodeStatus.Pending || n.Status == ReviewNodeStatus.Running || n.Status == ReviewNodeStatus.Waiting))
+                .ToListAsync(ct);
+            foreach (var node in outstanding)
+            {
+                node.Status = ReviewNodeStatus.Skipped;
+                node.CompletedAt = now;
+                node.Summary = string.IsNullOrEmpty(node.Summary) ? reason : $"{node.Summary}\nClosed: {reason}";
+            }
+
+            var gates = await db.ReviewGates.Where(g => g.RunId == id && g.Status != ReviewQueueItemStatus.Done).ToListAsync(ct);
+            foreach (var gate in gates)
+            {
+                gate.Status = ReviewQueueItemStatus.Done;
+                gate.DecidedAt = now;
+                gate.Reasons = [.. gate.Reasons, $"closed: {reason}"];
+            }
+
+            // Iteration zero is run history, outside the executable review iterations.
+            db.ReviewNodeExecutions.Add(new ReviewNodeExecution
+            {
+                Id = Guid.NewGuid(),
+                RunId = id,
+                NodeId = CloseAuditNode,
+                Kind = ReviewNodeKind.Completion,
+                Status = ReviewNodeStatus.Succeeded,
+                Outcome = "close",
+                CompletedAt = now,
+                Summary = reason,
+                OutputJson = JsonSerializer.Serialize(new ReviewRunClosureDto(viewer.Login, reason, now), GraphJson),
+            });
+            await db.SaveChangesAsync(ct);
+            var updated = await db.ReviewRuns
+                .Where(r => r.Id == id && r.ConcurrencyToken == request.ConcurrencyToken && r.Status != ReviewRunStatus.Closed)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Closed)
+                    .SetProperty(r => r.Stage, ReviewStage.Done).SetProperty(r => r.WaitingOn, (ReviewWaitingOn?)null)
+                    .SetProperty(r => r.UpdatedAt, now), ct);
+            if (updated == 0)
+            {
+                await transaction.RollbackAsync(ct);
+                if (await db.ReviewRuns.AnyAsync(r => r.Id == id && r.Status == ReviewRunStatus.Closed, ct))
+                    return await GetRunAsync(id, ct);
+                throw RunChanged(id);
+            }
+
+            await transaction.CommitAsync(ct);
+        }
+
+        await PublishAsync(id, ct);
+        return await GetRunAsync(id, ct);
+    }
+
+    private static ConflictException RunChanged(Guid id) =>
+        new($"Review run {id} changed. Reload it and retry.", "review_run_changed");
+
+    private async Task SaveRunAsync(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException ex) when (ex.Entries.Any(entry => entry.Entity is ReviewRun))
+        {
+            throw RunChanged(id);
+        }
     }
 
     /// <summary>
@@ -218,7 +344,7 @@ public sealed class ReviewService(
                 Complete(parked, merged ? "merge" : "close", merged ? "merged on the code host" : "closed on the code host", now);
             await SupersedeGatesAsync(run, merged ? "the PR was merged" : "the PR was closed", now, ct);
             ReviewWorkflowExecutor.Finish(run, merged ? ReviewRunStatus.Merged : ReviewRunStatus.Closed, now);
-            await db.SaveChangesAsync(ct);
+            await SaveRunAsync(id, ct);
             await PublishAsync(id, ct);
             return;
         }
@@ -257,7 +383,7 @@ public sealed class ReviewService(
                 Complete(wait, evt, detail!, now);
                 run.Status = ReviewRunStatus.Queued;
                 run.WaitingOn = ReviewWaitingOn.Bot;
-                await db.SaveChangesAsync(ct);
+                await SaveRunAsync(id, ct);
                 await PublishAsync(id, ct);
                 executor.Wake();
                 return;
@@ -265,7 +391,7 @@ public sealed class ReviewService(
 
             if (!moved)
             {
-                await db.SaveChangesAsync(ct);
+                await SaveRunAsync(id, ct);
                 await PublishAsync(id, ct);
                 return;
             }
@@ -294,7 +420,7 @@ public sealed class ReviewService(
             run.WaitingOn = ReviewWaitingOn.Bot;
         }
 
-        await db.SaveChangesAsync(ct);
+        await SaveRunAsync(id, ct);
         await PublishAsync(id, ct);
         if (trigger is not null)
             executor.Wake();
@@ -387,7 +513,7 @@ public sealed class ReviewService(
             run.Status = ReviewRunStatus.Queued;
             run.WaitingOn = ReviewWaitingOn.Bot;
             run.UpdatedAt = now;
-            await db.SaveChangesAsync(ct);
+            await SaveRunAsync(runId, ct);
             await PublishAsync(run.Id, ct);
             executor.Wake();
             return await GetRunAsync(run.Id, ct);
@@ -433,7 +559,7 @@ public sealed class ReviewService(
         run.Stage = ReviewStage.Intake;
         run.WaitingOn = ReviewWaitingOn.Bot;
         run.UpdatedAt = now;
-        await db.SaveChangesAsync(ct);
+        await SaveRunAsync(runId, ct);
         if (approved)
             await WithdrawApprovalAsync(run, who, ct);
         await PublishAsync(run.Id, ct);
@@ -553,7 +679,7 @@ public sealed class ReviewService(
         Apply(finding, request);
         run.BotOnlyRounds = 0;
         run.UpdatedAt = Now();
-        await db.SaveChangesAsync(ct);
+        await SaveRunAsync(run.Id, ct);
         await PublishAsync(run.Id, ct);
         executor.Wake();
         return ToDto(finding);
@@ -582,7 +708,7 @@ public sealed class ReviewService(
         // A submitted review is human involvement: the bot-only counter starts again (design 5).
         run.BotOnlyRounds = 0;
         run.UpdatedAt = Now();
-        await db.SaveChangesAsync(ct);
+        await SaveRunAsync(runId, ct);
         await PublishAsync(runId, ct);
         executor.Wake();
         return new ReviewItemsDto<ReviewFindingDto>(ids.Select(id => ToDto(findings[id])).ToList());
@@ -836,7 +962,7 @@ public sealed class ReviewService(
         }
 
         run.UpdatedAt = now;
-        await db.SaveChangesAsync(ct);
+        await SaveRunAsync(run.Id, ct);
         await PublishAsync(run.Id, ct);
         if (request.Decision == ReviewGateDecision.AnotherRound || (walked && request.Decision == ReviewGateDecision.Approve))
             executor.Wake();
@@ -855,8 +981,10 @@ public sealed class ReviewService(
     private async Task TouchAndSaveAsync(Guid runId, CancellationToken ct)
     {
         var run = await db.ReviewRuns.SingleAsync(r => r.Id == runId, ct);
+        if (run.Status == ReviewRunStatus.Closed)
+            throw RunChanged(runId);
         run.UpdatedAt = Now();
-        await db.SaveChangesAsync(ct);
+        await SaveRunAsync(runId, ct);
         await PublishAsync(runId, ct);
     }
 
@@ -1001,12 +1129,17 @@ public sealed class ReviewService(
         WaitingOn = run.WaitingOn,
     };
 
-    private ReviewRunDetailDto ToDetail(ReviewRun run, FindingCounts counts, RunCosts costs)
+    private ReviewRunDetailDto ToDetail(ReviewRun run, FindingCounts counts, RunCosts costs, bool? existing)
     {
         var models = run.Nodes.Where(n => n.Model != null).Select(n => n.Model!).Distinct().Order(StringComparer.Ordinal).ToList();
         var summary = ToSummary(run, counts, costs, models);
         return new ReviewRunDetailDto
         {
+            Existing = existing,
+            ConcurrencyToken = run.ConcurrencyToken,
+            Closure = run.Nodes.SingleOrDefault(n => n.Iteration == 0 && n.NodeId == CloseAuditNode)?.OutputJson is { } closure
+                ? JsonSerializer.Deserialize<ReviewRunClosureDto>(closure, GraphJson)
+                : null,
             Id = summary.Id,
             Subject = summary.Subject,
             Status = summary.Status,
@@ -1028,7 +1161,7 @@ public sealed class ReviewService(
             WorkflowRevisionId = run.WorkflowRevisionId,
             Iterations = run.Iterations.OrderBy(i => i.Iteration)
                 .Select(i => new ReviewIterationDto(i.Iteration, i.Round, i.Trigger, i.StartedAt, i.BaseSha, i.HeadSha)).ToList(),
-            Nodes = run.Nodes.OrderBy(n => n.Iteration).ThenBy(n => n.StartedAt ?? DateTime.MaxValue).ThenBy(n => n.NodeId, StringComparer.Ordinal)
+            Nodes = run.Nodes.Where(n => n.Iteration > 0).OrderBy(n => n.Iteration).ThenBy(n => n.StartedAt ?? DateTime.MaxValue).ThenBy(n => n.NodeId, StringComparer.Ordinal)
                 .ThenBy(n => n.ItemKey, StringComparer.Ordinal)
                 .Select(ToDto).ToList(),
             Gates = run.Gates.OrderBy(g => g.OpenedAt).Select(g => ToDto(g, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin))).ToList(),

@@ -196,6 +196,10 @@ export interface ReviewIterationDto {
 }
 
 export interface ReviewRunDetailDto extends ReviewRunSummaryDto {
+  /** Present on an intake response. */
+  existing?: boolean
+  concurrencyToken?: number
+  closure?: { actor: string; reason: string; at: string } | null
   categories: string[]
   workflowRevisionId: string | null
   iterations: ReviewIterationDto[]
@@ -366,6 +370,11 @@ export interface ReviewRoundRequest {
   steerPrompt?: string
 }
 
+export interface CloseReviewRunRequest {
+  concurrencyToken: number
+  reason: string
+}
+
 export interface ReviewPollingRepoDto {
   repo: string
   host: ReviewHost
@@ -417,6 +426,7 @@ export interface ReviewApi {
   getRun(runId: string): Promise<ReviewRunDetailDto>
   listFindings(runId: string, status?: FindingStatus): Promise<ListResult<ReviewFindingDto>>
   refreshRun(runId: string): Promise<void>
+  closeRun(runId: string, request: CloseReviewRunRequest): Promise<ReviewRunDetailDto>
   /**
    * A manual review round with an optional steer. 409 when the run waits at a gate (decide it with
    * another round instead), is finished, or is already reviewing.
@@ -465,6 +475,7 @@ export const httpReviewApi: ReviewApi = {
   getRun: (runId) => apiGet(`/review-runs/${enc(runId)}`),
   listFindings: (runId, status) => apiGet(`/review-runs/${enc(runId)}/findings${query({ status })}`),
   refreshRun: (runId) => apiPost(`/review-runs/${enc(runId)}/refresh`, {}),
+  closeRun: (runId, request) => apiPost(`/review-runs/${enc(runId)}/close`, request),
   requestRound: (runId, request) => apiPost(`/review-runs/${enc(runId)}/rounds`, request),
   getPolling: () => apiGet('/review-polling'),
   pollNow: () => apiPost('/review-polling/poll', {}),

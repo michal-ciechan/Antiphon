@@ -145,8 +145,10 @@ public sealed class ReviewPoller(
             {
                 await ActAsync(tally, $"#{pr.Number}", async () =>
                 {
-                    await WithServiceAsync(PollerActor, s => s.CreateRunAsync(new CreateReviewRunRequest(repo.Host, name, pr.Number), "opened", null, ct));
-                    tally.Started++;
+                    var run = await WithServiceAsync(PollerActor,
+                        s => s.CreateRunAsync(new CreateReviewRunRequest(repo.Host, name, pr.Number), "opened", null, ct));
+                    if (run.Existing == false)
+                        tally.Started++;
                 }, ct);
             }
 
@@ -264,12 +266,21 @@ public sealed class ReviewPoller(
             var latest = (await LatestRunsAsync(db, repo.Host, name, ct)).GetValueOrDefault(comment.PrNumber);
             try
             {
-                if (latest is null || latest.Status is ReviewRunStatus.Closed or ReviewRunStatus.Merged)
+                if (latest is null || latest.Status == ReviewRunStatus.Closed)
                 {
                     var run = await WithServiceAsync(comment.AuthorLogin, s =>
                         s.CreateRunAsync(new CreateReviewRunRequest(repo.Host, name, comment.PrNumber), marker, command.Steer, ct));
-                    tally.Started++;
-                    reply = $"Review started, round {run.Round} queued{SteerText(command.Steer)}.";
+                    if (run.Existing == true)
+                    {
+                        run = await WithServiceAsync(comment.AuthorLogin,
+                            s => s.RequestRoundAsync(run.Id, command.Steer, comment.AuthorLogin, marker, ct));
+                        reply = $"Round {run.Round} queued{SteerText(command.Steer)}.";
+                    }
+                    else
+                    {
+                        tally.Started++;
+                        reply = $"Review started, round {run.Round} queued{SteerText(command.Steer)}.";
+                    }
                 }
                 else
                 {
@@ -298,15 +309,19 @@ public sealed class ReviewPoller(
 
     private sealed record RunHead(Guid Id, int PrNumber, ReviewRunStatus Status, string HeadSha, DateTime StartedAt, bool Walked);
 
-    /// <summary>The newest run of each PR in the repo.</summary>
+    /// <summary>Each PR's open run, or its latest closed run if it has no open run.</summary>
     private static async Task<Dictionary<int, RunHead>> LatestRunsAsync(AppDbContext db, ReviewHost host, string repo, CancellationToken ct)
     {
         var lower = repo.ToLowerInvariant();
-        var rows = await db.ReviewRuns.AsNoTracking()
-            .Where(r => r.Subject.Host == host && r.Subject.Repo.ToLower() == lower && r.Subject.PrNumber != null)
+        var query = db.ReviewRuns.AsNoTracking();
+        query = host == ReviewHost.GitHub
+            ? query.Where(r => r.GitHubRepo == lower && r.GitHubPrNumber != null)
+            : query.Where(r => r.Subject.Host == host && r.Subject.Repo.ToLower() == lower && r.Subject.PrNumber != null);
+        var rows = await query
             .Select(r => new RunHead(r.Id, r.Subject.PrNumber!.Value, r.Status, r.Subject.HeadSha, r.StartedAt, r.Iterations.Any(i => i.HeadSha != null)))
             .ToListAsync(ct);
-        return rows.GroupBy(r => r.PrNumber).ToDictionary(g => g.Key, g => g.MaxBy(r => r.StartedAt)!);
+        return rows.GroupBy(r => r.PrNumber).ToDictionary(g => g.Key,
+            g => g.OrderBy(r => r.Status == ReviewRunStatus.Closed).ThenByDescending(r => r.StartedAt).ThenByDescending(r => r.Id).First());
     }
 
     /// <summary>The repo's filters for an automatic run: drafts, base branches, skip labels and the required label.</summary>

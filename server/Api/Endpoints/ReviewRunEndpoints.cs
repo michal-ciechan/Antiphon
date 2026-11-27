@@ -26,7 +26,7 @@ public static class ReviewRunEndpoints
         runs.MapPost("/", async (CreateReviewRunRequest request, ReviewService service, CancellationToken ct) =>
         {
             var run = await service.CreateRunAsync(request, ct);
-            return Results.Created($"/api/review-runs/{run.Id}", run);
+            return run.Existing == true ? Results.Ok(run) : Results.Created($"/api/review-runs/{run.Id}", run);
         });
 
         // Demo data for the UI's http mode; off unless Review:DemoSeedEnabled (on by default in Development).
@@ -60,6 +60,9 @@ public static class ReviewRunEndpoints
             await service.RefreshAsync(id, ct);
             return Results.Accepted();
         });
+
+        runs.MapPost("/{id:guid}/close", async (Guid id, CloseReviewRunRequest request, ReviewService service, CancellationToken ct) =>
+            Results.Ok(await service.CloseAsync(id, request, ct)));
 
         // A manual review round with an optional steer; 409 at a gate (decide it instead), when finished or busy.
         runs.MapPost("/{id:guid}/rounds", async (Guid id, ReviewRoundRequest? request, ReviewService service, ReviewViewer viewer, CancellationToken ct) =>

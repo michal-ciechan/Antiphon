@@ -1107,6 +1107,7 @@ export function createSeed(now: number): FakeSeed {
     runs.push({
       id,
       subject,
+      concurrencyToken: 1,
       status: s.status,
       stage: s.stage,
       round: s.round,

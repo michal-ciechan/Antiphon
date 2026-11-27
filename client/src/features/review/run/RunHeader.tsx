@@ -22,12 +22,14 @@ export function RunHeader({
   onRefresh,
   refreshing,
   onRequestRound,
+  onCloseRun,
 }: {
   run: ReviewRunDetailDto
   now: number
   onRefresh: () => void
   refreshing: boolean
   onRequestRound?: () => void
+  onCloseRun?: () => void
 }) {
   const s = run.subject
   const openedByOther = s.openedByLogin !== s.authorLogin
@@ -125,9 +127,15 @@ export function RunHeader({
                 Request review round
               </Button>
             )}
+            {onCloseRun && run.concurrencyToken !== undefined && run.status !== 'Closed' && (
+              <Button size="xs" variant="light" color="red" onClick={onCloseRun} data-testid="review-run-close">
+                Close run
+              </Button>
+            )}
           </Group>
         </Paper>
       </Group>
+      {run.closure && <Text size="xs" c="dimmed">Closed by {run.closure.actor} · {run.closure.reason}</Text>}
       {run.status === 'Failed' && (
         <Alert color="danger" variant="light" p={8} icon={<TbAlertTriangle size={16} />} title={<Text size="xs" fw={700}>Run failed{failed ? ` at ${failed.nodeId} (it${failed.iteration})` : ''}</Text>}>
           <Text size="xs">{failed?.summary ?? 'No failed step reported a reason.'} Refresh rechecks the same head.</Text>

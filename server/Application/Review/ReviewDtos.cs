@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Review;
@@ -61,12 +62,20 @@ public class ReviewRunSummaryDto
 
 public sealed class ReviewRunDetailDto : ReviewRunSummaryDto
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Existing { get; init; }
+    public uint ConcurrencyToken { get; init; }
+    public ReviewRunClosureDto? Closure { get; init; }
     public required IReadOnlyList<string> Categories { get; init; }
     public required Guid? WorkflowRevisionId { get; init; }
     public required IReadOnlyList<ReviewIterationDto> Iterations { get; init; }
     public required IReadOnlyList<NodeExecutionDto> Nodes { get; init; }
     public required IReadOnlyList<ReviewGateDto> Gates { get; init; }
 }
+
+public sealed record ReviewRunClosureDto(string Actor, string Reason, DateTime At);
+
+public sealed record CloseReviewRunRequest(uint ConcurrencyToken, string? Reason);
 
 public sealed record ReviewIterationDto(int Iteration, int Round, string Trigger, DateTime StartedAt, string? BaseSha, string? HeadSha);
 

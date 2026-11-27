@@ -150,6 +150,8 @@ The `delegate`, `status-snapshot`, `checkpoint-task` and `card` commands (`scrip
 
 | Need | Method | Path |
 |---|---|---|
+| Review runs | GET / POST | `/api/review-runs` lists or starts reviews. GitHub intake returns 200 `existing: true` for the current run, including Failed and Merged, and returns 201 `existing: false` when it creates a run. |
+| Close or retry a review run | GET / POST | Get `/api/review-runs/{id}` for the token. POST `/api/review-runs/{id}/close` with `{ concurrencyToken, reason }`. The response includes the recorded actor, reason and time. Use `/refresh` or `/rounds` to continue an existing run. |
 | Every agent, with its live session | GET | `/api/agents` |
 | Session-state cache/process diagnostics (CARD-0701) | GET | `/api/diagnostics/session-state` - cache hits/loads/faults/evictions/pressure, ingest calls and committed rows, tagged EF read-attempt counters, process CPU/memory/GC, live/unknown counts, resolved driver/provider versions and sanitized pool flags. `promptSpan` adds the prompt-span outcome counters (bypass, cold, hit, tail, full read after a failed proof, too large to store) and the prompt-cache entry and character counts (CARD-1987). Metadata only; does not pull transcripts. |
 | Database rate (CARD-1987) | GET | `/api/diagnostics/db-rate?minutes=60` - `minutes` is 1-1440, default 60; out of range is 400. Rollups for 1/5/15/60 minutes, the per-minute series, top statements, per-tag rates, gap reasons, in-process command rates, sampled call sites, and transaction rates. No SQL text. |

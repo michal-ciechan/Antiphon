@@ -293,6 +293,7 @@ namespace Antiphon.Scripts
             [ReviewEngineCommands.Standalone] = ReviewEngineCommands.RunStandalone,
             [ReviewEngineCommands.GitHubSetup] = ReviewEngineCommands.RunGitHubSetup,
             [ReviewEngineCommands.LiveGitHub] = ReviewEngineCommands.RunLiveGitHub,
+            [ReviewEngineCommands.ReviewRun] = ReviewEngineCommands.RunReviewRun,
             // The W8 read-only and static tools answer every input themselves (unit 46). check-server-docker-inputs: exit 0 every
             // linked input copied, 1 an input missing, 2 an error. pg-qps: 0 done, 2 bad arguments, 3 unreachable or no extension,
             // 4 partial, 1 the signal file could not be written. postgres-jit-window: 0 the plan or the window written, 1 failed.

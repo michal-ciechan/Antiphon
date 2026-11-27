@@ -88,6 +88,7 @@ public static class ReviewReviewSteps
 
             child.Status = ReviewNodeStatus.Running;
             child.StartedAt ??= walk.Now();
+            walk.Run.UpdatedAt = walk.Now();
             await walk.Db.SaveChangesAsync(ct);
             var previous = ReviewWalk.Output<ReviewerOutput>(child);
             var attempt = previous?.Attempts ?? 1;
@@ -144,6 +145,7 @@ public static class ReviewReviewSteps
                 Complete(walk, child, ReviewNodeStatus.Failed, ex.Message, null);
             }
 
+            walk.Run.UpdatedAt = walk.Now();
             await walk.Db.SaveChangesAsync(ct);
             if (unchanged)
                 continue;

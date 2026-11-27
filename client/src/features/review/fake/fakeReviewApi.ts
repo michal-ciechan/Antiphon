@@ -224,6 +224,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
 
   function touch(run: ReviewRunDetailDto) {
     run.updatedAt = isoNow()
+    run.concurrencyToken = (run.concurrencyToken ?? 0) + 1
     recompute(run)
   }
 
@@ -429,7 +430,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     if (ids.length <= 1) return
     schedule(() => {
       const run = runs.get(runId)
-      if (!run || currentIteration(run) !== iteration) return
+      if (!run || run.status === 'Closed' || currentIteration(run) !== iteration) return
       const n = run.nodes.find((x) => x.id === ids[0])
       if (n && n.status === 'Running') {
         const group = n.itemKey ?? 'group'
@@ -554,7 +555,23 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
 
     createRun: (request: CreateReviewRunRequest) =>
       respond(() => {
-        if (!request.repo?.trim()) throw problem(422, 'A repo is required.', { repo: ['A repo is required.'] })
+        let repo = request.repo.trim()
+        let prNumber = request.prNumber ?? null
+        if (!repo) throw problem(422, 'A repo is required.', { repo: ['A repo is required.'] })
+        if (request.host === 'GitHub') {
+          const match = /^(?:https?:\/\/github\.com\/)?([a-z0-9_.-]+\/[a-z0-9_.-]+)(?:\/(?:pull\/)?([0-9]+))?\/?(?:[?#].*)?$/i.exec(repo)
+          if (!match) throw problem(422, 'Use a GitHub repository or pull request URL.', { repo: ['Use a GitHub repository or pull request URL.'] })
+          repo = match[1].toLowerCase()
+          const embedded = match[2] ? Number(match[2]) : null
+          if (prNumber !== null && embedded !== null && prNumber !== embedded)
+            throw problem(422, 'PR number must match the repository URL or path.', { prNumber: ['PR number must match the repository URL or path.'] })
+          prNumber ??= embedded
+          if (prNumber === null || !Number.isInteger(prNumber) || prNumber <= 0 || prNumber > 2147483647)
+            throw problem(422, 'A positive PR number is required.', { prNumber: ['A positive PR number is required.'] })
+          const existing = [...runs.values()].find((run) => run.status !== 'Closed' && run.subject.host === 'GitHub'
+            && run.subject.repo.toLowerCase() === repo && run.subject.prNumber === prNumber)
+          if (existing) return { ...viewRun(existing), existing: true }
+        }
         const n = counter++
         const id = seedGuid(ID_KIND.run, 0x10000 + n)
         const login = actor()
@@ -563,10 +580,10 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
           subject: {
             id: seedGuid(ID_KIND.subject, 0x10000 + n),
             host: request.host,
-            repo: request.repo.trim(),
-            prNumber: request.prNumber ?? null,
-            title: request.title?.trim() || (request.prNumber ? `${request.repo}#${request.prNumber}` : `${request.repo} (manual)`),
-            url: request.host === 'GitHub' && request.prNumber ? `https://github.com/${request.repo}/pull/${request.prNumber}` : null,
+            repo,
+            prNumber,
+            title: request.title?.trim() || (prNumber ? `${repo}#${prNumber}` : `${repo} (manual)`),
+            url: request.host === 'GitHub' && prNumber ? `https://github.com/${repo}/pull/${prNumber}` : null,
             authorLogin: login,
             authorDisplayName: personName(login),
             authorResolvedBy: null,
@@ -578,6 +595,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
             owners: [],
           },
           status: 'Queued',
+          concurrencyToken: 1,
           stage: 'Intake',
           round: 1,
           botOnlyRounds: 0,
@@ -602,10 +620,38 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
         runs.set(id, run)
         startIteration(run, 'manual')
         emit(id)
-        return viewRun(run)
+        return { ...viewRun(run), existing: false }
       }),
 
     getRun: (runId) => respond(() => viewRun(requireRun(runId))),
+
+    closeRun: (runId, request) =>
+      respond(() => {
+        const run = requireRun(runId)
+        if (run.status === 'Closed') return viewRun(run)
+        const reason = request.reason.trim()
+        if (!reason || reason.length > 4000) throw problem(422, 'A close reason of up to 4000 characters is required.')
+        if (request.concurrencyToken !== run.concurrencyToken) throw problem(409, 'The review run changed. Reload it and retry.')
+
+        const at = isoNow()
+        run.status = 'Closed'
+        run.stage = 'Done'
+        run.waitingOn = null
+        run.closure = { actor: actor(), reason, at }
+        for (const gate of run.gates.filter((item) => item.status !== 'Done')) {
+          gate.status = 'Done'
+          gate.decidedAt = at
+          gate.reasons.push(`closed: ${reason}`)
+        }
+        for (const node of run.nodes.filter((item) => ['Pending', 'Running', 'Waiting'].includes(item.status))) {
+          node.status = 'Skipped'
+          node.completedAt = at
+          node.summary = node.summary ? `${node.summary}\nClosed: ${reason}` : reason
+        }
+        touch(run)
+        emit(runId)
+        return viewRun(run)
+      }),
 
     listFindings: (runId, status) =>
       respond((): ListResult<ReviewFindingDto> => {
@@ -619,6 +665,7 @@ export function createFakeReviewApi(options: FakeReviewApiOptions = {}): FakeRev
     refreshRun: (runId) =>
       respond(() => {
         const run = requireRun(runId)
+        if (run.status === 'Closed') return
         // contract v0.2: a failed run with an unchanged head (the fake never sees a push) is rechecked
         if (run.status === 'Failed') {
           run.status = 'Running'
