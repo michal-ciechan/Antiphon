@@ -8,6 +8,7 @@ using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -37,26 +38,8 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         var logRoot = Path.Combine(Path.GetTempPath(), "c778-native-" + Guid.NewGuid().ToString("N"));
         await using var client = new DirectSessionRunnerClient(logRoot, ptyBackend: ModernBackend);
         var factory = new NativeReadyFactory(client);
-        await using var h = await BridgeQueueHarness.CreateAsync(new()
-        {
-            ConnectionString = schema.ConnectionString,
-            ConfigureServices = services =>
-            {
-                services.AddSingleton<ISessionRunnerClient>(client);
-                services.AddSingleton<IAgentProtocolAdapterFactory>(factory);
-            },
-        });
-        h.Runtime.TryRemove(h.SessionId, out var old).ShouldBeTrue();
-        if (old is not null) await old.DisposeAsync();
-        string cwd;
-        await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
-        {
-            var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
-            session.AgentKind = AgentKind.Grok;
-            session.Status = SessionStatus.Starting;
-            cwd = session.Cwd;
-            await db.SaveChangesAsync();
-        }
+        await using var h = await CreateSpinnerHarnessAsync(schema.ConnectionString, factory, client);
+        var cwd = await PrepareSpinnerLaunchAsync(h);
         const string nonce = "C778NATIVEWHOLE0778";
         var body = "Whole native readiness nonce " + nonce;
         var queued = await h.SeedPendingMessageAsync(body);
@@ -109,6 +92,67 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             try { await launch; } catch { }
             try { await client.KillAsync(h.SessionId, CancellationToken.None); } catch { }
         }
+    }
+
+    [Test]
+    public async Task Spinner_fixture_keeps_the_ready_generation_when_the_first_submit_is_swallowed()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var adapter = new FakeAgentProtocolAdapter { SwallowSubmits = int.MaxValue, SubmitAck = "" };
+        await using var h = await CreateSpinnerHarnessAsync(schema.ConnectionString, new ScriptedReadyFactory(adapter));
+        adapter.RegisterOnStart = h.Runtime;
+        var cwd = await PrepareSpinnerLaunchAsync(h);
+        var queued = await h.SeedPendingMessageAsync("C778 scripted submit without a UserPrompt");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var scope = h.Provider.CreateAsyncScope();
+        var spec = new AgentLaunchSpec("scripted-grok", AgentKind.Grok, "unused", [],
+            new Dictionary<string, string>(), cwd, 120, 30);
+        var launch = scope.ServiceProvider.GetRequiredService<AgentSessionService>()
+            .LaunchInteractiveAsync(h.SessionId, h.AgentId, spec, null, false, null, deadline.Token);
+
+        Exception? launchError = null;
+        try { await launch; }
+        catch (Exception ex) { launchError = ex; }
+
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var message = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued, deadline.Token);
+        message.Status.ShouldBe(QueuedMessageStatus.Pending);
+        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.NoSubmitOutput);
+        var session = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == h.SessionId, deadline.Token);
+        message.LastDeliveryGeneration.ShouldBe(session.StartedAt);
+        launchError.ShouldBeNull("an unconfirmed submit in the readiness fixture must leave the accepted launch live");
+        session.Status.ShouldBe(SessionStatus.Running);
+        session.InteractiveLaunchCompletedAt.ShouldNotBeNull();
+        adapter.KillGenerationCalls.ShouldBeEmpty();
+    }
+
+    private static Task<BridgeQueueHarness> CreateSpinnerHarnessAsync(string connectionString,
+        IAgentProtocolAdapterFactory factory, ISessionRunnerClient? client = null) =>
+        BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = connectionString,
+            ConfigureServices = services =>
+            {
+                if (client is not null) services.AddSingleton(client);
+                services.AddSingleton(factory);
+            },
+        });
+
+    private static async Task<string> PrepareSpinnerLaunchAsync(BridgeQueueHarness h)
+    {
+        h.Runtime.TryRemove(h.SessionId, out var old).ShouldBeTrue();
+        if (old is not null) await old.DisposeAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(h.ConnectionString));
+        var session = await db.AgentSessions.SingleAsync(s => s.Id == h.SessionId);
+        session.AgentKind = AgentKind.Grok;
+        session.Status = SessionStatus.Starting;
+        await db.SaveChangesAsync();
+        return session.Cwd;
+    }
+
+    private sealed class ScriptedReadyFactory(FakeAgentProtocolAdapter adapter) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => adapter;
     }
 
     private sealed class NativeReadyFactory(ISessionRunnerClient client) : IAgentProtocolAdapterFactory
