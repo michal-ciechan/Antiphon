@@ -59,7 +59,7 @@ internal static class ChannelWithheldResolution
             if (page.Count == 0) return null;
             foreach (var prompt in page)
             {
-                if (ChannelPromptCorrelation.Matches(row, prompt, TimeSpan.Zero, out _))
+                if (await dispatcher.OwnsChannelPromptAsync(db, row, prompt, ct))
                 {
                     proof = prompt;
                     break;
