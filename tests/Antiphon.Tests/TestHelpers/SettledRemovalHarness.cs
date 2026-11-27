@@ -26,10 +26,23 @@ internal sealed class SettledRemovalHarness : IAsyncDisposable
 
     private SettledRemovalHarness(LandingSafetyHarness host) => Host = host;
 
+    internal static string NamedWorktreePath(LandingSafetyHarness host) =>
+        Path.Combine(host.Fixture.Root, "trees", "card-task-" + DelegationReportFormatter.Short(host.Fixture.TaskId));
+
+    // Copy the still-unreleased task and registered worktree. Each cut gets its own
+    // repository, database and provider, and executes release and retirement itself.
+    internal static Task<LandingSafetyHarness> CreateCrashFixtureAsync() =>
+        LandingHarnessSnapshot.CreateAsync("settled-removal-crash", _ => { }, async host =>
+        {
+            await InitializeAsync(host, namedLeaf: true);
+        });
+
     /// <param name="configure">CARD-0824 S4a S-4: extra registrations, passed through to <see cref="LandingSafetyHarness.ConfigureServices"/>.</param>
-    public static async Task<SettledRemovalHarness> CreateAsync(bool namedLeaf = false, Action<IServiceCollection>? configure = null)
+    public static Task<SettledRemovalHarness> CreateAsync(bool namedLeaf = false, Action<IServiceCollection>? configure = null) =>
+        InitializeAsync(new LandingSafetyHarness { ConfigureServices = configure }, namedLeaf);
+
+    private static async Task<SettledRemovalHarness> InitializeAsync(LandingSafetyHarness host, bool namedLeaf)
     {
-        var host = new LandingSafetyHarness { ConfigureServices = configure };
         await host.InitializeAsync();
         var h = new SettledRemovalHarness(host);
         h.SourceSha = (await host.Fixture.RequiredAsync(host.Fixture.Source, "rev-parse", "HEAD")).Trim();
@@ -43,7 +56,7 @@ internal sealed class SettledRemovalHarness : IAsyncDisposable
         if (namedLeaf)
         {
             var shortId = DelegationReportFormatter.Short(host.Fixture.TaskId);
-            h.NamedWorktree = Path.Combine(h.ManagedRoot, "card-task-" + shortId);
+            h.NamedWorktree = NamedWorktreePath(host);
             h.NamedRef = "refs/heads/feat/card-task-" + shortId;
             await host.Fixture.RequiredAsync(host.Fixture.Repository, "worktree", "add", "-b",
                 "feat/card-task-" + shortId, h.NamedWorktree, "HEAD");

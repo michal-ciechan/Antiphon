@@ -277,8 +277,9 @@ public sealed class WorktreeResidueRecoveryTests
     [Arguments("run-projection")]
     public async Task C459_WorkerDeathAtEveryRetirementHandoff(string cut)
     {
-        await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
-        var ready = Path.Combine(h.Host.Fixture.Root, "worker-ready.json");
+        await using var h = await SettledRemovalHarness.CreateCrashFixtureAsync();
+        var ready = Path.Combine(h.Fixture.Root, "worker-ready.json");
+        var namedWorktree = SettledRemovalHarness.NamedWorktreePath(h);
         AssertRetirementAdmission(h, cut, ready);
         // The model generator itself launches a process, so prepare it under this case's
         // shared ProcessSpawnLimit seat before starting the retirement worker.
@@ -299,9 +300,9 @@ public sealed class WorktreeResidueRecoveryTests
             }
 
             observed.Outcome.ShouldBe("accepted", observed.Error);
-            await using var observer = h.Host.CreateContext();
+            await using var observer = h.CreateContext();
             var retirements = await observer.TaskWorktreeRetirements.AsNoTracking()
-                .Where(r => r.TaskId == h.Host.Fixture.TaskId).ToListAsync();
+                .Where(r => r.TaskId == h.Fixture.TaskId).ToListAsync();
             if (cut.EndsWith("-before", StringComparison.Ordinal) && cut.StartsWith("release-", StringComparison.Ordinal))
                 retirements.ShouldBeEmpty();
             else if (cut != "release-before")
@@ -311,7 +312,7 @@ public sealed class WorktreeResidueRecoveryTests
                 or "branch-cas" or "terminal-after" or "run-projection")
             {
                 (await observer.WorkspaceUseReservations.AsNoTracking()
-                    .AnyAsync(r => r.TaskId == h.Host.Fixture.TaskId && r.Active)).ShouldBeTrue();
+                    .AnyAsync(r => r.TaskId == h.Fixture.TaskId && r.Active)).ShouldBeTrue();
             }
 
             if (cut is "intent-after" or "git-exit" or "directory-result" or "registration-result" or "branch-cas"
@@ -337,16 +338,16 @@ public sealed class WorktreeResidueRecoveryTests
 
             if (cut == "run-projection")
             {
-                (await observer.WorktreeResidueRunCandidates.CountAsync(c => c.TaskId == h.Host.Fixture.TaskId))
+                (await observer.WorktreeResidueRunCandidates.CountAsync(c => c.TaskId == h.Fixture.TaskId))
                     .ShouldBeGreaterThan(0);
             }
 
             worker.Process.Kill(entireProcessTree: false);
             await worker.Process.WaitForExitAsync();
 
-            var resumeReady = Path.Combine(h.Host.Fixture.Root, "worker-ready-resume.json");
+            var resumeReady = Path.Combine(h.Fixture.Root, "worker-ready-resume.json");
             var resumeRequest = new WorktreeRetirementCrashWorker.Request(
-                h.Host.Fixture.Root, h.Host.Fixture.TaskId, "resume", resumeReady);
+                h.Fixture.Root, h.Fixture.TaskId, "resume", resumeReady);
             var resumeJson = System.Text.Json.JsonSerializer.Serialize(resumeRequest);
             System.Text.Json.JsonDocument.Parse(resumeJson).RootElement.GetProperty("Cut").GetString()
                 .ShouldBe("resume", "worker-typed-resume");
@@ -364,9 +365,9 @@ public sealed class WorktreeResidueRecoveryTests
                 await Task.WhenAll(resumed.Stdout, resumed.Stderr);
             }
 
-            await using var recovered = h.Host.CreateContext();
+            await using var recovered = h.CreateContext();
             var final = await recovered.TaskWorktreeRetirements.AsNoTracking()
-                .SingleAsync(r => r.TaskId == h.Host.Fixture.TaskId && r.Active);
+                .SingleAsync(r => r.TaskId == h.Fixture.TaskId && r.Active);
             if (cut is "intent-after" or "git-exit" or "branch-cas")
             {
                 (await recovered.TaskWorktreeRetirementAttempts.AsNoTracking()
@@ -378,7 +379,7 @@ public sealed class WorktreeResidueRecoveryTests
             }
             else if (cut is not "release-before")
             {
-                Directory.Exists(h.NamedWorktree).ShouldBeFalse();
+                Directory.Exists(namedWorktree).ShouldBeFalse();
                 final.State.ShouldBe(WorktreeRetirementState.Complete);
             }
         }
@@ -388,10 +389,10 @@ public sealed class WorktreeResidueRecoveryTests
         }
     }
 
-    private static void AssertRetirementAdmission(SettledRemovalHarness h, string cut, string ready)
+    private static void AssertRetirementAdmission(LandingSafetyHarness h, string cut, string ready)
     {
         var owned = new WorktreeRetirementCrashWorker.Request(
-            h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
+            h.Fixture.Root, h.Fixture.TaskId, cut, ready);
         WorktreeRetirementCrashWorker.Rejection(owned).ShouldBeNull();
         var outsideRoot = Path.Combine(Path.GetTempPath(), "c889-not-owned-" + Guid.NewGuid().ToString("N"));
         WorktreeRetirementCrashWorker.Rejection(owned with { Root = outsideRoot })
@@ -408,19 +409,19 @@ public sealed class WorktreeResidueRecoveryTests
     }
 
     private static CrashWorkerProcess.Running StartRetirementWorker(
-        SettledRemovalHarness h, string cut, string ready, bool useCompiledModel, string? requestJson = null)
+        LandingSafetyHarness h, string cut, string ready, bool useCompiledModel, string? requestJson = null)
     {
         var request = new WorktreeRetirementCrashWorker.Request(
-            h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
+            h.Fixture.Root, h.Fixture.TaskId, cut, ready);
         var prepared = CrashWorkerProcess.Prepare(new CrashWorkerProcess.Spec(
             WorktreeRetirementCrashWorker.Marker,
             requestJson ?? System.Text.Json.JsonSerializer.Serialize(request),
             "ANTIPHON_C459_TEST_CONNECTION",
-            h.Host.Schema.ConnectionString,
+            h.Schema.ConnectionString,
             "/*/*/WorktreeResidueRecoveryTests/C459_WorkerDeathAtEveryRetirementHandoff",
             ready,
             cut));
-        prepared.Start.WorkingDirectory = h.Host.Fixture.Root;
+        prepared.Start.WorkingDirectory = h.Fixture.Root;
         // Each child runs one retirement and exits or is killed before it can benefit from a profile.
         prepared.Start.Environment["DOTNET_TieredPGO"] = "0";
         prepared.Start.Environment.Remove(WorktreeRetirementCrashWorker.CompiledModelVariable);
