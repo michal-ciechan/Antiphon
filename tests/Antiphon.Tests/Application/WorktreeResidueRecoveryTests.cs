@@ -19,7 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<WorktreeRecoverySpawnLimit>]
+[ParallelLimiter<ProcessSpawnLimit>]
 public sealed class WorktreeResidueRecoveryTests
 {
     [Test]
@@ -280,6 +280,8 @@ public sealed class WorktreeResidueRecoveryTests
         await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
         var ready = Path.Combine(h.Host.Fixture.Root, "worker-ready.json");
         AssertRetirementAdmission(h, cut, ready);
+        // The model generator itself launches a process, so prepare it under this case's
+        // shared ProcessSpawnLimit seat before starting the retirement worker.
         var useCompiledModel = await WorktreeRetirementCrashWorker.PrepareCompiledModelAsync();
         await using var worker = StartRetirementWorker(h, cut, ready, useCompiledModel);
         try

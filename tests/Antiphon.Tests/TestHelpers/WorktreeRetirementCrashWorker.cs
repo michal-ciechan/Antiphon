@@ -17,7 +17,7 @@ internal static class WorktreeRetirementCrashWorker
     internal const string Marker = "ANTIPHON_C459_RETIREMENT_WORKER";
     internal const string CompiledModelVariable = "ANTIPHON_C459_COMPILED_MODEL";
 
-    private static readonly Lazy<Task<bool>> CompiledModelReady = new(() => Task.Run(VerifyCompiledModelAsync));
+    private static readonly Lazy<Task<bool>> CompiledModelReady = new(VerifyCompiledModelAsync);
     internal static readonly string[] AllowedCuts =
     [
         "release-before", "release-after", "claim-before", "claim-after",
@@ -31,10 +31,6 @@ internal static class WorktreeRetirementCrashWorker
     // The generator checks the model in the staged probe. Compare it again in the test host
     // using the retirement fixture's options before handing it to any crash or resume child.
     internal static Task<bool> PrepareCompiledModelAsync() => CompiledModelReady.Value;
-
-    // If execution ends before a selected crash case starts, still join the generator.
-    internal static Task JoinModelPreparationAsync() =>
-        CompiledModelReady.IsValueCreated ? CompiledModelReady.Value : Task.CompletedTask;
 
     private static async Task<bool> VerifyCompiledModelAsync()
     {
