@@ -58,7 +58,7 @@ namespace Antiphon.CliLauncher
         /// <summary>Where the one failure line goes.</summary>
         public TextWriter Error { get; init; } = Console.Error;
 
-        internal Func<string, long?> DiskFreeBytes { get; init; }
+        public Func<string, long?> DiskFreeBytes { get; init; }
 
         /// <summary>The clock.</summary>
         public Func<DateTime> UtcNow { get; init; } = () => DateTime.UtcNow;

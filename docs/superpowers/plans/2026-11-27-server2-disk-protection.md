@@ -50,6 +50,7 @@ below cover the matching declared rows. Nightly and rc own full lanes.
 | CP-12 | repairs | CP-1 | dispatcher notification recovery | `/*/*/(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationRescanTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)/*` | dispatcher notification regression | AgentTaskLandNotificationRecoveryTests,AgentTaskLandNotificationRescanTests,AgentTaskLandReceiptTests,AgentTaskLandReceiptWatermarkSafetyTests | 4 | 2 | true |
 | CP-13 | repairs | CP-1 | dispatcher receipt neighbors | `/*/*/(AgentTaskLandReceiptWatermarkTests*)\|(ExpectationDebtTests*)\|(LandReceiptScanCacheTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | dispatcher notification regression | AgentTaskLandReceiptWatermarkTests,ExpectationDebtTests,LandReceiptScanCacheTests,ReceiptScanDestinationIntegrationTests | 4 | 2 | true |
 | CP-14 | repairs | CP-1 | dispatcher failure delivery | `/*/*/PreDispatchFailureDeliveryTests/*` | dispatcher notification regression | PreDispatchFailureDeliveryTests | 1 | 2 | true |
+| CP-15 | guard-witnesses | tests/Antiphon.Tests -> bin-e258-red/ | red-first | `/*/*/WorkspaceDiskAdmissionTests/SharedFilesystemHoldsBothRoutesAndRecoversFromEither` | V-5 | SharedFilesystemHoldsBothRoutesAndRecoversFromEither | 2 | 2 | true |
 
 ## Native and manual witnesses
 
