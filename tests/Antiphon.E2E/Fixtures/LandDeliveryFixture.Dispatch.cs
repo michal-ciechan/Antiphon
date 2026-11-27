@@ -451,9 +451,8 @@ public sealed partial class LandDeliveryFixture
                 && m.DeliveryVerdict == null && m.DeliveryAttempts > 0).ToListAsync();
         attempted.ShouldNotBeEmpty("the pre-typing crash must leave a charged Sent/null-verdict attempt");
         var started = attempted.Min(m => m.LastDeliveryStartedAt!.Value);
-        // The row is already eligible; the restarted host's watchdog (60 s default period) records
-        // the decision on its next pass: two periods plus host warm-up, the same window as
-        // WaitForLateConfirmedInterruptedRowsAsync.
+        // The row is already eligible; the restarted host's watchdog records the decision on
+        // its next pass. The deadline also allows a slow host warm-up.
         AgentIncident? incident = null;
         await UntilAsync(async () =>
         {
@@ -489,8 +488,8 @@ public sealed partial class LandDeliveryFixture
 
     public async Task WaitForLateConfirmedInterruptedRowsAsync(IReadOnlyDictionary<Guid, int> attemptsByRow)
     {
-        // Queue recovery runs from the restarted host's own flushes or stranded-queue sweep (60 s
-        // default period) once the row is eligible: two sweep periods plus host warm-up.
+        // Queue recovery runs from the restarted host's own flushes or stranded-queue sweep
+        // once the row is eligible. The deadline also allows a slow host warm-up.
         List<SessionQueuedMessage> rows = [];
         try
         {

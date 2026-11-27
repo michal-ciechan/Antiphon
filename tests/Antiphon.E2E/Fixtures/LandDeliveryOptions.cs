@@ -56,6 +56,9 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         settings["Delegation:MaxTasksPerRoot"] = "1"; // Preserve the real conflict cap branch; never launch a model helper.
         settings["Supervision:DeliveryVerification:Enabled"] = "true";
         settings["Supervision:DeliveryVerification:TranscriptConfirmEnabled"] = "true";
+        // Exercise the hosted stranded-queue sweep without waiting a minute for its first pass.
+        // The sweep still uses the production age and delivery-verification guards.
+        settings["Supervision:RcWatch:ProbeIntervalSeconds"] = "10";
     }
     public void ConfigureServices(IServiceCollection services)
     {
