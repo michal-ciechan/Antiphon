@@ -107,8 +107,8 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// $script:LiveLaneAllowedSeedPaths: the paths a seed commit (pre..seed) may touch; any other is seed-range. The
-        /// six PowerShell-era entries stay (the historical seed 49b77d40b touched them); EngineSource is added because
-        /// a re-seed now edits PreS1BaseSha there, where it used to edit scripts/lib/live-lane-manifest.ps1.
+        /// six PowerShell-era entries stay (the historical seed 49b77d40b touched them). Keep the old path of the Pty
+        /// inventory for that range and allow its current invariant path. A re-seed edits PreS1BaseSha in EngineSource.
         /// </summary>
         public static IReadOnlyList<string> AllowedSeedPaths { get; } = new[]
         {
@@ -117,6 +117,7 @@ namespace Antiphon.Nightly
             "scripts/test-live-lane-manifest.ps1",
             "tests/Antiphon.Tests/Scripts/LiveLaneInventoryTests.cs",
             "tests/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests.cs",
+            "tests/Antiphon.Agents.Pty.Tests/Invariants/LiveClaudeInventoryTests.cs",
             "tests/fixtures/live-lanes/full-discovery-before.json",
             EngineSource,
         };

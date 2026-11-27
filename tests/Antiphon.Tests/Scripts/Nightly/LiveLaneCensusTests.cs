@@ -20,12 +20,12 @@ public sealed class LiveLaneCensusTests
     private static string Repo => LiveLaneInventoryTests.LiveLaneProcess.FindRepo();
 
     /// <summary>
-    /// The seed lists keep every PowerShell-era entry but scripts/lib/nightly-coverage.ps1 (deleted in W2-nightly S27); the
-    /// compiled engine source is the one addition.
+    /// The seed lists keep the historical inventory path and include the moved invariant for the next seed.
     /// </summary>
     [Test]
     public void SeedListsKeepTheirEntries()
     {
+        const string movedInventory = "tests/Antiphon.Agents.Pty.Tests/Invariants/LiveClaudeInventoryTests.cs";
         LiveLaneCensus.ProtectedPaths.ShouldBe(
         [
             "tests/test-execution-policy.json",
@@ -42,11 +42,13 @@ public sealed class LiveLaneCensusTests
             "scripts/lib/live-lane-manifest.ps1",
             "scripts/test-live-lane-manifest.ps1",
             "tests/Antiphon.Tests/Scripts/LiveLaneInventoryTests.cs",
-            "tests/Antiphon.Agents.Pty.Tests/Invariants/LiveClaudeInventoryTests.cs",
+            "tests/Antiphon.Agents.Pty.Tests/LiveClaudeInventoryTests.cs",
+            movedInventory,
             "tests/fixtures/live-lanes/full-discovery-before.json",
             "scripts/lib/Antiphon.Nightly/LiveLaneCensus.cs",
         ]);
         LiveLaneCensus.ImmutableSeedPaths.ShouldBe(["tests/fixtures/live-lanes/pre-s1-base.sha"]);
+        File.Exists(Path.Combine(Repo, movedInventory)).ShouldBeTrue(movedInventory);
         File.Exists(Path.Combine(Repo, LiveLaneCensus.EngineSource)).ShouldBeTrue(LiveLaneCensus.EngineSource);
     }
 

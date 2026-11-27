@@ -1488,12 +1488,15 @@ public sealed partial class ImpactedClassesSelectorTests
         {
             var resilience = await ProjectRowsAsync(root, merge, "tests/Antiphon.Resilience.Tests/ResilienceCircuitTests.cs");
             AssertProjectOf(resilience, "ResilienceCircuitTests", "tests/Antiphon.Resilience.Tests");
-            AssertProjectOf(resilience, "ResilienceAssemblyTests", "tests/Antiphon.Resilience.Tests");
+            AssertMirrorAssemblyProject(root, merge, resilience, "tests/Antiphon.Resilience.Tests", "ResilienceAssemblyTests",
+                "Assembly_hook_is_local_to_the_mirror", "Mirror_holds_the_resilience_tests");
             AssertProjectOf(resilience, "StaleWorkingTranscriptWatchdogTests", "tests/Antiphon.Tests");
 
             var git = await ProjectRowsAsync(root, merge, "src/Antiphon.Server.Git/ServerGitProcess.cs");
             AssertProjectOf(git, "GitIndexLockTests", "tests/Antiphon.Server.Git.Tests");
-            AssertProjectOf(git, "ServerGitAssemblyTests", "tests/Antiphon.Server.Git.Tests");
+            AssertMirrorAssemblyProject(root, merge, git, "tests/Antiphon.Server.Git.Tests", "ServerGitAssemblyTests",
+                "Declaring_assembly_is_Antiphon_Server_Git", "Project_does_not_reference_the_server",
+                "Test_project_does_not_reference_the_server");
             AssertProjectOf(git, "ServerGitProcessTests", "tests/Antiphon.Tests");
 
             // A class name declared in three projects runs in each of them, not only the ordinal-first file.
@@ -1501,6 +1504,32 @@ public sealed partial class ImpactedClassesSelectorTests
             AssertProjectsOf(spawn, "ProcessSpawnLimitTests",
                 "tests/Antiphon.Agents.Pty.Tests", "tests/Antiphon.SessionRunner.Tests", "tests/Antiphon.Tests");
         }
+    }
+
+    private static void AssertMirrorAssemblyProject(string root, bool merge, List<(string Project, string Filter)> rows,
+        string project, string fixture, params string[] expectedMethods)
+    {
+        if (!merge)
+        {
+            AssertProjectOf(rows, fixture, project);
+            return;
+        }
+
+        const string categoryFilter = "/*/*/*/*[Category=RepositoryInvariant]";
+        rows.Count(row => row == (project, categoryFilter)).ShouldBe(1, project);
+        AssertProjectsOf(rows, fixture);
+
+        var path = Path.Combine(root, project, "Invariants", fixture + ".cs");
+        var source = CSharpSyntaxTree.ParseText(File.ReadAllText(path)).GetRoot();
+        var type = source.DescendantNodes().OfType<ClassDeclarationSyntax>().Single(node => node.Identifier.ValueText == fixture);
+        type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().ShouldHaveSingleItem().Name.ToString().ShouldEndWith(".Invariants");
+        var category = type.AttributeLists.SelectMany(list => list.Attributes).Any(attribute =>
+            attribute.Name.ToString() == "Category" &&
+            attribute.ArgumentList?.Arguments.Single().Expression is LiteralExpressionSyntax { Token.ValueText: "RepositoryInvariant" });
+        category.ShouldBeTrue(fixture + " must be admitted by the category filter.");
+        type.Members.OfType<MethodDeclarationSyntax>()
+            .Where(method => method.AttributeLists.SelectMany(list => list.Attributes).Any(attribute => attribute.Name.ToString() == "Test"))
+            .Select(method => method.Identifier.ValueText).ShouldBe(expectedMethods, ignoreOrder: true);
     }
 
     // The map is the catalog's data, not a second hand list: dropping the entry moves the class back
