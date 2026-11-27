@@ -153,11 +153,11 @@ public sealed class NightlyNativeOwnershipTests
         IdleCaptureAndJobTermination(native, cancellationToken);
         foreach (var owner in native.Owners)
         {
-            var result = owner.Completion.GetAwaiter().GetResult();
-            (result.JobEmptyObserved, result.RemainingProcessCount).ShouldBe((true, 0), "every fixture job is empty");
-            var members = result.DescendantIdentities.Zip(result.DescendantImages, (identity, image) => image + "=" + identity);
+            var custody = owner.Completion.GetAwaiter().GetResult();
+            (custody.JobEmptyObserved, custody.RemainingProcessCount).ShouldBe((true, 0), "every fixture job is empty");
+            var members = custody.DescendantIdentities.Zip(custody.DescendantImages, (identity, image) => image + "=" + identity);
             Console.WriteLine(FormattableString.Invariant(
-                $"C1039_NATIVE_CUSTODY root={result.Pid}:{result.RootStartedAtUtc:O}; job-empty={result.JobEmptyObserved}; remaining={result.RemainingProcessCount}; members={string.Join(",", members)}"));
+                $"C1039_NATIVE_CUSTODY root={custody.Pid}:{custody.RootStartedAtUtc:O}; job-empty={custody.JobEmptyObserved}; remaining={custody.RemainingProcessCount}; members={string.Join(",", members)}"));
         }
     }, cancellationToken);
 
