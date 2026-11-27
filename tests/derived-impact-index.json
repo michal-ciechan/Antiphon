@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 369,
+      "classes": 371,
       "reason": "allowlist"
     },
     {
@@ -2133,9 +2133,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 142,
+      "classes": 143,
       "reason": "cap",
-      "owed": 117,
+      "owed": 118,
       "first": [
         "DelegateScriptVerificationRoundTests",
         "NightlyVerificationContractTests",
@@ -25878,7 +25878,8 @@
         "DockerTestCommandTests",
         "LinuxTestRosterTests",
         "RetireRunnerVolumesCaptureTests",
-        "RetireRunnerVolumesTests"
+        "RetireRunnerVolumesTests",
+        "Server2RollingStubTests"
       ]
     },
     {
@@ -25899,6 +25900,12 @@
       "classes": [
         "C849FrontDoorCaptureTests",
         "RemoteScriptContractTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/C849SavedDonorImportCaptures.cs",
+      "classes": [
+        "C849SavedDonorImportTests"
       ]
     },
     {
@@ -26834,19 +26841,22 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Server2RollingCaptures.cs",
       "classes": [
-        "Server2RollingDeployTests"
+        "Server2RollingDeployTests",
+        "Server2RollingStubTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Server2RollingCapturesC1008.cs",
       "classes": [
-        "Server2RollingDeployTests"
+        "Server2RollingDeployTests",
+        "Server2RollingStubTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Server2RollingCapturesDriver.cs",
       "classes": [
-        "Server2RollingDeployTests"
+        "Server2RollingDeployTests",
+        "Server2RollingStubTests"
       ]
     },
     {
