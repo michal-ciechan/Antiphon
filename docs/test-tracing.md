@@ -47,21 +47,21 @@ scripts/antiphon build-slot --label trace-build -- dotnet build $project '-m:1' 
 if ($LASTEXITCODE -ne 0) { throw "Build failed ($LASTEXITCODE)" }
 
 $oldTraceDir = $env:ANTIPHON_TEST_TRACE_DIR
-$oldOtlp = $env:OTEL_EXPORTER_OTLP_ENDPOINT
+$oldOtlp = $env:ANTIPHON_TEST_TRACE_OTLP
 try {
     $env:ANTIPHON_TEST_TRACE_DIR = $traceDir
-    $env:OTEL_EXPORTER_OTLP_ENDPOINT = $null
+    $env:ANTIPHON_TEST_TRACE_OTLP = $null
     scripts/antiphon build-slot --label trace-run -- $testHost --treenode-filter $filter --report-trx --report-trx-filename run.trx --results-directory $traceDir
     $testExit = $LASTEXITCODE
 } finally {
     $env:ANTIPHON_TEST_TRACE_DIR = $oldTraceDir
-    $env:OTEL_EXPORTER_OTLP_ENDPOINT = $oldOtlp
+    $env:ANTIPHON_TEST_TRACE_OTLP = $oldOtlp
 }
 "Test exit $testExit. Evidence $traceDir"
 scripts\antiphon.cmd test-trace-summary "$traceDir"
 ```
 
-Set `OTEL_EXPORTER_OTLP_ENDPOINT` to an authorised collector instead of clearing it if you need OTLP export. Verify the executed count and identity in the fresh TRX even when the host exits successfully. If an OR filter contains `|`, pass it through the PowerShell `scripts/antiphon.exe` launcher or directly to the built host under the authorised lock. The `.cmd` launcher parses the pipe.
+For OTLP export, set `ANTIPHON_TEST_TRACE_OTLP=1` and point `OTEL_EXPORTER_OTLP_ENDPOINT` at an authorised collector. Native chunks write local JSONL by default. A background writer drains a bounded queue and reports dropped spans on orderly exit if the queue filled. Verify the executed count and identity in the fresh TRX even when the host exits successfully. If an OR filter contains `|`, pass it through the PowerShell `scripts/antiphon.exe` launcher or directly to the built host under the authorised lock. The `.cmd` launcher parses the pipe.
 
 For the operator-supplied lock, set `$acquireLock` and `$releaseLock` to the supplied script paths and `$tag` to the assigned tag. Substitute this pattern for each `build-slot` invocation above. For the test invocation, call `& $testHost` inside the lock, pass the same test and TRX arguments, and capture its exit code before releasing the lock.
 

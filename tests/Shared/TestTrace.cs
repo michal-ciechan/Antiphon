@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -17,8 +17,8 @@ namespace Antiphon.Tests.TestHelpers;
 /// TUnit, Npgsql, HttpClient, ASP.NET Core) is appended to that file as one JSON object per line,
 /// with no cap. <c>scripts/antiphon summarize-test-trace --path &lt;file&gt;</c> (Antiphon.Nightly.TestTraceSummary) turns it
 /// into per-test and per-span totals.</item>
-/// <item>With both <see cref="DirectoryVariable"/> and <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
-/// set, the fixture and TUnit spans are also exported over OTLP.</item>
+/// <item>With <see cref="DirectoryVariable"/>, <c>ANTIPHON_TEST_TRACE_OTLP=1</c> and
+/// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> set, fixture and TUnit spans are also exported over OTLP.</item>
 /// </list>
 /// With no listener, <see cref="Span"/> returns null and costs nothing. Span names and tag values
 /// are code-supplied labels; never pass payloads, prompts, paths with secrets or credentials.
@@ -189,7 +189,7 @@ public static partial class TestTrace
                     if (sink.FrameworkStart is { } first)
                         sink.RecordProcessSpan("process startup", started, first);
                 }
-                sink.Flush();
+                sink.Complete();
                 DisposeOtlp();
             };
             Volatile.Write(ref _listener, listener);
@@ -206,9 +206,11 @@ public static partial class TestTrace
     private sealed class FileSink
     {
         private readonly string _path;
-        private readonly ConcurrentQueue<string> _pending = new();
+        private const int Capacity = 4096;
+        private readonly Channel<Activity> _pending = Channel.CreateBounded<Activity>(Capacity);
         private readonly object _write = new();
-        private int _count;
+        private readonly Task _writer;
+        private int _dropped;
         private long _firstFrameworkTicks = long.MaxValue;
 
         public DateTime? FrameworkStart
@@ -245,11 +247,16 @@ public static partial class TestTrace
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.AppendAllText(path, "");
             _path = path;
+            _writer = Task.Run(WritePendingAsync);
         }
 
         public void Write(Activity activity)
         {
-            var line = JsonSerializer.Serialize(new SpanRecord(
+            if (!_pending.Writer.TryWrite(activity))
+                Interlocked.Increment(ref _dropped);
+        }
+
+        private static string Serialize(Activity activity) => JsonSerializer.Serialize(new SpanRecord(
                 activity.TraceId.ToHexString(),
                 activity.SpanId.ToHexString(),
                 activity.ParentSpanId == default ? null : activity.ParentSpanId.ToHexString(),
@@ -262,21 +269,34 @@ public static partial class TestTrace
                     ? activity.TagObjects.ToDictionary(t => t.Key, t => t.Value?.ToString(), StringComparer.Ordinal)
                     : null,
                 Environment.ProcessId));
-            _pending.Enqueue(line);
-            var count = Interlocked.Increment(ref _count);
-            if (count == 1 || count % 256 == 0)
+
+        private async Task WritePendingAsync()
+        {
+            while (await _pending.Reader.WaitToReadAsync().ConfigureAwait(false))
                 Flush();
+        }
+
+        public void Complete()
+        {
+            _pending.Writer.TryComplete();
+            _writer.GetAwaiter().GetResult();
+            if (_dropped > 0)
+                Console.Error.WriteLine($"[TestTrace] Dropped {_dropped} spans while the trace queue was full.");
         }
 
         public void Flush()
         {
             lock (_write)
             {
-                if (_pending.IsEmpty)
+                if (!_pending.Reader.TryRead(out var activity))
                     return;
                 var builder = new StringBuilder();
-                while (_pending.TryDequeue(out var line))
-                    builder.Append(line).Append('\n');
+                for (var count = 1; ; count++)
+                {
+                    builder.Append(Serialize(activity)).Append('\n');
+                    if (count == 256 || !_pending.Reader.TryRead(out activity))
+                        break;
+                }
                 try { File.AppendAllText(_path, builder.ToString()); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {

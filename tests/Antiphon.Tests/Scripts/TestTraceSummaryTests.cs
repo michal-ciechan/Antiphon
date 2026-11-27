@@ -201,6 +201,17 @@ public sealed class TestTraceSummaryTests
     }
 
     [Test]
+    public void Otlp_requires_separate_opt_in()
+    {
+        const string endpoint = "http://localhost:4317";
+        TestTrace.HasOtlpDestination("traces", null, endpoint).ShouldBeFalse();
+        TestTrace.HasOtlpDestination("traces", "0", endpoint).ShouldBeFalse();
+        TestTrace.HasOtlpDestination("traces", "1", null).ShouldBeFalse();
+        TestTrace.HasOtlpDestination(null, "1", endpoint).ShouldBeFalse();
+        TestTrace.HasOtlpDestination("traces", "1", endpoint).ShouldBeTrue();
+    }
+
+    [Test]
     public void Chunk_helper_spans_require_the_trace_directory_even_with_a_listener()
     {
         using var listener = new ActivityListener
