@@ -22,7 +22,7 @@ namespace Antiphon.Tests.Review;
 [Category("Integration")]
 [NotInParallel("ReviewEndToEnd")]
 [ClassDataSource<ReviewEndToEndApiTests.Factory>(Shared = SharedType.PerClass)]
-public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
+public partial class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
 {
     private static readonly TimeSpan StepTimeout = TimeSpan.FromSeconds(60);
 

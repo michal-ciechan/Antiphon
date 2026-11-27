@@ -102,7 +102,9 @@ public sealed class ScriptedCodeHost : ICodeHost
                 var n = Interlocked.Increment(ref pr.CommentCounter);
                 return new CodeHostPostedComment(c.Path, c.Line, $"c{n}", $"t{n}", $"https://github.example/acme/widgets/pull/{pr.Number}#discussion_r{n}");
             }).ToList();
-            return Task.FromResult(new CodeHostPostedReview($"r{pr.Reviews.Count}", $"https://github.example/acme/widgets/pull/{pr.Number}#review-{pr.Reviews.Count}", posted));
+            var receipt = new CodeHostPostedReview($"r{pr.Reviews.Count}", $"https://github.example/acme/widgets/pull/{pr.Number}#review-{pr.Reviews.Count}", posted);
+            pr.AcceptedReviews.Add(receipt.ReviewId, new ScriptedReviewReceipt(target, review, receipt));
+            return Task.FromResult(receipt);
         }
     }
 
@@ -230,6 +232,7 @@ public sealed class ScriptedPr(int number, string title, string author, string b
     public List<string> BaseMoveFiles { get; set; } = [];
 
     public List<CodeHostReview> Reviews { get; } = [];
+    public Dictionary<string, ScriptedReviewReceipt> AcceptedReviews { get; } = new(StringComparer.Ordinal);
     public List<(string Sha, CodeHostCommitStatus Status)> Statuses { get; } = [];
     public List<string> Approvals { get; } = [];
     public List<(string CommentId, string Body)> Replies { get; } = [];
@@ -281,6 +284,8 @@ public sealed class ScriptedPr(int number, string title, string author, string b
     public CodeHostCommitStatus? Status(string context, string sha) =>
         Read(p => p.Statuses.LastOrDefault(s => s.Sha == sha && s.Status.Context == context).Status);
 }
+
+public sealed record ScriptedReviewReceipt(CodeHostTarget Target, CodeHostReview Review, CodeHostPostedReview Posted);
 
 /// <summary>A decision model with scripted answers per question name; an unscripted question is refused (no answer).</summary>
 public sealed class ScriptedDecisions : IDecisionModel
