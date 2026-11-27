@@ -22188,6 +22188,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.E2E/Invariants/AntiphonAppFixtureHostPathInvariantTests.cs",
+      "classes": [
+        "ExpectedDurationSyncTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.E2E/OutputDistillationApplyCanaryTests.cs",
       "classes": [
         "NativeWindowsFixtureGateTests"
