@@ -5,6 +5,7 @@ using System.Text.Json;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
+using LibGit2Sharp;
 using Shouldly;
 using TUnit.Core;
 
@@ -22,8 +23,11 @@ public sealed class RcProjectSelectionTests
 {
 
     [Test, Timeout(8_000)]
-    public void BothEndpointProofsPreserveIndependentlyOwedChunks(CancellationToken cancellationToken) =>
-        CheckEndpointProofs(cancellationToken);
+    [Arguments(ProofScenario.Composition)]
+    [Arguments(ProofScenario.RosterAndIdentity)]
+    [Arguments(ProofScenario.IndependentEndpoints)]
+    public void BothEndpointProofsPreserveIndependentlyOwedChunks(ProofScenario scenario, CancellationToken cancellationToken) =>
+        CheckEndpointProofs(cancellationToken, scenario);
 
     [Test, Timeout(6_000)]
     public void EndpointProofsPreserveOwnedAndUnownedCaps(CancellationToken cancellationToken) =>
@@ -33,9 +37,9 @@ public sealed class RcProjectSelectionTests
     public void EndpointProofsPreserveIndependentReadersAndAddedConsumers(CancellationToken cancellationToken) =>
         CheckEndpointProofs(cancellationToken, ProofScenario.Readers);
 
-    private enum ProofScenario { Standard, Caps, Readers }
+    public enum ProofScenario { Composition, RosterAndIdentity, IndependentEndpoints, Caps, Readers }
 
-    private void CheckEndpointProofs(CancellationToken cancellationToken, ProofScenario scenario = ProofScenario.Standard)
+    private void CheckEndpointProofs(CancellationToken cancellationToken, ProofScenario scenario)
     {
         const string leftProject = "tests/L/L.csproj";
         const string rightProject = "tests/R/R.csproj";
@@ -76,7 +80,6 @@ public sealed class RcProjectSelectionTests
         files[south] = "namespace South; public class Probe { public int Value; }\n";
         repo.Put(south, files[south]);
         var candidate = repo.Commit();
-        var candidateArtifact = Produce(candidate, "candidate");
 
         var chunks = new[]
         {
@@ -113,6 +116,13 @@ public sealed class RcProjectSelectionTests
             return RcChunkReceipt.Reusable(row, trx, chunk.Cases, scope);
         }
 
+        if (scenario == ProofScenario.IndependentEndpoints)
+        {
+            CheckChangedIndexAndRemovedLink();
+            return;
+        }
+
+        var candidateArtifact = Produce(candidate, "candidate");
         var off = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit);
         off.Mode.ShouldBe("Scoped", "C.off project coverage");
         off.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.off");
@@ -137,22 +147,26 @@ public sealed class RcProjectSelectionTests
             return;
         }
 
-        var reader = new RcReaderCensusEntry { Reader = "L.LeftTests", Globs = [south] };
-        var owed = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [reader], Admit, proof);
-        owed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed");
-        owed.Of("left").Reasons.ShouldContain("runtime-reader:" + south, "C.owed");
-        var missing = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [receipts[1]], [], Admit, proof);
-        missing.Of("left").Decision.ShouldBe("execute", "C.origin missing");
-        var dirty = new OrderedDictionary();
-        foreach (DictionaryEntry entry in receipts[0]) dirty[entry.Key] = entry.Value;
-        dirty["coverageComplete"] = false;
-        RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
-            .Of("left").Decision.ShouldBe("execute", "C.origin dirty");
-        dirty["coverageComplete"] = true;
-        dirty["sha"] = baseline;
-        dirty["result"] = "FAIL";
-        RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
-            .Of("left").Decision.ShouldBe("execute", "C.debt failed execution cannot be an origin");
+        if (scenario == ProofScenario.Composition)
+        {
+            var reader = new RcReaderCensusEntry { Reader = "L.LeftTests", Globs = [south] };
+            var owed = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [reader], Admit, proof);
+            owed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed");
+            owed.Of("left").Reasons.ShouldContain("runtime-reader:" + south, "C.owed");
+            var missing = RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [receipts[1]], [], Admit, proof);
+            missing.Of("left").Decision.ShouldBe("execute", "C.origin missing");
+            var dirty = new OrderedDictionary();
+            foreach (DictionaryEntry entry in receipts[0]) dirty[entry.Key] = entry.Value;
+            dirty["coverageComplete"] = false;
+            RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
+                .Of("left").Decision.ShouldBe("execute", "C.origin dirty");
+            dirty["coverageComplete"] = true;
+            dirty["sha"] = baseline;
+            dirty["result"] = "FAIL";
+            RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, [dirty, receipts[1]], [], Admit, proof)
+                .Of("left").Decision.ShouldBe("execute", "C.debt failed execution cannot be an origin");
+            return;
+        }
 
         chunks[0].CaseRoster = [new("wrong-assembly", "L.LeftTests", "M", "l1")];
         RcChunkSelection.Select(repo.Root, baseline, candidate, chunks, receipts, [], Admit, proof)
@@ -211,49 +225,52 @@ public sealed class RcProjectSelectionTests
             baseline, Path.Combine(Path.GetDirectoryName(replacement)!, "absent.json"), candidateArtifact.Digest,
             candidate, Digest("fixture-algorithm"), Digest("fixture-policy")), "C.reseal missing endpoint artifact");
 
-        var originalIndex = files[index];
-        var changedIndex = System.Text.Json.Nodes.JsonNode.Parse(originalIndex)!;
-        var changedEdge = changedIndex["edges"]!.AsArray().Single(edge => (string?)edge!["path"] == south);
-        changedEdge!["classes"] = new System.Text.Json.Nodes.JsonArray("RightTests");
-        repo.Put(index, files[index] = changedIndex.ToJsonString());
-        var indexCandidate = repo.Commit();
-        var indexArtifact = Produce(indexCandidate, "candidate-index");
-        var indexProof = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
-            indexArtifact.Path, indexArtifact.Digest, indexCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
-        var changed = RcChunkSelection.Select(repo.Root, baseline, indexCandidate, chunks, receipts, [], Admit, indexProof);
-        changed.Of("left").Reasons.ShouldContain("index-edge-changed:LeftTests", "C.index independent change");
-        changed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.index owed set");
-        repo.Git("checkout", "-q", "--detach", baseline);
-        files[index] = originalIndex;
+        void CheckChangedIndexAndRemovedLink()
+        {
+            var originalIndex = files[index];
+            var changedIndex = System.Text.Json.Nodes.JsonNode.Parse(originalIndex)!;
+            var changedEdge = changedIndex["edges"]!.AsArray().Single(edge => (string?)edge!["path"] == south);
+            changedEdge!["classes"] = new System.Text.Json.Nodes.JsonArray("RightTests");
+            repo.Put(index, files[index] = changedIndex.ToJsonString());
+            var indexCandidate = repo.Commit();
+            var indexArtifact = Produce(indexCandidate, "candidate-index");
+            var indexProof = RcTypeProofComparison.Read(baselineArtifact.Path, baselineArtifact.Digest, baseline,
+                indexArtifact.Path, indexArtifact.Digest, indexCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
+            var changed = RcChunkSelection.Select(repo.Root, baseline, indexCandidate, chunks, receipts, [], Admit, indexProof);
+            changed.Of("left").Reasons.ShouldContain("index-edge-changed:LeftTests", "C.index independent change");
+            changed.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.index owed set");
+            repo.Checkout(baseline);
+            files[index] = originalIndex;
 
-        var unlinkedProject = files[leftProject];
-        var currentSouth = files[south];
-        files[south] = "namespace South; public class Probe {}\n";
-        files[leftProject] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><Compile Include=\"../R/B.cs\" Link=\"B.cs\" /></ItemGroup></Project>\n";
-        repo.Put(leftProject, files[leftProject]);
-        repo.Put(south, files[south]);
-        var linkedBaseline = repo.Commit();
-        contexts[0] = contexts[0] with { SourcePaths = [north, leftSource, south] };
-        var linkedArtifact = Produce(linkedBaseline, "baseline-linked");
-        repo.Put(leftProject, files[leftProject] = unlinkedProject);
-        repo.Put(south, files[south] = currentSouth);
-        var unlinkedCandidate = repo.Commit();
-        contexts[0] = contexts[0] with { SourcePaths = [north, leftSource] };
-        var unlinkedArtifact = Produce(unlinkedCandidate, "candidate-link-removed");
-        var linkProof = RcTypeProofComparison.Read(linkedArtifact.Path, linkedArtifact.Digest, linkedBaseline,
-            unlinkedArtifact.Path, unlinkedArtifact.Digest, unlinkedCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
-        var linked = RcChunkSelection.Select(repo.Root, linkedBaseline, unlinkedCandidate, chunks, receipts, [], Admit, linkProof);
-        linked.Mode.ShouldBe("Scoped", "C.sides " + string.Join(", ", linked.FallbackReasons));
-        linked.Of("left").Reasons.ShouldContain("project-closure:B:" + south, "C.sides B-only link");
-        linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
-        linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
+            var unlinkedProject = files[leftProject];
+            var currentSouth = files[south];
+            files[south] = "namespace South; public class Probe {}\n";
+            files[leftProject] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><Compile Include=\"../R/B.cs\" Link=\"B.cs\" /></ItemGroup></Project>\n";
+            repo.Put(leftProject, files[leftProject]);
+            repo.Put(south, files[south]);
+            var linkedBaseline = repo.Commit();
+            contexts[0] = contexts[0] with { SourcePaths = [north, leftSource, south] };
+            var linkedArtifact = Produce(linkedBaseline, "baseline-linked");
+            repo.Put(leftProject, files[leftProject] = unlinkedProject);
+            repo.Put(south, files[south] = currentSouth);
+            var unlinkedCandidate = repo.Commit();
+            contexts[0] = contexts[0] with { SourcePaths = [north, leftSource] };
+            var unlinkedArtifact = Produce(unlinkedCandidate, "candidate-link-removed");
+            var linkProof = RcTypeProofComparison.Read(linkedArtifact.Path, linkedArtifact.Digest, linkedBaseline,
+                unlinkedArtifact.Path, unlinkedArtifact.Digest, unlinkedCandidate, Digest("fixture-algorithm"), Digest("fixture-policy"));
+            var linked = RcChunkSelection.Select(repo.Root, linkedBaseline, unlinkedCandidate, chunks, receipts, [], Admit, linkProof);
+            linked.Mode.ShouldBe("Scoped", "C.sides " + string.Join(", ", linked.FallbackReasons));
+            linked.Of("left").Reasons.ShouldContain("project-closure:B:" + south, "C.sides B-only link");
+            linked.Of("left").Reasons.ShouldNotContain("project-closure:A:" + south, "C.sides link removed at A");
+            linked.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.sides B-only link owed set");
+        }
 
         void CheckCaps()
         {
             const string uncatalogued = "docs/capped.md";
             var southAtCandidate = files[south];
 
-            repo.Git("checkout", "-q", "--detach", baseline);
+            repo.Checkout(baseline);
             files[south] = southAtBaseline;
             var cappedIndex = System.Text.Json.Nodes.JsonNode.Parse(files[index])!;
             cappedIndex["cappedPaths"] = new System.Text.Json.Nodes.JsonArray(south, uncatalogued);
@@ -273,7 +290,7 @@ public sealed class RcProjectSelectionTests
             ownedCap.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.cap owned set");
             ownedCap.Proof.Removed.ShouldBeEmpty("C.cap no subtraction from the capped path");
 
-            repo.Git("checkout", "-q", "--detach", capBaseline);
+            repo.Checkout(capBaseline);
             files[south] = southAtBaseline;
             Put(uncatalogued, "changed\n");
             var unknownCandidate = repo.Commit();
@@ -291,7 +308,7 @@ public sealed class RcProjectSelectionTests
             const string hand = "tests/impacted-classes.json";
             const string script = "scripts/test-startup.ps1";
             var southAtCandidate = files[south];
-            repo.Git("checkout", "-q", "--detach", baseline);
+            repo.Checkout(baseline);
             files[south] = southAtBaseline;
             Put(hand, JsonSerializer.Serialize(new { kinds = new[] { new { globs = new[] { south }, classes = new[] { "LeftTests" } } } }));
             Put(script, "Write-Output 'baseline'\n");
@@ -307,7 +324,7 @@ public sealed class RcProjectSelectionTests
             handRule.Of("left").Reasons.ShouldNotContain("release-relation-type:A:" + south, "C.owed proof still removed its own contribution");
             handRule.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "execute"], "C.owed hand set");
 
-            repo.Git("checkout", "-q", "--detach", readerBaseline);
+            repo.Checkout(readerBaseline);
             files[south] = southAtBaseline;
             Put(script, "Write-Output 'candidate'\n");
             var scriptCandidate = repo.Commit();
@@ -319,7 +336,7 @@ public sealed class RcProjectSelectionTests
             scriptReader.Of("left").Reasons.ShouldContain("runtime-reader:scripts/test-*.ps1", "C.owed script reader");
             scriptReader.Decisions.Select(decision => decision.Decision).ShouldBe(["execute", "carry"], "C.owed script set");
 
-            repo.Git("checkout", "-q", "--detach", baseline);
+            repo.Checkout(baseline);
             files.Remove(hand);
             files.Remove(script);
             const string added = "tests/R/New.cs";
@@ -587,7 +604,7 @@ public sealed class RcProjectSelectionTests
         cancellationToken.ThrowIfCancellationRequested();
 
         // A2 (from B): a new file gets an A-only edge to NewEdgeTests and to a simple name two projects share.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         fx.Put("src/Messaging/Wire.cs", "wire");
         fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests"), Edge("src/Messaging/Wire.cs", "NewEdgeTests", "Ambiguous")], []));
         var a2 = fx.Commit();
@@ -597,21 +614,21 @@ public sealed class RcProjectSelectionTests
             Reasons(s2, "AmbiguousServer") + " | " + Reasons(s2, "AmbiguousOther"));
 
         // Capped at B: an owned path widens to its project closure; an unowned capped path forces Full.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         fx.Put("docs/capped.md", "baseline");
         fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests")], [new Dictionary<string, object> { ["path"] = "src/Messaging/Message.cs", ["reason"] = "cap" }, "docs/capped.md"]));
         var bc = fx.Commit();
         fx.Put("src/Messaging/Message.cs", "changed");
         var a3 = fx.Commit();
         var s3 = Select(bc, a3);
-        fx.Git("checkout", "-q", "--detach", bc);
+        fx.Checkout(bc);
         fx.Put("docs/capped.md", "changed");
         var s3b = Select(bc, fx.Commit());
         rows.Check(s3.Mode == "Scoped" && Runs(s3, "AmbiguousServer", "index-capped-closure:src/Messaging/Message.cs:B") && s3b.Mode == "Full"
             && s3b.FallbackReasons.Contains("index-capped:docs/capped.md:B"), "s2-cap", s3.Mode + " " + string.Join(",", s3b.FallbackReasons));
 
         // No index blob at B.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         File.Delete(fx.PathOf("tests", "derived-impact-index.json"));
         var b0 = fx.Commit();
         fx.Put("src/Messaging/Message.cs", "changed again");
@@ -625,7 +642,7 @@ public sealed class RcProjectSelectionTests
             && s1.Index[1].Blob == Blob(a1) && s1.Index[1].Sha256 == Sha(a1) && Blob(b) != Blob(a1), "s2-index-binding");
 
         // R-2: every file under a directory a reader lists is deleted.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         File.Delete(fx.PathOf("tests", "fixtures", "data", "one.txt"));
         File.Delete(fx.PathOf("tests", "fixtures", "data", "two.txt"));
         var s5 = Select(b, fx.Commit());
@@ -633,7 +650,7 @@ public sealed class RcProjectSelectionTests
             s5.Mode + " " + string.Join(",", s5.FallbackReasons) + " " + Reasons(s5, "FixtureReader"));
 
         // R-3: an assembled-name reader of a deleted driver, no index edge on either side.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         File.Delete(fx.PathOf("scripts", "test-x-startup.ps1"));
         var a6 = fx.Commit();
         var s6 = Select(b, a6);
@@ -643,7 +660,7 @@ public sealed class RcProjectSelectionTests
             s6.Mode + " " + string.Join(",", s6.FallbackReasons) + " | " + string.Join(",", s6Bare.FallbackReasons));
 
         // Review r1 D-4(a): a census glob over compiled project source (scripts/lib/** over Antiphon.Nightly) keeps the project closure.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         fx.Put("src/Messaging/Message.cs", "census");
         var s7 = Select(b, fx.Commit(), [.. census, new RcReaderCensusEntry { Reader = "MessagingReaderTests", Globs = ["src/Messaging/**"] }]);
         rows.Check(s7.Mode == "Scoped" && Runs(s7, "ServerHarness", "project-closure:B:src/Messaging/Message.cs") && Runs(s7, "RunnerLinked", "project-closure:A:src/Messaging/Message.cs")
@@ -659,7 +676,7 @@ public sealed class RcProjectSelectionTests
         }
         RcChunkSelectionResult IndexAt(string text)
         {
-            fx.Git("checkout", "-q", "--detach", b);
+            fx.Checkout(b);
             fx.Put(Index, text);
             fx.Put("src/Messaging/Wire.cs", "index-shape");
             return Select(b, fx.Commit());
@@ -671,7 +688,7 @@ public sealed class RcProjectSelectionTests
             "s2-index-schema-unknown", string.Join(" | ", new[] { schema2, noEdges, noCapped }.Select(s => s.Mode + ":" + string.Join(",", s.FallbackReasons))));
 
         // Review r1 D-4(c): an index-only regeneration that removes an edge selects the removed class and the index's own readers.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         fx.Put(Index, IndexJson([], []));
         var s8 = Select(b, fx.Commit());
         rows.Check(s8.Mode == "Scoped" && Runs(s8, "ServerHarness", "index-edge-changed:ServerHarnessTests") && Runs(s8, "IndexReader", "runtime-reader:" + Index)
@@ -679,7 +696,7 @@ public sealed class RcProjectSelectionTests
             s8.Mode + " " + string.Join(",", s8.FallbackReasons) + " " + Reasons(s8, "ServerHarness") + " | " + Reasons(s8, "IndexReader"));
 
         // A change to a non-edge index field (cap, allowlist, windowsOnly, linuxOnly) changes what every edge means: Full.
-        fx.Git("checkout", "-q", "--detach", b);
+        fx.Checkout(b);
         fx.Put(Index, IndexJson([Edge("tests/Server/Harness.cs", "ServerHarnessTests")], []).Replace("\"cap\":25", "\"cap\":30", StringComparison.Ordinal));
         var s9 = Select(b, fx.Commit());
         rows.Check(s9.Mode == "Full" && s9.FallbackReasons.Contains("index-fields-changed"), "s2-index-field-change", s9.Mode + " " + string.Join(",", s9.FallbackReasons));
@@ -721,13 +738,16 @@ public sealed class RcProjectSelectionTests
     /// <summary>The fixture repository of the deleted driver: six projects, their categories and three batches.</summary>
     private sealed class Repo : IDisposable
     {
+        private static readonly Signature Author = new("Fixture", "fixture@example.invalid", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
         private readonly NightlyFixture _fixture = NightlyFixture.Create("c1545-projects");
+        private readonly Repository _repository;
 
         public Repo()
         {
-            Directory.CreateDirectory(Root);
-            Git("init", "-q", "-b", "main");
-            Git("config", "core.autocrlf", "false");
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "initialize rc project repository");
+            _repository = new Repository(Repository.Init(Root));
+            _repository.Refs.UpdateTarget("HEAD", "refs/heads/main");
+            _repository.Config.Set("core.autocrlf", false);
         }
 
         public string Root => _fixture.PathOf("repository with spaces");
@@ -735,6 +755,8 @@ public sealed class RcProjectSelectionTests
         public string PathOf(params string[] parts) => Path.Combine(new[] { Root }.Concat(parts).ToArray());
 
         public string Git(params string[] arguments) => NightlyRcChain.Git(Root, arguments);
+
+        public void Checkout(string sha) => Commands.Checkout(_repository, _repository.Lookup<Commit>(sha));
 
         public void Put(string path, string text)
         {
@@ -745,9 +767,10 @@ public sealed class RcProjectSelectionTests
 
         public string Commit()
         {
-            Git("add", "--all");
-            Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture", "--allow-empty");
-            return Git("rev-parse", "HEAD").Trim();
+            using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "commit rc project fixture");
+            // Fixture commits use libgit2. The selector reads the resulting Git objects.
+            Commands.Stage(_repository, "*");
+            return _repository.Commit("fixture", Author, Author, new CommitOptions { AllowEmptyCommit = true }).Sha;
         }
 
         public void Catalog(IDictionary projects, params string[] batches) =>
@@ -769,6 +792,10 @@ public sealed class RcProjectSelectionTests
             return Commit();
         }
 
-        public void Dispose() => _fixture.Dispose();
+        public void Dispose()
+        {
+            _repository.Dispose();
+            _fixture.Dispose();
+        }
     }
 }

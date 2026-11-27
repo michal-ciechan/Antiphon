@@ -42,6 +42,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
 
     internal ReleaseImpactTypeProofFixture()
     {
+        using var timing = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "pin proof fixture compiler inputs");
         _repository = new(Repository.Init(Path.Combine(_workspace.Path, "git"), true));
         _permutedRoot = Path.Combine(_workspace.Path, "permuted");
         _dotnetRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location)!, "..", "..", ".."));
@@ -64,6 +65,7 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
 
     internal ReleaseCompilerReference Emit(string assembly, string code, string[] aliases, params MetadataReference[] additional)
     {
+        using var timing = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "emit proof fixture reference");
         var compilation = CSharpCompilation.Create(assembly,
             [CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(LanguageVersion.CSharp12))],
             [_core, ..additional], new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, deterministic: true));
@@ -158,18 +160,28 @@ internal sealed class ReleaseImpactTypeProofFixture : IDisposable
     internal void WriteReleaseGraph(string repositoryRoot, string sha, string output, IReadOnlyDictionary<string, string> files,
         Context[] contexts, CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        using var timing = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "write pinned release graph");
         var clock = Stopwatch.StartNew();
+        var outputName = Path.GetFileName(output);
+        CheckDeadline("before compiler manifest");
         using var repository = new Repository(repositoryRoot);
         var tree = repository.Lookup<Commit>(sha).Tree;
         var blobs = files.Keys.ToDictionary(path => path, path => tree[path].Target.Id.Sha, StringComparer.Ordinal);
         var (manifest, digest) = WriteManifest(sha, files, new Dictionary<string, string>(), contexts, blobs, null, _workspace.Path);
+        var manifestMilliseconds = clock.ElapsedMilliseconds;
+        CheckDeadline("after compiler manifest");
         string[] arguments = ["--release-graph", repositoryRoot, sha, output,
             "--proven-subtraction", "--compiler-manifest", manifest, "--expected-compiler-manifest-sha256", digest];
         var exit = (int)ReleaseGraphEntryPoint.Value.Invoke(null, [arguments])!;
-        Console.WriteLine($"C2076 fixture phase=release-graph elapsedMs={clock.ElapsedMilliseconds}");
-        exit.ShouldBe(0, $"release graph fixture {Path.GetFileName(output)}");
-        cancellationToken.ThrowIfCancellationRequested();
+        Console.WriteLine($"C2076 fixture phase=release-graph endpoint={outputName} manifestMs={manifestMilliseconds} elapsedMs={clock.ElapsedMilliseconds}");
+        exit.ShouldBe(0, $"release graph fixture {outputName}");
+        CheckDeadline($"after graph production (manifest {manifestMilliseconds} ms)");
+
+        void CheckDeadline(string phase)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException($"Release graph {outputName} canceled {phase} at {clock.ElapsedMilliseconds} ms.", cancellationToken);
+        }
     }
 
     private (string Path, string Digest) WriteManifest(string sha, IReadOnlyDictionary<string, string> files,

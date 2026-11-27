@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
+using LibGit2Sharp;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Shouldly;
@@ -13,6 +14,7 @@ namespace Antiphon.Tests.Scripts;
 
 internal sealed class ProvenReplayWorld : IDisposable
 {
+    private static readonly Signature Author = new("Fixture", "fixture@example.invalid", new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero));
     private const string Left = "tests/L/L.csproj";
     private const string Right = "tests/R/R.csproj";
     internal const string Changed = "tests/R/B.cs";
@@ -38,13 +40,14 @@ internal sealed class ProvenReplayWorld : IDisposable
     internal async Task InitializeAsync(CancellationToken cancellationToken, bool includeGateEndpoints = false,
         bool includeRenameEndpoint = false, bool reuseCommit = false)
     {
+        using var setup = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "proof replay setup");
         var clock = Stopwatch.StartNew();
         const string north = "tests/L/A.cs";
         const string leftUse = "tests/L/Use.cs";
         const string rightUse = "tests/R/Use.cs";
-        Directory.CreateDirectory(Repository);
-        Git("init", "-q", "-b", "main");
-        Git("config", "core.autocrlf", "false");
+        using var git = new Repository(LibGit2Sharp.Repository.Init(Repository));
+        git.Refs.UpdateTarget("HEAD", "refs/heads/main");
+        git.Config.Set("core.autocrlf", false);
         using var pack = new ReleaseImpactTypeProofFixture();
         var tunit = pack.Emit("TUnit.Core", ReleaseImpactTypeProofFixture.TUnitAttributes, []);
         const string reader = """
@@ -131,11 +134,11 @@ internal sealed class ProvenReplayWorld : IDisposable
         }
         else
         {
-            await ObserveLeftAsync([files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
+            await ObserveLeftAsync(git, [files[leftUse], files[north], ReleaseImpactTypeProofFixture.TUnitAttributes], pack, cancellationToken);
         }
         if (includeGateEndpoints)
         {
-            Git("checkout", "--detach", _shas[3]);
+            Commands.Checkout(git, git.Lookup<Commit>(_shas[3]));
             Put("Directory.Build.props", files["Directory.Build.props"] = "<Project><!-- hold baseline --></Project>\n");
             Put(Left, files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"../R/R.csproj\" /></ItemGroup></Project>\n");
             Put(Changed, files[Changed] = "namespace South; public class Probe {}\n");
@@ -145,7 +148,7 @@ internal sealed class ProvenReplayWorld : IDisposable
         }
         if (includeRenameEndpoint)
         {
-            Git("checkout", "--detach", _shas[3]);
+            Commands.Checkout(git, git.Lookup<Commit>(_shas[3]));
             files[Left] = "<Project Sdk=\"Microsoft.NET.Sdk\" />\n";
             files["Directory.Build.props"] = "<Project><!-- run 2 --></Project>\n";
             files[Changed] = "namespace South; public class Probe { public int Value; }\n";
@@ -154,6 +157,7 @@ internal sealed class ProvenReplayWorld : IDisposable
             files.Remove(RenamedFrom);
             _renameEndpoint = CommitEndpoint();
         }
+        CheckSetupDeadline("completed fixture setup");
         Console.WriteLine($"C2076 replay fixture=setup alias={_alias} gate={includeGateEndpoints} rename={includeRenameEndpoint} elapsedMs={clock.ElapsedMilliseconds}");
 
         string RightSource(bool changed) => _alias
@@ -162,12 +166,24 @@ internal sealed class ProvenReplayWorld : IDisposable
 
         (string Sha, string Graph) CommitEndpoint()
         {
-            Git("add", "--all");
-            Git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
-            var sha = Git("rev-parse", "HEAD").Trim();
+            CheckSetupDeadline("before committing replay endpoint");
+            string sha;
+            using (TestTiming.BeginPhase(TestPhaseKind.Filesystem, "commit replay endpoint"))
+            {
+                // Fixture commits use libgit2 and preserve Git blob identities.
+                Commands.Stage(git, "*");
+                sha = git.Commit("fixture", Author, Author).Sha;
+            }
+            CheckSetupDeadline("after committing replay endpoint");
             var output = Path.Combine(Repository, ".antiphon", "selector-replay", sha + ".json");
             pack.WriteReleaseGraph(Repository, sha, output, files, contexts, cancellationToken);
             return (sha, output);
+        }
+
+        void CheckSetupDeadline(string phase)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException($"Replay fixture canceled {phase} at {clock.ElapsedMilliseconds} ms of setup.", cancellationToken);
         }
     }
 
@@ -210,7 +226,7 @@ internal sealed class ProvenReplayWorld : IDisposable
         return path;
     }
 
-    private async Task ObserveLeftAsync(string[] sources, ReleaseImpactTypeProofFixture pack, CancellationToken cancellationToken)
+    private async Task ObserveLeftAsync(Repository git, string[] sources, ReleaseImpactTypeProofFixture pack, CancellationToken cancellationToken)
     {
         const string harness = """
             public static class Program
@@ -249,12 +265,23 @@ internal sealed class ProvenReplayWorld : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(changedPath)!);
         for (var run = 2; run <= 3; run++)
         {
-            var actual = Git("show", _shas[run] + ":" + Changed);
+            var actual = ((Blob)git.Lookup<Commit>(_shas[run]).Tree[Changed].Target).GetContentText();
             await File.WriteAllTextAsync(changedPath, actual, cancellationToken);
             if (_alias) Emit([core, pack.Open(pack.Emit("R", actual, []))]);
             string[] keys = ["l1", "l2", "d1"];
-            var execution = await C1514Support.RunProcess(new ProcessStartInfo("dotnet", [entry, ..keys])
-                { WorkingDirectory = output }, cancellationToken);
+            using var observation = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "execute replay case probe");
+            var processClock = Stopwatch.StartNew();
+            (int ExitCode, string Text) execution;
+            try
+            {
+                execution = await C1514Support.RunProcess(new ProcessStartInfo("dotnet", [entry, ..keys])
+                    { WorkingDirectory = output }, cancellationToken);
+            }
+            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new OperationCanceledException($"Replay fixture probe for run {run} canceled after {processClock.ElapsedMilliseconds} ms.",
+                    error, cancellationToken);
+            }
             execution.ExitCode.ShouldBe(run == 3 ? 3 : 0, $"P.absent-reader run {run}: {execution.Text}");
             for (var index = 0; index < keys.Length; index++)
                 if ((execution.ExitCode & (1 << index)) != 0) _observedFailures.Add(keys[index]);
@@ -370,7 +397,6 @@ internal sealed class ProvenReplayWorld : IDisposable
 
     internal static string Digest(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
     private static string RunKey(int run) => run == 0 ? "p0000000" : $"r{run}000000";
-    private string Git(params string[] args) => NightlyRcChain.Git(Repository, args);
     private void Put(string path, string text)
     {
         var full = Path.Combine(Repository, path);

@@ -27229,6 +27229,7 @@
         "ControlledLandingRemovalReadTests",
         "ExpectationObservationAdapterTests",
         "InterimVerificationReadinessTests",
+        "RcProjectSelectionTests",
         "StaleWorkingTranscriptWatchdogTests"
       ]
     },
@@ -29389,6 +29390,7 @@
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
         "ProjectReadinessCollationTests",
+        "RcProjectSelectionTests",
         "RequestedModelAliasDatabaseMigrationTests",
         "ReviewEngineDatabaseMigrationTests",
         "TestTimingChokePointTests",

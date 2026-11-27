@@ -239,6 +239,41 @@ difference between the planned class list and member roster. Inspect the
 matched roster and recorded removed contributions before treating a counted
 carry as a subtraction witness.
 
+### Round 4 deadline repair
+
+Review `b77a4f86` reproduced a CP-3 deadline cancellation at 8.177 s and observed
+a replay setup cancellation at 124.896 s. The replay trace records the first graph
+finishing in 371 ms and cancellation before the second graph begins. This brackets
+the stall to writing the next fixture input and preparing its commit, where the
+fixture used three Git children with unbounded output and exit waits. The trace
+does not identify the precise command or distinguish host scheduling from local I/O.
+The staged graph driver executes in process, and the checkpoint lease covers the host.
+
+Calibration run `20261126-235222-b80f` at
+`a0cab7b58db509542b68dffb09e8bb9e4174a360` used ten separate cold hosts per exact
+method on Debian 12 Linux x64 with 24 visible CPUs and SDK 10.0.404. Review
+`b77a4f86` supplies the demonstrated flake for the ten-loaded-sample exception.
+The competing workload repeatedly rebuilt a 24-project C# compilation pack under
+a separate host slot. One-minute load during the case windows ranged from 18.78 to 40.69.
+Build drivers were visible during 20/20 cases, with a controlled build
+worker directly identified during 19/20. All case slots were granted.
+Maximum admission wait was 30 s, outside the whole-method TRX durations.
+Nearest-rank p95 is the maximum at ten observations. A canceled run bounds its
+unobserved completion time from below. The aggregate outcome retains the cancellations.
+
+| Method | Whole-method samples (s) | Median (s) | Observed p95/max (s) | Deadline (s) |
+|---|---|---:|---:|---:|
+| `BothEndpointProofsPreserveIndependentlyOwedChunks` | 9.143 canceled, 7.123, 4.885, 4.839, 8.280 canceled, 8.240 canceled, 5.022, 5.938, 10.108 canceled, 4.014 | 6.531 | 10.108 | 8 per case |
+| `ProvenSubtractionReplayRefusesUnverifiableOutcomes` | 9.170, 15.559, 13.837, 10.150, 16.239, 7.517, 10.979, 7.556, 16.870, 8.677 | 10.564 | 16.870 | 25 |
+
+Both fixtures prepare their real commits in process. The staged graph driver,
+pinned input validation and replay probe still exercise their existing entry points.
+CP-3 uses three cases for composition and strict origins, roster and proof identity,
+and the independently changed index and removed link. The latter case builds only
+the endpoint graphs those checks consume. Commit, compiler input, graph and probe
+phase timings identify the work around cancellation. The original method deadlines
+apply to each case. The cancellation rows retain their red outcomes.
+
 ### Checkpoints
 
 Portable managed lane for every row, with target-specific compilations/Windows-profile evidence supplied by small fixtures. Both placement routes were checked. Omit runner and platform pins. Each filter binds a known method roster in one class. CP-1 and CP-3 each execute a single exact method. CP-2 and CP-4 select the scenario methods by their shared prefixes. Check every intended method in the fresh TRX. The same-tip S1–S4 Final can reuse one isolated build while preserving the filters and execution floors. At TestDesign keep each decisive positive and its ambiguous or unbound twin reachable through the production entry point.
@@ -247,7 +282,7 @@ Portable managed lane for every row, with target-specific compilations/Windows-p
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | `tests/Antiphon.Tests -> bin-c2076-inputs/` | portable-compiler-inputs | `/*/*/ReleaseImpactEvaluationTests/ProofRequiresBoundCompilerInputs` | D-1/2, complete and tampered compiler inputs | 1 passed, 0 failed or skipped | 1 | 12 | true |
 | CP-2 | S2 | `tests/Antiphon.Tests -> bin-c2076-resolve/` | portable-type-proof | `/*/*/ReleaseImpactRelationTests/UniqueBindingsPruneOnlyTheirOwnContributions*` | D-2, paired matrix and overlapping reasons | 11 passed, 0 failed or skipped | 11 | 12 | true |
-| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c2076-compose/` | portable-chunk-selection | `/*/*/RcProjectSelectionTests/BothEndpointProofsPreserveIndependentlyOwedChunks` | D-3, two trees, chunk and receipt joins | 1 passed, 0 failed or skipped | 1 | 12 | true |
+| CP-3 | S3 | `tests/Antiphon.Tests -> bin-c2076-compose/` | portable-chunk-selection | `/*/*/RcProjectSelectionTests/BothEndpointProofsPreserveIndependentlyOwedChunks` | D-3, two trees, chunk and receipt joins | 3 passed, 0 failed or skipped | 3 | 12 | true |
 | CP-4 | S4 | `tests/Antiphon.Tests -> bin-c2076-replay/` | portable-miss-replay | `/*/*/IncrementalSelectionSoundnessTests/ProvenSubtractionReplay*` | D-4, blind score, nonvacuity and miss records | 5 passed, 0 failed or skipped | 5 | 12 | true |
 | CP-5 | S5 | `tests/Antiphon.Tests -> bin-c2076-cut/` | portable-cut-withdrawal | `/*/*/ReleaseCutTests/WithdrawnTypeProofRequiresFullOnResume` | Default off, approval, miss withdrawal and repaired version | 1 passed, 0 failed or skipped | 1 | 12 | true |
 
