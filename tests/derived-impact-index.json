@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 369,
+      "classes": 370,
       "reason": "allowlist"
     },
     {
@@ -2130,18 +2130,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 146,
+      "classes": 145,
       "reason": "cap",
-      "owed": 121,
+      "owed": 120,
       "first": [
         "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
-        "LinuxServerRestartGateTests",
         "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
         "RunnerLinuxCompilerPolicyTests",
-        "VolumeRetirementApplyGateTests"
+        "VolumeRetirementApplyGateTests",
+        "AntiphonLogsTests"
       ]
     },
     {
@@ -2194,9 +2194,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Infrastructure/DockerStackDocuments.cs",
-      "classes": 59,
+      "classes": 61,
       "reason": "cap",
-      "owed": 34,
+      "owed": 36,
       "first": [
         "CodexGpt62LadderTests",
         "GrokRunnerImageContractTests",
@@ -2274,9 +2274,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/RecordingLauncher.cs",
-      "classes": 59,
+      "classes": 60,
       "reason": "cap",
-      "owed": 34,
+      "owed": 35,
       "first": [
         "ClassCostMeasurementTests",
         "ClaudeSessionCleanupTests",
@@ -2783,7 +2783,6 @@
         "HangfireStorageSelectionTests",
         "IncrementalSelectionSoundnessTests",
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
         "RcInputOwnersMapTests"
       ]
     },
@@ -2990,12 +2989,15 @@
         "AppHostWatchdogTests",
         "AutostartInstallTests",
         "BootstrapCheckTests",
+        "C1744G1DesktopWinComposeTests",
         "DevAspireTests",
         "DevStackTests",
         "DockerStackContractTests",
         "Server2PostgresComposeTests",
         "Server2PostgresDeployTests",
-        "Server2ProductionServerContractTests"
+        "Server2ProductionServerContractTests",
+        "Server2ServerDeployTests",
+        "Server2StagingDeployTests"
       ]
     },
     {
@@ -3088,14 +3090,19 @@
       "classes": [
         "C1744G1DesktopWinComposeTests",
         "Server2ProductionServerContractTests",
-        "Server2SidecarStandingAgentsTests"
+        "Server2ServerDeployTests",
+        "Server2SidecarStandingAgentsTests",
+        "Server2StagingDeployTests"
       ]
     },
     {
       "path": "docker-compose.server2-staging-server.yml",
       "classes": [
+        "C1744G1DesktopWinComposeTests",
         "Server2ProductionServerContractTests",
+        "Server2ServerDeployTests",
         "Server2SidecarStandingAgentsTests",
+        "Server2StagingDeployTests",
         "Server2StagingServerContractTests"
       ]
     },
@@ -3686,8 +3693,7 @@
       "path": "scripts/autostart-apphost.ps1",
       "classes": [
         "AntiphonCliLauncherTests",
-        "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "LinuxServerRestartGateTests"
       ]
     },
     {
@@ -3852,20 +3858,6 @@
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
-      "path": "scripts/deploy-server2-server.ps1",
-      "classes": [
-        "C1744G1DesktopWinComposeTests",
-        "Server2ProductionServerContractTests",
-        "Server2SidecarStandingAgentsTests"
-      ]
-    },
-    {
-      "path": "scripts/deploy-server2-staging-server.ps1",
-      "classes": [
-        "Server2StagingServerContractTests"
       ]
     },
     {
@@ -4139,15 +4131,13 @@
     {
       "path": "scripts/lib/Antiphon.Nightly/AppHostAutostart.cs",
       "classes": [
-        "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "LinuxServerRestartGateTests"
       ]
     },
     {
       "path": "scripts/lib/Antiphon.Nightly/AppHostCommon.cs",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
         "SourceRevisionStampContractTests"
       ]
     },
@@ -4155,7 +4145,6 @@
       "path": "scripts/lib/Antiphon.Nightly/AppHostRestart.cs",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
         "SourceRevisionStampContractTests"
       ]
     },
@@ -4193,15 +4182,13 @@
     {
       "path": "scripts/lib/Antiphon.Nightly/DeployLocal.cs",
       "classes": [
-        "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests"
+        "LinuxServerRestartGateTests"
       ]
     },
     {
       "path": "scripts/lib/Antiphon.Nightly/DevAspire.cs",
       "classes": [
         "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
         "SourceRevisionStampContractTests"
       ]
     },
@@ -4302,6 +4289,13 @@
       "classes": [
         "BuildSlotScriptTests",
         "ProcessSpawnLimitTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/LinuxServerRestart.cs",
+      "classes": [
+        "LinuxServerRestartGateTests",
+        "Server2ProductionServerContractTests"
       ]
     },
     {
@@ -4439,6 +4433,15 @@
       "path": "scripts/lib/Antiphon.Nightly/Server2PostgresDeploy.cs",
       "classes": [
         "Server2PostgresComposeTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/Server2ServerDeploy.cs",
+      "classes": [
+        "Server2ProductionServerContractTests",
+        "Server2ServerDeployTests",
+        "Server2SidecarStandingAgentsTests",
+        "Server2StagingServerContractTests"
       ]
     },
     {
@@ -4756,17 +4759,7 @@
         "LinuxServerRestartGateTests",
         "PhoneHomeBackpressureTests",
         "PlanCatalogServiceTests",
-        "ProcessSpawnLimitTests",
         "ZombieCensusServiceTests"
-      ]
-    },
-    {
-      "path": "scripts/restart-linux-server.ps1",
-      "classes": [
-        "DockerStackDocumentationTests",
-        "LinuxServerRestartGateTests",
-        "ProcessSpawnLimitTests",
-        "Server2ProductionServerContractTests"
       ]
     },
     {
@@ -26103,9 +26096,10 @@
       ]
     },
     {
-      "path": "tests/Antiphon.Tests/Scripts/LinuxServerRestartGateTests.cs",
+      "path": "tests/Antiphon.Tests/Scripts/LinuxServerRestartWorld.cs",
       "classes": [
-        "ProcessSpawnLimitTests"
+        "LinuxServerRestartGateTests",
+        "LinuxServerRestartTests"
       ]
     },
     {
@@ -26888,6 +26882,15 @@
       "classes": [
         "Server2PostgresComposeTests",
         "Server2PostgresDeployTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/Server2ServerDeployWorld.cs",
+      "classes": [
+        "C1744G1DesktopWinComposeTests",
+        "Server2ProductionServerContractTests",
+        "Server2ServerDeployTests",
+        "Server2StagingDeployTests"
       ]
     },
     {
