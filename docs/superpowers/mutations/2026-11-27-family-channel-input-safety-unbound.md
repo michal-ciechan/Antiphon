@@ -1,0 +1,13 @@
+# Family channel input safety mutation candidates
+
+The original Code and landing owner is de62cb52-7fda-4e3c-9fa6-bc1eb3f88a97. Each control is pending for caller-commissioned, method-scoped SourceLanding Mutation. [Checkpoint plan](../plans/2026-11-27-family-channel-input-safety.md).
+
+| ID and variant | Deliberate production change | Exact method filter | Expected red |
+| --- | --- | --- | --- |
+| PC-1 / occupied body | In SessionRunnerRuntime.CheckComposerInput, permit a new body with an occupied composer. | `/*/*/ClaudeDialogInputGuardTests/VerifiedAdoptionRefusesBodyWhenAnOperatorHasDrafted` | An occupied composer authorizes a channel body write. |
+| PC-1 / edited draft | In SessionRunnerRuntime.CheckComposerInput, authorize Enter when the rendered draft differs from the expected draft. | `/*/*/ClaudeDialogInputGuardTests/GuardedEnterRefusesAnEditBetweenPasteAndSubmit` | Enter reaches the backend after the edit. |
+| PC-1 / foreign paste token | In SessionRunnerRuntime.CheckComposerInput, allow a collapsed paste token without the owning write. | `/*/*/ClaudeDialogInputGuardTests/CollapsedPasteRequiresTheUninterruptedOwningWrite` | A displayed token from a different write authorizes Enter. |
+| PC-2 / revert the uncertain channel attempt | Exclude Claude channel attempts from SessionMessageQueueService.UnresolvedInputAttempts so the aged interrupted path can retry them from an empty composer. | `/*/*/ChannelInputWithheldIncidentTests/ChannelEnterAcceptedBeforeInterruptionReconcilesWithoutRetyping` | Recovery writes a second channel body before transcript catch-up. |
+| PC-3 / admit an early retry | In SessionMessageQueueService.ScheduleChannelRetryAfterWithholdAsync, stamp the current time as the deadline. | `/*/*/ChannelInputWithheldIncidentTests/NewInboundCannotBypassTheWithheldChannelRetrySchedule` | An inbound before the deadline reaches the conditional writer. |
+| PC-4 / lose the continuation decision | In AgentSessionRuntime.WriteRestartBoundaryIfInterruptedAsync, omit the due marker when appending an interrupted channel boundary. | `/*/*/AgentSessionLaunchFailureTests/InterruptedChannelContinuationSurvivesCrashAfterBoundaryCommit` | The crash leaves the boundary without a continuation for the retry. |
+| PC-5 / skip native history verification | In SessionRunnerRuntime.VerifyAdoptedDialogHistory, drop the production check of the current idle transcript binding before marking a stable composer verified. | `/*/*/ClaudeDialogInputGuardTests/AdoptedClaudeRequiresOwnedCompletedTurnAndEmptyComposer` | The guarded writer admits input while the reader is behind. |
