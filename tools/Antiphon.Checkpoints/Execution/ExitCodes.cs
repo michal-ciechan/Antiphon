@@ -11,6 +11,7 @@ public static class ExitCodes
     public const int ExecutorCrashed = 6;
     public const int OwnerEnded = 7;
     public const int RestoreFailed = 8;
+    public const int DiskLow = 9;
     public const int StillRunning = 75;
     // Caller cancellation is a command/executor outcome, not a row precedence.
     public const int Canceled = 130;

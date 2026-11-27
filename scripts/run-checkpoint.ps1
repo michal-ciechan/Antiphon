@@ -21,7 +21,7 @@
     Exit codes: 0 green; 1 one or more failed tests; 2 invalid input, a dirty tracked tree, a detected tracked change, a
     failed build, no TRX or ineligible source; 3 fewer than -MinExecuted executed tests, or an -Expect token that matched
     no executed name; 4 no host build slot within -SlotWaitMinutes (nothing was built or run); 9 the CLI or the tool could
-    not be built or started (one stderr line).
+    not be built or started, or the launch filesystem has less than 20 GiB available (one stderr line).
 
     Owner: docs/testing-and-build.md, "Checkpoint manifest (CARD-0585)". ASCII-only.
 #>
@@ -48,6 +48,15 @@ $ErrorActionPreference = 'Stop'
 
 # Every value goes over as given (-Verbatim): a trailing backslash or quote characters are the row's to judge.
 $location = (Get-Location -PSProvider FileSystem).ProviderPath
+foreach ($path in @($PSScriptRoot, $location, [IO.Path]::GetTempPath())) {
+    $drivePath = if ($IsWindows) { [IO.Path]::GetPathRoot($path) } else { $path }
+    try { $free = [IO.DriveInfo]::new($drivePath).AvailableFreeSpace }
+    catch { continue }
+    if ($free -lt 20GB) {
+        [Console]::Error.WriteLine("checkpoints: workspace_disk_low: $path has $free bytes available. Free at least 20 GiB before retrying.")
+        exit 9
+    }
+}
 $invariant = [Globalization.CultureInfo]::InvariantCulture
 $results = $location
 if (-not [string]::IsNullOrEmpty($ResultsRoot)) { $results = [IO.Path]::GetFullPath($ResultsRoot, $location) }

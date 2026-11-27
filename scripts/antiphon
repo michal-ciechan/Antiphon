@@ -14,6 +14,19 @@ esac
 root=$(CDPATH= cd -- "$here/.." && pwd) || exit 9
 cache="$root/bin-launcher/antiphon-scripts"
 
+case "${1-}:${2-}" in
+	checkpoints:row|checkpoints:run|checkpoints:start)
+		# Check before creating the bootstrap cache or starting dotnet.
+		for path in "$root" "$PWD" "${TMPDIR:-/tmp}"; do
+			free=$(LC_ALL=C df -Pk "$path" 2>/dev/null | awk 'NR == 2 && $4 ~ /^[0-9]+$/ { print $4 }')
+			if [ -n "$free" ] && [ "$free" -lt 20971520 ]; then
+				echo "checkpoints: workspace_disk_low: $path has ${free} KiB available. Free at least 20 GiB before retrying." >&2
+				exit 9
+			fi
+		done
+		;;
+esac
+
 resolve() {
 	dll=
 	id=

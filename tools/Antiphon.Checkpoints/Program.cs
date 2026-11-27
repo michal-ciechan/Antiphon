@@ -94,6 +94,9 @@ public static class Program
         if (verb == "validate")
             return Validate(options, options.Get("repo-root") ?? runtime.RepoRoot ?? TryFindRoot(context) ?? context.Io.CurrentDirectory, runtime);
         var repo = options.Get("repo-root") ?? runtime.RepoRoot ?? RepoPaths.FindRoot(context: context);
+        if (verb is "row" or "run" or "start"
+            && RefuseLowDisk(runtime.Output ?? Console.Error, repo, Path.GetTempPath(), ResultsRoot(options, repo)))
+            return ExitCodes.DiskLow;
         switch (verb)
         {
             case "coverage":
@@ -122,6 +125,31 @@ public static class Program
                 Console.Error.WriteLine("unknown verb " + verb);
                 return ExitCodes.Invalid;
         }
+    }
+
+    private static bool RefuseLowDisk(TextWriter output, params string[] paths)
+    {
+        const long minimumFreeBytes = 20L << 30;
+        foreach (var path in paths)
+        {
+            var full = Path.GetFullPath(path);
+            var existing = full;
+            while (!Directory.Exists(existing) && Path.GetDirectoryName(existing) is { } parent)
+                existing = parent;
+            try
+            {
+                var drive = new DriveInfo(OperatingSystem.IsWindows() ? Path.GetPathRoot(full)! : existing);
+                var free = drive.AvailableFreeSpace;
+                if (free >= minimumFreeBytes)
+                    continue;
+                output.WriteLine($"checkpoints: workspace_disk_low: {path} has {free} bytes available. Free at least 20 GiB before retrying.");
+                return true;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (ArgumentException) { }
+        }
+        return false;
     }
 
     private static int Hold(string[] args)
