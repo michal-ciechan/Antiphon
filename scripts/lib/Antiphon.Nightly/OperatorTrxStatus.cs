@@ -176,11 +176,12 @@ namespace Antiphon.Nightly
                     + string.Join(", ", unknown.Take(BiggestChunkCount)) + (unknown.Length > BiggestChunkCount ? " and " + (unknown.Length - BiggestChunkCount) + " more" : "") + ".");
             if (known.Length > 0 || remaining.Length == 0)
             {
+                var observationMillisecond = DateTimeOffset.FromUnixTimeMilliseconds(now.ToUnixTimeMilliseconds());
                 var projectedMilliseconds = Math.Round(baselineSeconds * ratio * 1000);
-                p50 = Finish(now, projectedMilliseconds, errors);
+                p50 = Finish(observationMillisecond, projectedMilliseconds, errors);
                 if (p50 != null) point = projectedMilliseconds / 1000;
                 if (upperRatio.HasValue)
-                    p95 = Finish(now, Math.Round(baselineSeconds * upperRatio.Value * 1000), errors);
+                    p95 = Finish(observationMillisecond, Math.Round(baselineSeconds * upperRatio.Value * 1000), errors);
             }
 
             var confidence = point == null ? "unavailable" : upperRatio == null ? "provisional" : "matched";
