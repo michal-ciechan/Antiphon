@@ -31,8 +31,7 @@ for command in dotnet npm curl pwsh docker; do
     printf '#!/bin/sh\nprintf "DENIED %%s\\n" "$0" >> "$C913_ROOT/denied"\nexit 93\n' > "$root/bin/$command"
     chmod 755 "$root/bin/$command"
 done
-# Preserve the actual interpreter for the admitted saved-import child; every other invocation is denied.
-pwsh_path=$(command -v pwsh)
+# Every invocation is denied; unit 68 made the admitted saved-import child the host CLI's command (the stand-in below).
 export PATH="$root/bin:$PATH"
 # Canonical design witnesses annotate the existing predicate that failed.
 # This changes diagnostics only; no predicate or refusal is bypassed.
@@ -281,8 +280,16 @@ docker() {
           echo helper; return
         fi
         if [ "$entrypoint" = npm ]; then [ "$FAULT" != npm-verify ] || return 1; barrier after-npm-verify; return; fi
-        if [ "$entrypoint" = pwsh ]; then
-          "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage" || return $?; barrier after-saved-copy; return
+        if [ "$entrypoint" = dotnet ]; then
+          # Unit 68: the saved import is the host-published CLI's c849-import-saved-donor, read-only at /opt/antiphon-cli (in process
+          # in C849SavedDonorImportTests, every refusal and the mode masking captured from the deleted script). This boundary checks
+          # the call and copies the donor's two roots as the command does for a packages/ npm/ donor.
+          [ "${*: -7}" = 'exec /opt/antiphon-cli/Antiphon.Scripts.dll c849-import-saved-donor --source /saved --stage /stage' ] || return 97
+          [[ " ${mappings[*]} " == *" /opt/antiphon-cli|$C849_CLI_DIR "* ]] || return 97
+          if [ -d "$C590_SAVED_DONOR" ]; then cp -a "$C590_SAVED_DONOR/." "$stage/" || return 2
+          else tar --no-overwrite-dir -xf "$C590_SAVED_DONOR" -C "$stage" || return 2; fi
+          find "$stage" -type f -perm /7000 -exec chmod ug-s,o-t {} +
+          barrier after-saved-copy; return
         fi
         if [ "$entrypoint" = sha256sum ]; then code="sha256sum ${!#}"; fi
         if [ -z "$code" ]; then code=$(cat); if [ "${@: -2:1}" = -- ]; then script_args=("bash" "${@: -1}"); fi; fi
@@ -671,14 +678,8 @@ case "$mode" in
       esac
       run c849_validate_seed_tree "$root/stage"; refuse "$fault-refused" "$diagnosis"
     done
-    ordinary "$root/mode-source"
-    chmod 6751 "$root/mode-source/packages/c913.tools/2.0.0/tool"
-    tar -cf "$root/mode.tar" -C "$root/mode-source" .
-    mkdir -p "$root/mode-stage/packages" "$root/mode-stage/npm"
-    run "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/mode.tar" -Stage "$root/mode-stage"
-    accept unsafe-mode-imported
-    [ "$(stat -c %a "$root/mode-stage/packages/c913.tools/2.0.0/tool")" = 751 ] || fail unsafe-mode-masked
-    pass unsafe-mode-masked
+    # Unit 68: unsafe-mode-imported and unsafe-mode-masked ran scripts/c849-import-saved-donor.ps1 in pwsh on a 6751 tool; the
+    # command masks to 0777 (C849SavedDonorImportTests: the tar-basic, tar-dir-modes-not-applied and dir-basic captures).
     ;;
  seed)
     ordinary "$root/donor"

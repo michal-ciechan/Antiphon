@@ -2101,11 +2101,14 @@ c849_saved_copy() {
         && [ "$(realpath -e -- "$source" 2>/dev/null)" = "$source" ] \
         && { [ -f "$source" ] || [ -d "$source" ]; } \
         || { printf 'CacheSavedDonorInvalid\n'; return 2; }
-    diagnosis="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint pwsh \
+    # Unit 68: the import is the host-published CLI's c849-import-saved-donor (C849SavedDonorImport), mounted read-only; the
+    # bridge no longer copies scripts/c849-import-saved-donor.ps1 here. Its stdout is the diagnosis, as the script's was.
+    c849_cli || { printf 'CacheSavedDonorReadFailed\n'; return 2; }
+    diagnosis="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint dotnet \
         --mount "type=bind,source=$source,target=/saved,readonly" \
         --mount "type=bind,source=$stage,target=/stage" \
-        --mount "type=bind,source=$ROOT/c849-import-saved-donor.ps1,target=/import.ps1,readonly" \
-        "$image" -NoProfile -File /import.ps1 -Source /saved -Stage /stage)" \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
+        "$image" exec /opt/antiphon-cli/Antiphon.Scripts.dll c849-import-saved-donor --source /saved --stage /stage)" \
         || { printf '%s\n' "${diagnosis:-CacheSavedDonorReadFailed}"; return 2; }
 }
 

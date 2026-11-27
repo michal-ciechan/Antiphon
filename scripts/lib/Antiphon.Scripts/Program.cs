@@ -315,10 +315,12 @@ namespace Antiphon.Scripts
             // The W10 retirement and cache-check entries (unit 67). verify-card0849-caches: exit 0 accepted, 1 refused (one stderr
             // line). retire-runner-volumes: 0 closed or the manual phase done, 2 refused (one TempRetirementCloseRefused or
             // TempRetirementManualRefused line), 1 a thrown error. c1609-read-packet: 0 printed, 1 a refused packet, 2 a refused send.
+            // c849-import-saved-donor (unit 68, inside the runner image): 0 imported, 2 one Cache* diagnosis on stdout.
             // Usage is 2 for each.
             [RetirementCommands.VerifyCaches] = RetirementCommands.RunVerifyCaches,
             [RetirementCommands.RetireVolumes] = RetirementCommands.RunRetireVolumes,
             [RetirementCommands.ReadPacket] = RetirementCommands.RunReadPacket,
+            [RetirementCommands.ImportSavedDonor] = RetirementCommands.RunImportSavedDonor,
             // The desktop deploy answers every input itself (unit 49). deploy-local: exit 0 DEPLOY VERDICT: ok, 1 failed (a step's
             // failure, the restart and the verification included), 3 refused (a linked or unverifiable worktree; nothing touched).
             // Usage is 2.

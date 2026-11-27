@@ -1788,7 +1788,12 @@ no containers, all cache volumes must have no attached containers, and the build
 must be idle. Seed checks volume identities, complete generic package versions, npm
 integrity and a leased uid-1654 native apphost build using image packs and private
 empty caches. At least one complete ordinary version is required; incomplete versions
-are removed only from staging. The saved archive stays untouched.
+are removed only from staging. The saved archive stays untouched. The import is the
+`c849-import-saved-donor` command of server2's host-published CLI, run inside the image with only the
+donor (read-only), the private stage and the CLI (read-only) mounted (unit 68; it was
+`scripts/c849-import-saved-donor.ps1` under pwsh). As before, an archive member with no bytes (NuGet's
+`_._` placeholders, for example) fails the archive import with `CacheSavedDonorReadFailed`; a directory
+donor copies empty files.
 
 New full markers use schema 3 and bind a deterministic NUL-delimited recovery manifest
 with a SHA-256 digest. The manifest includes both package and npm trees, regular-file
