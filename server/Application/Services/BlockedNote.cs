@@ -124,12 +124,11 @@ internal static class BlockedNote
 
         var next = authority is null
             ? $"""
-              next: reply {shortId} "<answer>" if you can answer it; otherwise put `asks:` in your reply to
-                    the chat now — do not answer this note with NO_REPLY
+              next: reply {shortId} "<decision>" using the recommended action. Escalate only repository-defined hard stops.
               """
             : $"""
-              next: scripts/antiphon delegate continue {shortId}  — replays the authority as the answer
-                    or reply {shortId} "<answer>" · or relay `asks:` to your chat now and end your turn
+              next: scripts/antiphon delegate continue {shortId} — replay applicable standing authority
+                    or reply {shortId} "<decision>". Escalate only repository-defined hard stops.
               """;
 
         return string.Join('\n',

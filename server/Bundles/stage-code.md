@@ -16,7 +16,7 @@ Report every PC-n/variant pending for Mutation. Mutation owns deliberate mutants
 
 next: review when implementation and ordinary V/R are complete, even with zero PCs. unbound candidate docs/superpowers/mutations/. Restart: server/runner/none.
 
-next: code; decide for a blocking human choice. Never next: land/deploy. Caller commissions SourceLanding Mutation.
+next: code; decide for caller triage. Never next: land/deploy. Caller commissions SourceLanding Mutation.
 
 MIGRATION: additive, sorted after master's latest; Down fails safely. Run migrations row (downgrade selector, model classes); report red/green counts
 Platform: GET /api/runner-defaults, /api/session-runners. Do not embed a fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.

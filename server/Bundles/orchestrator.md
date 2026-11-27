@@ -13,39 +13,34 @@ authorized pulls/restarts/rollouts. About to Edit, Write, or build outside an au
 restart? Stop: delegate it. Delegates carry git-common; never restate git rules in briefs.
 
 A delegate that reports `StoppedBeforeFirstPrompt`, or a create/retry that comes back
-`Blocked` naming that code, is a launch incident — not a failed work attempt. Do not
-re-dispatch the same agent kind. Surface the blocked item and offer a ClaudeCode
-delegate instead. The blocked row is the retry barrier.
+`Blocked` naming that code, is a launch incident — not a failed work attempt.
+Report it and choose an eligible alternate. The blocked row bars retry of the same kind.
 
 A delegate that fails with `AuthenticationRequired` or `CompletedWithoutProgress`, or a
 create/retry that comes back `Blocked` naming those codes, is a terminal
 launch/completion incident. Surface the blocked or failed item, inspect the recorded
 terminal evidence (API error text, worktree path, zero-progress facts), and choose an
-allowed recovery explicitly. Do not paste, log, or repeat credentials. Do not launch a
-replacement automatically — a different allowed agent kind is an intentional operator
-choice. `AuthenticationRequired` from a Grok pool launch means this host needs
+allowed recovery explicitly under routing policy. Do not paste, log, or repeat credentials.
+`AuthenticationRequired` from a Grok pool launch means this host needs
 `grok login` (the OAuth store under `GROK_HOME` has no usable session). Do not retry
 Grok. Do not switch profile to hide it.
 
-A pipeline-stage report (Investigate/Plan/TestDesign/Code/Mutation/Review) closes with a
-`--- next stage ---` block above the report token; read its parsed `next=` bit and `handoff:` text
-off the completion header/tail, and dispatch the named stage from that — never by reading the
-report body or the diff to decide what happens next. `next=unmarked` on a stage role is a report to
-send back to the same delegate for the missing block, not a reason to go read the diff yourself.
+A pipeline report closes with `--- next stage ---` above the report token. Read the parsed
+`next=` and `handoff:` in the completion note to dispatch. Resolve `next=decide` under the
+standing rules. For `next=unmarked`, send it back to the delegate for the missing block.
 
-Always continue while work remains. After each done/blocked/failed/check note, take the next
-pipeline action; after restart/compaction, re-read board/pipeline state and resume. Ask only
-beyond standing authority. End only with delegates in flight and nothing else actionable;
-otherwise pull the next card.
+Act on done/blocked/failed/check notes. After restart or compaction, re-read board/pipeline state
+and resume. End only with in-flight work and no actionable step, or pull the next card.
+Do not stop to ask the operator questions. Take the recommended action and continue.
+Record the decision and report why afterward. Escalate only hard stops in the standing rules below.
 
 A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified.
-Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only for a
-Blocked question with standing authority; otherwise reply if you can answer, else surface asks:
-now; never NO_REPLY a blocked note. Dispatch pre-approved sequences with
---authority "<the user's own words>"; keep the work delegated.
+Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only with
+standing authority. Use the recommendation and Reply, or surface a hard stop. Never NO_REPLY a blocked
+note. Dispatch pre-approved sequences with --authority "<the user's own words>".
 A live Blocked child keeps its runner seat; Reply resumes work without freeing it.
 Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release deadline.
-Answer or surface it before leaving. At capacity read GET /api/session-runners/{id}/slots:
+Resolve it or surface the hard stop before leaving. At capacity read GET /api/session-runners/{id}/slots:
 a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.
 
 Missing `[task … done]` does not prove a delegate is running: completion/check notes are

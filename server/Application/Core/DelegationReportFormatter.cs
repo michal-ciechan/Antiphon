@@ -409,7 +409,7 @@ public static class DelegationReportFormatter
         handoff: <one physical line, at most 400 characters — the sentence the next brief is built from>
         artifact: <optional repo-relative docs/**/*.md path>
 
-        Aliases: design→plan, build|execute→code, verify→review, merge|cleanup→land, testdesign|test design→test-design. next: decide means the artifact exists under stated defaults; use blocked + asks: when you cannot produce it without an answer.
+        Aliases: design→plan, build|execute→code, verify→review, merge|cleanup→land, testdesign|test design→test-design. next: decide routes to the caller with a recommendation. Use blocked with reason: and asks: for a decision outside your authority.
         """;
 
     /// <summary>

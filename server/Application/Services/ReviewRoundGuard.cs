@@ -7,8 +7,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-1647 item 1 (CARD-1635 item 4). docs/orchestration-loop.md#review-rounds caps code Review at
-/// three rounds per subject and stops for the operator after round 3. The server cannot tell which
+/// CARD-1647 item 1 (CARD-1635 item 4). docs/orchestration-loop.md#review-rounds caps the ordinary
+/// Review loop at three rounds per subject and assigns disposition to the orchestrator. The server cannot tell which
 /// subject a new Review reviews, so it flags rather than refuses: a brief that declares round 4 or
 /// later, or an undeclared Review on a card that already has three completed Reviews. The warning
 /// reaches the caller at creation and the task timeline; it never blocks the dispatch.
@@ -39,15 +39,15 @@ public static partial class ReviewRoundGuard
 
     public static string? Evaluate(string? cardIdentifier, string goal, IReadOnlyList<string> completedReviewShortIds)
     {
-        const string stop = "Review rounds stop at three per subject (docs/orchestration-loop.md#review-rounds): "
-            + "surface the open blockers and the unreviewed range to the operator (next: decide) instead of another round.";
+        const string disposition = "The ordinary Review loop ends after round 3 (docs/orchestration-loop.md#review-rounds). "
+            + "Send the blocker, the unreviewed range and your recommendation to the orchestrator (next: decide).";
         if (DeclaredRound(goal) is { } declared)
-            return declared > MaxRounds ? $"{Code}: this Review brief declares round {declared}. {stop}" : null;
+            return declared > MaxRounds ? $"{Code}: this Review brief declares round {declared}. {disposition}" : null;
         if (completedReviewShortIds.Count < MaxRounds)
             return null;
         return $"{Code}: {cardIdentifier ?? "this card"} already has {completedReviewShortIds.Count} completed Review tasks "
             + $"({string.Join(", ", completedReviewShortIds)}) and this brief declares no round. If they reviewed this subject "
-            + $"this is round {completedReviewShortIds.Count + 1}. {stop}";
+            + $"this is round {completedReviewShortIds.Count + 1}. {disposition}";
     }
 
     public static async Task<string?> EvaluateAsync(

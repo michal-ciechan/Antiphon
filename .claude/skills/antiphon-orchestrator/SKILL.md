@@ -22,15 +22,16 @@ branch. It must advance the owned branch by fast-forward pushes. Land performs t
 use a fresh task with `--start-ref` when a different base is needed. A confirmation-only step is a
 Review task, not a Code task requiring new attributed progress (CARD-0779).
 
-A live Blocked child keeps its runner seat; an accepted Reply resumes work and does not itself free the seat. Answer it within the session or surface the missing decision before leaving; do not leave one overnight. At capacity, read GET /api/session-runners/{id}/slots: orphan=true is not a count of free seats; a live Blocked owner reads orphan=false with its park field. BlockedTaskParking:Enabled and TerminalRunnerSeatRelease:AutomaticEnabled default to false; do not count a live Blocked seat free until its release is confirmed. An Exited or Failed status, or absence from a listed catalogue, drops that seat. Parking never stops a Working session (CARD-1083).
+A live Blocked child keeps its runner seat; an accepted Reply resumes work and does not itself free the seat. Decide and Reply within the session, or surface a human-only hold before leaving. At capacity, read GET /api/session-runners/{id}/slots: orphan=true is not a count of free seats; a live Blocked owner reads orphan=false with its park field. BlockedTaskParking:Enabled and TerminalRunnerSeatRelease:AutomaticEnabled default to false; do not count a live Blocked seat free until its release is confirmed. An Exited or Failed status, or absence from a listed catalogue, drops that seat. Parking never stops a Working session (CARD-1083).
 
 Use `reply` for a Blocked answer, `continue` only for a question with standing authority, and `refine` only for Queued, Dispatched or Working tasks. Follow docs/session-runtime-invariants.md for released-park admission and prerequisite publication.
 
 The owner is `docs/orchestration-loop.md` §1, "Standing pipeline policy" (CARD-0533); this is the
 short form.
 Operator standing operating rules (failures get a Debug task, in-flight target on the landing host, no land from an Interim Review, minimal testing, master lands are not activation, reviewed rc ports; never Reply to a complete report Blocked only by runner sync, Reply only for a missing report and ask for the full report): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
+On a card, take the recommended action, record the decision and why, and continue. Surface only the hard stops in the standing operating rules.
 Fast-track lane (operator 2026-11-20): [Fast-track lane](../../../docs/orchestration-loop.md#fast-track-lane-operator-2026-11-20).
-Review rounds (round 1 full; rounds 2 and 3 only the diff from the previous reviewed SHA, round 3 blockers only; a blocker left after round 3 stops for the operator, no round 4; lows become cards; fix briefs state the invariant; every fix has a red-first witness; a `review_round_limit` create warning flags a fourth round): [Review rounds](../../../docs/orchestration-loop.md#review-rounds) (CARD-1635). Each Review brief states the round, the previous reviewed SHA, the exact range and the stringency. Each Review brief names the [Review test-quality checklist](../../../docs/testing-and-build.md#review-test-quality-checklist) (CARD-1809 R1-R5) for the tests in its range.
+Review rounds (round 1 full; rounds 2 and 3 cover only the diff from the previous reviewed SHA, round 3 blockers only; record the orchestrator's disposition at the cap; lows become cards; fix briefs state the invariant; every fix has a red-first witness): [Review rounds](../../../docs/orchestration-loop.md#review-rounds) (CARD-1635). Each Review brief states the round, the previous reviewed SHA, the exact range and the stringency. Each Review brief names the [Review test-quality checklist](../../../docs/testing-and-build.md#review-test-quality-checklist) (CARD-1809 R1-R5) for the tests in its range.
 For AppHost and runner restarts or server2 rollouts without human confirmation, follow [orchestrator operational autonomy](../../../docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout).
 During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed), then send new work to `server2` and start `drain-temp`; there must always be a server2 accepting work, and the orchestrator never drops below its in-flight target (6) for a rollout ([continuous dispatch](../../../docs/docker-stack.md#continuous-dispatch-during-rollout)).
 For a desktop runner restart use `scripts/antiphon restart-session-runner` (`--hard` only for a planned supervisor refresh; `--kill-sessions` is human-only); check `logs/apphost.restart.lock` and `logs/apphost.launch.lock` first, and inspect AppHost exit 3 before retrying.
@@ -77,7 +78,7 @@ For a desktop runner restart use `scripts/antiphon restart-session-runner` (`--h
 ## 1. Dispatch the next stage from the completion header, never the report body
 
 Every stage report ends with a `--- next stage ---` block naming `next:` and `handoff:`. Dispatch
-exactly that stage next. Write the new goal file referencing the prior task's branch/commit and
+that stage next or resolve `decide` under the standing operating rules. Write the new goal file referencing the prior task's branch/commit and
 the handoff text — don't re-derive it by reading the report prose.
 
 Goal text always goes through a file (`Write` a scratchpad `.md`, then pass it as

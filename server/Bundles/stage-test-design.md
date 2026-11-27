@@ -28,4 +28,4 @@ One isolated build + exact filter per row; union=whole ordinary scope. Min=--min
 - Ordinary V/R floor (Code)=sum EstimatedMinutes; PC floor (Mutation). Name filters/minutes. Total=build/setup+V/R+PC red/restore/green; label estimated/measured; quantify savings or justify zero.
 
 Before handoff: guards=N, mapped=N, missing=0, duplicate PC maps=0; all PCs run; numeric Cost.
-next: code when complete; plan for unverifiable seams; decide for human choices. Commit and push plan.
+next: code when complete; plan for unverifiable seams; decide for caller triage. Commit and push plan.

@@ -657,6 +657,8 @@ public class InstructionBundleTests
         text.ShouldContain("never a \"next step\" to offer");
         text.ShouldContain("FORWARD slash");
         text.ShouldContain("PRE-EXISTING RED");
+        text.ShouldContain("end Blocked with reason: and asks: recommending an action for caller Reply");
+        text.ShouldContain("Never end with an open question.");
 
         // The line between a rule and today's state, which is the reason this directory exists: a
         // bundle carrying either of these would be WRONG tomorrow, and wrong for every agent at once.
@@ -1070,14 +1072,13 @@ public class InstructionBundleTests
         var text = Collapse(InstructionBundles.TextOf(InstructionBundles.Orchestrator));
         const string report =
             "A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified. "
-            + "Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only for a "
-            + "Blocked question with standing authority; otherwise reply if you can answer, else surface asks: "
-            + "now; never NO_REPLY a blocked note. Dispatch pre-approved sequences with "
-            + "--authority \"<the user's own words>\"; keep the work delegated.";
+            + "Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only with "
+            + "standing authority. Use the recommendation and Reply, or surface a hard stop. Never NO_REPLY a blocked "
+            + "note. Dispatch pre-approved sequences with --authority \"<the user's own words>\".";
         const string seat =
             "A live Blocked child keeps its runner seat; Reply resumes work without freeing it. "
             + "Parking defaults off (BlockedTaskParking:Enabled=false); do not assume a release deadline. "
-            + "Answer or surface it before leaving. At capacity read GET /api/session-runners/{id}/slots: "
+            + "Resolve it or surface the hard stop before leaving. At capacity read GET /api/session-runners/{id}/slots: "
             + "a live Blocked owner reads orphan=false with its park field; orphan=true is not a count of free seats.";
         const string refine =
             "Steer Queued, Dispatched or Working tasks with refine <taskId> \"one sentence\". "
