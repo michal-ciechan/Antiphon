@@ -107,6 +107,7 @@ internal static class RemoteScriptContractSupport
     private static (int Exit, string Output, string Error) RunWindowsShell(string executable, string input)
     {
         var scratch = Directory.CreateTempSubdirectory("antiphon-remote-shell-");
+        Exception? shellFailure = null;
         try
         {
             var inputPath = Path.Combine(scratch.FullName, "stdin");
@@ -120,18 +121,30 @@ internal static class RemoteScriptContractSupport
                 180_000, logPath, null, hooks).Completion.GetAwaiter().GetResult();
             Console.WriteLine(FormattableString.Invariant(
                 $"REMOTE_SHELL_EXIT exit={result.ExitCode}; launch-ms={result.LaunchMilliseconds:F0}; execution-ms={result.ExecutionMilliseconds:F0}; cleanup-ms={result.CleanupMilliseconds:F0}; drain-ms={result.DrainMilliseconds:F0}; terminated-job={result.TerminationRequested}"));
+            var members = result.DescendantIdentities.Zip(result.DescendantImages, (identity, image) => image + "=" + identity)
+                .Prepend(FormattableString.Invariant($"wsl={result.Pid}:{result.RootStartedAtUtc:O}"));
+            Console.WriteLine($"REMOTE_SHELL_CUSTODY job-empty={result.JobEmptyObserved}; remaining={result.RemainingProcessCount}; members={string.Join(",", members)}");
             if (result.TimedOut)
                 throw new TimeoutException("the WSL shell harness exceeded its launch or output-drain budget: " + result.Error);
-            if (!result.CleanupComplete || !string.IsNullOrEmpty(result.Error))
+            if (!result.CleanupComplete || !result.JobEmptyObserved || !string.IsNullOrEmpty(result.Error))
                 throw new InvalidOperationException("WSL shell custody failed: " + result.Error);
 
             var log = File.ReadAllBytes(logPath);
             var outputBytes = checked((int)result.StandardOutputBytes);
             return (result.ExitCode, ReadText(log, 0, outputBytes), ReadText(log, outputBytes, log.Length - outputBytes));
         }
+        catch (Exception ex)
+        {
+            shellFailure = ex;
+            throw;
+        }
         finally
         {
-            scratch.Delete(recursive: true);
+            try { scratch.Delete(recursive: true); }
+            catch (Exception ex) when (shellFailure != null && (ex is IOException || ex is UnauthorizedAccessException))
+            {
+                Console.WriteLine("REMOTE_SHELL_SCRATCH_CLEANUP_FAILED " + ex.Message);
+            }
         }
     }
 

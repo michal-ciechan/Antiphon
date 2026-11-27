@@ -88,6 +88,12 @@ namespace Antiphon.Nightly
     {
         internal const int DefaultCleanupTimeoutMilliseconds = 15000;
         private const int OutputDrainTimeoutMilliseconds = 15000;
+        private const int ParentProcessAttribute = 0x20000;
+        private const int HandleListAttribute = 0x20002;
+        private const uint CreateSuspended = 0x4;
+        private const uint CreateUnicodeEnvironment = 0x400;
+        private const uint ExtendedStartupInfoPresent = 0x80000;
+        private const uint CreateNoWindow = 0x08000000;
         private readonly CancellationTokenSource _drainCancellation = new CancellationTokenSource();
         private readonly NativeProcessHooks _hooks;
         private readonly Dictionary<int, Process> _descendants = new Dictionary<int, Process>();
@@ -130,6 +136,9 @@ namespace Antiphon.Nightly
             IntPtr job = IntPtr.Zero, root = IntPtr.Zero, thread = IntPtr.Zero;
             IntPtr outRead = IntPtr.Zero, outWrite = IntPtr.Zero, errRead = IntPtr.Zero, errWrite = IntPtr.Zero;
             IntPtr inputRead = IntPtr.Zero, inputWrite = IntPtr.Zero, attributes = IntPtr.Zero, handleList = IntPtr.Zero, envBlock = IntPtr.Zero;
+            IntPtr parentAttribute = IntPtr.Zero;
+            ProcessInfo carrier = default;
+            bool attributesInitialized = false;
             ReaderWork stdout = null, stderr = null;
             Task logWrite = null;
             Stopwatch drain = null;
@@ -155,25 +164,48 @@ namespace Antiphon.Nightly
                 var limits = new ExtendedLimits();
                 limits.Basic.LimitFlags = 0x2000; // KILL_ON_JOB_CLOSE only; no breakaway.
                 Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()), "SetInformationJobObject");
-                Pipe(out outRead, out outWrite, true);
-                Pipe(out errRead, out errWrite, true);
-                using var inputFile = string.IsNullOrEmpty(_hooks.StandardInputPath) ? null
-                    : new FileStream(_hooks.StandardInputPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Inheritable);
-                if (inputFile == null) Pipe(out inputRead, out inputWrite, false);
-                IntPtr childInput = inputFile?.SafeFileHandle.DangerousGetHandle() ?? inputRead;
-                IntPtr size = IntPtr.Zero;
-                InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
-                attributes = Marshal.AllocHGlobal(size);
-                Check(InitializeProcThreadAttributeList(attributes, 1, 0, ref size), "InitializeProcThreadAttributeList");
-                handleList = Marshal.AllocHGlobal(IntPtr.Size * 3);
-                Marshal.WriteIntPtr(handleList, 0, childInput);
-                Marshal.WriteIntPtr(handleList, IntPtr.Size, outWrite);
-                Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, errWrite);
-                Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)0x20002, handleList, (IntPtr)(IntPtr.Size * 3), IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute");
+                bool fileInput = !string.IsNullOrEmpty(_hooks.StandardInputPath);
+                Pipe(out outRead, out outWrite, true, inheritChildEnd: !fileInput);
+                Pipe(out errRead, out errWrite, true, inheritChildEnd: !fileInput);
+                using var inputFile = fileInput
+                    ? new FileStream(_hooks.StandardInputPath, FileMode.Open, FileAccess.Read, FileShare.Read) : null;
+                if (!fileInput) Pipe(out inputRead, out inputWrite, false);
+                IntPtr localInput = inputFile?.SafeFileHandle.DangerousGetHandle() ?? inputRead;
                 var startup = new StartupInfoEx();
                 startup.Startup.cb = Marshal.SizeOf<StartupInfoEx>();
                 startup.Startup.flags = 0x100; // USESTDHANDLES
-                startup.Startup.stdin = childInput; startup.Startup.stdout = outWrite; startup.Startup.stderr = errWrite;
+                startup.Startup.stdin = localInput;
+                startup.Startup.stdout = outWrite;
+                startup.Startup.stderr = errWrite;
+
+                // HANDLE_LIST still requires inheritable entries. Put those entries in a suspended
+                // process so a concurrent CreateProcess in this process cannot collect them.
+                if (fileInput)
+                {
+                    StartHandleCarrier(job, out carrier);
+                    startup.Startup.stdin = DuplicateForChild(carrier.Process, localInput);
+                    startup.Startup.stdout = DuplicateForChild(carrier.Process, outWrite);
+                    startup.Startup.stderr = DuplicateForChild(carrier.Process, errWrite);
+                }
+                int attributeCount = fileInput ? 2 : 1;
+                IntPtr size = IntPtr.Zero;
+                InitializeProcThreadAttributeList(IntPtr.Zero, attributeCount, 0, ref size);
+                attributes = Marshal.AllocHGlobal(size);
+                Check(InitializeProcThreadAttributeList(attributes, attributeCount, 0, ref size), "InitializeProcThreadAttributeList");
+                attributesInitialized = true;
+                if (fileInput)
+                {
+                    parentAttribute = Marshal.AllocHGlobal(IntPtr.Size);
+                    Marshal.WriteIntPtr(parentAttribute, carrier.Process);
+                    Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)ParentProcessAttribute, parentAttribute, (IntPtr)IntPtr.Size,
+                        IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute parent process");
+                }
+                handleList = Marshal.AllocHGlobal(IntPtr.Size * 3);
+                Marshal.WriteIntPtr(handleList, 0, startup.Startup.stdin);
+                Marshal.WriteIntPtr(handleList, IntPtr.Size, startup.Startup.stdout);
+                Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, startup.Startup.stderr);
+                Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)HandleListAttribute, handleList, (IntPtr)(IntPtr.Size * 3),
+                    IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute standard handles");
                 startup.Attributes = attributes;
                 // Null inherits via CreateProcess; even an empty explicit map replaces.
                 if (environment != null)
@@ -191,12 +223,21 @@ namespace Antiphon.Nightly
                 }
                 var command = new StringBuilder(Quote(executable) + " " + string.Join(" ", (arguments ?? Array.Empty<string>()).Select(Quote)));
                 ProcessInfo info;
-                _hooks.Pause("create-process", evidence: childInput.ToInt64().ToString(CultureInfo.InvariantCulture));
+                _hooks.Pause("create-process", evidence: localInput.ToInt64().ToString(CultureInfo.InvariantCulture));
                 Check(CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, true,
-                    0x4 | 0x400 | 0x80000 | 0x08000000, envBlock, directory, ref startup, out info), "CreateProcess suspended");
+                    CreateSuspended | CreateUnicodeEnvironment | ExtendedStartupInfoPresent | CreateNoWindow,
+                    envBlock, directory, ref startup, out info), "CreateProcess suspended");
                 root = info.Process; thread = info.Thread; Observation.Pid = (int)info.Pid;
-                using (var identity = Process.GetProcessById(Observation.Pid)) Observation.RootStartedAtUtc = identity.StartTime.ToUniversalTime();
+                inputFile?.Dispose();
                 Close(ref outWrite); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
+                if (fileInput)
+                {
+                    CloseCarrierHandle(carrier.Process, startup.Startup.stdin);
+                    CloseCarrierHandle(carrier.Process, startup.Startup.stdout);
+                    CloseCarrierHandle(carrier.Process, startup.Startup.stderr);
+                    StopHandleCarrier(ref carrier);
+                }
+                using (var identity = Process.GetProcessById(Observation.Pid)) Observation.RootStartedAtUtc = identity.StartTime.ToUniversalTime();
                 // Desktop packaged apps can create unpackaged children outside this job,
                 // even when this process itself was successfully assigned to it.
                 uint packageLength = 0;
@@ -204,7 +245,15 @@ namespace Antiphon.Nightly
                 if (packageStatus != 15700) // APPMODEL_ERROR_NO_PACKAGE
                     throw new InvalidOperationException("Native job custody refuses packaged process images; use an unpackaged executable. Package query=" + packageStatus);
                 _hooks.Pause("assignment");
-                Check(!_hooks.FailAssignment && AssignProcessToJobObject(job, root), "AssignProcessToJobObject");
+                if (fileInput)
+                {
+                    // Windows inherits the chosen parent's job. Verify custody before resume.
+                    Check(IsProcessInJob(root, job, out bool contained), "IsProcessInJob");
+                    if (_hooks.FailAssignment || !contained)
+                        throw new InvalidOperationException("AssignProcessToJobObject: inherited private job membership not established.");
+                }
+                else
+                    Check(!_hooks.FailAssignment && AssignProcessToJobObject(job, root), "AssignProcessToJobObject");
                 // Readers start before resume, and own only their respective read handles.
                 stdout = Drain(outRead, stdoutPath, "stdout"); outRead = IntPtr.Zero;
                 stderr = Drain(errRead, stderrPath, "stderr"); errRead = IntPtr.Zero;
@@ -368,10 +417,14 @@ namespace Antiphon.Nightly
                 StampOwnerObservation(root);
                 Observation.DescendantIdentities = _descendants.Values.Select(p => p.Id + ":" + p.StartTime.ToUniversalTime().ToString("O")).ToArray();
                 foreach (var p in _descendants.Values) p.Dispose();
+                try { StopHandleCarrier(ref carrier); }
+                catch (Exception e) { Observation.Error += "; " + e.Message; }
                 Close(ref job); Close(ref root); Close(ref thread);
                 JobHandle = IntPtr.Zero;
                 Close(ref outRead); Close(ref outWrite); Close(ref errRead); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
-                if (attributes != IntPtr.Zero) { DeleteProcThreadAttributeList(attributes); Marshal.FreeHGlobal(attributes); }
+                if (attributesInitialized) DeleteProcThreadAttributeList(attributes);
+                if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
+                if (parentAttribute != IntPtr.Zero) Marshal.FreeHGlobal(parentAttribute);
                 if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);
                 if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
             }
@@ -882,11 +935,50 @@ namespace Antiphon.Nightly
             finally { Marshal.FreeHGlobal(buffer); }
         }
         private static bool RootExited(IntPtr root) { uint value = WaitForSingleObject(root, 0); Check(value != uint.MaxValue, "Root wait"); return value == 0; }
-        private static void Pipe(out IntPtr read, out IntPtr write, bool childWrites)
+        private static void Pipe(out IntPtr read, out IntPtr write, bool childWrites, bool inheritChildEnd = true)
         {
-            var security = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Inherit = 1 };
+            var security = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Inherit = inheritChildEnd ? 1 : 0 };
             Check(CreatePipe(out read, out write, ref security, 0), "CreatePipe");
-            Check(SetHandleInformation(childWrites ? read : write, 1, 0), "SetHandleInformation");
+            if (inheritChildEnd) Check(SetHandleInformation(childWrites ? read : write, 1, 0), "SetHandleInformation");
+        }
+
+        private static void StartHandleCarrier(IntPtr job, out ProcessInfo carrier)
+        {
+            var startup = new StartupInfo { cb = Marshal.SizeOf<StartupInfo>() };
+            Check(CreateProcessW(Path.Combine(Environment.SystemDirectory, "cmd.exe"), null, IntPtr.Zero, IntPtr.Zero,
+                false, CreateSuspended | CreateNoWindow, IntPtr.Zero, null, ref startup, out carrier), "CreateProcess suspended handle carrier");
+            Check(AssignProcessToJobObject(job, carrier.Process), "AssignProcessToJobObject handle carrier");
+        }
+
+        private static IntPtr DuplicateForChild(IntPtr carrier, IntPtr handle)
+        {
+            Check(DuplicateHandle(GetCurrentProcess(), handle, carrier, out var duplicate, 0, true, 2), "DuplicateHandle for launch");
+            return duplicate;
+        }
+
+        private static void CloseCarrierHandle(IntPtr carrier, IntPtr handle)
+        {
+            const uint duplicateCloseSource = 1;
+            Check(DuplicateHandle(carrier, handle, IntPtr.Zero, IntPtr.Zero, 0, false, duplicateCloseSource),
+                "DuplicateHandle close launch copy");
+        }
+
+        private static void StopHandleCarrier(ref ProcessInfo carrier)
+        {
+            if (carrier.Process == IntPtr.Zero) return;
+            try
+            {
+                // The carrier never runs. Its exit also releases any copies left by a failed launch.
+                Check(TerminateProcess(carrier.Process, 1) || RootExited(carrier.Process), "TerminateProcess handle carrier");
+                var wait = WaitForSingleObject(carrier.Process, DefaultCleanupTimeoutMilliseconds);
+                if (wait == 258) throw new TimeoutException("Suspended handle carrier did not exit within the cleanup budget.");
+                Check(wait == 0, "WaitForSingleObject handle carrier");
+            }
+            finally
+            {
+                Close(ref carrier.Thread);
+                Close(ref carrier.Process);
+            }
         }
         private static void Close(ref IntPtr handle) { if (handle != IntPtr.Zero) { CloseHandle(handle); handle = IntPtr.Zero; } }
         private static void Check(bool ok, string operation) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), operation); }
@@ -908,10 +1000,15 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, uint size);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr buffer, uint size, out uint returned);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool contained);
+        [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, IntPtr target, uint access, bool inherit, uint options);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
         [DllImport("kernel32.dll")] private static extern void DeleteProcThreadAttributeList(IntPtr list);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern bool CreateProcessW(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref StartupInfoEx startup, out ProcessInfo info);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern bool CreateProcessW(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref StartupInfo startup, out ProcessInfo info);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern uint ResumeThread(IntPtr thread);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool TerminateJobObject(IntPtr job, uint code);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool TerminateProcess(IntPtr process, uint code);

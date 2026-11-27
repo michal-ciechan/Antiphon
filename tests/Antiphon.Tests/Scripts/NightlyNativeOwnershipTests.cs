@@ -151,6 +151,14 @@ public sealed class NightlyNativeOwnershipTests
 
         FixtureJobReapsDescendant(native);
         IdleCaptureAndJobTermination(native, cancellationToken);
+        foreach (var owner in native.Owners)
+        {
+            var result = owner.Completion.GetAwaiter().GetResult();
+            (result.JobEmptyObserved, result.RemainingProcessCount).ShouldBe((true, 0), "every fixture job is empty");
+            var members = result.DescendantIdentities.Zip(result.DescendantImages, (identity, image) => image + "=" + identity);
+            Console.WriteLine(FormattableString.Invariant(
+                $"C1039_NATIVE_CUSTODY root={result.Pid}:{result.RootStartedAtUtc:O}; job-empty={result.JobEmptyObserved}; remaining={result.RemainingProcessCount}; members={string.Join(",", members)}"));
+        }
     }, cancellationToken);
 
     private static void FixtureJobReapsDescendant(NativeHarness native)
