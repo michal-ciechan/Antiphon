@@ -2021,6 +2021,61 @@ public class AgentSessionLaunchFailureTests
     }
 
     [Test]
+    public async Task InterruptedChannelContinuationSurvivesCrashAfterBoundaryCommit()
+    {
+        using var stop = new CancellationTokenSource();
+        var abandoned = new FakeAgentProtocolAdapter
+        {
+            ThrowOnStartFactory = () =>
+            {
+                stop.Cancel();
+                return new OperationCanceledException(stop.Token);
+            },
+        };
+        var resumed = new FakeAgentProtocolAdapter();
+        var duplicate = new FakeAgentProtocolAdapter();
+        await using var fixture = await LaunchFixture.CreateAsync(abandoned, resumed, duplicate);
+        await fixture.BindChannelAsync();
+        await using var db = LaunchFixture.CreateContext();
+        var now = DateTime.UtcNow;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            AgentSessionId = fixture.SessionId, Sequence = 1, Uuid = Guid.NewGuid().ToString("D"),
+            Kind = TranscriptKinds.UserPrompt, Role = "user", Text = "synthetic interrupted prompt",
+            Timestamp = now, CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            fixture.LaunchInteractiveAsync(resume: true, ct: stop.Token));
+        abandoned.Started.ShouldBeFalse();
+        var boundary = await db.TranscriptEntries.AsNoTracking().SingleAsync(t =>
+            t.AgentSessionId == fixture.SessionId && t.Kind == TranscriptKinds.SessionRestartBoundary);
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == fixture.SessionId)).ShouldBe(0);
+
+        // The resumed generation can publish output before any new UserPrompt. Its output
+        // must be fenced even when the original process never reached continuation enqueue.
+        var startupSequence = boundary.Sequence + 1;
+        db.TranscriptEntries.Add(new TranscriptEntry
+        {
+            AgentSessionId = fixture.SessionId, Sequence = startupSequence, Uuid = Guid.NewGuid().ToString("D"),
+            Kind = TranscriptKinds.AssistantText, Role = "assistant", Text = "synthetic startup output",
+            Timestamp = now, CreatedAt = now,
+        });
+        await db.SaveChangesAsync();
+        (await TranscriptTurnWindow.FindActionBoundaryAsync(db, fixture.SessionId, startupSequence,
+            CancellationToken.None)).ShouldBeNull();
+
+        await fixture.LaunchInteractiveAsync(resume: true);
+        await fixture.LaunchInteractiveAsync(resume: true);
+        var settings = fixture.Services.GetRequiredService<IOptions<AgentSessionSettings>>().Value;
+        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == fixture.SessionId
+            && m.Origin == QueuedMessageOrigin.System && m.Body == settings.ResumeContinuePrompt)).ShouldBe(1);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == fixture.SessionId
+            && t.Kind == TranscriptKinds.SessionRestartBoundary)).ShouldBe(1);
+    }
+
+    [Test]
     public async Task Boot_arm_cancels_a_leftover_queued_remote_control()
     {
         // CARD-0354: health-watch leftover on the persistent session must not be flushed after

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Antiphon.Messaging;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -36,6 +37,96 @@ public sealed partial class ChannelInputWithheldIncidentTests
     private static readonly CancellationToken Ct = CancellationToken.None;
     private const string WithheldBody = "queued-channel-body-9f3a";
     private const string WithholdReason = "adopted session";
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task NewInboundCannotBypassTheWithheldChannelRetrySchedule(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, clock);
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var chat = await h.BindChannelAsync();
+        using var bridge = Bridge(h);
+        h.Adapter.DialogAdopted = true;
+        await ReceiveAsync();
+
+        // An attempted body is observable without actually writing or waiting for a timer.
+        h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.ModalBlocked;
+        var age = TimeSpan.Zero;
+        foreach (var (probeAge, delay) in new[] { (0, 10), (60, 30), (300, 120) })
+        {
+            var probe = TimeSpan.FromSeconds(probeAge);
+            clock.Advance(probe - age);
+            h.Adapter.AdoptedHistoryVerified = false;
+            await bridge.DrainPendingAsync(ct);
+            h.Adapter.AdoptedHistoryVerified = true;
+            clock.Advance(TimeSpan.FromSeconds(delay - 1));
+            await ReceiveAsync();
+            h.Adapter.ConditionalInputs.ShouldBeEmpty($"age {probeAge}: admission before the retry is due");
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await bridge.DrainPendingAsync(ct);
+            h.Adapter.ConditionalInputs.ShouldHaveSingleItem();
+            h.Adapter.ConditionalInputs.Clear();
+            age = TimeSpan.FromSeconds(probeAge + delay);
+        }
+        h.Adapter.Inputs.ShouldBeEmpty();
+
+        Task ReceiveAsync() => bridge.HandleInboundAsync(Message(chat, Guid.NewGuid().ToString("N"), "fixture inbound")
+            with { Timestamp = clock.GetUtcNow() }, ct);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task ChannelEnterAcceptedBeforeInterruptionReconcilesWithoutRetyping(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new OutageQueueClock();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, clock);
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var chat = await h.BindChannelAsync();
+        using var bridge = Bridge(h);
+        var inbound = Message(chat, "fixture-delayed-receipt", "fixture inbound");
+        h.Adapter.OnSubmitted = _ => throw new InputDeliveryUncertainException(h.SessionId);
+        await bridge.HandleInboundAsync(inbound, ct);
+        var body = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        await using var db = Db(schema.ConnectionString);
+        var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId, ct);
+        row.Status.ShouldBe(QueuedMessageStatus.Sent);
+        row.DeliveryVerdict.ShouldBeNull();
+        row.DeliveryAttempts.ShouldBe(1);
+        h.Adapter.OnSubmitted = submitted => h.InsertStoreVisibleTurnAsync(submitted, "fixture replay");
+
+        clock.Advance(TimeSpan.FromSeconds(45));
+        await h.Queue.FlushStrandedQueuesAsync(ct);
+        h.Adapter.Inputs.Count(input => input != "\r").ShouldBe(1);
+        h.Adapter.SubmittedBodies.Count.ShouldBe(1);
+
+        var sequence = (await h.CurrentTranscriptMaxSequenceAsync()) + 1;
+        var at = clock.GetUtcNow();
+        h.Runner.SetTranscript(new SessionRunnerTranscriptDto(h.SessionId,
+        [
+            new(h.SessionId, sequence, TranscriptKinds.UserPrompt, "fixture-owner", null, at,
+                "user", body, null, null, null, null, null),
+            new(h.SessionId, sequence + 1, TranscriptKinds.AssistantText, "fixture-answer", null, at,
+                "assistant", "fixture answer", null, null, null, null, null),
+            new(h.SessionId, sequence + 2, TranscriptKinds.TurnEnd, "fixture-end", null, at,
+                "assistant", null, null, null, null, null, "end_turn"),
+        ], sequence + 2));
+        await h.Queue.FlushSessionAsync(h.SessionId, ct);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+        await h.DrainOutboundAsync();
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+        await h.DrainOutboundAsync();
+
+        var confirmed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == row.Id, ct);
+        confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        confirmed.DeliveryAttempts.ShouldBe(1);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == body, ct)).ShouldBe(1);
+        h.Messaging.SentReplies.ShouldHaveSingleItem().AnsweredMessageIds.ShouldBe([inbound.ChannelMessageId]);
+        h.Adapter.Inputs.Count(input => input != "\r").ShouldBe(1);
+    }
 
     [Test]
     [Timeout(120_000)]

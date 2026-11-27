@@ -261,7 +261,7 @@ public class SessionMessageQueueInterruptedAttemptTests
     }
 
     [Test]
-    public async Task Verdict_less_Sent_with_nothing_on_screen_is_reverted_then_retyped()
+    public async Task Verdict_less_channel_attempt_with_empty_composer_awaits_transcript()
     {
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
@@ -269,16 +269,17 @@ public class SessionMessageQueueInterruptedAttemptTests
             Body,
             deliveryAttempts: 1,
             status: QueuedMessageStatus.Sent,
+            origin: QueuedMessageOrigin.Channel,
             lastDeliveryStartedAt: started);
 
         await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
 
-        h.Adapter.Inputs.ShouldBe([Body, "\r"], "absent body is the one case that may re-type");
+        h.Adapter.Inputs.ShouldBeEmpty("an empty composer cannot distinguish submission from a missing paste");
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
         message.Status.ShouldBe(QueuedMessageStatus.Sent);
-        message.DeliveryAttempts.ShouldBe(2, "attempts were kept on revert, then the retype charged one");
-        message.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        message.DeliveryAttempts.ShouldBe(1);
+        message.DeliveryVerdict.ShouldBeNull();
     }
 
     [Test]
