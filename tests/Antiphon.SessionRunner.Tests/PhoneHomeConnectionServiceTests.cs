@@ -7,6 +7,9 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests.TestHelpers;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -477,92 +480,71 @@ public class PhoneHomeConnectionServiceTests
     [Test]
     public async Task Reconnect_backoff_caps_at_five_seconds()
     {
-        var settings = RunnableSettings();
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var logs = new CapturingLogger<PhoneHomeConnectionService>();
+        var clock = new ReconnectClock();
         var gate = new PhoneHomeAdoptionGate();
         gate.SignalReady();
-        var service = Service(
-            new RecordingRuntime(), settings, new StatusHandler(HttpStatusCode.BadGateway), time, gate, logs);
-        using var cts = new CancellationTokenSource();
-        var running = service.StartAsync(cts.Token);
+        using var service = Service(new RecordingRuntime(), RunnableSettings(),
+            new StatusHandler(HttpStatusCode.BadGateway), clock, gate, upperJitter: true);
+        await service.StartAsync(CancellationToken.None);
         try
         {
-            // The attempt counter moves before the failure is logged, and the delay is armed only
-            // after that log. Advancing earlier spends the fake second on a timer that does not
-            // exist yet, so the cap is never reached.
-            await WaitForFailureAsync(logs, 1);
-            service.RegistrationAttempts.ShouldBe(1);
-            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(1));
-            await WaitForFailureAsync(logs, 2);
-            service.RegistrationAttempts.ShouldBe(2);
-            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(2));
-            await WaitForFailureAsync(logs, 3);
-            service.RegistrationAttempts.ShouldBe(3);
-            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(4));
-            await WaitForFailureAsync(logs, 4);
-            service.RegistrationAttempts.ShouldBe(4);
-            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(5));
-            await WaitForFailureAsync(logs, 5);
-            service.RegistrationAttempts.ShouldBe(5);
+            var expectedSeconds = new[] { 1, 2, 4, 5, 5 };
+            for (var index = 0; index < expectedSeconds.Length; index++)
+            {
+                var delay = await clock.NextDelayAsync();
+                delay.ShouldBe(TimeSpan.FromSeconds(expectedSeconds[index]));
+                service.RegistrationAttempts.ShouldBe(index + 1);
+                if (index + 1 < expectedSeconds.Length)
+                    clock.Advance(delay);
+            }
         }
-        finally
-        {
-            cts.Cancel();
-            try { await running.WaitAsync(TimeSpan.FromSeconds(2)); }
-            catch (OperationCanceledException) { /* stopping */ }
-        }
+        finally { await service.StopAsync(CancellationToken.None); }
     }
 
     [Test]
     public async Task Registration_failure_line_names_the_status_attempt_and_backoff()
     {
-        var settings = RunnableSettings();
-        var logs = new CapturingLogger<PhoneHomeConnectionService>();
-        var gate = new PhoneHomeAdoptionGate();
-        gate.SignalReady();
-        var service = Service(
-            new RecordingRuntime(), settings, new StatusHandler(HttpStatusCode.BadGateway),
-            TimeProvider.System, gate, logs);
-        using var cts = new CancellationTokenSource();
-        var running = service.StartAsync(cts.Token);
-        try
-        {
-            await WaitUntilAsync(() => logs.Warnings.Count >= 1);
-            logs.Warnings.Count.ShouldBe(1);
-            logs.Warnings[0].Exception.ShouldBeNull();
-            const string prefix = "Phone-home registration failed: reason=http_502 attempt=1 backoffMs=";
-            logs.Warnings[0].Message.ShouldStartWith(prefix);
-            int.Parse(logs.Warnings[0].Message[prefix.Length..]).ShouldBeInRange(500, 1000);
-        }
-        finally
-        {
-            cts.Cancel();
-            try { await running.WaitAsync(TimeSpan.FromSeconds(2)); }
-            catch (OperationCanceledException) { /* stopping */ }
-        }
-    }
-
-    [Test]
-    public async Task Registration_retry_waits_for_retry_after_plus_jitter()
-    {
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var clock = new ReconnectClock();
         var logs = new CapturingLogger<PhoneHomeConnectionService>();
         var gate = new PhoneHomeAdoptionGate();
         gate.SignalReady();
         using var service = Service(new RecordingRuntime(), RunnableSettings(),
-            new StatusHandler(HttpStatusCode.ServiceUnavailable, TimeSpan.FromSeconds(7)), time, gate, logs);
+            new StatusHandler(HttpStatusCode.BadGateway), clock, gate, logs);
         await service.StartAsync(CancellationToken.None);
         try
         {
-            await WaitForFailureAsync(logs, 1);
-            const string prefix = "Phone-home registration failed: reason=http_503 attempt=1 backoffMs=";
+            var delay = await clock.NextDelayAsync();
+            logs.Warnings.Count.ShouldBe(1);
+            logs.Warnings[0].Exception.ShouldBeNull();
+            const string prefix = "Phone-home registration failed: reason=http_502 attempt=1 backoffMs=";
             logs.Warnings[0].Message.ShouldStartWith(prefix);
-            int.Parse(logs.Warnings[0].Message[prefix.Length..]).ShouldBeInRange(7500, 8000);
-            await ArmAndAdvanceAsync(time, TimeSpan.FromSeconds(7));
+            var loggedMs = int.Parse(logs.Warnings[0].Message[prefix.Length..]);
+            loggedMs.ShouldBeInRange(500, 1000);
+            delay.ShouldBe(TimeSpan.FromMilliseconds(loggedMs));
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Test]
+    [Arguments("1", false, 1_500)]
+    [Arguments("1", true, 2_000)]
+    [Arguments("malformed", false, 500)]
+    [Arguments("malformed", true, 1_000)]
+    public async Task Registration_retry_waits_for_retry_after_plus_jitter(string hint, bool upperJitter, int expectedMs)
+    {
+        var clock = new ReconnectClock();
+        var gate = new PhoneHomeAdoptionGate();
+        gate.SignalReady();
+        using var service = Service(new RecordingRuntime(), RunnableSettings(),
+            new StatusHandler(HttpStatusCode.ServiceUnavailable, hint), clock, gate, upperJitter: upperJitter);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            (await clock.NextDelayAsync()).ShouldBe(TimeSpan.FromMilliseconds(expectedMs));
+            clock.Advance(TimeSpan.FromMilliseconds(expectedMs - 1));
             service.RegistrationAttempts.ShouldBe(1);
-            time.Advance(TimeSpan.FromSeconds(1));
-            await WaitForFailureAsync(logs, 2);
+            clock.Advance(TimeSpan.FromMilliseconds(1));
+            await clock.NextDelayAsync();
             service.RegistrationAttempts.ShouldBe(2);
         }
         finally
@@ -572,22 +554,87 @@ public class PhoneHomeConnectionServiceTests
     }
 
     [Test]
-    [Arguments("3600")]
-    [Arguments("http-date")]
-    public async Task Oversized_retry_after_arms_a_timer_of_at_most_thirty_seconds(string hint)
+    [Arguments("3600", false, 29_500)]
+    [Arguments("3600", true, 30_000)]
+    [Arguments("http-date", false, 29_500)]
+    [Arguments("http-date", true, 30_000)]
+    public async Task Oversized_retry_after_arms_a_timer_of_at_most_thirty_seconds(string hint, bool upperJitter, int expectedMs)
     {
         var clock = new ReconnectClock();
         var gate = new PhoneHomeAdoptionGate();
         gate.SignalReady();
         var header = hint == "http-date" ? clock.GetUtcNow().AddHours(1).ToString("R") : hint;
         using var service = Service(new RecordingRuntime(), RunnableSettings(),
-            new StatusHandler(HttpStatusCode.ServiceUnavailable, rawRetryAfter: header), clock, gate);
+            new StatusHandler(HttpStatusCode.ServiceUnavailable, header), clock, gate, upperJitter: upperJitter);
         await service.StartAsync(CancellationToken.None);
         try
         {
-            (await clock.NextDelayAsync()).TotalMilliseconds.ShouldBeInRange(29_500, 30_000);
+            (await clock.NextDelayAsync()).ShouldBe(TimeSpan.FromMilliseconds(expectedMs));
         }
         finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments("1")]
+    public async Task Configured_reconnect_backoff_cannot_exceed_the_total_ceiling(string? hint)
+    {
+        var settings = RunnableSettings();
+        settings.ReconnectBackoffMs = settings.ReconnectBackoffMaxMs = 60_000;
+        var clock = new ReconnectClock();
+        var gate = new PhoneHomeAdoptionGate();
+        gate.SignalReady();
+        using var service = Service(new RecordingRuntime(), settings,
+            new StatusHandler(HttpStatusCode.ServiceUnavailable, hint), clock, gate, upperJitter: true);
+        await service.StartAsync(CancellationToken.None);
+        try { (await clock.NextDelayAsync()).ShouldBe(TimeSpan.FromSeconds(30)); }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Test]
+    public async Task First_retry_after_a_normal_websocket_close_waits_for_equal_jitter()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Testing" });
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        await using var app = builder.Build();
+        app.UseWebSockets();
+        app.MapGet("/api/session-runners/{runnerId}/connect", async (HttpContext http) =>
+        {
+            using var socket = await http.WebSockets.AcceptWebSocketAsync();
+            var heartbeat = await PhoneHomeFraming.ReadFrameAsync(socket, 64 * 1024, http.RequestAborted);
+            heartbeat!.Kind.ShouldBe(PhoneHomeFrameKind.Heartbeat);
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "complete", http.RequestAborted);
+        });
+        await app.StartAsync();
+        try
+        {
+            var settings = RunnableSettings();
+            settings.ServerOrigin = app.Urls.Single();
+            var clock = new ReconnectClock();
+            var gate = new PhoneHomeAdoptionGate();
+            gate.SignalReady();
+            using var registrationHandler = new TicketHandler();
+            var logs = new CapturingLogger<PhoneHomeConnectionService>();
+            using var service = Service(new RecordingRuntime(), settings, registrationHandler, clock, gate, logs,
+                upperJitter: false);
+            await service.StartAsync(CancellationToken.None);
+            try
+            {
+                var delay = await clock.NextDelayAsync();
+                if (delay == TimeSpan.FromSeconds(settings.HeartbeatSeconds))
+                    delay = await clock.NextDelayAsync();
+                delay.ShouldBe(TimeSpan.FromMilliseconds(500));
+                logs.Warnings.ShouldBeEmpty();
+                clock.Advance(TimeSpan.FromMilliseconds(499));
+                service.RegistrationAttempts.ShouldBe(1);
+                clock.Advance(TimeSpan.FromMilliseconds(1));
+                await WaitUntilAsync(() => service.RegistrationAttempts == 2);
+                service.RegistrationAttempts.ShouldBe(2);
+            }
+            finally { await service.StopAsync(CancellationToken.None); }
+        }
+        finally { await app.StopAsync(); }
     }
 
     [Test]
@@ -790,7 +837,8 @@ public class PhoneHomeConnectionServiceTests
         HttpMessageHandler handler,
         TimeProvider? clock = null,
         IPhoneHomeAdoptionGate? adoption = null,
-        ILogger<PhoneHomeConnectionService>? logger = null)
+        ILogger<PhoneHomeConnectionService>? logger = null,
+        bool? upperJitter = null)
     {
         var runtime = new SessionRunnerRuntime(
             Options.Create(new SessionRunnerSettings
@@ -805,7 +853,10 @@ public class PhoneHomeConnectionServiceTests
             runtime,
             new SingleHandlerFactory(handler),
             clock ?? TimeProvider.System,
-            logger ?? NullLogger<PhoneHomeConnectionService>.Instance);
+            logger ?? NullLogger<PhoneHomeConnectionService>.Instance)
+        {
+            ReconnectRandom = upperJitter is { } upper ? new BoundaryRandom(upper) : Random.Shared,
+        };
     }
 
     private static string TestCapacityPath() =>
@@ -816,22 +867,6 @@ public class PhoneHomeConnectionServiceTests
         var deadline = DateTime.UtcNow.AddSeconds(3);
         while (!condition() && DateTime.UtcNow < deadline)
             await Task.Delay(10);
-    }
-
-    private static async Task WaitForFailureAsync(CapturingLogger<PhoneHomeConnectionService> logs, int count)
-    {
-        await WaitUntilAsync(() => logs.Warnings.Count >= count);
-        logs.Warnings.Count.ShouldBeGreaterThanOrEqualTo(count);
-    }
-
-    /// <summary>
-    /// One advance, after a real pause so <c>Task.Delay</c> has armed its timer on the fake clock.
-    /// A second advance of the same step would walk past today's 8s backoff and hide the cap.
-    /// </summary>
-    private static async Task ArmAndAdvanceAsync(FakeTimeProvider time, TimeSpan step)
-    {
-        await Task.Delay(50);
-        time.Advance(step);
     }
 
     private static string WriteTemp(string name)
@@ -859,6 +894,7 @@ public class PhoneHomeConnectionServiceTests
         public override DateTimeOffset GetUtcNow() => _time.GetUtcNow();
         public override long GetTimestamp() => _time.GetTimestamp();
         public override long TimestampFrequency => _time.TimestampFrequency;
+        public void Advance(TimeSpan duration) => _time.Advance(duration);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
@@ -874,17 +910,20 @@ public class PhoneHomeConnectionServiceTests
         }
     }
 
-    private sealed class StatusHandler(HttpStatusCode status, TimeSpan? retryAfter = null, string? rawRetryAfter = null)
+    private sealed class BoundaryRandom(bool upper) : Random
+    {
+        public override long NextInt64(long minValue, long maxValue) => upper ? maxValue - 1 : minValue;
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status, string? retryAfter = null)
         : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var response = new HttpResponseMessage(status);
-            if (retryAfter is { } delay)
-                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(delay);
-            if (rawRetryAfter is not null)
-                response.Headers.TryAddWithoutValidation("Retry-After", rawRetryAfter);
+            if (retryAfter is not null)
+                response.Headers.TryAddWithoutValidation("Retry-After", retryAfter);
             return Task.FromResult(response);
         }
     }

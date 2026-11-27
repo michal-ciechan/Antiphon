@@ -11,6 +11,9 @@ namespace Antiphon.SessionRunner;
 
 public sealed class PhoneHomeConnectionService : BackgroundService
 {
+    private const int MaxReconnectDelayMs = 30_000;
+    private const int RegistrationRetryFloorMs = 1_000;
+
     private readonly PhoneHomeSettings _settings;
     private readonly RunnerCapacityState _capacity;
     private readonly IPhoneHomeAdoptionGate _adoption;
@@ -55,6 +58,7 @@ public sealed class PhoneHomeConnectionService : BackgroundService
     }
 
     internal int RegistrationAttempts { get; private set; }
+    internal Random ReconnectRandom { get; init; } = Random.Shared;
     internal IReadOnlyList<PhoneHomeFrame> SentMutations => _sentMutations;
     public long Epoch => Interlocked.Read(ref _epoch);
     public int InFlight => Volatile.Read(ref _inFlight);
@@ -97,9 +101,12 @@ public sealed class PhoneHomeConnectionService : BackgroundService
             }
 
             // Equal jitter keeps consecutive short connections and failures from retrying in lockstep.
-            var delayMs = Random.Shared.NextInt64(Math.Max(1, backoff / 2), (long)backoff + 1);
-            if (failure is RegistrationDeferredException deferred)
-                delayMs = (long)Math.Min(uint.MaxValue - 1L, Math.Ceiling(deferred.RetryAfter.TotalMilliseconds) + delayMs);
+            // Reserve room for the server's busy hint and keep jitter even when a long hint is capped.
+            var retryAfter = (failure as RegistrationDeferredException)?.RetryAfter;
+            var maxJitterMs = Math.Min(backoff, MaxReconnectDelayMs - (retryAfter is null ? 0 : RegistrationRetryFloorMs));
+            var delayMs = ReconnectRandom.NextInt64(Math.Max(1, maxJitterMs / 2), maxJitterMs + 1L);
+            if (retryAfter is { } wait)
+                delayMs += (long)Math.Min(Math.Ceiling(wait.TotalMilliseconds), MaxReconnectDelayMs - maxJitterMs);
             if (failure is not null)
             {
                 var reason = PhoneHomeReconnectReason.Classify(failure, stoppingToken);
