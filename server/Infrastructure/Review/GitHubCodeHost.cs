@@ -5,6 +5,9 @@ using System.Text.Json;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Review;
@@ -21,7 +24,8 @@ public sealed class GitHubCodeHost(
     HttpClient http,
     IOptions<ReviewCodeHostSettings> settings,
     CodeHostResponseCache cache,
-    GitHubAppTokens? appTokens = null) : ICodeHost
+    GitHubAppTokens? appTokens = null,
+    IServiceScopeFactory? scopes = null) : ICodeHost
 {
     private readonly GitHubAppTokens _appTokens = appTokens ?? new GitHubAppTokens();
 
@@ -269,7 +273,7 @@ public sealed class GitHubCodeHost(
                 : throw new CodeHostException(CodeHostFailureKind.NotFound, $"No review thread on {target.Repo}#{target.PrNumber} starts with comment {threadId}.");
         }
 
-        using var doc = await GraphQlAsync(target, ResolveThreadMutation, new Dictionary<string, object?> { ["threadId"] = id }, ct);
+        using var doc = await GraphQlAsync(target, ResolveThreadMutation, new Dictionary<string, object?> { ["threadId"] = id }, ct, mutation: true);
         var resolved = doc.RootElement.GetProperty("data").TryGetProperty("resolveReviewThread", out var payload)
             && payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("thread", out var thread) && thread.ValueKind == JsonValueKind.Object
             && thread.TryGetProperty("isResolved", out var flag) && flag.ValueKind == JsonValueKind.True;
@@ -332,7 +336,8 @@ public sealed class GitHubCodeHost(
     /// One GraphQL POST. A non-2xx is mapped like REST; a 200 with <c>errors</c> is mapped by the first
     /// error's type (NOT_FOUND, FORBIDDEN, RATE_LIMITED; anything else is an invalid request).
     /// </summary>
-    private async Task<JsonDocument> GraphQlAsync(CodeHostTarget target, string query, IReadOnlyDictionary<string, object?> variables, CancellationToken ct)
+    private async Task<JsonDocument> GraphQlAsync(CodeHostTarget target, string query, IReadOnlyDictionary<string, object?> variables,
+        CancellationToken ct, bool mutation = false)
     {
         var host = Host(target);
         using var request = new HttpRequestMessage(HttpMethod.Post, GraphQlEndpoint(host));
@@ -340,6 +345,8 @@ public sealed class GitHubCodeHost(
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
         await AuthorizeAsync(request, target, host, ct);
         request.Content = new StringContent(JsonSerializer.Serialize(new { query, variables }), System.Text.Encoding.UTF8, "application/json");
+        if (mutation)
+            await VerifyWriteRepositoryAsync(target, ct);
 
         var seconds = Math.Max(1, host.TimeoutSeconds);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -347,7 +354,9 @@ public sealed class GitHubCodeHost(
         string body;
         try
         {
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token);
+            using var response = mutation
+                ? await SendWriteAsync(target, request, budget.Token)
+                : await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token);
             body = await response.Content.ReadAsStringAsync(budget.Token);
             if (!response.IsSuccessStatusCode)
                 throw Failure(response, body, "POST", "graphql");
@@ -443,7 +452,7 @@ public sealed class GitHubCodeHost(
             var nodeId = Text(prDoc.RootElement, "node_id")
                 ?? throw new CodeHostException(CodeHostFailureKind.Unavailable, "GitHub sent the pull request without a node_id.");
             using var updated = await GraphQlAsync(target, UpdateBranchMutation,
-                new Dictionary<string, object?> { ["id"] = nodeId, ["head"] = expectedHeadSha, ["method"] = "REBASE" }, ct);
+                new Dictionary<string, object?> { ["id"] = nodeId, ["head"] = expectedHeadSha, ["method"] = "REBASE" }, ct, mutation: true);
             var head = updated.RootElement.TryGetProperty("data", out var data)
                 && data.TryGetProperty("updatePullRequestBranch", out var result) && result.ValueKind == JsonValueKind.Object
                 && result.TryGetProperty("pullRequest", out var updatedPr)
@@ -689,7 +698,7 @@ public sealed class GitHubCodeHost(
     private async Task<string> GetAsync(CodeHostTarget target, string path, string accept, CancellationToken ct)
     {
         var host = Host(target);
-        var uri = new Uri(new Uri((string.IsNullOrWhiteSpace(host.BaseUrl) ? DefaultApiRoot : host.BaseUrl).TrimEnd('/') + "/"), path);
+        var uri = new Uri(host.GitHubApiRoot, path);
         var key = $"{target.HostId}|{accept}|{uri}";
         var cached = cache.Get(key);
 
@@ -730,20 +739,21 @@ public sealed class GitHubCodeHost(
     private async Task<string> SendAsync(CodeHostTarget target, HttpMethod method, string path, object payload, CancellationToken ct)
     {
         var host = Host(target);
-        var uri = new Uri(new Uri((string.IsNullOrWhiteSpace(host.BaseUrl) ? DefaultApiRoot : host.BaseUrl).TrimEnd('/') + "/"), path);
+        var uri = new Uri(host.GitHubApiRoot, path);
         using var request = new HttpRequestMessage(method, uri);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(JsonMediaType));
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("Antiphon-Review", "1.0"));
         request.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", ApiVersion);
         await AuthorizeAsync(request, target, host, ct);
         request.Content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json");
+        await VerifyWriteRepositoryAsync(target, ct);
 
         var seconds = Math.Max(1, host.TimeoutSeconds);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(TimeSpan.FromSeconds(seconds));
         try
         {
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token);
+            using var response = await SendWriteAsync(target, request, budget.Token);
             var body = await response.Content.ReadAsStringAsync(budget.Token);
             if (!response.IsSuccessStatusCode)
                 throw Failure(response, body, method.Method, path);
@@ -757,6 +767,34 @@ public sealed class GitHubCodeHost(
         {
             throw new CodeHostException(CodeHostFailureKind.Unavailable, $"GitHub {method.Method} {path}: no response within {seconds}s.");
         }
+    }
+
+    private async Task VerifyWriteRepositoryAsync(CodeHostTarget target, CancellationToken ct)
+    {
+        if (target.ReviewRunId is not null && target.GitHubRepositoryId is null)
+            throw new CodeHostException(CodeHostFailureKind.Rejected, "This review run has no verified GitHub repository identity.");
+        if (target.GitHubRepositoryId is { } expected && await GetRepositoryIdAsync(target, ct) != expected)
+            throw new CodeHostException(CodeHostFailureKind.Rejected, "GitHub returned a different repository for the stored pull request.");
+    }
+
+    private async Task<HttpResponseMessage> SendWriteAsync(CodeHostTarget target, HttpRequestMessage request, CancellationToken ct)
+    {
+        if (target.ReviewRunId is not { } runId)
+            return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (scopes is null)
+            throw new CodeHostException(CodeHostFailureKind.NotConfigured, "The review run write fence is unavailable.");
+
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        // Hold the shared row lock through this single request. Close (on any server) must
+        // update the same row, and every retry takes a fresh lock and sees the committed status.
+        var open = await db.Database.SqlQuery<Guid>(
+            $"""SELECT "Id" AS "Value" FROM "ReviewRuns" WHERE "Id" = {runId} AND "Status" <> 'Closed' FOR SHARE""")
+            .ToListAsync(ct);
+        if (open.Count == 0)
+            throw new CodeHostException(CodeHostFailureKind.Rejected, "The review run closed before the GitHub write.");
+        return await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, ct);
     }
 
     private static CodeHostException Failure(HttpResponseMessage response, string body, string method, string path)
@@ -802,13 +840,16 @@ public sealed class GitHubCodeHost(
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
     }
 
-    private static Uri ApiRoot(ReviewCodeHost host) =>
-        new((string.IsNullOrWhiteSpace(host.BaseUrl) ? DefaultApiRoot : host.BaseUrl).TrimEnd('/') + "/");
+    private static Uri ApiRoot(ReviewCodeHost host) => host.GitHubApiRoot;
 
-    private ReviewCodeHost Host(CodeHostTarget target) =>
-        settings.Value.Hosts.TryGetValue(target.HostId, out var host) && host.Kind == ReviewHost.GitHub
-            ? host
-            : throw new CodeHostException(CodeHostFailureKind.NotConfigured, $"GitHub host '{target.HostId}' is not configured (Review:CodeHosts:Hosts).");
+    private ReviewCodeHost Host(CodeHostTarget target)
+    {
+        if (!settings.Value.Hosts.TryGetValue(target.HostId, out var host) || host.Kind != ReviewHost.GitHub)
+            throw new CodeHostException(CodeHostFailureKind.NotConfigured, $"GitHub host '{target.HostId}' is not configured (Review:CodeHosts:Hosts).");
+        if (target.GitHubAuthority is { } authority && host.GitHubAuthority != authority)
+            throw new CodeHostException(CodeHostFailureKind.Rejected, "The configured GitHub authority changed during this operation.");
+        return host;
+    }
 
     private static int RequirePr(CodeHostTarget target) =>
         target.PrNumber ?? throw new CodeHostException(CodeHostFailureKind.InvalidRequest, $"A GitHub review of {target.Repo} needs a PR number.");

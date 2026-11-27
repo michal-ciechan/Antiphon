@@ -17,7 +17,7 @@ public static class ReviewIntakeSteps
     /// <summary>An another-round or executor-started iteration's intake: re-reads the PR and pins its SHAs.</summary>
     public static async Task<NodeResult> IntakeAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var snapshot = await walk.Services.GetRequiredService<ReviewIntake>().ReadAsync(walk.Run.Subject, ct);
+        var snapshot = await walk.Services.GetRequiredService<ReviewIntake>().ReadAsync(walk.Run, ct);
         if (walk.Run.Subject.Host == ReviewHost.GitHub && snapshot.PullRequest.Title.Length > 0)
             walk.Run.Subject.Title = snapshot.PullRequest.Title;
         ReviewIntake.Apply(walk.Run.Subject, walk.Iteration, execution, snapshot, execution.StartedAt ?? walk.Now());

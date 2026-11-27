@@ -38,15 +38,17 @@ public sealed class ReviewFindingSync(AppDbContext db, CodeHostRouter router, IE
 
         var findings = await db.ReviewFindings.Include(f => f.Events).Where(f => pending.Contains(f.Id)).ToListAsync(ct);
         var runIds = findings.Select(f => f.RunId).Distinct().ToList();
-        var subjects = await db.ReviewRuns.Where(r => runIds.Contains(r.Id)).Select(r => new { r.Id, r.Subject }).ToDictionaryAsync(r => r.Id, r => r.Subject, ct);
+        var runs = await db.ReviewRuns.AsNoTracking().Include(r => r.Subject).Where(r => runIds.Contains(r.Id))
+            .ToDictionaryAsync(r => r.Id, ct);
         var handled = 0;
         foreach (var finding in findings)
         {
-            var subject = subjects[finding.RunId];
+            var run = runs[finding.RunId];
             CodeHostBinding? binding = null;
             try
             {
-                binding = router.Resolve(subject);
+                if (run.Status != ReviewRunStatus.Closed)
+                    binding = router.Resolve(run);
             }
             catch (CodeHostException ex)
             {
@@ -56,7 +58,7 @@ public sealed class ReviewFindingSync(AppDbContext db, CodeHostRouter router, IE
             foreach (var evt in finding.Events.Where(e => e.SyncState == ReviewSyncState.Pending).OrderBy(e => e.CreatedAt))
             {
                 handled++;
-                if (binding is null || !binding.Host.Capabilities.CanReplyToThreads || finding.ExternalCommentId is null || subject.PrNumber is null)
+                if (binding is null || !binding.Host.Capabilities.CanReplyToThreads || finding.ExternalCommentId is null || run.Subject.PrNumber is null)
                 {
                     evt.SyncState = ReviewSyncState.NotApplicable;
                     continue;

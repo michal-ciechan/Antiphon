@@ -2396,11 +2396,13 @@ public sealed partial class SessionMessageQueueService
             .Select(m => m.ExecutionTaskId!.Value).Distinct().ToList();
         if (taskIds.Count == 0) return changed;
         var tasks = await db.AgentTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id))
-            .Select(t => new { t.Id, t.Status }).ToDictionaryAsync(t => t.Id, ct);
+            .Select(t => new { t.Id, t.Status, ReviewerClosed = t.ReviewerRunId != null
+                && !db.ReviewRuns.Any(r => r.Id == t.ReviewerRunId && r.Status != ReviewRunStatus.Closed) })
+            .ToDictionaryAsync(t => t.Id, ct);
         foreach (var message in pending.Where(m => m.Status == QueuedMessageStatus.Pending))
         {
             if (!tasks.TryGetValue(message.ExecutionTaskId!.Value, out var task)
-                || !AgentTaskService.IsSettled(task.Status))
+                || (!task.ReviewerClosed && !AgentTaskService.IsSettled(task.Status)))
                 continue;
             var untyped = message.DeliveryAttempts == 0;
             if (!untyped && !DeliveryGenerationChanged(message, currentGeneration))
@@ -2410,7 +2412,7 @@ public sealed partial class SessionMessageQueueService
             message.CanceledAt = UtcNow();
             changed = true;
             _logger.LogInformation(
-                "Canceled orphaned brief {MessageId} for terminal task {TaskId} ({Status}): {Reason}",
+                "Canceled orphaned brief {MessageId} for task {TaskId} ({Status}): {Reason}",
                 message.Id, task.Id.ToString("N")[..8], task.Status,
                 untyped ? "never typed" : "delivery generation changed");
         }

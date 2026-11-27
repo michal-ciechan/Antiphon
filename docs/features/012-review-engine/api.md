@@ -205,7 +205,9 @@ GitHub identity consists of the configured REST API root, the numeric ID of the 
 
 Manual intake returns the existing run without queuing a round. Use Refresh to retry a failure or Request review round to start another round. The GitHub poller uses the same intake service and keeps working on the existing run. An ordinary poll does not automatically restart a deliberately closed run while the PR remains open. A trusted PR comment or manual intake can start the next run. The existing code-host close event also transitions the run to Closed.
 
-An explicit close removes open gates from the queue, skips outstanding workflow steps and records the viewer, reason and time. A code-host call already in progress can finish. Further workflow work stops when the executor observes the close.
+An explicit close removes open gates from the queue, skips outstanding workflow steps and records the viewer, reason and time. Reviewer task creation saves the run, node and attempt link with the task before dispatch. Close uses the delegated-task cancellation path for those tasks. A server worker retries cancellation of closed or timed-out reviewers after restart, including seats held while waiting for input. The deadline lives on the task and applies independently of workflow polling.
+
+Each GitHub write, including an individual merge retry, takes a database lock on its run and checks its status before sending. An admitted write completes before the close commits. A later write is refused. Writes require a verified numeric repository ID.
 
 ### Database activation
 
@@ -215,7 +217,9 @@ The startup migration adds GitHub identity columns and installs partial unique i
 
 In the same transaction the migration keeps the newest non-Closed run per key by start time and ID and closes older duplicates with the reason `superseded by duplicate-intake cleanup`. All runs, subjects, findings and workflow history remain. The audit names the surviving run and captures its predecessor's prior status, stage, waiting state and timestamp. A five-second lock timeout aborts the transaction if a lock cannot be acquired. Rehearse the migration on the restored copy to measure the review-table lock window.
 
-Down removes the identity columns and indexes. The closure records and run history survive the downgrade. Use the pre-activation snapshot for a full data rewind.
+The migration also adds reviewer task linkage and backfills handles that can be matched to the run and a recorded task brief. Rehearse lock acquisition on both the review and task tables.
+
+Down removes the identity and reviewer task link columns, indexes and foreign key. The closure records and run history survive the downgrade. Use the pre-activation snapshot for a full data rewind.
 
 ## SignalR
 

@@ -29,7 +29,8 @@ public sealed class ReviewService(
     ReviewIntake intake,
     ReviewExecutorSignal executor,
     CodeHostRouter router,
-    IOptions<ReviewPolicySettings> policy)
+    IOptions<ReviewPolicySettings> policy,
+    ReviewReviewerReconciler reviewerReconciler)
 {
     public const string RunChangedEvent = "ReviewRunChanged";
     private const string CloseAuditNode = "review-run-close";
@@ -250,7 +251,7 @@ public sealed class ReviewService(
         if (!viewer.MayDecideOn(run.GitHubRepo ?? run.Subject.Repo))
             throw new ForbiddenException($"You need write access to {run.Subject.Repo} to close its review runs.", "review_run_close_forbidden");
         if (run.Status == ReviewRunStatus.Closed)
-            return await GetRunAsync(id, ct);
+            return await ReconcileClosedRunAsync(id, ct);
 
         var reason = request.Reason?.Trim();
         if (string.IsNullOrEmpty(reason) || reason.Length > MaxCloseReasonLength)
@@ -263,6 +264,8 @@ public sealed class ReviewService(
         var now = Now();
         await using (var transaction = await db.Database.BeginTransactionAsync(ct))
         {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"""SELECT 1 FROM "ReviewRuns" WHERE "Id" = {id} FOR NO KEY UPDATE""", ct);
             var outstanding = await db.ReviewNodeExecutions.Where(n => n.RunId == id
                 && (n.Status == ReviewNodeStatus.Pending || n.Status == ReviewNodeStatus.Running || n.Status == ReviewNodeStatus.Waiting))
                 .ToListAsync(ct);
@@ -304,7 +307,7 @@ public sealed class ReviewService(
             {
                 await transaction.RollbackAsync(ct);
                 if (await db.ReviewRuns.AnyAsync(r => r.Id == id && r.Status == ReviewRunStatus.Closed, ct))
-                    return await GetRunAsync(id, ct);
+                    return await ReconcileClosedRunAsync(id, ct);
                 throw RunChanged(id);
             }
 
@@ -312,6 +315,12 @@ public sealed class ReviewService(
         }
 
         await PublishAsync(id, ct);
+        return await ReconcileClosedRunAsync(id, ct);
+    }
+
+    private async Task<ReviewRunDetailDto> ReconcileClosedRunAsync(Guid id, CancellationToken ct)
+    {
+        await reviewerReconciler.ReconcileAsync(id, ct);
         return await GetRunAsync(id, ct);
     }
 
@@ -359,7 +368,7 @@ public sealed class ReviewService(
             return;
         }
 
-        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run.Subject, ct));
+        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run, ct));
         var pr = snapshot.PullRequest;
         var now = Now();
         if (run.Subject.Host == ReviewHost.GitHub && pr.Title.Length > 0)
@@ -398,7 +407,7 @@ public sealed class ReviewService(
             {
                 var state = await ReadIntakeAsync(() =>
                 {
-                    var binding = router.Resolve(run.Subject);
+                    var binding = router.Resolve(run);
                     return binding.Host.GetBranchStateAsync(binding.Target, run.Subject.BaseRef, previousHead, ct);
                 });
                 if (!string.Equals(state.BaseTipSha, run.BaseTipSha, StringComparison.OrdinalIgnoreCase))
@@ -555,7 +564,7 @@ public sealed class ReviewService(
 
         // Approved, awaiting merge or failed: a new iteration, as Refresh starts one for a recheck.
         var approved = run.Status is ReviewRunStatus.Approved or ReviewRunStatus.AwaitingMerge;
-        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run.Subject, ct));
+        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run, ct));
         var pr = snapshot.PullRequest;
         if (pr.State is not CodeHostPullRequestState.Open)
             throw new ConflictException($"The PR is {pr.State} on the code host; Refresh finishes the run.", "review_run_finished");
@@ -608,7 +617,7 @@ public sealed class ReviewService(
             return;
         try
         {
-            var binding = router.Resolve(run.Subject);
+            var binding = router.Resolve(run);
             if (!binding.Host.Capabilities.SupportsCommitStatuses)
                 return;
             var root = settings.Value.PublicBaseUrl;

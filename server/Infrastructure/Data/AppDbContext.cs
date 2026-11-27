@@ -2396,6 +2396,10 @@ public partial class AppDbContext : DbContext
             entity.Property(t => t.DesktopWorkspaceKind).IsRequired().HasDefaultValue(DesktopWorkspaceKind.Checkout);
             entity.Property(t => t.TaskRefWorkspaceBindingId);
             entity.ToTable("AgentTasks");
+            entity.HasIndex(t => new { t.ReviewerRunId, t.ReviewerNodeId, t.ReviewerAttempt })
+                .HasDatabaseName("IX_AgentTasks_ReviewerAttempt").IsUnique()
+                .HasFilter("\"ReviewerRunId\" IS NOT NULL");
+            entity.HasOne<ReviewRun>().WithMany().HasForeignKey(t => t.ReviewerRunId).OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(t => t.CardWorkflowStageId).HasDatabaseName("IX_AgentTasks_CardWorkflowStageId");
             entity.HasOne(t => t.CardWorkflowStage).WithMany()
                 .HasForeignKey(t => t.CardWorkflowStageId).OnDelete(DeleteBehavior.SetNull);

@@ -67,6 +67,13 @@ public sealed partial class SessionMessageQueueService
                 committed = true;
                 return new DispatchBriefEnsureResult(DispatchBriefKind.Uncertain, null, false);
             }
+            if (task.ReviewerRunId is { } runId && !await db.ReviewRuns.AnyAsync(r =>
+                r.Id == runId && r.Status != ReviewRunStatus.Closed, ct))
+            {
+                await tx.CommitAsync(ct);
+                committed = true;
+                return new DispatchBriefEnsureResult(DispatchBriefKind.Superseded, null, false);
+            }
 
             var session = await db.AgentSessions.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.Id == request.SessionId, ct);

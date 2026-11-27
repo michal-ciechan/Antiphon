@@ -27,7 +27,6 @@ public sealed class DelegationReviewAgentRunner(
     AppDbContext db,
     IReviewTaskGateway tasks,
     IOptions<ReviewAgentSettings> settings,
-    TimeProvider time,
     ILogger<DelegationReviewAgentRunner> logger) : IReviewAgentRunner
 {
     /// <summary>The task goal limit (<c>AgentTaskService</c>).</summary>
@@ -47,7 +46,11 @@ public sealed class DelegationReviewAgentRunner(
         Guid taskId;
         try
         {
-            taskId = await tasks.CreateAsync(create, project.Id, repoPath, ct);
+            if (request.NodeExecutionId is not { } nodeId)
+                throw new ReviewAgentRunnerException("A delegated reviewer requires a persisted workflow node.");
+            var link = new ReviewerTaskLink(request.RunId, nodeId, request.Attempt,
+                TimeSpan.FromMinutes(Math.Max(1, options.TimeoutMinutes)));
+            taskId = await tasks.CreateReviewerAsync(create, project.Id, repoPath, link, ct);
         }
         catch (Exception ex) when (ex is not (OperationCanceledException or ReviewAgentRunnerException))
         {
@@ -101,15 +104,6 @@ public sealed class DelegationReviewAgentRunner(
             case AgentTaskStatus.Blocked:
                 await tasks.CancelAsync(taskId, "The review engine takes no questions from a reviewer.", ct);
                 throw new ReviewAgentRunnerException($"Reviewer task {Short(taskId)} asked a question instead of answering: {Excerpt(task.Result)}");
-        }
-
-        var limit = TimeSpan.FromMinutes(Math.Max(1, settings.Value.TimeoutMinutes));
-        var age = time.GetUtcNow().UtcDateTime - task.CreatedAt;
-        if (age > limit)
-        {
-            await tasks.CancelAsync(taskId, $"The review engine timed this reviewer out after {limit.TotalMinutes:0} minutes.", ct);
-            throw new ReviewAgentRunnerException(
-                $"Reviewer task {Short(taskId)} did not finish within {limit.TotalMinutes:0} minutes (Review:Agents:TimeoutMinutes); it was cancelled.");
         }
 
         return ReviewAgentResult.Pending(handle);

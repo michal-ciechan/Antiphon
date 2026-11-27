@@ -17,6 +17,9 @@ public class AgentTask
     public string? SpecialistInputPolicyJson { get; set; }
     /// <summary>Original optional-work deadline. Null preserves historical dispatch behavior.</summary>
     public DateTime? ExecutionDeadlineAt { get; set; }
+    public Guid? ReviewerRunId { get; set; }
+    public Guid? ReviewerNodeId { get; set; }
+    public int? ReviewerAttempt { get; set; }
     /// <summary>Internal specialist execution snapshot. Null preserves legacy/public pin behavior.</summary>
     public string? SpecialistModelAlias { get; set; }
     public string? SpecialistModelId { get; set; }

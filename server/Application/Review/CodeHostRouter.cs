@@ -54,6 +54,18 @@ public sealed class CodeHostRouter(IEnumerable<ICodeHost> hosts, IOptions<Review
         return Resolve(subject.Host, repo, prNumber, Blank(subject.BaseRef), Blank(subject.HeadRef));
     }
 
+    public CodeHostBinding Resolve(ReviewRun run)
+    {
+        var binding = Resolve(run.Subject);
+        if (run.GitHubAuthority is { } authority && binding.Target.GitHubAuthority != authority)
+            throw new CodeHostException(CodeHostFailureKind.Rejected,
+                "The pull request's configured GitHub authority has changed since intake.");
+        return binding with
+        {
+            Target = binding.Target with { ReviewRunId = run.Id, GitHubRepositoryId = run.GitHubRepositoryId },
+        };
+    }
+
     /// <summary>A code host failure as the API reports it to a caller.</summary>
     public static HttpException ToHttp(CodeHostException ex) => ex.Kind switch
     {

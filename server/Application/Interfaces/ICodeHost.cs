@@ -126,6 +126,7 @@ public sealed record CodeHostTarget(
 {
     public string? GitHubAuthority { get; init; }
     public long? GitHubRepositoryId { get; init; }
+    public Guid? ReviewRunId { get; init; }
 }
 
 /// <summary>

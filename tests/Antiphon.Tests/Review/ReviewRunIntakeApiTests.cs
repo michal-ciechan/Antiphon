@@ -19,6 +19,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -219,7 +221,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         const string repo = "acme/enterprise";
         using var client = OpenPullRequest(number);
         var original = await IntakeAsync(client, repo, number, HttpStatusCode.Created, ct);
-        var options = factory.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ReviewCodeHostSettings>>().Value;
+        var options = factory.Services.GetRequiredService<IOptions<ReviewCodeHostSettings>>().Value;
         options.Hosts["intake-test-enterprise"].BaseUrl = "https://second.example/api/v3/";
 
         var replacement = await IntakeAsync(client, repo, number, HttpStatusCode.Created, ct);
@@ -327,7 +329,9 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
                 Kind: AgentTaskKind.Worker, Role: AgentTaskRole.Review, Workspace: WorkspaceMode.ReadOnly,
                 WorkingDirectory: harness.TempRoot, CommitOnSettle: "Never", AgentKind: AgentKind.ClaudeCode,
                 ModelLevel: AgentModelLevel.High);
-            taskId = await tasks.CreateAsync(create, null, harness.TempRoot, ct);
+            var link = new ReviewerTaskLink(runId, nodeId, 1, TimeSpan.FromMinutes(90));
+            taskId = await tasks.CreateReviewerAsync(create, null, harness.TempRoot, link, ct);
+            (await tasks.CreateReviewerAsync(create, null, harness.TempRoot, link, ct)).ShouldBe(taskId);
             var when = DateTime.UtcNow;
             var sessionStarted = await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.StartedAt).SingleAsync(ct);
             var claimed = await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
@@ -381,6 +385,57 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
             rows.ShouldBeEmpty();
         else
             rows.ShouldHaveSingleItem().Status.ShouldBe(recipient == "busy" ? QueuedMessageStatus.Canceled : QueuedMessageStatus.Sent);
+    }
+
+    [Test]
+    [Arguments(209668, false)]
+    [Arguments(209669, true)]
+    public async Task Reconciliation_recovers_closed_or_timed_out_reviewers_without_the_executor(int number, bool closed,
+        CancellationToken ct)
+    {
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var nodeId = Guid.NewGuid();
+        db.ReviewNodeExecutions.Add(new ReviewNodeExecution
+        {
+            Id = nodeId, RunId = runId, NodeId = "reviewer", Kind = ReviewNodeKind.Agent,
+            ItemKey = "correctness", Iteration = 1, Sequence = 2, Status = ReviewNodeStatus.Running,
+        });
+        await db.SaveChangesAsync(ct);
+
+        var directory = Path.GetDirectoryName(factory.OperatorTokenPath)!;
+        var gateway = scope.ServiceProvider.GetRequiredService<IReviewTaskGateway>();
+        var request = new CreateAgentTaskRequest("Hold this read-only review", Role: AgentTaskRole.Review,
+            Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: directory, CommitOnSettle: "Never");
+        var link = new ReviewerTaskLink(runId, nodeId, 1, TimeSpan.FromMinutes(90));
+        var taskId = await gateway.CreateReviewerAsync(request, null, directory, link, ct);
+        if (closed)
+        {
+            // The process went away after its close commit, before it could cancel the task.
+            await db.ReviewRuns.Where(r => r.Id == runId)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ReviewRunStatus.Closed), ct);
+            await Should.ThrowAsync<Antiphon.Server.Application.Exceptions.ConflictException>(() =>
+                gateway.CreateReviewerAsync(request, null, directory, link with { Attempt = 2 }, ct));
+        }
+        else
+        {
+            await db.AgentTasks.Where(t => t.Id == taskId).ExecuteUpdateAsync(s => s
+                .SetProperty(t => t.Status, AgentTaskStatus.Blocked)
+                .SetProperty(t => t.ExecutionDeadlineAt, DateTime.UtcNow.AddMinutes(-1)), ct);
+        }
+
+        var reconciler = new ReviewReviewerReconciler(factory.Services.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System, factory.Services.GetRequiredService<IOptions<ReviewAgentSettings>>(),
+            NullLogger<ReviewReviewerReconciler>.Instance);
+        await reconciler.ReconcileAsync(null, ct);
+
+        var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+        task.Status.ShouldBe(AgentTaskStatus.Canceled);
+        task.FailureReason!.ShouldContain(closed ? "was closed" : "timed this reviewer out");
+        (await db.AgentTasks.CountAsync(t => t.ReviewerRunId == runId, ct)).ShouldBe(1);
     }
 
     private HttpClient OpenPullRequest(int number)

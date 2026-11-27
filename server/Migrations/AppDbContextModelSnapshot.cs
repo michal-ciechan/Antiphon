@@ -1423,6 +1423,15 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
 
+                    b.Property<int?>("ReviewerAttempt")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ReviewerNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ReviewerRunId")
+                        .HasColumnType("uuid");
+
                     b.Property<int>("Role")
                         .HasColumnType("integer");
 
@@ -1643,6 +1652,11 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("RootTaskId", "CreatedAt")
                         .HasDatabaseName("IX_AgentTasks_RootTaskId_CreatedAt");
+
+                    b.HasIndex("ReviewerRunId", "ReviewerNodeId", "ReviewerAttempt")
+                        .IsUnique()
+                        .HasDatabaseName("IX_AgentTasks_ReviewerAttempt")
+                        .HasFilter("\"ReviewerRunId\" IS NOT NULL");
 
                     b.HasIndex("CardId", "Role", "CreatedAt")
                         .HasDatabaseName("IX_AgentTasks_CardId_Role_CreatedAt");
@@ -11976,6 +11990,11 @@ namespace Antiphon.Server.Migrations
                     b.HasOne("Antiphon.Server.Domain.Entities.AgentTask", "ParentTask")
                         .WithMany("Children")
                         .HasForeignKey("ParentTaskId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Antiphon.Server.Domain.Entities.ReviewRun", null)
+                        .WithMany()
+                        .HasForeignKey("ReviewerRunId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Antiphon.Server.Domain.Entities.Project", null)

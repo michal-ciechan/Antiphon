@@ -1,7 +1,6 @@
 using System.Text;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
-using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Review;
 
@@ -25,13 +24,9 @@ public sealed class ReviewIntake(CodeHostRouter router)
     /// <summary>Files listed in a node summary before it says how many more there are.</summary>
     public const int SummaryFileLimit = 200;
 
-    public Task<IntakeSnapshot> ReadAsync(ReviewHost host, string repo, int? prNumber, string? baseRef, string? headRef, CancellationToken ct) =>
-        ReadAsync(router.Resolve(host, repo, prNumber, baseRef, headRef), ct);
-
-    public Task<IntakeSnapshot> ReadAsync(ReviewSubject subject, CancellationToken ct) => ReadAsync(router.Resolve(subject), ct);
-
-    private static async Task<IntakeSnapshot> ReadAsync(CodeHostBinding binding, CancellationToken ct)
+    public async Task<IntakeSnapshot> ReadAsync(ReviewRun run, CancellationToken ct)
     {
+        var binding = router.Resolve(run);
         var pr = await binding.Host.GetPullRequestAsync(binding.Target, ct);
         return await ReadFilesAsync(binding, pr, ct);
     }

@@ -29,6 +29,9 @@ namespace Antiphon.Server.Migrations
             migrationBuilder.AddColumn<string>(name: "GitHubAuthority", table: "ReviewRuns", type: "text", nullable: true);
             migrationBuilder.AddColumn<long>(name: "GitHubRepositoryId", table: "ReviewRuns", type: "bigint", nullable: true);
             migrationBuilder.AddColumn<bool>(name: "IsDemo", table: "ReviewRuns", type: "boolean", nullable: false, defaultValue: false);
+            migrationBuilder.AddColumn<Guid>(name: "ReviewerRunId", table: "AgentTasks", type: "uuid", nullable: true);
+            migrationBuilder.AddColumn<Guid>(name: "ReviewerNodeId", table: "AgentTasks", type: "uuid", nullable: true);
+            migrationBuilder.AddColumn<int>(name: "ReviewerAttempt", table: "AgentTasks", type: "integer", nullable: true);
 
             migrationBuilder.Sql(
                 """
@@ -91,6 +94,21 @@ namespace Antiphon.Server.Migrations
                         'at', transaction_timestamp(), 'supersededByRunId', "KeepId", 'previousStatus', "Status",
                         'previousStage', "Stage", 'previousWaitingOn', "WaitingOn", 'previousUpdatedAt', "UpdatedAt")
                 FROM "_ReviewRunDuplicates";
+
+                -- Older executions saved the handle only on returning from task creation. Retain
+                -- links that can be proved by both the handle and the task's review brief.
+                WITH recorded AS (
+                    SELECT n."Id", n."RunId", (n."OutputJson" ->> 'handle')::uuid AS task_id,
+                        CASE n."OutputJson" ->> 'attempts' WHEN '2' THEN 2 ELSE 1 END AS attempt
+                    FROM "ReviewNodeExecutions" n
+                    WHERE n."Kind" = 'Agent'
+                        AND n."OutputJson" ->> 'handle' ~* '^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$'
+                )
+                UPDATE "AgentTasks" AS t
+                SET "ReviewerRunId" = a."RunId", "ReviewerNodeId" = a."Id", "ReviewerAttempt" = a.attempt
+                FROM recorded a
+                WHERE a.task_id = t."Id"
+                    AND position('for the Antiphon review engine (run ' || a."RunId"::text || ',' IN t."Goal") > 0;
                 """);
 
             migrationBuilder.CreateIndex(
@@ -105,6 +123,12 @@ namespace Antiphon.Server.Migrations
                 columns: new[] { "GitHubAuthority", "GitHubRepo", "GitHubPrNumber" },
                 unique: true,
                 filter: "\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubRepositoryId\" IS NULL AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+
+            migrationBuilder.CreateIndex(name: "IX_AgentTasks_ReviewerAttempt", table: "AgentTasks",
+                columns: new[] { "ReviewerRunId", "ReviewerNodeId", "ReviewerAttempt" }, unique: true,
+                filter: "\"ReviewerRunId\" IS NOT NULL");
+            migrationBuilder.AddForeignKey(name: "FK_AgentTasks_ReviewRuns_ReviewerRunId", table: "AgentTasks",
+                column: "ReviewerRunId", principalTable: "ReviewRuns", principalColumn: "Id", onDelete: ReferentialAction.Restrict);
         }
 
         /// <inheritdoc />
@@ -112,6 +136,12 @@ namespace Antiphon.Server.Migrations
         {
             // The keys are derived. Keep the run closures and their audit when removing them.
             migrationBuilder.Sql("SET LOCAL lock_timeout = '5s';");
+
+            migrationBuilder.DropForeignKey(name: "FK_AgentTasks_ReviewRuns_ReviewerRunId", table: "AgentTasks");
+            migrationBuilder.DropIndex(name: "IX_AgentTasks_ReviewerAttempt", table: "AgentTasks");
+            migrationBuilder.DropColumn(name: "ReviewerAttempt", table: "AgentTasks");
+            migrationBuilder.DropColumn(name: "ReviewerNodeId", table: "AgentTasks");
+            migrationBuilder.DropColumn(name: "ReviewerRunId", table: "AgentTasks");
 
             migrationBuilder.DropIndex(
                 name: "IX_ReviewRuns_GitHubIdentity_Open",

@@ -98,7 +98,7 @@ public static class ReviewReviewSteps
                 {
                     var result = await runner.RunAsync(new ReviewAgentRequest(walk.Run.Id, walk.Iteration.Iteration, walk.Run.Round, group.Key,
                         pack.Content, pack.Hash, group.CheckIds, subject.Repo, subject.PrNumber, walk.Iteration.HeadSha ?? walk.HeadSha, attempt,
-                        previous?.Handle, group.Tier, subject.Host, localPath), ct);
+                        previous?.Handle, group.Tier, subject.Host, localPath, child.Id), ct);
                     Usage(child, result.Usage);
                     if (result.Status == ReviewAgentStatus.Pending)
                     {

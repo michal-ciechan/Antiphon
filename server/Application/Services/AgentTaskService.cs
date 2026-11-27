@@ -5,6 +5,7 @@ using Antiphon.Agents.Pty;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
@@ -293,9 +294,24 @@ public sealed class AgentTaskService
         Caller caller,
         CancellationToken ct) => CreateCoreAsync(request, caller, null, ct);
 
+    internal async Task<AgentTaskCreatedDto> CreateReviewerAsync(
+        CreateAgentTaskRequest request, Caller caller, ReviewerTaskLink reviewer, CancellationToken ct)
+    {
+        // A lost create response or executor restart can reach the same reviewer attempt again.
+        var existing = await FindReviewerTaskAsync(reviewer, ct);
+        return existing is not null ? ExistingReviewer(existing) : await CreateCoreAsync(request, caller, null, ct, reviewer: reviewer);
+    }
+
+    private Task<AgentTask?> FindReviewerTaskAsync(ReviewerTaskLink reviewer, CancellationToken ct) =>
+        _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.ReviewerRunId == reviewer.RunId
+            && t.ReviewerNodeId == reviewer.NodeId && t.ReviewerAttempt == reviewer.Attempt, ct);
+
+    private static AgentTaskCreatedDto ExistingReviewer(AgentTask task) =>
+        new(task.Id, DelegationReportFormatter.Short(task.Id), task.Status, task.ModelLevel, null, task.AgentKind);
+
     private async Task<AgentTaskCreatedDto> CreateCoreAsync(
         CreateAgentTaskRequest request, Caller caller, Guid? handoffActionId, CancellationToken ct,
-        bool acceptSpend = false)
+        bool acceptSpend = false, ReviewerTaskLink? reviewer = null)
     {
         if (handoffActionId is not null && !acceptSpend)
             throw new ConflictException("The caller must explicitly accept this child request's spend.", "handoff_spend_held");
@@ -1699,7 +1715,7 @@ public sealed class AgentTaskService
         CardWorktreeBaseSelection? basePreview = prepareBeforeLocks
             ? await PrepareWorktreeBaseAsync(task, request, now, ct, fetchUnreadable: true) : null;
         PipelineHandoffAction? handoff = null;
-        if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null
+        if (gateCreate || task.SourceLandingOperationId is not null || verificationAdmission is not null || reviewer is not null
             || task.CardId is not null || handoffActionId is not null)
         {
             gateTx = _db.Database.CurrentTransaction is null
@@ -1709,6 +1725,25 @@ public sealed class AgentTaskService
 
         try
         {
+            if (reviewer is not null)
+            {
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""SELECT 1 FROM "ReviewRuns" WHERE "Id" = {reviewer.RunId} FOR NO KEY UPDATE""", ct);
+                if (!await _db.ReviewRuns.AnyAsync(r => r.Id == reviewer.RunId && r.Status != ReviewRunStatus.Closed, ct)
+                    || !await _db.ReviewNodeExecutions.AnyAsync(n => n.Id == reviewer.NodeId && n.RunId == reviewer.RunId
+                        && (n.Status == ReviewNodeStatus.Running || n.Status == ReviewNodeStatus.Waiting), ct))
+                    throw new ConflictException("The review run no longer admits this reviewer.", "review_reviewer_closed");
+                if (await FindReviewerTaskAsync(reviewer, ct) is { } existing)
+                {
+                    await gateTx!.CommitAsync(ct);
+                    return ExistingReviewer(existing);
+                }
+                task.ReviewerRunId = reviewer.RunId;
+                task.ReviewerNodeId = reviewer.NodeId;
+                task.ReviewerAttempt = reviewer.Attempt;
+                task.ExecutionDeadlineAt = now.Add(reviewer.Timeout);
+            }
+
             // Shared order for B-3 writers: card, handoff (when present), then task/evidence locks.
             // This transaction is required even when the optional concurrency gate is absent.
             Card? admissionCard = null;
@@ -3152,13 +3187,19 @@ public sealed class AgentTaskService
     {
         var observed = await _db.AgentTasks.AsNoTracking().SingleOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
-        var gate = (observed.Status == AgentTaskStatus.Working || observed.CeilingHeldAt is not null)
+        var gate = (observed.Status == AgentTaskStatus.Working || observed.CeilingHeldAt is not null || observed.ReviewerRunId is not null)
             && observed.AgentSessionId is { } sessionId ? _messageQueue?.GetLock(sessionId) : null;
         if (gate is not null) await gate.WaitAsync(ct);
         AgentTask canceled;
         try
         {
+            await using var tx = observed.ReviewerRunId is not null ? await _db.Database.BeginTransactionAsync(ct) : null;
+            if (tx is not null)
+                await _db.Database.ExecuteSqlInterpolatedAsync(
+                    $"""SELECT 1 FROM "AgentTasks" WHERE "Id" = {id} FOR UPDATE""", ct);
             canceled = await CancelCoreAsync(id, observed.Attempt, observed.AgentSessionId, reason, ct);
+            if (tx is not null)
+                await tx.CommitAsync(ct);
         }
         finally { gate?.Release(); }
         return await AfterCancelCommitAsync(canceled, ct);
@@ -3177,7 +3218,7 @@ public sealed class AgentTaskService
 
         // Stop the delegate BEFORE relabelling the row. A cancel that only changes a status leaves
         // a Claude running against the run's cost ceiling while the board says the work stopped.
-        await StopDelegateAsync(task, ct);
+        await StopDelegateAsync(task, ct, retryUnrecordedStop: task.ReviewerRunId is not null);
         if (_capacityRecovery is not null)
             await _capacityRecovery.SupersedeTaskWaitsOnAsync(_db, task.Id, "task-canceled", ct);
         await RemoveEphemeralAgentAsync(task, task.AgentId, ct);
@@ -3192,6 +3233,11 @@ public sealed class AgentTaskService
         if (trimmed is not null)
             task.FailureReason = trimmed;
         AddEvent(task.Id, AgentTaskEventType.Canceled, null, trimmed is null ? "Canceled." : "Canceled: " + trimmed, now);
+        if (task.ReviewerRunId is not null)
+            await _db.SessionQueuedMessages.Where(m => m.ExecutionTaskId == id && m.Status == QueuedMessageStatus.Pending
+                    && m.DeliveryAttempts == 0)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled)
+                    .SetProperty(m => m.CanceledAt, now), ct);
         await MergeHelperOutcome.RecordUnresolvedAsync(_db, task, now, ct);
         await _db.SaveChangesAsync(ct);
         return task;
@@ -4661,7 +4707,7 @@ public sealed class AgentTaskService
     /// End the delegate's session if it has one. Best-effort: a session the runner has already lost
     /// must not stop the caller from cancelling or requeueing the task.
     /// </summary>
-    private async Task StopDelegateAsync(AgentTask task, CancellationToken ct)
+    private async Task StopDelegateAsync(AgentTask task, CancellationToken ct, bool retryUnrecordedStop = false)
     {
         if (task.AgentSessionId is not Guid sessionId)
             return;
@@ -4675,6 +4721,11 @@ public sealed class AgentTaskService
             _logger.LogWarning(
                 ex, "Could not stop session {SessionId} for task {ShortId}",
                 sessionId, DelegationReportFormatter.Short(task.Id));
+            // The session reconciler owns a recorded Stopping intent. If the call
+            // failed earlier, keep the linked task eligible for review reconciliation.
+            if (retryUnrecordedStop && await _db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId
+                && (s.Status == SessionStatus.Created || s.Status == SessionStatus.Starting || s.Status == SessionStatus.Running), ct))
+                throw;
         }
     }
 

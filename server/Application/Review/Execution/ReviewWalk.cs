@@ -142,7 +142,7 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
 
     public string EntryNodeId => Workflow.Nodes.FirstOrDefault(n => n.Run == EntryRun)?.Id ?? Workflow.Nodes[0].Id;
 
-    public CodeHostBinding Binding => _binding ??= Services.GetRequiredService<CodeHostRouter>().Resolve(Run.Subject);
+    public CodeHostBinding Binding => _binding ??= Services.GetRequiredService<CodeHostRouter>().Resolve(Run);
 
     public ICodeHost Host => Binding.Host;
 

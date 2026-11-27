@@ -5836,6 +5836,11 @@ public sealed partial class AgentTaskDispatcher
         await _db.Entry(claimed).ReloadAsync(ct);
         // Ends the claim span on this path; an exception before here leaves it unexported only.
         claimSpan?.Dispose();
+        if (await ReviewerDispatchRefusedAsync(claimed, ct))
+        {
+            await transaction.RollbackAsync(ct);
+            return DispatchOneResult.NotClaimed;
+        }
         if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
             && (string.IsNullOrWhiteSpace(claimed.RunnerId) || RunnerRequestIntent.IsDesktopAlias(claimed.RunnerId)))
         {
@@ -6550,6 +6555,8 @@ public sealed partial class AgentTaskDispatcher
         // start and never prepares. Preparation is never a launch gate.
         if (claimed.ReleasedSeatAnswerId is null)
             await PrepareAbsenceEvidenceAsync(claimed, session, ct);
+        if (await ReviewerDispatchRefusedAsync(claimed, ct))
+            return DispatchOneResult.Dispatched;
         try
         {
             if (_taskLaunchSink is not null)
@@ -6637,6 +6644,10 @@ public sealed partial class AgentTaskDispatcher
 
         return DispatchOneResult.Dispatched;
     }
+
+    private async Task<bool> ReviewerDispatchRefusedAsync(AgentTask task, CancellationToken ct) =>
+        task.ReviewerRunId is { } runId && (task.ExecutionDeadlineAt <= UtcNow()
+            || !await _db.ReviewRuns.AnyAsync(r => r.Id == runId && r.Status != ReviewRunStatus.Closed, ct));
 
     private static string FormatWorktreeCreatedDetail(AgentTask claimed, bool armed)
     {

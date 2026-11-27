@@ -38,7 +38,8 @@ public sealed record ReviewAgentRequest(
     string? Handle = null,
     string? Tier = null,
     ReviewHost Host = ReviewHost.GitHub,
-    string? LocalPath = null);
+    string? LocalPath = null,
+    Guid? NodeExecutionId = null);
 
 public enum ReviewAgentStatus
 {

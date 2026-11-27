@@ -48,6 +48,9 @@ public sealed record ReviewTaskState(
     }
 }
 
+/// <summary>Uniquely identifies one attempt of a persisted reviewer node.</summary>
+public sealed record ReviewerTaskLink(Guid RunId, Guid NodeId, int Attempt, TimeSpan Timeout);
+
 /// <summary>
 /// The review engine's door into delegation: make a commit reachable for a worktree, create a task as
 /// a server-originated caller with no parent and no reply routing, read it back, cancel it. One seam so
@@ -64,6 +67,9 @@ public interface IReviewTaskGateway
 
     /// <summary>Creates the task. <paramref name="callerDirectory"/> is the caller's own tree, which the workspace rules allow.</summary>
     Task<Guid> CreateAsync(CreateAgentTaskRequest request, Guid? projectId, string callerDirectory, CancellationToken ct);
+
+    Task<Guid> CreateReviewerAsync(CreateAgentTaskRequest request, Guid? projectId, string callerDirectory,
+        ReviewerTaskLink link, CancellationToken ct) => CreateAsync(request, projectId, callerDirectory, ct);
 
     /// <summary>The task, or null when it no longer exists.</summary>
     Task<ReviewTaskState?> ReadAsync(Guid taskId, CancellationToken ct);
@@ -93,6 +99,18 @@ public sealed class AgentTaskReviewGateway(IServiceScopeFactory scopes, StartRef
         await using var scope = scopes.CreateAsyncScope();
         var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
         var created = await tasks.CreateAsync(request, new AgentTaskService.Caller(null, null, callerDirectory, ProjectId: projectId), ct);
+        if (created.Warning is { Length: > 0 } warning)
+            logger.LogInformation("Review delegate task {TaskId} created with a warning: {Warning}", created.Id, warning);
+        return created.Id;
+    }
+
+    public async Task<Guid> CreateReviewerAsync(CreateAgentTaskRequest request, Guid? projectId, string callerDirectory,
+        ReviewerTaskLink link, CancellationToken ct)
+    {
+        await using var scope = scopes.CreateAsyncScope();
+        var tasks = scope.ServiceProvider.GetRequiredService<AgentTaskService>();
+        var caller = new AgentTaskService.Caller(null, null, callerDirectory, ProjectId: projectId);
+        var created = await tasks.CreateReviewerAsync(request, caller, link, ct);
         if (created.Warning is { Length: > 0 } warning)
             logger.LogInformation("Review delegate task {TaskId} created with a warning: {Warning}", created.Id, warning);
         return created.Id;
