@@ -140,13 +140,23 @@ public sealed partial class ChannelInputWithheldIncidentTests
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
         await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
-        await h.InsertTranscriptEntryAsync(TranscriptKinds.SessionRestartBoundary);
+        var boundary = await h.InsertTranscriptEntryAsync(TranscriptKinds.SessionRestartBoundary);
         var stray = await h.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText, "synthetic startup output");
         await using var db = Db(schema.ConnectionString);
         (await TranscriptTurnWindow.FindActionBoundaryAsync(db, h.SessionId, stray, ct)).ShouldBeNull();
         await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
         await h.DrainOutboundAsync();
         h.Messaging.SentReplies.Count.ShouldBe(1);
+
+        // Idle relaunches from older versions have no interrupted-turn boundary. Establish
+        // the previous generation by the ingestion time of its timestamp-less entries.
+        var restarted = h.Now.AddMinutes(-1);
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId && t.Sequence == boundary).ExecuteDeleteAsync(ct);
+        await db.TranscriptEntries.Where(t => t.AgentSessionId == h.SessionId && t.Sequence < stray)
+            .ExecuteUpdateAsync(s => s.SetProperty(t => t.Timestamp, (DateTime?)null)
+                .SetProperty(t => t.CreatedAt, restarted.AddMinutes(-1)), ct);
+        await db.AgentSessions.Where(a => a.Id == h.SessionId).ExecuteUpdateAsync(s => s.SetProperty(a => a.StartedAt, restarted), ct);
+        (await TranscriptTurnWindow.FindActionBoundaryAsync(db, h.SessionId, stray, ct)).ShouldBeNull();
     }
 
     [Test]
@@ -187,7 +197,10 @@ public sealed partial class ChannelInputWithheldIncidentTests
         var id = await h.SeedPendingMessageAsync("synthetic prior generation", origin: QueuedMessageOrigin.System);
         await db.SessionQueuedMessages.Where(m => m.Id == id)
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.RuntimeActionKey, StandingResumeNote.Key(generation.AddMinutes(-1))), ct);
-        await h.Queue.FlushSessionAsync(h.SessionId, ct);
+        await db.SessionQueuedMessages.Where(m => m.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.CreatedAt, generation.AddMinutes(-1)), ct);
+        await h.MarkWorkingAsync();
+        await h.Queue.FlushStrandedQueuesAsync(ct);
         var closed = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id, ct);
         closed.Status.ShouldBe(QueuedMessageStatus.Canceled);
         closed.CanceledAt.ShouldNotBeNull();
