@@ -49,6 +49,49 @@ public sealed class ExpectedPlatformSkipRosterTests
     private static string Joined(object? values) => string.Join(",", PsValue.AsArray(values!).Select(PsValue.Str));
 
     [Test]
+    public void Roster_uses_qualified_source_identities_across_suites()
+    {
+        using var fixture = NightlyFixture.Create("eps-cross-suite");
+        var tests = Directory.CreateDirectory(Path.Combine(fixture.Root, "tests")).FullName;
+        File.WriteAllText(Path.Combine(tests, "MainTests.cs"), """
+            namespace First;
+            public class MainTests
+            {
+                [Test] public void Required() => Removed();
+                private void Removed() { }
+            }
+            """);
+        const string current = "First.MainTests.Required";
+        const string moved = "Old.MainTests.Required";
+        const string noLongerATest = "First.MainTests.Removed";
+        var roster = new[] { Entry("windows", current, "skip") };
+        var state = new NightlyRunState { Platform = "windows", ExpectedSkipRoster = roster };
+        var suite = new NightlySuiteRunner(state);
+        var discoveryPath = Path.Combine(fixture.Root, "other.discovery.json");
+        NightlyFixture.WriteDiscovery(discoveryPath, [new NightlyTestNode("other", "OtherTests", "Runs", "Second")]);
+        var index = new NightlyDiscoveryIndex();
+        var discovery = index.Entry(discoveryPath).Document;
+        suite.Complete(new NightlyPreparedSuite(new NightlySuiteState
+        {
+            SuiteId = "other",
+            IsNative = true,
+            DiscoveryIndex = index,
+            ProfileDiscovery = discovery,
+            ProfileDiscoveryPath = discoveryPath,
+            DiscoveryNodes = PsValue.AsArray(PsValue.Prop(discovery, "Nodes")),
+        }, []));
+
+        var gaps = NightlyExpectedSkips.SourceGaps(fixture.Root, "windows",
+            roster.Concat([Entry("windows", moved, "skip"), Entry("windows", noLongerATest, "skip")]).ToArray(), null);
+        var rows = new NightlyCaseRows();
+        rows.Check(state.ExpectedSkipWarnings.Count == 0, "another suite does not condemn a valid roster row",
+            Joined(state.ExpectedSkipWarnings.ToArray()));
+        rows.Check(gaps.SequenceEqual([moved, noLongerATest]), "a moved namespace and a former test are stale",
+            string.Join(",", gaps));
+        rows.ShouldAllPass(2);
+    }
+
+    [Test]
     public void Windows_qualification_tolerates_the_three_linux_only_witnesses()
     {
         const string handleProbe = "Antiphon.Tests.Scripts.ScriptHarnessHandleProbeTests.Early_exit_reports_process_and_receipt_evidence";
