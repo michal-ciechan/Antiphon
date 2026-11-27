@@ -509,6 +509,12 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         if (OverlayOpen)
             return;
 
+        if (input == ComposerInputProbe.KillLine)
+        {
+            _composer.Clear();
+            return;
+        }
+
         if (input == "\r")
         {
             if (EmptyComposerSnapshotsAfterEnter > 0)

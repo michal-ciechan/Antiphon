@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Review.Execution;
@@ -13,6 +14,7 @@ using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.Server.Infrastructure.Review;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -505,6 +507,154 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         task.Status.ShouldBe(AgentTaskStatus.Canceled);
         task.FailureReason!.ShouldContain(closed ? "was closed" : "timed this reviewer out");
         (await db.AgentTasks.CountAsync(t => t.ReviewerRunId == runId, ct)).ShouldBe(1);
+    }
+
+    [Test]
+    [Arguments(209675, true)]
+    [Arguments(209676, false)]
+    public async Task Dispatch_brief_buffered_at_restart_submits_only_while_the_run_is_open(int number, bool close, CancellationToken ct)
+    {
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var reviewer = new ReviewNodeExecution
+        {
+            Id = Guid.NewGuid(), RunId = runId, NodeId = "reviewer", Kind = ReviewNodeKind.Agent,
+            ItemKey = "concurrency", Iteration = 1, Sequence = 2, Status = ReviewNodeStatus.Running,
+        };
+        db.ReviewNodeExecutions.Add(reviewer);
+        await db.SaveChangesAsync(ct);
+
+        var connection = db.Database.GetConnectionString()!;
+        var settings = new DelegationSettings { MaxConcurrentTasks = 16 };
+        var launch = new BufferedBriefLaunch();
+        var recipient = new FakeAgentProtocolAdapter { ReadyResult = true };
+        var options = new BridgeQueueHarness.HarnessOptions
+        {
+            ConnectionString = connection, PreserveDatabaseOnDispose = true,
+            AlwaysOn = false, ClaudeDialogObservation = true, Delegation = settings,
+        };
+        Guid taskId;
+        string body;
+        await using (var server = await BridgeQueueHarness.CreateAsync(options with
+        {
+            ConfigureServices = services =>
+            {
+                services.AddSingleton<IAgentProtocolAdapterFactory>(new BufferedBriefAdapterFactory(recipient));
+                services.AddSingleton<IAgentTaskLaunchSink>(launch);
+                services.AddSingleton<IDelegateSessionStopper, RecordingSessionStopper>();
+                services.AddSingleton<DelegationWorkspaceResolver>();
+                services.AddDelegationWorktreeGraph();
+                services.AddScoped<AgentTaskService>();
+                services.AddScoped<AgentTaskDispatcher>();
+                services.AddSingleton<IOptionsMonitor<AgentRegistrySettings>>(
+                    new BridgeQueueHarness.OptionsMonitorStub<AgentRegistrySettings>(new AgentRegistrySettings
+                    {
+                        DefaultDefinition = "claude",
+                        Definitions = { ["claude"] = new AgentDefinition
+                        {
+                            Kind = "ClaudeCode", Exe = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+                        } },
+                    }));
+            },
+        }))
+        {
+            settings.AllowedRoots = [server.TempRoot];
+            var directory = Directory.CreateDirectory(Path.Combine(server.TempRoot, "reviewer")).FullName;
+            var agentId = Guid.NewGuid();
+            var board = await db.Agents.Where(a => a.Id == server.AgentId).Select(a => a.BoardId).SingleAsync(ct);
+            db.Agents.Add(new Agent
+            {
+                Id = agentId, BoardId = board, Name = "Buffered reviewer", Slug = $"buffered-{number}",
+                Kind = AgentKind.ClaudeCode, WorkingDirectory = directory, AlwaysOn = false,
+            });
+            await db.SaveChangesAsync(ct);
+            var gateway = scope.ServiceProvider.GetRequiredService<IReviewTaskGateway>();
+            taskId = await gateway.CreateReviewerAsync(new CreateAgentTaskRequest(
+                Goal: $"Review the pinned change for run {runId:D}.\nCheck the close boundary.",
+                Title: "Buffered review brief", Role: AgentTaskRole.Review, AgentKind: AgentKind.ClaudeCode,
+                Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: directory, AgentId: agentId,
+                CommitOnSettle: "Never", ReplyTo: AgentTaskReplyTo.None),
+                null, directory, new ReviewerTaskLink(runId, reviewer.Id, 1, TimeSpan.FromMinutes(90)), ct);
+
+            await using var dispatch = server.Provider.CreateAsyncScope();
+            await dispatch.ServiceProvider.GetRequiredService<AgentTaskDispatcher>().TickAsync(ct);
+            launch.Calls.ShouldBe(1);
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == taskId, ct);
+            task.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            task.AgentSessionId.ShouldBe(launch.SessionId);
+
+            recipient.RegisterOnStart = server.Runtime;
+            recipient.BeforeInput = (input, _) => input == "\r"
+                ? throw new InputDeliveryUncertainException(launch.SessionId) : Task.CompletedTask;
+            await recipient.EnableClaudeDialogObservationAsync(connection, launch.SessionId);
+            await dispatch.ServiceProvider.GetRequiredService<AgentSessionService>()
+                .ResumeInterruptedLaunchAsync(launch.SessionId, launch.AgentId, ct);
+            await server.Queue.FlushSessionAsync(launch.SessionId, ct);
+
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId, ct);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBeNull();
+            body = row.Body;
+            PromptSubmissionMatch.IsCompleteIn(body, recipient.ComposerText).ShouldBeTrue();
+            recipient.SubmittedBodies.ShouldBeEmpty();
+        }
+
+        if (close)
+            await CloseBufferedRunAsync(client, runId, ct);
+
+        // A new queue service and runtime attach to the same recipient generation and existing draft.
+        await using var restarted = await BridgeQueueHarness.CreateAsync(options with
+        {
+            AttachSessionId = launch.SessionId, AttachAgentId = launch.AgentId,
+        });
+        restarted.Adapter.PrimeComposer(recipient.ComposerText);
+        await restarted.Queue.FlushSessionAsync(launch.SessionId, ct);
+        await restarted.Queue.FlushSessionAsync(launch.SessionId, ct);
+        var prompts = await db.TranscriptEntries.AsNoTracking()
+            .Where(t => t.AgentSessionId == launch.SessionId && t.Kind == TranscriptKinds.UserPrompt)
+            .Select(t => t.Text).ToListAsync(ct);
+        var brief = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId, ct);
+        if (close)
+        {
+            prompts.ShouldBeEmpty("a durably closed run cannot submit its buffered brief");
+            brief.Status.ShouldBe(QueuedMessageStatus.Canceled);
+            restarted.Adapter.ComposerText.ShouldBeEmpty();
+        }
+        else
+        {
+            PromptSubmissionMatch.IsCompleteIn(body, prompts.ShouldHaveSingleItem()).ShouldBeTrue();
+            brief.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        }
+    }
+
+    private sealed class BufferedBriefLaunch : IAgentTaskLaunchSink
+    {
+        public Guid SessionId { get; private set; }
+        public Guid AgentId { get; private set; }
+        public int Calls { get; private set; }
+
+        public void Enqueue(Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec)
+        {
+            SessionId = sessionId;
+            AgentId = agentId;
+            Calls++;
+        }
+    }
+
+    private sealed class BufferedBriefAdapterFactory(IAgentProtocolAdapter recipient) : IAgentProtocolAdapterFactory
+    {
+        public IAgentProtocolAdapter Create(AgentKind kind) => recipient;
+    }
+
+    private static async Task CloseBufferedRunAsync(HttpClient client, Guid id, CancellationToken ct)
+    {
+        var current = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{id}", ct);
+        using var close = await client.PostAsJsonAsync($"/api/review-runs/{id}/close",
+            new { concurrencyToken = current.GetProperty("concurrencyToken").GetUInt32(), reason = "maintainer closed" }, ct);
+        close.StatusCode.ShouldBe(HttpStatusCode.OK, await close.Content.ReadAsStringAsync(ct));
     }
 
     private HttpClient OpenPullRequest(int number)
