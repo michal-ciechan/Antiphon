@@ -21,6 +21,7 @@ public static class CheckpointApp
         public Func<DateTimeOffset>? OwnerClock { get; init; }
         public TimeSpan? OwnerUncertaintyBudget { get; init; }
         public IDriver? Driver { get; init; }
+        internal Func<string, long?>? DiskFreeBytes { get; init; }
         public IBuildSlotClient? Slots { get; init; }
         public HttpMessageHandler? SlotHandler { get; init; }
         public Func<DateTimeOffset>? SlotClock { get; init; }

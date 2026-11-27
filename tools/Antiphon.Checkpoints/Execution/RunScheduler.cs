@@ -8,6 +8,7 @@ public sealed class SchedulerRequest
     public required string WorkingDirectory { get; init; }
     public required RunState State { get; init; }
     public required IBuildSlotClient Slots { get; init; }
+    internal Func<string, long?>? DiskFreeBytes { get; init; }
     public SlotSession? Session { get; init; }
     public string Commit { get; init; } = "";
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];

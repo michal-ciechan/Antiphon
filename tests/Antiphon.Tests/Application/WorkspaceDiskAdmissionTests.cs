@@ -59,10 +59,10 @@ public sealed class WorkspaceDiskAdmissionTests
 
     private static (WorkspaceDiskAdmission Guard, HostStatsCache Cache, FakeTimeProvider Clock, RecordingLogger Log) Create()
     {
-        using var configuration = new ConfigurationBuilder()
+        var configuration = new ConfigurationBuilder()
             .AddJsonFile(Path.Combine(CheckpointFixtures.RepoRoot, "server", "appsettings.json"))
-            .Build() as IConfigurationRoot;
-        var settings = configuration!.GetSection(WorkspaceDiskAlarmSettings.SectionName)
+            .Build();
+        var settings = configuration.GetSection(WorkspaceDiskAlarmSettings.SectionName)
             .Get<WorkspaceDiskAlarmSettings>().ShouldNotBeNull();
         var clock = new FakeTimeProvider(Now);
         var cache = new HostStatsCache(new HostStatsSettings(), clock);
