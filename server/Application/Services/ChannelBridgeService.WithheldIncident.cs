@@ -97,7 +97,6 @@ public sealed partial class ChannelBridgeService
             try
             {
                 await ScanWithheldChannelIncidentsAsync(ct);
-                await ScanChannelReplyAlertsAsync(ct);
                 _withheldScanFailures = 0;
                 _withheldFailureIncidentId = null;
                 _withheldFailureReported = false;
@@ -123,6 +122,16 @@ public sealed partial class ChannelBridgeService
                         _logger.LogWarning(reportError, "Withheld channel scan failure incident could not be saved; retrying");
                     }
                 }
+            }
+
+            try
+            {
+                await ScanChannelReplyAlertsAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Channel reply alert scan failed; retrying");
             }
 
             try

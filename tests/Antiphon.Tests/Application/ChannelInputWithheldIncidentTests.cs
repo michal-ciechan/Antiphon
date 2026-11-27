@@ -99,32 +99,19 @@ public sealed partial class ChannelInputWithheldIncidentTests
         var inbound = await db.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId, ct);
         inbound.ChatChannelId = chat.Id;
         await db.SaveChangesAsync(ct);
-        clock.Advance(TimeSpan.FromMinutes(9));
+        clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromSeconds(1));
         using var bridge = Bridge(h);
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var loop = bridge.RunWithheldIncidentLoopAsync(stop.Token);
-        try
-        {
-            await Task.Delay(100, ct);
-            (await db.AgentIncidents.CountAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct)).ShouldBe(0);
-            clock.Advance(TimeSpan.FromMinutes(1));
-            await WaitForAsync(async () =>
-            {
-                clock.Advance(TimeSpan.FromSeconds(10));
-                return await db.AgentIncidents.AnyAsync(i => i.FailureReason == "ChannelNoOutboundReply"
-                    && i.HumanNotifiedAt != null, ct);
-            });
-            var incident = await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct);
-            incident.Message.ShouldContain(seed.NativeMessageId);
-            h.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentChanged"
-                && JsonSerializer.Serialize(e.Payload, (JsonSerializerOptions?)null).Contains(incident.Id.ToString()));
-            h.Messaging.SentReplies.ShouldBeEmpty();
-        }
-        finally
-        {
-            stop.Cancel();
-            await loop;
-        }
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        (await db.AgentIncidents.CountAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct)).ShouldBe(0);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        var incident = await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct);
+        incident.HumanNotifiedAt.ShouldBe(h.Now);
+        incident.Message.ShouldContain(seed.NativeMessageId);
+        h.EventBus.PublishedEvents.Count(e => e.EventName == "AgentChanged"
+            && JsonSerializer.Serialize(e.Payload).Contains(incident.Id.ToString())).ShouldBe(1);
+        h.Messaging.SentReplies.ShouldBeEmpty();
     }
 
     [Test]
@@ -591,7 +578,8 @@ public sealed partial class ChannelInputWithheldIncidentTests
             {
                 clock.Advance(TimeSpan.FromSeconds(10));
                 await using var db = Db(schema.ConnectionString);
-                return await WithheldIncidentsAsync(db, h.AgentId) == 1;
+                return await db.AgentIncidents.AnyAsync(i => i.AgentId == h.AgentId
+                    && i.FailureReason == "ChannelInputWithheld" && i.HumanNotifiedAt != null, ct);
             });
         }
         finally

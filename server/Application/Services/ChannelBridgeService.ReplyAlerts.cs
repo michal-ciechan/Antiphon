@@ -55,7 +55,10 @@ public sealed partial class ChannelBridgeService
                 ORDER BY i."AcceptanceSequence" LIMIT {WithheldIncidentPageSize}
                 FOR UPDATE OF i SKIP LOCKED
                 """).ToListAsync(ct);
-            foreach (var row in overdue)
+            // A concurrent scanner can commit between our query snapshot and its inbound lock.
+            var ids = overdue.Select(r => r.Id).ToArray();
+            var claimed = await db.AgentIncidents.Where(i => ids.Contains(i.Id)).Select(i => i.Id).ToHashSetAsync(ct);
+            foreach (var row in overdue.Where(r => !claimed.Contains(r.Id)))
             {
                 db.AgentIncidents.Add(new AgentIncident
                 {

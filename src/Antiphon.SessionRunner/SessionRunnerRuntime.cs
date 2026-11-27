@@ -2845,8 +2845,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private bool _adopted;
         private string? _verifiedAdoptedBinding;
         private AdoptedComposerSample? _adoptedComposer;
-        private sealed record AdoptedComposerSample(string Binding, DateTime Generation, long Output, long Input);
+        private sealed record AdoptedComposerSample(string Binding, DateTime Generation, string Screen, long Input);
         private DateTimeOffset _adoptedComposerAt;
+        private DateTimeOffset _nextAdoptedHistoryRead;
 
         private bool DialogInputHistoryKnown => !_terminalInputUncertain && _backend == SessionBackends.PtyHost
             && (!_adopted || (_verifiedAdoptedBinding is not null
@@ -2858,6 +2859,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         {
             ITranscriptTailer tailer;
             AdoptedComposerSample sample;
+            long outputSequence;
             lock (_gate)
             {
                 if (!_adopted || DialogInputHistoryKnown) return;
@@ -2866,14 +2868,14 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     || _tailer?.NativeBindingIdentity is not { } binding
                     || _screen?.GetScreenText() is not { } screen
                     || ClaudeDialogObservation.Observe(screen).State != ClaudeDialogState.Clear
-                    || !ClaudeScreen.TryReadComposer(screen, out var composer) || composer.Length != 0)
+                    || ClaudeScreen.IsWorking(screen) || !ClaudeScreen.TryReadComposer(screen, out var composer) || composer.Length != 0)
                 {
                     _adoptedComposer = null;
                     return;
                 }
 
                 tailer = _tailer;
-                sample = new(binding, generation, _lastSequence, _inputRevision);
+                sample = new(binding, generation, ClaudeScreen.Stable(screen), _inputRevision);
                 var now = clock.GetUtcNow();
                 if (sample != _adoptedComposer)
                 {
@@ -2881,7 +2883,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     _adoptedComposerAt = now;
                     return;
                 }
-                if (now - _adoptedComposerAt < TimeSpan.FromMilliseconds(500)) return;
+                if (now - _adoptedComposerAt < TimeSpan.FromMilliseconds(500) || now < _nextAdoptedHistoryRead) return;
+                _nextAdoptedHistoryRead = now.AddSeconds(5);
+                outputSequence = _lastSequence;
             }
 
             var history = await tailer.ObserveTerminalSeatAsync(ct);
@@ -2893,7 +2897,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             {
                 if (_adoptedComposer == sample && ReferenceEquals(tailer, _tailer)
                     && _acceptedStartedAt == sample.Generation && tailer.NativeBindingIdentity == sample.Binding
-                    && _lastSequence == sample.Output && _inputRevision == sample.Input && _status == "Running"
+                    && _lastSequence == outputSequence && _inputRevision == sample.Input && _status == "Running"
                     && !_terminalInputUncertain && _terminalInputWriters == 0 && !_terminalComposerPending)
                     _verifiedAdoptedBinding = sample.Binding;
             }
