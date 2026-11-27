@@ -25,12 +25,7 @@ public sealed partial class ReleaseGatePlatformTests
     [Test]
     public void LinuxOnlyWindowsExclusionPolicy()
     {
-        var skipRoster = NightlyChunkVerdict.SkipRoster(Path.Combine(Repo, "tests", "expected-platform-skips.json"));
-        foreach (var platform in new[] { "linux", "windows" })
-        {
-            var staleEntries = NightlyExpectedSkips.SourceGaps(Repo, platform, skipRoster, null);
-            staleEntries.ShouldBeEmpty($"Stale expected-platform skip entries for {platform}: {string.Join(", ", staleEntries)}");
-        }
+        AssertExpectedSkipRosterIsCurrent(Repo);
 
         var rows = new NightlyCaseRows();
         string[] decisionClasses = ["ClaudeDialogWatchdogCanaryTests", "CheckpointOwnedOutputTests", "CheckpointLargeStampTests", "CheckpointShapeConflictTests",
@@ -110,6 +105,56 @@ public sealed partial class ReleaseGatePlatformTests
             "linux=" + linuxLaunched.Length + " inventory=" + linuxOnly.Length);
         rows.ShouldAllPass(6, "C1323 every-new-row-has-linux-gate", "C1323 markers-and-rows-agree", "C1323 decision-classes-are-not-class-excluded",
             "C1323 linux-only-rows-leave-census-complete", "C1323 decision-gaps-stay-incomplete", "C1323 linux-still-requires-the-rows");
+    }
+
+    [Test]
+    public void Merge_guard_uses_CLR_nested_and_generic_roster_identities()
+    {
+        using var fixture = NightlyFixture.Create("eps-nested");
+        var repo = CensusRoot(fixture, "nested-roster",
+        [
+            ("tests/Outer.cs", """
+                namespace Demo;
+                public partial class Outer<T> { public partial class Inner<TFirst, TSecond> { } }
+                public class Another { [Test] public void CanRun() { } }
+                """),
+            ("tests/Outer.Tests.cs", """
+                namespace Demo
+                {
+                    public partial class Outer<T>
+                    {
+                        public partial class Inner<TFirst, TSecond>
+                        {
+                            [Test, Arguments(42)] public void CanRun(int number) { }
+                        }
+                    }
+                    public class NonGeneric { public class Nested { [Test] public void CanRun() { } } }
+                }
+                """),
+        ]);
+        var path = Path.Combine(repo, "tests", "expected-platform-skips.json");
+        void WriteRoster(params string[] identities) => File.WriteAllText(path,
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                entries = identities.Select(test => new { platform = "windows", test, reasonPrefix = "fixture" }),
+            }));
+
+        WriteRoster("Demo.Outer`1+Inner`2.CanRun", "Demo.NonGeneric+Nested.CanRun", "Demo.Another.CanRun");
+        AssertExpectedSkipRosterIsCurrent(repo);
+
+        WriteRoster("Demo.NonGeneric.Nested.CanRun", "Demo.Outer`1+Inner`1.CanRun", "Demo.Unrelated.CanRun");
+        var stale = Should.Throw<ShouldAssertException>(() => AssertExpectedSkipRosterIsCurrent(repo));
+        stale.Message.ShouldContain("Demo.NonGeneric.Nested.CanRun, Demo.Outer`1+Inner`1.CanRun, Demo.Unrelated.CanRun");
+    }
+
+    private static void AssertExpectedSkipRosterIsCurrent(string repo)
+    {
+        var skipRoster = NightlyChunkVerdict.SkipRoster(Path.Combine(repo, "tests", "expected-platform-skips.json"));
+        foreach (var platform in new[] { "linux", "windows" })
+        {
+            var staleEntries = NightlyExpectedSkips.SourceGaps(repo, platform, skipRoster, null);
+            staleEntries.ShouldBeEmpty($"Stale expected-platform skip entries for {platform}: {string.Join(", ", staleEntries)}");
+        }
     }
 
     /// <summary>
