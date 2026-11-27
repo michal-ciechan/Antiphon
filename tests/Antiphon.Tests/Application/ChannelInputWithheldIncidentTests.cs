@@ -69,6 +69,8 @@ public sealed partial class ChannelInputWithheldIncidentTests
         await bridge.DrainPendingAsync(ct);
         await bridge.DrainPendingAsync(ct);
         var submitted = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        h.Adapter.Inputs.Count(input => input.Contains("fixture caption", StringComparison.Ordinal)).ShouldBe(1);
+        PromptSubmissionMatch.IsCompleteIn(row.Body, submitted).ShouldBeTrue();
         submitted.ShouldContain("fixture caption");
         submitted.ShouldContain("[photo attached: ");
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
@@ -625,13 +627,19 @@ public sealed partial class ChannelInputWithheldIncidentTests
             PublicBaseUrl = "https://antiphon.example",
         };
         await using var pageDb = Db(schema.ConnectionString);
+        incident.HumanNotifiedAt.ShouldNotBeNull();
+        // Exercise the digest sweep first, with every other paging prerequisite satisfied.
+        await pageDb.Agents.Where(a => a.Id == h.AgentId)
+            .ExecuteUpdateAsync(s => s.SetProperty(a => a.AlwaysOn, true), ct);
+        await pageDb.AgentIncidents.Where(i => i.Id == incident.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(i => i.HumanNotifiedAt, (DateTime?)null), ct);
         var notifier = new IncidentPageNotifier(pageDb,
             new ChatChannelService(pageDb, clock, h.Messaging), Options.Create(digest),
             clock, NullLogger<IncidentPageNotifier>.Instance);
         await notifier.SweepAsync(ct);
         await notifier.SweepAsync(ct);
-        (await pageDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
-            && i.FailureReason == "ChannelInputWithheld" && i.HumanNotifiedAt != null)).ShouldBe(1);
+        (await pageDb.AgentIncidents.AsNoTracking().SingleAsync(i => i.Id == incident.Id, ct))
+            .HumanNotifiedAt.ShouldBeNull();
         h.Messaging.SentReplies.ShouldBeEmpty("an operational page must never be sent to the family chat");
         h.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentChanged"
             && JsonSerializer.Serialize(e.Payload, (JsonSerializerOptions?)null).Contains(incident.Id.ToString()));
