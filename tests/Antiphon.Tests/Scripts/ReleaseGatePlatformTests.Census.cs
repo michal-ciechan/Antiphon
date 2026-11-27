@@ -116,7 +116,6 @@ public sealed partial class ReleaseGatePlatformTests
             ("tests/Outer.cs", """
                 namespace Demo;
                 public partial class Outer<T> { public partial class Inner<TFirst, TSecond> { } }
-                public class Another { [Test] public void CanRun() { } }
                 """),
             ("tests/Outer.Tests.cs", """
                 namespace Demo
@@ -131,6 +130,7 @@ public sealed partial class ReleaseGatePlatformTests
                 }
                 """),
             ("tests/Nested.cs", "namespace Demo; public class NonGeneric { public class Nested { [Test] public void CanRun() { } } }"),
+            ("tests/Homonym.cs", "namespace Demo; public class Another { [Test] public void CanRun() { } }"),
         ]);
         var path = Path.Combine(repo, "tests", "expected-platform-skips.json");
         void WriteRoster(params string[] identities) => File.WriteAllText(path,
