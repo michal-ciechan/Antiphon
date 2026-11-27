@@ -19,6 +19,7 @@ using Microsoft.Extensions.Options;
 // The parent owns the database and directory. No production configuration or
 // external runner is loaded by this crash probe.
 if (args is ["--generate-model", var modelDir]) return ProbeModelGenerator.Run(modelDir);
+if (args is ["--bake-model"]) return ProbeModelGenerator.Bake();
 // A spare (ProbeSpare): warmed first, then the probe its config, once given, describes.
 if (args is ["--spare", var warmPath, var givenPath, var parent])
 {

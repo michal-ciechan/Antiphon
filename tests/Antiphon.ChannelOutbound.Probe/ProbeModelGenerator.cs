@@ -23,7 +23,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Design.Internal;
 public static class ProbeModelGenerator
 {
     public const string Namespace = ProbeModel.GeneratedNamespace;
-    public const string AssemblyName = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
+    public const string AssemblyName = ProbeModel.AssemblyName;
 
     private static readonly Lazy<IRelationalTypeMappingSource> ElementMappings = new(() =>
     {
@@ -36,6 +36,29 @@ public static class ProbeModelGenerator
     public static RelationalTypeMapping ResolveElementMapping(Type clrType, string storeType) =>
         ElementMappings.Value.FindMapping(clrType, storeType)
         ?? throw new InvalidOperationException($"No Npgsql mapping for {clrType} as {storeType}.");
+
+    internal static int Bake()
+    {
+        var probe = AppContext.BaseDirectory;
+        var key = ProbeModel.BuildKey(probe);
+        if (ProbeModel.FindBuiltArtifact(probe, key) is not null)
+        {
+            Console.WriteLine("Verified probe model reused key=" + key);
+            return 0;
+        }
+
+        var output = Path.Combine(probe, ProbeModel.BuiltDirectory);
+        Directory.CreateDirectory(output);
+        var identity = Path.Combine(output, ProbeModel.IdentityFile);
+        File.Delete(identity);
+        var exitCode = Run(output);
+        if (exitCode == 0)
+        {
+            File.WriteAllText(identity + ".tmp", key);
+            File.Move(identity + ".tmp", identity, overwrite: true);
+        }
+        return exitCode;
+    }
 
     public static int Run(string outDir)
     {
