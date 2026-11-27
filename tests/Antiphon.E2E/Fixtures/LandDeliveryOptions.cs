@@ -20,7 +20,8 @@ using Antiphon.Server.Infrastructure.Orchestration;
 
 namespace Antiphon.E2E.Fixtures;
 
-internal sealed record LandDeliveryOptions(string Root, string Cut = "none", string CompletionForm = "raw")
+internal sealed record LandDeliveryOptions(
+    string Root, string Cut = "none", string CompletionForm = "raw", bool UseShortInterruptedAttemptGuard = false)
 {
     public string Gate => Path.Combine(Root, "caller-busy");
     public void Configure(Dictionary<string, string?> settings)
@@ -56,6 +57,13 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         settings["Delegation:MaxTasksPerRoot"] = "1"; // Preserve the real conflict cap branch; never launch a model helper.
         settings["Supervision:DeliveryVerification:Enabled"] = "true";
         settings["Supervision:DeliveryVerification:TranscriptConfirmEnabled"] = "true";
+        if (UseShortInterruptedAttemptGuard)
+        {
+            // Keep all three components of the guard for the owned pre-typing crash witness.
+            settings["Supervision:DeliveryVerification:TranscriptConfirmTimeoutSeconds"] = "10";
+            settings["Supervision:DeliveryVerification:PostFailureConfirmGraceSeconds"] = "3";
+            settings["Supervision:DeliveryVerification:UnobservableBaselineConfirmClockToleranceSeconds"] = "2";
+        }
         // Exercise the hosted stranded-queue sweep without waiting a minute for its first pass.
         // The sweep still uses the production age and delivery-verification guards.
         settings["Supervision:RcWatch:ProbeIntervalSeconds"] = "10";

@@ -421,8 +421,8 @@ public sealed partial class LandDeliveryFixture
         attempted.ShouldNotBeEmpty();
         var eligibleAt = attempted.Max(m => m.LastDeliveryStartedAt!.Value) + InterruptedAttemptAge;
         var waitStarted = DateTime.UtcNow;
-        // Arrange the production recovery prerequisite with real time while the child is dead.
-        // Do not edit attempt timestamps, shorten the safety guard or extend ReceiptAsync's deadline.
+        // Wait out the configured guard in real time while the child is dead, using untouched
+        // attempt timestamps.
         while (DateTime.UtcNow < eligibleAt)
         {
             var remaining = eligibleAt - DateTime.UtcNow;
@@ -462,6 +462,9 @@ public sealed partial class LandDeliveryFixture
             return incident is not null;
         }, "input-delivery-unknown decision for the held pre-typing attempt", 150);
         incident!.Kind.ShouldBe(AgentIncidentKind.DeliveryTransportFailed);
+        incident.CreatedAt.ShouldBeGreaterThanOrEqualTo(
+            attempted.Max(m => m.LastDeliveryStartedAt!.Value) + InterruptedAttemptAge,
+            "the watchdog cannot report an unknown delivery before the configured guard elapses");
 
         await using var final = CreateContext();
         foreach (var before in attempted)

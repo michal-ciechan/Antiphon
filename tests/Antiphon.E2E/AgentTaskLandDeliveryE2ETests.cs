@@ -420,7 +420,7 @@ public class AgentTaskLandDeliveryE2ETests
     private async Task C488_ReviewDeliveryCrashMatrix(string cut)
     {
         await using var f = new LandDeliveryFixture();
-        await f.InitializeAsync();
+        await f.InitializeAsync(useShortInterruptedAttemptGuard: cut == "before-typing");
         // Settlement and queue workers must be owned by a killable process at the cut.
         // The child reconciles every due note. Hold the two enqueue throws for the review,
         // or an earlier note consumes them and the review never sits at two failures.

@@ -55,10 +55,13 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     private string _connection = "";
     private string _address = "";
     private bool _hostSuspended;
+    private bool _useShortInterruptedAttemptGuard;
 
-    public async Task InitializeAsync(bool busy = false, string cut = "none", bool dispatch = false, string completionForm = "raw")
+    public async Task InitializeAsync(bool busy = false, string cut = "none", bool dispatch = false,
+        string completionForm = "raw", bool useShortInterruptedAttemptGuard = false)
     {
         NativeWindowsGate.Require(NativeWindowsReason);
+        _useShortInterruptedAttemptGuard = useShortInterruptedAttemptGuard;
         ConPtyRedistributable.TryLocate(out _, out var why).ShouldBeTrue(why);
         File.Exists(Path.Combine(AppContext.BaseDirectory, "fakegrok", "fakegrok.exe")).ShouldBeTrue("native FakeGrok must be staged");
         Directory.CreateDirectory(Repository);
@@ -83,7 +86,11 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         await GitAsync(Source, "push", "origin", "HEAD:refs/heads/c467-source");
         if (!_shared)
         {
-            _app = new AntiphonAppFixture { LandDelivery = new(Root, cut, completionForm), UsePrebuiltFrontend = true, DiagnosticsDirectory = Path.Combine(Root, "server-logs") };
+            _app = new AntiphonAppFixture {
+                LandDelivery = new(Root, cut, completionForm, useShortInterruptedAttemptGuard),
+                UsePrebuiltFrontend = true,
+                DiagnosticsDirectory = Path.Combine(Root, "server-logs")
+            };
             await _app.InitializeAsync();
         }
         _app.EnsureSessionRunnerReachable();
@@ -262,7 +269,9 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { typeof(LandDeliveryFixture).Assembly.Location, "--treenode-filter", "/*/*/AgentTaskLandDeliveryE2ETests/C467_V22*" }) start.ArgumentList.Add(arg);
         start.Environment["ANTIPHON_C467_CONNECTION"] = _connection;
-        start.Environment["ANTIPHON_C467_CHILD"] = JsonSerializer.Serialize(new[] { Root, _app.OwnedRunnerUrl, cut, ready });
+        start.Environment["ANTIPHON_C467_CHILD"] = JsonSerializer.Serialize(new[] {
+            Root, _app.OwnedRunnerUrl, cut, ready, _useShortInterruptedAttemptGuard.ToString()
+        });
         using (Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("LandDeliveryFixture owned child launch"))
             _child = Process.Start(start)!;
         _childOut = _child.StandardOutput.ReadToEndAsync(); _childError = _child.StandardError.ReadToEndAsync();
@@ -275,11 +284,11 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         _http.Dispose(); _http = new HttpClient { BaseAddress = new Uri(_address) };
     }
 
-    public static async Task RunChildAsync(string root, string runner, string cut, string ready)
+    public static async Task RunChildAsync(string root, string runner, string cut, string ready, bool useShortInterruptedAttemptGuard)
     {
         var connection = Environment.GetEnvironmentVariable("ANTIPHON_C467_CONNECTION") ?? throw new InvalidOperationException("Missing owned database");
         var factory = new AntiphonAppFixture.KestrelWebApplicationFactory(null, connection, false, root,
-            Path.Combine(root, "child-logs"), runner, land: new(root, cut));
+            Path.Combine(root, "child-logs"), runner, land: new(root, cut, UseShortInterruptedAttemptGuard: useShortInterruptedAttemptGuard));
         try { factory.CreateClient(); } catch when (factory.KestrelHost is not null) { }
         var host = factory.KestrelHost ?? throw new InvalidOperationException("No real child host");
         AssertNoMaintenanceServer(host.Services);
