@@ -60,6 +60,34 @@ public sealed class ReviewEngineDatabaseMigrationTests
     private const string Predecessor = "20261120091515_AddRequestedModelAlias";
 
     [Test]
+    public async Task Tip_detach_preserves_review_data_and_removes_the_empty_reviewer_dependency(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var id = Guid.NewGuid();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "ReviewWorkflowRevisions" ("Id", "Name", "Hash", "GraphJson", "CreatedAt")
+            VALUES ({id}, {"pr-review"}, {new string('a', 64)}, {"{}"}::jsonb, {DateTime.UtcNow})
+            """, ct);
+
+        var applied = await db.Database.GetAppliedMigrationsAsync(ct);
+        var refused = await Should.ThrowAsync<NotSupportedException>(() => MigrationTestDatabase.DetachReviewEngineAsync(db, ct));
+        refused.Message.ShouldBe(MigrationTestDatabase.ReviewEngineDowngradeRefusal);
+        (await db.Database.GetAppliedMigrationsAsync(ct)).ShouldBe(applied);
+        (await db.Database.SqlQuery<int>($"""SELECT count(*)::int AS "Value" FROM "ReviewWorkflowRevisions" WHERE "Id" = {id}""")
+            .SingleAsync(ct)).ShouldBe(1);
+
+        await db.Database.ExecuteSqlInterpolatedAsync($"""DELETE FROM "ReviewWorkflowRevisions" WHERE "Id" = {id}""", ct);
+        await MigrationTestDatabase.DetachReviewEngineAsync(db, ct);
+        (await ReviewEngineTablesAsync(db, ct)).ShouldBeEmpty();
+        (await db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value" FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'AgentTasks'
+              AND column_name IN ('ReviewerRunId', 'ReviewerNodeId', 'ReviewerAttempt')
+            """).SingleAsync(ct)).ShouldBe(0);
+    }
+
+    [Test]
     public async Task A_stored_review_row_refuses_the_downgrade_and_the_detach(CancellationToken ct)
     {
         await using var database = await MigrationTestDatabase.CreateAsync(Predecessor, ct);
