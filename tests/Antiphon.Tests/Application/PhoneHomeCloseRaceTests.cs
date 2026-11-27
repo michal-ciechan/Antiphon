@@ -24,7 +24,6 @@ public sealed class PhoneHomeCloseRaceTests
         PhoneHomeTestWebSocket socket = null!;
         socket = new PhoneHomeTestWebSocket
         {
-            BeforeAbort = () => closing.Task.WaitAsync(deadline.Token).GetAwaiter().GetResult(),
             BeforeClose = async ct =>
             {
                 closing.SetResult(socket.State);
@@ -37,7 +36,16 @@ public sealed class PhoneHomeCloseRaceTests
             },
         };
         await using var connection = NewConnection(socket, logger);
-        receiving = connection.ReceiveLoopAsync(stopReceiving.Token);
+        var originalContext = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(new CloseGateContext(closing.Task));
+            receiving = connection.ReceiveLoopAsync(stopReceiving.Token);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(originalContext);
+        }
 
         try
         {
@@ -49,6 +57,7 @@ public sealed class PhoneHomeCloseRaceTests
         }
         finally
         {
+            closing.TrySetResult(socket.State);
             stopReceiving.Cancel();
             try { await receiving; }
             catch (OperationCanceledException) when (receiving.IsCanceled) { }
@@ -75,4 +84,15 @@ public sealed class PhoneHomeCloseRaceTests
     private static PhoneHomeLiveConnection NewConnection(WebSocket socket, ILogger logger) =>
         new("test-runner", Guid.NewGuid(), Guid.NewGuid(), 17, socket, new PhoneHomeLimits(),
             TimeProvider.System, eventWindow: new PhoneHomeEventWindowOptions(1, 1, 4096), closeLogger: logger);
+
+    private sealed class CloseGateContext(Task closing) : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state) => _ = ResumeAsync(callback, state);
+
+        private async Task ResumeAsync(SendOrPostCallback callback, object? state)
+        {
+            await closing.ConfigureAwait(false);
+            callback(state);
+        }
+    }
 }
