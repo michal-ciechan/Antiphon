@@ -41,9 +41,11 @@ public sealed class SlackSettings
     public int MaxRetryAfterSeconds { get; set; } = 60;
 
     /// <summary>Extra attempts for an outbound send when the failure looks transient
-    /// (429/5xx/network/<c>ratelimited</c>). The outbound consumer auto-commits, so without this a
-    /// transient blip silently drops the reply. 0 disables.</summary>
+    /// (429/5xx/network/<c>ratelimited</c>). Zero disables retries.</summary>
     public int SendRetryAttempts { get; set; } = 2;
+
+    /// <summary>Allow another send after a transport failure with no native result. Disabled by the journaled gateway.</summary>
+    public bool RetryUnconfirmedSends { get; set; } = true;
 
     /// <summary>
     /// WebSocket keepalive ping interval. .NET pairs this with <see cref="KeepAliveTimeoutSeconds"/>

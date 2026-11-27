@@ -1,1 +1,3 @@
 #nullable enable
+Antiphon.Messaging.Slack.SlackSettings.RetryUnconfirmedSends.get -> bool
+Antiphon.Messaging.Slack.SlackSettings.RetryUnconfirmedSends.set -> void

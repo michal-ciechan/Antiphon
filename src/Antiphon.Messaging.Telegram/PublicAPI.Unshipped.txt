@@ -1,1 +1,3 @@
 #nullable enable
+Antiphon.Messaging.Telegram.TelegramSettings.RetryUnconfirmedSends.get -> bool
+Antiphon.Messaging.Telegram.TelegramSettings.RetryUnconfirmedSends.set -> void

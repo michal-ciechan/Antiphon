@@ -12,6 +12,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<TelegramSettings>(builder.Configuration.GetSection(TelegramSettings.SectionName));
 builder.Services.Configure<SlackSettings>(builder.Configuration.GetSection(SlackSettings.SectionName));
+builder.Services.PostConfigure<TelegramSettings>(o => o.RetryUnconfirmedSends = false);
+builder.Services.PostConfigure<SlackSettings>(o => o.RetryUnconfirmedSends = false);
 
 builder.Services.AddDbContext<MessagingDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Messaging")));

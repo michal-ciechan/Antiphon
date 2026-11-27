@@ -502,8 +502,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         var payloadJson = BuildSendPayload(reply, target, formatted);
         var maxAttempts = Math.Max(0, _settings.SendRetryAttempts) + 1;
 
-        // The outbound consumer auto-commits, so a transient blip (429/5xx/network) would silently drop
-        // the reply. Retry those a bounded number of times, honoring retry_after; fail fast on 4xx.
+        // Honor explicit transient refusals. A journaled send holds a lost response for reconciliation.
         for (var attempt = 1; ; attempt++)
         {
             var (result, retryDelay) = await TrySendOnceAsync(payloadJson, lastAttempt: attempt >= maxAttempts, cancellationToken);
@@ -567,7 +566,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             try { doc = JsonDocument.Parse(body); }
             catch (JsonException)
             {
-                return lastAttempt
+                return lastAttempt || !_settings.RetryUnconfirmedSends
                     ? (SendResult.Failed($"Telegram sendDocument HTTP {(int)resp.StatusCode}: non-JSON body"), null)
                     : (null, ErrorBackoff);
             }
@@ -583,6 +582,8 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                     return (SendResult.Sent(sentId), null);
                 }
 
+                if (!_settings.RetryUnconfirmedSends && ok.ValueKind != JsonValueKind.False)
+                    return (SendResult.Failed("Native send response unavailable."), null);
                 var (code, _, retryAfter) = ReadError(root);
                 if (lastAttempt || !IsTransient(code, retryAfter))
                     return (SendResult.Failed($"Telegram sendDocument failed: {body}"), null);
@@ -598,6 +599,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         {
             // Includes HttpClient TIMEOUT TaskCanceledExceptions (an OCE without our token
             // cancelled) — a transient transport failure to retry, not a shutdown.
+            if (!_settings.RetryUnconfirmedSends) return (SendResult.Failed("Native send response unavailable."), null);
             return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
         }
     }
@@ -663,7 +665,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
             catch (JsonException)
             {
                 // Non-JSON (e.g. proxy 5xx) — transient.
-                return lastAttempt
+                return lastAttempt || !_settings.RetryUnconfirmedSends
                     ? (SendResult.Failed($"Telegram sendMessage HTTP {(int)resp.StatusCode}: non-JSON body"), null)
                     : (null, ErrorBackoff);
             }
@@ -679,6 +681,8 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
                     return (SendResult.Sent(sentId), null);
                 }
 
+                if (!_settings.RetryUnconfirmedSends && ok.ValueKind != JsonValueKind.False)
+                    return (SendResult.Failed("Native send response unavailable."), null);
                 var (code, _, retryAfter) = ReadError(root);
                 if (lastAttempt || !IsTransient(code, retryAfter))
                     return (SendResult.Failed($"Telegram sendMessage failed: {body}"), null);
@@ -694,6 +698,7 @@ public sealed class TelegramChannelAdapter : IChannelAdapter
         {
             // Includes HttpClient TIMEOUT TaskCanceledExceptions (an OCE without our token
             // cancelled) — a transient transport failure to retry, not a shutdown.
+            if (!_settings.RetryUnconfirmedSends) return (SendResult.Failed("Native send response unavailable."), null);
             return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
         }
     }

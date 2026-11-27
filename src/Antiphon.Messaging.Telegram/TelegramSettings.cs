@@ -27,8 +27,11 @@ public sealed class TelegramSettings
     public int MaxRetryAfterSeconds { get; set; } = 60;
 
     /// <summary>Extra attempts for an outbound sendMessage when the failure looks transient (429/5xx/network).
-    /// The consumer auto-commits, so without this a transient blip silently drops the reply. 0 disables.</summary>
+    /// Zero disables retries.</summary>
     public int SendRetryAttempts { get; set; } = 2;
+
+    /// <summary>Allow another send after a transport failure with no native result. Disabled by the journaled gateway.</summary>
+    public bool RetryUnconfirmedSends { get; set; } = true;
 
     /// <summary>
     /// Outbound text formatting. <c>"Markdown"</c> (default) renders the reply's Markdown to

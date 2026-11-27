@@ -207,6 +207,42 @@ public sealed class GatewayTests
         replies.ShouldHaveSingleItem().Text.ShouldBe("pong");
     }
 
+    [Test]
+    [Arguments("telegram")]
+    [Arguments("slack")]
+    public async Task Journaled_provider_transport_holds_a_lost_native_response(string channel)
+    {
+        var lost = new LostNativeResponse();
+        using var http = new HttpClient(lost);
+        IChannelAdapter adapter = channel == "telegram"
+            ? new Antiphon.Messaging.Telegram.TelegramChannelAdapter(http, new()
+            {
+                BotToken = "fixture", RetryUnconfirmedSends = false, ErrorBackoffSeconds = 0,
+            }, Microsoft.Extensions.Logging.Abstractions.NullLogger<Antiphon.Messaging.Telegram.TelegramChannelAdapter>.Instance)
+            : new Antiphon.Messaging.Slack.SlackChannelAdapter(http, new()
+            {
+                BotToken = "fixture", RetryUnconfirmedSends = false, ErrorBackoffSeconds = 0,
+            }, Microsoft.Extensions.Logging.Abstractions.NullLogger<Antiphon.Messaging.Slack.SlackChannelAdapter>.Instance);
+        try
+        {
+            var result = await adapter.SendAsync(new ChannelReply { Channel = channel, ConversationId = "11", Text = "fixture" },
+                CancellationToken.None);
+            result.Ok.ShouldBeFalse();
+            lost.Accepted.ShouldBe(1);
+        }
+        finally { if (adapter is IAsyncDisposable disposable) await disposable.DisposeAsync(); }
+    }
+
+    private sealed class LostNativeResponse : HttpMessageHandler
+    {
+        public int Accepted;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref Accepted);
+            throw new HttpRequestException("native acceptance response lost");
+        }
+    }
+
     private static ChannelMessage SampleMessage(string conversationId, string channelMessageId = "1") => new()
     {
         Id = "id-1",

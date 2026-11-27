@@ -885,11 +885,14 @@ public sealed class SlackChannelAdapter : IChannelAdapter, IAsyncDisposable
 
             using var doc = ParseOrNull(body);
             if (doc is null)   // non-JSON (e.g. a proxy 5xx page) — transient
-                return Retryable(lastAttempt, $"Slack {method} HTTP {(int)resp.StatusCode}: non-JSON body", resp);
+                return Retryable(lastAttempt || !_settings.RetryUnconfirmedSends, $"Slack {method} HTTP {(int)resp.StatusCode}: non-JSON body", resp);
 
             if (IsOk(doc.RootElement))
                 return (SendResult.Sent(readId(doc.RootElement)), null);
 
+            if (!_settings.RetryUnconfirmedSends && (!doc.RootElement.TryGetProperty("ok", out var ok)
+                || ok.ValueKind != JsonValueKind.False))
+                return (SendResult.Failed("Native send response unavailable."), null);
             return Classify(doc.RootElement, resp, lastAttempt, $"Slack {method} failed: {body}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -899,6 +902,7 @@ public sealed class SlackChannelAdapter : IChannelAdapter, IAsyncDisposable
         catch (Exception ex)
         {
             // Includes HttpClient TIMEOUT TaskCanceledExceptions — transient, not shutdown.
+            if (!_settings.RetryUnconfirmedSends) return (SendResult.Failed("Native send response unavailable."), null);
             return lastAttempt ? (SendResult.Failed(ex.Message), null) : (null, ErrorBackoff);
         }
     }
