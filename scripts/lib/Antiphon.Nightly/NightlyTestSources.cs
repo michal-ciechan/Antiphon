@@ -9,6 +9,7 @@
 // read of each file pays for the I/O.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis.CSharp;
@@ -67,14 +68,16 @@ namespace Antiphon.Nightly
             if (tests == null || tests.Length == 0) return Array.Empty<string>();
             var identities = tests.Select(test => test ?? "").ToArray();
             if (!Directory.Exists(testsRoot)) return identities;
-            var missing = new HashSet<string>(identities, StringComparer.Ordinal);
+            var declarations = identities.Select(DeclarationIdentity).ToArray();
+            var missing = new HashSet<string>(declarations, StringComparer.Ordinal);
             var classNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (var identity in missing)
             {
                 var methodDot = identity.LastIndexOf('.');
                 if (methodDot <= 0) continue;
-                var classDot = identity.LastIndexOf('.', methodDot - 1);
-                classNames.Add(identity.Substring(classDot + 1, methodDot - classDot - 1));
+                var classStart = Math.Max(identity.LastIndexOf('.', methodDot - 1), identity.LastIndexOf('+', methodDot - 1)) + 1;
+                var arity = identity.IndexOf('`', classStart, methodDot - classStart);
+                classNames.Add(identity.Substring(classStart, (arity < 0 ? methodDot : arity) - classStart));
             }
             var pending = new Stack<string>();
             pending.Push(testsRoot);
@@ -92,13 +95,10 @@ namespace Antiphon.Nightly
                     foreach (var type in CSharpSyntaxTree.ParseText(text).GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
                     {
                         if (!classNames.Contains(type.Identifier.ValueText)) continue;
-                        var containers = type.AncestorsAndSelf().Reverse().Select(node => node switch
-                        {
-                            BaseNamespaceDeclarationSyntax ns => string.Concat(ns.Name.DescendantTokens().Select(token => token.ValueText)),
-                            TypeDeclarationSyntax declaringType => declaringType.Identifier.ValueText,
-                            _ => null,
-                        }).Where(part => part != null);
-                        var qualifiedClass = string.Join(".", containers);
+                        var namespacePrefix = string.Concat(type.Ancestors().OfType<BaseNamespaceDeclarationSyntax>().Reverse()
+                            .Select(ns => string.Concat(ns.Name.DescendantTokens().Select(token => token.ValueText)) + "."));
+                        var qualifiedClass = namespacePrefix + string.Join("+", type.AncestorsAndSelf()
+                            .OfType<TypeDeclarationSyntax>().Reverse().Select(MetadataName));
                         foreach (var method in type.Members.OfType<MethodDeclarationSyntax>())
                         {
                             if (method.AttributeLists.SelectMany(list => list.Attributes)
@@ -108,7 +108,26 @@ namespace Antiphon.Nightly
                     }
                 }
             }
-            return identities.Where(missing.Contains).ToArray();
+            return identities.Where((_, i) => missing.Contains(declarations[i])).ToArray();
+        }
+
+        private static string MetadataName(TypeDeclarationSyntax type)
+        {
+            var name = type.Identifier.ValueText;
+            var arity = type.TypeParameterList?.Parameters.Count ?? 0;
+            return arity == 0 ? name : name + "`" + arity.ToString(CultureInfo.InvariantCulture);
+        }
+
+        // TUnit's TRX uses Type.FullName. A constructed generic class includes its
+        // argument types, but the source census checks the generic declaration.
+        private static string DeclarationIdentity(string identity)
+        {
+            var methodDot = identity.LastIndexOf('.');
+            var arguments = identity.IndexOf('[');
+            if (arguments > 0 && arguments < methodDot && identity[methodDot - 1] == ']'
+                && identity.LastIndexOf('`', arguments - 1) >= 0)
+                return identity.Substring(0, arguments) + identity.Substring(methodDot);
+            return identity;
         }
     }
 }

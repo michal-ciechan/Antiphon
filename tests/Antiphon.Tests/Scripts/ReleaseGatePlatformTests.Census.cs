@@ -139,7 +139,8 @@ public sealed partial class ReleaseGatePlatformTests
                 entries = identities.Select(test => new { platform = "windows", test, reasonPrefix = "fixture" }),
             }));
 
-        WriteRoster("Demo.Outer`1+Inner`2.CanRun", "Demo.NonGeneric+Nested.CanRun", "Demo.Another.CanRun");
+        WriteRoster("Demo.Outer`1+Inner`2.CanRun", "Demo.NonGeneric+Nested.CanRun", "Demo.Another.CanRun",
+            "Demo.Outer`1+Inner`2[[System.Int32, System.Private.CoreLib],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun");
         AssertExpectedSkipRosterIsCurrent(repo);
 
         WriteRoster("Demo.NonGeneric.Nested.CanRun", "Demo.Outer`1+Inner`1.CanRun", "Demo.Unrelated.CanRun");
