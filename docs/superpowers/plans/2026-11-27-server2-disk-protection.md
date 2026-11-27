@@ -1,69 +1,88 @@
 # Server2 disk protection verification
 
-Base lineage begins at 561591c562f31dd4fe0fc8f940f2ea7e947ce965. The repair starts
-at 20bb691ff5a638a3fbd61f2edd869ccbd10a148c. Review b9a6a79b evaluated
-0219b4182264361bba40f228a8891dae5777078e. The evidence sweep and its controls moved to CARD-2095 at
-`9f101466bef25907f887b035dc6edef8238f4990`. Disk admission's absolute floor is 20 GiB.
-The attention item has its own percentage and free-space settings.
+The full task base is `561591c562f31dd4fe0fc8f940f2ea7e947ce965`. Repair Review
+b33367ef examined `9f101466bef25907f887b035dc6edef8238f4990`. That tip also
+preserves the evidence sweep and its tests, documentation and controls on
+`feat/card-2095-evidence-sweep-wip` for CARD-2095. The original landing owner is
+`abfd18ed-34d4-4318-bbc6-18ae42d464d4`.
 
-## Invariants and controls
+## Verification design
 
-| ID | Invariant | Test | SourceLanding control |
-|---|---|---|---|
-| V-5 | Shipped primary and rollout routes hold below 20 GiB and admit at the floor. | ShippedRunnersHoldOneByteBelowTheAbsoluteFloor | PC-7 remove rollout admission configuration. |
-| V-6 | Missing, stale and invalid samples produce bounded diagnostics. | MissingStaleAndInvalidSamplesEmitBoundedDiagnostics | PC-8 remove the degraded-sample warning. |
-| V-7 | The row and scheduler check again under the lease and release it upon refusal. | RowRechecksSpaceAfterAdmissionAndReleasesTheLease, SchedulerRechecksSpaceAfterAdmissionAndReleasesTheLease | PC-9a skip the row recheck. PC-9b skip the scheduler build recheck. PC-9c skip the scheduled row recheck. |
-| V-8 | An externally launched historical build checks effective write paths before restore. | HistoricalProjectEvidenceDestinationsAreRefusedBeforeRestore | PC-10a omit IntermediateOutputPath. PC-10b omit MSBuildProjectExtensionsPath. |
-| R-3 | The Linux and native Windows entries check space before bootstrap. | Linux launcher witness, Test-WindowsCheckpointBootstrap | PC-11a bypass the POSIX check. PC-11b bypass the Windows check. |
-| R-4 | The timer targets unused builder cache older than 24 hours. | Inspect service and timer | Host activation is operator work after landing. |
-| V-9 | A held task dispatches after the sample recovers and the same recipient gets a complete matching UserPrompt. | LowDiskRecoveryDeliversTheCompleteQueuedBrief | PC-12 bypass the dispatch hold before remote prep. |
+| ID | Invariant | Witness |
+|---|---|---|
+| V-5 | Both rollout routes use the most recent valid fresh sample of their shared backing filesystem. Dispatch holds below the 20 GiB floor and recovers at the floor. | `ShippedRunnersHoldOneByteBelowTheAbsoluteFloor`, `SharedFilesystemHoldsBothRoutesAndRecoversFromEither` |
+| V-6 | With no usable sample, configured routes admit and log bounded missing, stale or invalid diagnostics for that filesystem. | `MissingStaleAndInvalidSamplesEmitBoundedDiagnostics` |
+| V-7 | The row, scheduler and baseline check again at lease grant. Refusal launches zero build or test drivers on that lease and releases it. | `RowRechecksSpaceAfterAdmissionAndReleasesTheLease`, `SchedulerRechecksSpaceAfterAdmissionAndReleasesTheLease`, `BaselineRechecksSpaceAfterGrantAndReleasesTheLease` |
+| V-8 | The current checkpoint tool evaluates each effective project/property combination before running the build. The current build-slot launcher supplies its guard to historical SDK projects. | `HistoricalProjectEvidenceDestinationsAreRefusedBeforeRestore`, `ReferenceSpecificPropertiesAreCheckedForEveryOccurrenceOfTheSameProject`, R-5 |
+| V-9 | A held dispatch resumes on the same recipient. The production reconciliation scan discovers persisted brief debt after a failed enqueue. | `LowDiskRecoveryDeliversTheCompleteQueuedBrief` verifies exactly one complete matching UserPrompt on the original session for eligible, busy and failed enqueue cases. |
+| R-3 | The shell, Windows cmd and PowerShell exe check space before any CLI bootstrap. The raw SDK entry checks before restore. | POSIX launcher witness, `Checkpoint_entry_refuses_low_space_before_publishing_or_launching`, native SDK and Windows witnesses below. |
+| R-4 | The timer starts the outer host Docker builder-cache prune hourly with `until=24h`. | Read the timer and exact service command. Host activation follows landing. |
+| R-5 | A normal leased historical project refuses protected paths before NuGet writes and accepts a safe relative output. | The historical build command and positive witness below. |
 
-### Checkpoints
+V-1 through V-4 and R-1 through R-2 moved to CARD-2095. SourceLanding controls
+are listed in the [unbound candidate](../mutations/2026-11-27-server2-disk-protection-candidate.md).
 
-CP-1 covers the disk and placement invariants with one isolated build and an
-exact class union. CP-2 covers the six-class policy union and the named mechanical,
-layering, guidance and fixture/plan guards. CARD-2093 is on its own branch and
-Merge carries it. The inherited plan guard remains red until that repair joins
-the candidate.
+## Performance budget
 
-The red CP-1 measured 8m44s to the build-ready boundary, including slot wait,
-and 1m14s of test execution. The rows below reuse the isolated CP-1 artifacts
-for focused neighboring selections, avoiding extra cold builds against the
-same project. CP-9 and CP-10 run after the Antiphon.Tests rows. The broad
-dispatcher file has unbounded derived impact, which is recorded in the impact
-manifest. The named dispatcher, receipt, policy and notification classes
-below cover the matching declared rows. Nightly and rc own full lanes.
+The 14-row round-2 review ran 48m28s and finished one row. Earlier Code
+measured 8m44s through build-ready and 1m14s of row execution for the first
+build row. Combine related classes and build `Antiphon.Tests` once. The
+isolated executor owns the SDK and row leases. Use one shared Postgres fixture
+with isolated schemas under width four for database cases. The estimates
+below are provisional pending timings from this grouped run. Record the
+lease waits, build and row durations in the run report and per-test times in
+the TRX. The isolated output avoids colliding with the worktree's native
+incremental build. No assertion or per-test deadline changes.
 
-| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
-|---|---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | repairs | tests/Antiphon.Tests -> bin-ad7e-disk/ | disk | `/*/*/(WorkspaceDiskAdmissionTests*)\|(CheckpointDiskAdmissionTests*)\|(CheckpointEvidencePlacementTests*)/*` | V-5–V-8 | WorkspaceDiskAdmissionTests,CheckpointDiskAdmissionTests,CheckpointEvidencePlacementTests | 11 | 14 | true |
-| CP-2 | repairs | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | policy and source guards | TestClassificationPolicyTests,TestClassificationGuardTests,SlowTestRegistryMergeTests,SlowTestTripwireTests,NativeLinuxPolicyWitnessTests,MechanicalPcContractTests,TaskPlatformGuidanceTests,C1729LayeringGuardTests,TestLaneCategoryGuardTests,TestFixtureCleanupGuardTests,PlanCheckpointClassSelectionGuardTests | 87 | 2 | true |
-| CP-3 | repairs | CP-2 | guards | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | live gate inventory | LiveLaneInventoryTests | 2 | 1 | true |
-| CP-4 | repairs | CP-1 | dispatch recovery | `/*/*/PhoneHomeTaskDispatchProjectionTests/LowDiskRecoveryDeliversTheCompleteQueuedBrief` | V-9 | LowDiskRecoveryDeliversTheCompleteQueuedBrief | 3 | 4 | true |
-| CP-5 | repairs | CP-1 | runner and checkpoint neighbors | `/*/*/(RowVerbTests*)\|(RunSchedulerTests*)\|(CheckpointLauncherTests*)\|(C1677DiskAlarmTests*)\|(CheckpointReceiptSafetyTests*)\|(CheckpointTerminalReceiptTests*)\|(HostCleanupCheckpointReceiptTests*)\|(ProcessSpawnLimitTests*)\|(PhoneHomeRollingRunnerTests*)\|(RefOnlyProductionCompositionTests*)\|(DelegationTestServicesTests*)\|(DelegationHarnessCensusTests*)\|(Card1277PtyHostFixtureTests*)/*` | runner and checkpoint regression | RowVerbTests,RunSchedulerTests,CheckpointLauncherTests,C1677DiskAlarmTests,CheckpointReceiptSafetyTests,CheckpointTerminalReceiptTests,HostCleanupCheckpointReceiptTests,ProcessSpawnLimitTests,PhoneHomeRollingRunnerTests,RefOnlyProductionCompositionTests,DelegationTestServicesTests,DelegationHarnessCensusTests,Card1277PtyHostFixtureTests | 13 | 6 | true |
-| CP-6 | repairs | CP-1 | dispatcher budgets | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | dispatcher statement budgets | C1149_C1150_Statement_budgets | 1 | 1 | true |
-| CP-7 | repairs | CP-1 | native exclusion policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | OS policy | C1686_LinuxOnlyCensus,LinuxOnlyWindowsExclusionPolicy | 2 | 1 | true |
-| CP-8 | repairs | CP-1 | dispatcher notification state | `/*/*/(AgentTaskLandHeldNotificationTests*)\|(AgentTaskLandNotificationParkFollowUpTests*)\|(AgentTaskLandNotificationPersistenceTests*)\|(AgentTaskLandNotificationReconcileLoadTests*)/*` | dispatcher notification regression | AgentTaskLandHeldNotificationTests,AgentTaskLandNotificationParkFollowUpTests,AgentTaskLandNotificationPersistenceTests,AgentTaskLandNotificationReconcileLoadTests | 4 | 2 | true |
-| CP-9 | repairs | tests/Antiphon.SessionRunner.Tests -> bin-ad7e-runner/ | spawn roster | `/*/*/ProcessSpawnLimitTests/*` | runner spawn roster | ProcessSpawnLimitTests | 1 | 4 | true |
-| CP-10 | repairs | tests/Antiphon.Agents.Pty.Tests -> bin-ad7e-pty/ | spawn roster | `/*/*/ProcessSpawnLimitTests/*` | PTY spawn roster | ProcessSpawnLimitTests | 1 | 4 | true |
-| CP-11 | repairs | CP-1 | policy pin | `/*/*/(LiveLaneRunnerTests*)\|(NightlyCoreGoldenTests*)/*` | native exclusions preserve live-lane sentinels and policy | LiveLaneRunnerTests,NightlyCoreGoldenTests | 2 | 2 | true |
-| CP-12 | repairs | CP-1 | dispatcher notification recovery | `/*/*/(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationRescanTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)/*` | dispatcher notification regression | AgentTaskLandNotificationRecoveryTests,AgentTaskLandNotificationRescanTests,AgentTaskLandReceiptTests,AgentTaskLandReceiptWatermarkSafetyTests | 4 | 2 | true |
-| CP-13 | repairs | CP-1 | dispatcher receipt neighbors | `/*/*/(AgentTaskLandReceiptWatermarkTests*)\|(ExpectationDebtTests*)\|(LandReceiptScanCacheTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | dispatcher notification regression | AgentTaskLandReceiptWatermarkTests,ExpectationDebtTests,LandReceiptScanCacheTests,ReceiptScanDestinationIntegrationTests | 4 | 2 | true |
-| CP-14 | repairs | CP-1 | dispatcher failure delivery | `/*/*/PreDispatchFailureDeliveryTests/*` | dispatcher notification regression | PreDispatchFailureDeliveryTests | 1 | 2 | true |
-| CP-15 | guard-witnesses | tests/Antiphon.Tests -> bin-e258-red/ | red-first | `/*/*/WorkspaceDiskAdmissionTests/SharedFilesystemHoldsBothRoutesAndRecoversFromEither` | V-5 | SharedFilesystemHoldsBothRoutesAndRecoversFromEither | 2 | 2 | true |
+The disk invariant affects the configured dispatch routes, checkpoint
+launchers and build placement. The impact selector caps the shared
+`Directory.Build.targets` edge and returns a large dispatcher dependency set.
+The recovery class alone measured 3,505s for its full inventory. A full build
+and run of every downstream test project would exceed the 30-minute Debug
+threshold. The dispatcher row checks the exact production recovery path and
+the affected notification and custody classes. The recovery statement
+budget stays method-scoped. The checkpoint tool, launchers, policy guards
+and dispatcher classes below are the bounded Final selection. The full Unit
+lane belongs to nightly and rc.
+
+CARD-2093 repairs the three inherited plan-selection rows at
+`9c119f33bf753c04431c45da984d006c23f40212`. Merge carries that repair.
 
 ## Native and manual witnesses
 
-R-3 Linux uses the real `scripts/antiphon` entry with a controlled `df` and a
-dotnet launch sentinel in `scripts/test-checkpoint-disk-guard.mjs`. The Windows
-obligation uses a clean copy of `scripts\antiphon.cmd` from the tested SHA and a
-caller volume with less than 20 GiB free. It must print `workspace_disk_low`,
-exit 9, and leave the bootstrap cache absent. Run the required impacted Windows
-`Card1277PtyHostFixtureTests` and `GrokDelegateEndToEndTests` separately on Windows.
+Use the real POSIX entry through
+`scripts/antiphon build-slot --label checkpoint-linux-bootstrap -- node --test scripts/test-checkpoint-disk-guard.mjs`.
+The Linux raw SDK entry runs `dotnet run --project tools/Antiphon.Checkpoints`
+through a lease from an owned caller directory on a mount with less than
+20 GiB free. It must print `workspace_disk_low` before restore. The SDK
+returns its normal build error (1), while the Antiphon launchers return 9.
 
-```powershell
-scripts\antiphon.cmd build-slot --label checkpoint-windows-bootstrap -- pwsh -NoProfile -File scripts/test-checkpoint-bootstrap-win.ps1 -LowSpaceDirectory <owned-low-space-directory>
-```
+On Windows run the real cold cmd and published PowerShell exe against a
+caller volume with less than 20 GiB free, using
+`scripts/test-checkpoint-bootstrap-win.ps1`. Run Windows-only
+`Card1277PtyHostFixtureTests` and `GrokDelegateEndToEndTests` before the rc
+pick, along with the native startup rehearsal.
 
-R-4 checks the hourly timer and the service's exact builder-prune invocation.
-Host activation follows land.
+R-5 invokes `<current-checkout>/scripts/antiphon build-slot --label historical-build -- dotnet build sample.csproj`
+from a scratch checkout that predates the guard. Set an evaluated
+`MSBuildProjectExtensionsPath` to a fresh path under an evidence root
+and require `workspace_evidence_write` before any restore output.
+Run a second leased build with the default native directories and an
+evaluated safe relative intermediate override. Require a produced assembly
+and NuGet assets under the scratch checkout.
+
+R-4 reads both systemd units. Install and enable the timer on the outer
+host during activation. The dispatcher settings and code take effect with the
+next server restart. The checkpoint CLI refreshes from its checkout.
+
+### Checkpoints
+
+| CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
+|---|---|---|---|---|---|---|---:|---:|---|
+| CP-1 | final | tests/Antiphon.Tests -> bin-e258-final/ | disk and confinement | `/*/*/(WorkspaceDiskAdmissionTests*)\|(CheckpointDiskAdmissionTests*)\|(CheckpointEvidencePlacementTests*)\|(BaselineComparerTests*)\|(CliEntryTests*)\|(CheckpointOutputConfinementTests*)/*` | V-5–V-8, R-3 | WorkspaceDiskAdmissionTests,CheckpointDiskAdmissionTests,CheckpointEvidencePlacementTests,BaselineComparerTests,CliEntryTests,CheckpointOutputConfinementTests | 6 | 8 | true |
+| CP-2 | final | CP-1 | verification guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)\|(LiveLaneRunnerTests*)\|(NightlyCoreGoldenTests*)\|(LiveLaneCensusTests*)\|(CheckpointManifestDocumentationTests*)\|(StableBuildOutputDocumentationTests*)\|(DockerStackDocumentationTests*)/*` | policy, mechanical, layering and source guards | TestClassificationPolicyTests,TestClassificationGuardTests,SlowTestRegistryMergeTests,SlowTestTripwireTests,NativeLinuxPolicyWitnessTests,MechanicalPcContractTests,TaskPlatformGuidanceTests,C1729LayeringGuardTests,TestLaneCategoryGuardTests,TestFixtureCleanupGuardTests,PlanCheckpointClassSelectionGuardTests,LiveLaneRunnerTests,NightlyCoreGoldenTests,LiveLaneCensusTests,CheckpointManifestDocumentationTests,StableBuildOutputDocumentationTests,DockerStackDocumentationTests | 17 | 3 | true |
+| CP-3 | final | CP-1 | live gate inventory | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | live gate inventory | LiveLaneInventoryTests | 2 | 1 | true |
+| CP-4 | final | CP-1 | dispatch recovery | `/*/*/(PhoneHomeTaskDispatchProjectionTests*)\|(PreDispatchFailureDeliveryTests*)\|(AgentTaskLandHeldNotificationTests*)\|(AgentTaskLandNotificationParkFollowUpTests*)\|(AgentTaskLandNotificationPersistenceTests*)\|(AgentTaskLandNotificationReconcileLoadTests*)\|(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationRescanTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)\|(AgentTaskLandReceiptWatermarkTests*)\|(ExpectationDebtTests*)\|(LandReceiptScanCacheTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | V-9 and selected notification and receipt regressions | PhoneHomeTaskDispatchProjectionTests,PreDispatchFailureDeliveryTests,AgentTaskLandHeldNotificationTests,AgentTaskLandNotificationParkFollowUpTests,AgentTaskLandNotificationPersistenceTests,AgentTaskLandNotificationReconcileLoadTests,AgentTaskLandNotificationRecoveryTests,AgentTaskLandNotificationRescanTests,AgentTaskLandReceiptTests,AgentTaskLandReceiptWatermarkSafetyTests,AgentTaskLandReceiptWatermarkTests,ExpectationDebtTests,LandReceiptScanCacheTests,ReceiptScanDestinationIntegrationTests | 14 | 6 | true |
+| CP-5 | final | CP-1 | checkpoint and runner neighbors | `/*/*/(RowVerbTests*)\|(RunSchedulerTests*)\|(CheckpointLauncherTests*)\|(CheckpointToolCommandTests*)\|(C1677DiskAlarmTests*)\|(CheckpointReceiptSafetyTests*)\|(CheckpointTerminalReceiptTests*)\|(HostCleanupCheckpointReceiptTests*)\|(ProcessSpawnLimitTests*)\|(PhoneHomeRollingRunnerTests*)\|(RefOnlyProductionCompositionTests*)\|(DelegationTestServicesTests*)\|(DelegationHarnessCensusTests*)\|(Card1277PtyHostFixtureTests*)/*` | checkpoint and dispatch integration regression | RowVerbTests,RunSchedulerTests,CheckpointLauncherTests,CheckpointToolCommandTests,C1677DiskAlarmTests,CheckpointReceiptSafetyTests,CheckpointTerminalReceiptTests,HostCleanupCheckpointReceiptTests,ProcessSpawnLimitTests,PhoneHomeRollingRunnerTests,RefOnlyProductionCompositionTests,DelegationTestServicesTests,DelegationHarnessCensusTests,Card1277PtyHostFixtureTests | 14 | 7 | true |
+| CP-6 | final | CP-1 | dispatcher budget | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | dispatch statement budgets | C1149_C1150_Statement_budgets | 1 | 1 | true |
+| CP-7 | final | CP-1 | native exclusion policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | OS policy | ReleaseGatePlatformTests | 2 | 1 | true |

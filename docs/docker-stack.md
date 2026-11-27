@@ -1277,8 +1277,10 @@ only on the next request for that task; it is never moved back.
 Keep runnable checkouts and build products in the task worktree or its owned scratch directory.
 Write checkpoint receipts, TRX, logs and reports to the external evidence root. The checkpoint
 tool checks evaluated build, intermediate, NuGet and publish destinations before invoking the
-SDK build, including in a historical checkout. A direct build from a revision with the MSBuild
-guard also refuses those standard output, intermediate and publish paths.
+SDK build, including each project reference's effective property combination in a historical
+checkout. To build an older revision directly, invoke `scripts/antiphon build-slot` from a checkout
+with the guard and run the leased `dotnet build` in the historical workspace. The current
+launcher imports the placement guard into that build's SDK graph before restore.
 
 Install `scripts/server2-docker-builder-prune.service` and its matching timer in
 `/etc/systemd/system/` on the outer server2 host, reload systemd and enable the timer.
@@ -1286,11 +1288,12 @@ The timer runs hourly, targeting the host daemon's unused build cache older than
 Inspect the scheduled run in the host journal.
 
 The existing `WorkspaceDiskLow` attention item warns at 85% usage. The dispatcher also keeps
-new work queued on a configured runner when its latest fresh workspace sample has less than
-20 GiB available. The primary and temporary rollout runner both have a configured `/work`
-admission check. Missing, stale and invalid samples log a bounded
-`workspace_disk_sample_unavailable` diagnostic. Checkpoint launches check available space before
-bootstrap and again after acquiring a build slot. They return exit 9 with `workspace_disk_low`
+new work queued when the latest valid fresh sample for the configured backing filesystem has
+less than 20 GiB available. The primary and temporary rollout routes share the host/mount key
+configured for their `/work` filesystem. When both routes lack a usable sample, dispatch admits
+work and logs a bounded `workspace_disk_sample_unavailable` diagnostic for the filesystem.
+Checkpoint launches check available space before bootstrap and again after acquiring a build
+slot, including baseline comparison. The launchers return exit 9 with `workspace_disk_low`
 when they hit that floor.
 
 #### Runner temp sweep (CARD-1677 S2)
