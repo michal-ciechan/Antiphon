@@ -321,6 +321,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             await File.WriteAllTextAsync(Path.Combine(root, "early-recovery-scan.json"), JsonSerializer.Serialize(scan));
             clock!.Resume();
         }
+        Antiphon.Tests.TestHelpers.TestTrace.FlushLocal();
         await File.WriteAllTextAsync(ready + ".tmp", JsonSerializer.Serialize(new { address, pid = Environment.ProcessId, mvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId }));
         File.Move(ready + ".tmp", ready);
         await Task.Delay(Timeout.Infinite);

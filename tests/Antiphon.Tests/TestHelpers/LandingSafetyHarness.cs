@@ -153,6 +153,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
             NullLogger<SessionMessageQueueService>.Instance);
         async Task PauseAsync()
         {
+            TestTrace.FlushLocal();
             await File.WriteAllTextAsync(ready, System.Text.Json.JsonSerializer.Serialize(new { cut, worker = Environment.ProcessId }));
             await Task.Delay(Timeout.Infinite);
         }
@@ -190,6 +191,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         h.BuildServices();
         async Task PauseAsync()
         {
+            TestTrace.FlushLocal();
             await File.WriteAllTextAsync(ready, System.Text.Json.JsonSerializer.Serialize(new { cut, worker = Environment.ProcessId }));
             await Task.Delay(Timeout.Infinite);
         }

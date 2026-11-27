@@ -91,7 +91,7 @@ Each file describes one process. If a chunk has several files, compare their lif
 | One-time setup and teardown | Observed session, assembly, class and shared-fixture work. |
 | Per-test setup, body and teardown | Observed test lifecycle and body. Setup includes the interval from test-case start to first body when available. Child helpers identify work inside those intervals. |
 | Limiter wait | TUnit 1.44 leaves this unobserved. Look for limiter attributes and serial body starts as clues. Queueing cannot be calculated from gaps alone. |
-| Process exit/teardown | Tail after the last observed test and teardown work through the exit callback. A forced exit can lose this interval and buffered spans. |
+| Process exit/teardown | Tail after the last observed test and teardown work through the exit callback. Retirement and land-delivery workers flush completed local spans before publishing a crash barrier. A forced exit can still lose the exit interval and spans in progress. |
 | Idle/unaccounted | Wall minus the union of observed phase intervals. It can contain scheduler gaps and work without spans. |
 | Top 20 spans and top 10 classes | Inclusive span durations and summed test-case durations by class. Use them to find cost centres and check nesting before estimating savings. |
 

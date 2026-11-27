@@ -199,14 +199,18 @@ public static partial class TestTrace
     /// <summary>Flushes buffered spans; called after the last test in the assembly.</summary>
     public static void Flush()
     {
-        _sink?.Flush();
+        FlushLocal();
         FlushOtlp();
     }
+
+    /// <summary>Persists completed spans before publishing a barrier that permits a forced kill.</summary>
+    public static void FlushLocal() => _sink?.Flush();
 
     private sealed class FileSink
     {
         private readonly string _path;
         private const int Capacity = 4096;
+        private const int BatchSize = 256;
         private readonly Channel<Activity> _pending = Channel.CreateBounded<Activity>(Capacity);
         private readonly object _write = new();
         private readonly Task _writer;
@@ -273,7 +277,10 @@ public static partial class TestTrace
         private async Task WritePendingAsync()
         {
             while (await _pending.Reader.WaitToReadAsync().ConfigureAwait(false))
-                Flush();
+            {
+                lock (_write)
+                    WriteBatch(Math.Min(BatchSize, _pending.Reader.Count));
+            }
         }
 
         public void Complete()
@@ -288,20 +295,29 @@ public static partial class TestTrace
         {
             lock (_write)
             {
-                if (!_pending.Reader.TryRead(out var activity))
-                    return;
-                var builder = new StringBuilder();
-                for (var count = 1; ; count++)
+                // Drain everything admitted before this checkpoint. New spans can continue
+                // to arrive without extending the barrier's wait.
+                var remaining = _pending.Reader.Count;
+                while (remaining > 0)
                 {
-                    builder.Append(Serialize(activity)).Append('\n');
-                    if (count == 256 || !_pending.Reader.TryRead(out activity))
-                        break;
+                    var count = Math.Min(BatchSize, remaining);
+                    WriteBatch(count);
+                    remaining -= count;
                 }
-                try { File.AppendAllText(_path, builder.ToString()); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    // Losing access to the trace destination must not fail a test.
-                }
+            }
+        }
+
+        private void WriteBatch(int count)
+        {
+            if (count == 0)
+                return;
+            var builder = new StringBuilder();
+            for (var written = 0; written < count && _pending.Reader.TryRead(out var activity); written++)
+                builder.Append(Serialize(activity)).Append('\n');
+            try { File.AppendAllText(_path, builder.ToString()); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Losing access to the trace destination must not fail a test.
             }
         }
     }

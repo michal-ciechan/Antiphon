@@ -323,6 +323,7 @@ internal sealed record LandDeliveryOptions(
                 || options.Cut == "review-queue-inserted" && boundary == "queue-inserted"
                 || options.Cut == "review-before-wakeup" && boundary == "queue-committed-before-wakeup";
             if (!blocked || File.Exists(Path.Combine(options.Root, boundary + ".release"))) return;
+            Antiphon.Tests.TestHelpers.TestTrace.FlushLocal();
             var barrierPath = Path.Combine(options.Root, boundary + ".barrier.json");
             var temporary = barrierPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(new
