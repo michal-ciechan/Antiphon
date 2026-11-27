@@ -46,7 +46,9 @@ public sealed class LibGit2VsGitDifferentialTests
         answer.Output.ShouldBe(git.Output, shape);
         if (answer.ExitCode != 0) answer.Diagnostic.ShouldBe($"git_exit_{answer.ExitCode}", shape);
         // An answer the stderr-forwarding runners take (TryAnswerSilently) is only one git gives without a word.
-        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null) error.ShouldBeEmpty("git wrote to stderr: " + shape);
+        // (An absent object's cat-file -e is taken by its exit code alone: its callers never read the stderr line.)
+        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null && !(args is ["cat-file", "-e", _] && git.ExitCode != 0))
+            error.ShouldBeEmpty("git wrote to stderr: " + shape);
     }
 
     /// <summary>Every handled shape, answered and equal to git, for a checkout root.</summary>
@@ -57,9 +59,9 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", head);
         await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", head + "^{commit}");
         await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", tree);
-        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", tree + "^{commit}");
-        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40));
-        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40) + "^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", tree + "^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", new string('1', 40));
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", new string('1', 40) + "^{commit}");
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", head[..12]);
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", fixture.SeedSha + ".." + head);
@@ -284,8 +286,8 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", blob);
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", commitTag);
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", commitTag + "^{commit}");
-        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", treeTag + "^{commit}");
-        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", blob + "^{commit}");
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", treeTag + "^{commit}");
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", blob + "^{commit}");
         await CompareAsync(repo, Expect.Fallback, "cat-file", "-t", blob);
 
         // A ref named by a hex id: git reads the argument as that id (and warns), libgit2 would read the ref.
@@ -300,11 +302,28 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", "--quiet", fixture.SeedSha + "^{commit}");
         await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", fixture.SeedSha + "^{commit}");
 
+        // A promisor remote may fetch an absent object on demand: its absence is git's to decide, presence is not.
+        var absent = new string('3', 40);
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", absent);
+        await fixture.RequiredAsync(repo, "config", "remote.origin.promisor", "true");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent);
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent + "^{commit}");
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", head + "^{commit}");
+        await fixture.RequiredAsync(repo, "config", "--unset", "remote.origin.promisor");
+
         // A file named like the range: without "--" git dies of the ambiguity (128).
         await CompareAsync(repo, Expect.Answered, "rev-list", "--count", "master..refs/heads/side");
         await File.WriteAllTextAsync(Path.Combine(repo, "master..HEAD"), "a path, not a range");
         await CompareAsync(repo, Expect.Fallback, "rev-list", "--count", "master..HEAD");
         (await GitAsync(repo, "rev-list", "--count", "master..HEAD")).ExitCode.ShouldBe(128);
+
+        // Task-progress ref names Antiphon builds are valid without asking git; any other name is git's.
+        var task = Guid.NewGuid().ToString("N");
+        await CompareAsync(repo, Expect.Answered, "check-ref-format", "refs/antiphon/progress/" + task + "/settlement-sync");
+        await CompareAsync(repo, Expect.Answered, "check-ref-format", "refs/antiphon/progress/" + task + "/observe-97d35425e2a4");
+        await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/Observe");
+        await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/x.lock");
+        await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/a/b");
     }
 
     [Test]

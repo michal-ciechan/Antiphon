@@ -49,7 +49,7 @@ internal static partial class InProcessGitReads
         // check-ref-format of a land ref we built ourselves needs no repository: every name of
         // this shape is valid under git-check-ref-format(1). Any other name is git's.
         if (arguments.Count == 2 && arguments[0] == "check-ref-format")
-            return LandRefName.IsMatch(arguments[1]) ? Ok("") : null;
+            return LandRefName.IsMatch(arguments[1]) || ProgressRefName.IsMatch(arguments[1]) ? Ok("") : null;
         // ls-remote of a local-path remote opens the remote, not this repository.
         if (arguments[0] == "ls-remote") return LsRemote(arguments);
         if (!Handled(arguments)) return null;
@@ -150,7 +150,10 @@ internal static partial class InProcessGitReads
         if (answer is null) return null;
         var silent = answer.ExitCode == 0
             || answer.ExitCode == 1 && arguments is ["merge-base", "--is-ancestor", _, _] or ["symbolic-ref", "-q" or "--quiet", _]
-                or ["show-ref", "--verify", "--quiet", _] or ["rev-parse", "--verify", "--quiet", _];
+                or ["show-ref", "--verify", "--quiet", _] or ["rev-parse", "--verify", "--quiet", _]
+            // An absent object (exit 1, or 128 with the peel): every caller reads only the exit code, never git's
+            // "Not a valid object name" line.
+            || answer.ExitCode is 1 or 128 && arguments is ["cat-file", "-e", _];
         return silent ? (answer.ExitCode, answer.Output) : null;
     }
 
@@ -160,6 +163,15 @@ internal static partial class InProcessGitReads
     /// source-observed/&lt;id&gt;, source-observed/probe, cleanup-observed, ...). No such name contains
     /// "..", "//", "@{", a leading dot, a ".lock" suffix or a character git refuses.
     /// </summary>
+    /// <summary>
+    /// The task-progress refs: refs/antiphon/progress/&lt;task&gt;/&lt;name&gt;, the name a lowercase word followed by
+    /// hyphenated lowercase-alphanumeric parts (settlement-sync, observe-&lt;hex&gt;). Valid under git-check-ref-format(1)
+    /// for the same reasons as <see cref="LandRefName"/>. Only the format check reads it; no write is made in process.
+    /// </summary>
+    internal static readonly System.Text.RegularExpressions.Regex ProgressRefName = new(
+        "^refs/antiphon/progress/[0-9a-f]{32}/[a-z]+(?:-[0-9a-z]+)*$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     internal static readonly System.Text.RegularExpressions.Regex LandRefName = new(
         "^refs/antiphon/land/[0-9a-f]{32}/[0-9a-f]{32}(/(?:[0-9a-f]{32}|[a-z]+(?:-[a-z]+)*)){0,2}$",
         System.Text.RegularExpressions.RegexOptions.CultureInvariant);
