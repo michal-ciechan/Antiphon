@@ -64,7 +64,7 @@ public sealed class MultiRunnerDirectoryTests
         var ticket = await registered.Content.ReadFromJsonAsync<PhoneHomeRegistrationResponse>(PhoneHomeFraming.Json);
         ticket.ShouldNotBeNull();
         var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
-        var refused = Should.Throw<ConflictException>(() => host.Directory.AcceptConnect("runner-b", ticket.Ticket, socket));
+        var refused = await Should.ThrowAsync<ConflictException>(() => host.Directory.AcceptConnectAsync("runner-b", ticket.Ticket, socket));
         refused.Code.ShouldBe(PhoneHomeProblemTypes.InvalidTicket);
         host.Directory.SnapshotLive("runner-b").ShouldBeNull();
     }

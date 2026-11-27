@@ -108,7 +108,7 @@ public class PtyConditionalReadClientTests
     [Test]
     public async Task Two_resolve_calls_on_one_live_connection_send_if_none_match_on_the_second_read()
     {
-        await using var lane = ResolvedLane.Open();
+        await using var lane = await ResolvedLane.OpenAsync();
         var first = lane.Directory.Resolve(ResolvedLane.RunnerId);
         var second = lane.Directory.Resolve(ResolvedLane.RunnerId);
         await first.GetBufferAsync(SessionId, CancellationToken.None);
@@ -133,14 +133,14 @@ public class PtyConditionalReadClientTests
     [Test]
     public async Task A_new_connection_does_not_reuse_another_connections_hold()
     {
-        await using var lane = ResolvedLane.Open();
+        await using var lane = await ResolvedLane.OpenAsync();
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
         var held = Frames(lane.Socket.Sent, PhoneHomeOperation.Buffer);
         held.Count.ShouldBe(2);
         held[1].ShouldContain("ifNoneMatch");
 
-        var fresh = lane.ReplaceConnection();
+        var fresh = await lane.ReplaceConnectionAsync();
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetSnapshotAsync(SessionId, CancellationToken.None);
         Frames(fresh.Sent, PhoneHomeOperation.Buffer).Single().ShouldNotContain("ifNoneMatch");
@@ -150,7 +150,7 @@ public class PtyConditionalReadClientTests
     [Test]
     public async Task A_killed_session_drops_its_phone_home_hold()
     {
-        await using var lane = ResolvedLane.Open();
+        await using var lane = await ResolvedLane.OpenAsync();
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetBufferAsync(SessionId, CancellationToken.None);
         await lane.Directory.Resolve(ResolvedLane.RunnerId).GetSnapshotAsync(SessionId, CancellationToken.None);
@@ -345,7 +345,7 @@ public class PtyConditionalReadClientTests
 
         private ResolvedLane(PhoneHomeRunnerDirectory directory) => Directory = directory;
 
-        public static ResolvedLane Open()
+        public static async Task<ResolvedLane> OpenAsync()
         {
             var settings = Options.Create(new PhoneHomeRunnerSettings
             {
@@ -360,14 +360,14 @@ public class PtyConditionalReadClientTests
                 settings,
                 new IdleScopes(),
                 TimeProvider.System));
-            lane.Attach(new ScriptedSocket(notModifiedFirst: false));
+            await lane.AttachAsync(new ScriptedSocket(notModifiedFirst: false));
             return lane;
         }
 
-        public ScriptedSocket ReplaceConnection()
+        public async Task<ScriptedSocket> ReplaceConnectionAsync()
         {
             var socket = new ScriptedSocket(notModifiedFirst: false);
-            Attach(socket);
+            await AttachAsync(socket);
             return socket;
         }
 
@@ -381,13 +381,13 @@ public class PtyConditionalReadClientTests
             }
         }
 
-        private void Attach(ScriptedSocket socket)
+        private async Task AttachAsync(ScriptedSocket socket)
         {
             _stop?.Cancel();
             socket.Reply = DirectoryReply;
             var registration = Directory.Register(new PhoneHomeRegistrationRequest(
                 PhoneHomeProtocol.Version, RunnerId, _boot, _store, "linux", 1, Capabilities()));
-            var connection = Directory.AcceptConnect(RunnerId, registration.Ticket, socket);
+            var connection = await Directory.AcceptConnectAsync(RunnerId, registration.Ticket, socket);
             Directory.MarkRecovered(connection);
             var stop = new CancellationTokenSource();
             Socket = socket;

@@ -19,6 +19,8 @@ namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerEligibilitySnapshotSource
 {
     public const string LocalRunnerId = PhoneHomeProtocol.LocalRunnerId;
+    internal const string RegistrationBusy = "phone_home_registration_busy";
+    private const int RegistrationLockTimeoutMs = 50;
 
     private readonly ISessionRunnerClient _local;
     private readonly PhoneHomeRunnerSettings _settings;
@@ -270,34 +272,29 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             throw new ConflictException("Unsupported phone-home protocol version.", PhoneHomeProblemTypes.ProtocolVersion);
         if (!_slots.TryGetValue(request.RunnerId, out var slot) || !slot.Entry.Enabled)
             throw new ConflictException("Runner id is not allowed.", PhoneHomeProblemTypes.RunnerMismatch);
-        if (DrainState(request.RunnerId)?.RetiredAt is not null)
-            throw new ConflictException(
-                $"Runner '{request.RunnerId}' is retired until its drain is cleared.",
-                PhoneHomeProblemTypes.RunnerRetired);
-        // CARD-0604 D-14: the runner is a bounded pool, not a single seat. Capacity is declared by
-        // the runner and bounded by that entry, so a misconfigured runner cannot enlarge itself.
-        if (request.Capacity < 1 || request.Capacity > slot.Entry.MaxCapacity)
-            throw new ConflictException(
-                $"Phone-home capacity must be between 1 and {slot.Entry.MaxCapacity}.",
-                PhoneHomeProblemTypes.Capacity);
         var registeredPlatform = RunnerPlatformWire.Normalize(request.Platform);
         var reportedPlatform = RunnerPlatformWire.Normalize(request.Capabilities?.Platform);
-        if (registeredPlatform is not null && reportedPlatform is not null
-            && !string.Equals(registeredPlatform, reportedPlatform, StringComparison.Ordinal))
-        {
-            throw new ConflictException(
-                $"Runner '{request.RunnerId}' registration platform {registeredPlatform} disagrees with capabilities {reportedPlatform}.",
-                RunnerPlatformProblems.Conflict);
-        }
         var platform = reportedPlatform ?? registeredPlatform;
+        var supportsWindow = request.Capabilities?.Features?.Contains(
+            PhoneHomeEventWindowOptions.Capability, StringComparer.Ordinal) == true;
 
-        lock (_gate)
+        if (!Monitor.TryEnter(_gate, RegistrationLockTimeoutMs))
+            throw new ServiceUnavailableException("Runner registration is busy. Retry shortly.", RegistrationBusy);
+        try
         {
-            // Recheck under the admission gate: retirement may have been mirrored during validation.
             if (slot.State?.RetiredAt is not null)
                 throw new ConflictException(
                     $"Runner '{request.RunnerId}' is retired until its drain is cleared.",
                     PhoneHomeProblemTypes.RunnerRetired);
+            if (request.Capacity < 1 || request.Capacity > slot.Entry.MaxCapacity)
+                throw new ConflictException(
+                    $"Phone-home capacity must be between 1 and {slot.Entry.MaxCapacity}.",
+                    PhoneHomeProblemTypes.Capacity);
+            if (registeredPlatform is not null && reportedPlatform is not null
+                && !string.Equals(registeredPlatform, reportedPlatform, StringComparison.Ordinal))
+                throw new ConflictException(
+                    $"Runner '{request.RunnerId}' registration platform {registeredPlatform} disagrees with capabilities {reportedPlatform}.",
+                    RunnerPlatformProblems.Conflict);
             var now = _clock.GetUtcNow();
             var lease = TimeSpan.FromSeconds(_settings.LeaseSeconds);
             if (slot.StoreId is { } store && store != request.RunnerStoreId)
@@ -330,7 +327,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             // restarts alone, and both receive loops then drop every frame in silence.
             var epoch = ++slot.Epoch;
             var limits = _settings.Limits;
-            var window = request.Capabilities?.Features?.Contains(PhoneHomeEventWindowOptions.Capability, StringComparer.Ordinal) == true
+            var window = supportsWindow
                 ? new PhoneHomeEventWindowOptions(1, limits.MaxPendingEvents, limits.MaxPendingEventBytes) : null;
             window?.Validate();
             _tickets[ticket] = new Ticket(
@@ -351,6 +348,10 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             return new PhoneHomeRegistrationResponse(
                 ticket, now.AddSeconds(_settings.TicketTtlSeconds), request.RunnerStoreId, request.ProcessBootId, epoch, window);
         }
+        finally
+        {
+            Monitor.Exit(_gate);
+        }
     }
 
     public void PeekTicket(string runnerId, string ticketValue)
@@ -363,11 +364,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         }
     }
 
-    public PhoneHomeLiveConnection AcceptConnect(
+    public async Task<PhoneHomeLiveConnection> AcceptConnectAsync(
         string runnerId, string ticketValue, System.Net.WebSockets.WebSocket socket)
     {
         PhoneHomeLiveConnection connection;
-        var superseded = false;
+        PhoneHomeLiveConnection? previous;
         lock (_gate)
         {
             if (!_tickets.Remove(ticketValue, out var ticket))
@@ -376,11 +377,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
 
             if (!_slots.TryGetValue(runnerId, out var slot))
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
-            if (slot.Live is { } previous)
+            previous = slot.Live;
+            if (previous is not null)
             {
                 RecordDisconnect(slot, previous, "superseded");
-                previous.DisposeAsync("superseded").AsTask().GetAwaiter().GetResult();
-                superseded = true;
+                previous.DispatchEligible = false;
             }
             // The ticket already carries the epoch the runner was told at registration.
             var epoch = ticket.Epoch;
@@ -393,8 +394,16 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             slot.Reconnects++;
         }
 
-        if (superseded)
+        if (previous is not null)
+        {
+            // Closing the old transport can resume its endpoint in Disconnect, which takes _gate.
+            try { await previous.DisposeAsync("superseded"); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to close superseded runner {RunnerId} epoch {Epoch}", runnerId, previous.Epoch);
+            }
             Notify(runnerId);
+        }
         return connection;
     }
 

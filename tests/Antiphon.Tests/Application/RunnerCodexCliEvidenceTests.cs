@@ -451,7 +451,7 @@ public sealed class RunnerCodexCliEvidenceTests
             await using var guarded = await PhoneHomeTestHost.StartAsync(clock);
             var registered = guarded.Directory.Register(guarded.Registration() with { Capabilities = Caps("0.160.0", T) });
             using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
-            var held = keepLive ? guarded.Directory.AcceptConnect(guarded.AllowedRunnerId, registered.Ticket, socket) : null;
+            var held = keepLive ? await guarded.Directory.AcceptConnectAsync(guarded.AllowedRunnerId, registered.Ticket, socket) : null;
             guarded.Directory.ApplyState(guarded.AllowedRunnerId, new RunnerState(true, T, "C959", null, false, null, T, "C959"));
             guarded.Directory.ApplyState(guarded.AllowedRunnerId, new RunnerState(false, null, null, null, false, null, null, null));
             clock.Advance(TimeSpan.FromSeconds(keepLive ? 91 : 89));
@@ -504,7 +504,7 @@ public sealed class RunnerCodexCliEvidenceTests
             await using var ownership = await PhoneHomeTestHost.StartAsync(clock);
             using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
             var ownershipRegistration = ownership.Directory.Register(ownership.Registration() with { Capabilities = Caps("0.160.0", T) });
-            var ownershipLive = ownership.Directory.AcceptConnect(ownership.AllowedRunnerId, ownershipRegistration.Ticket, socket);
+            var ownershipLive = await ownership.Directory.AcceptConnectAsync(ownership.AllowedRunnerId, ownershipRegistration.Ticket, socket);
             clock.Advance(TimeSpan.FromSeconds(91));
             ownershipLive.NoteHeartbeat(clock.GetUtcNow());
             if (clearRetirement)

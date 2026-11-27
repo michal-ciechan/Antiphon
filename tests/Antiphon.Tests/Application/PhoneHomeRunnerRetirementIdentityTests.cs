@@ -44,7 +44,7 @@ public sealed class PhoneHomeRunnerRetirementIdentityTests
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
         using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
         var ticket = host.Directory.Register(host.Registration());
-        var live = host.Directory.AcceptConnect(host.AllowedRunnerId, ticket.Ticket, socket);
+        var live = await host.Directory.AcceptConnectAsync(host.AllowedRunnerId, ticket.Ticket, socket);
         RetireAndClear(host, clock);
         if (expired) clock.Advance(TimeSpan.FromSeconds(91));
         RefuseStore(host, host.Registration(storeId: Guid.NewGuid()));
@@ -60,7 +60,7 @@ public sealed class PhoneHomeRunnerRetirementIdentityTests
         await using var host = await PhoneHomeTestHost.StartAsync(clock);
         using var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
         var ticket = host.Directory.Register(host.Registration());
-        var live = host.Directory.AcceptConnect(host.AllowedRunnerId, ticket.Ticket, socket);
+        var live = await host.Directory.AcceptConnectAsync(host.AllowedRunnerId, ticket.Ticket, socket);
         clock.Advance(TimeSpan.FromSeconds(91));
         live.NoteHeartbeat(clock.GetUtcNow());
         RetireAndClear(host, clock);

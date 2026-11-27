@@ -76,13 +76,13 @@ public sealed class PhoneHomeDirectoryTests
         };
         var request = Registration(capacity: 1);
         var first = directory.Register(request);
-        directory.AcceptConnect("server2", first.Ticket, previous);
+        await directory.AcceptConnectAsync("server2", first.Ticket, previous);
         var second = directory.Register(request);
         using var replacement = new PhoneHomeTestWebSocket();
         replacement.Abort(); // The recovery cycle can inspect this socket without making a List RPC.
         using var pump = new PhoneHomeRecoveryPump(directory, Options.Create(new PhoneHomeRunnerSettings()),
             new NoScopeFactory(), NullLogger<PhoneHomeRecoveryPump>.Instance);
-        var accept = Task.Run(() => directory.AcceptConnect("server2", second.Ticket, replacement));
+        var accept = Task.Run(() => directory.AcceptConnectAsync("server2", second.Ticket, replacement));
         try
         {
             (await closingEpoch.Task.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBe(second.Epoch,
@@ -98,6 +98,50 @@ public sealed class PhoneHomeDirectoryTests
         {
             finishClose.TrySetResult();
             await (await accept).DisposeAsync();
+        }
+    }
+
+    [Test]
+    public async Task Registration_returns_retry_after_without_minting_a_ticket_when_admission_is_busy()
+    {
+        var clock = new RegistrationClock();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        await host.RegisterAsync();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        clock.OnNextRead = () =>
+        {
+            entered.SetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("The fixture did not release the registration clock.");
+        };
+        var owner = Task.Run(() => host.Directory.Register(host.Registration()));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
+            request.Headers.Add(PhoneHomeProtocol.SecretHeader, host.Secret);
+            request.Content = JsonContent.Create(host.Registration(), options: PhoneHomeFraming.Json);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var response = await host.Http.SendAsync(request, deadline.Token);
+            response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+            (response.Headers.RetryAfter?.Delta).ShouldBe(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            release.Set();
+            await owner;
+        }
+        (await host.RegisterAsync()).Epoch.ShouldBe((await owner).Epoch + 1);
+    }
+
+    private sealed class RegistrationClock : TimeProvider
+    {
+        public Action? OnNextRead;
+        public override DateTimeOffset GetUtcNow()
+        {
+            Interlocked.Exchange(ref OnNextRead, null)?.Invoke();
+            return TimeProvider.System.GetUtcNow();
         }
     }
 
@@ -205,12 +249,12 @@ public sealed class PhoneHomeDirectoryTests
     // CARD-0679 D-6 (card ask 2): between the socket closing and the connect route recording the
     // end, Resolve handed out a client bound to a closed socket because it checked only the flag.
     [Test]
-    public void Resolve_refuses_a_recovered_connection_whose_socket_is_closed()
+    public async Task Resolve_refuses_a_recovered_connection_whose_socket_is_closed()
     {
         var directory = Directory(maxCapacity: 8);
         var ticket = directory.Register(Registration(capacity: 1));
         var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
-        var live = directory.AcceptConnect("server2", ticket.Ticket, socket);
+        var live = await directory.AcceptConnectAsync("server2", ticket.Ticket, socket);
         directory.MarkRecovered(live);
         directory.Resolve("server2").ShouldNotBeNull();
 
