@@ -61,11 +61,13 @@ public sealed partial class ChannelInputWithheldIncidentTests
         row.DeliveryAttempts.ShouldBe(0);
         h.Adapter.SentInput.ShouldBeEmpty();
         h.Adapter.AdoptedHistoryVerified = true;
+        await bridge.DrainPendingAsync(ct);
+        h.Adapter.SentInput.ShouldBeEmpty("the first retry waits for backoff");
         await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(s => s
             .SetProperty(m => m.FirstWithheldAt, h.Now.AddMinutes(-20))
             .SetProperty(m => m.LastWithheldAt, h.Now.AddMinutes(-20)), ct);
-        await h.Queue.FlushStrandedQueuesAsync(ct);
-        await h.Queue.FlushStrandedQueuesAsync(ct);
+        await bridge.DrainPendingAsync(ct);
+        await bridge.DrainPendingAsync(ct);
         var submitted = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
         submitted.ShouldContain("fixture caption");
         submitted.ShouldContain("[photo attached: ");
@@ -79,6 +81,50 @@ public sealed partial class ChannelInputWithheldIncidentTests
         reply.ConversationId.ShouldBe(chat);
         reply.Text.ShouldBe("fixture answer");
         (await db.SessionQueuedMessages.SingleAsync(m => m.Id == row.Id, ct)).DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task UnansweredGroupInboundPushesAttentionAtTenMinutes(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        await using var h = await OpenAsync(schema.ConnectionString, clock);
+        var seed = await SeedAsync(h, h.Now, null, 0);
+        await h.BindChannelAsync(seed.ConversationId);
+        await using var db = Db(schema.ConnectionString);
+        var chat = await db.ChatChannels.SingleAsync(c => c.ExternalId == seed.ConversationId, ct);
+        chat.Kind = ChatChannelKind.Group;
+        chat.DigestEnabled = true;
+        var inbound = await db.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId, ct);
+        inbound.ChatChannelId = chat.Id;
+        await db.SaveChangesAsync(ct);
+        clock.Advance(TimeSpan.FromMinutes(9));
+        using var bridge = Bridge(h);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var loop = bridge.RunWithheldIncidentLoopAsync(stop.Token);
+        try
+        {
+            await Task.Delay(100, ct);
+            (await db.AgentIncidents.CountAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct)).ShouldBe(0);
+            clock.Advance(TimeSpan.FromMinutes(1));
+            await WaitForAsync(async () =>
+            {
+                clock.Advance(TimeSpan.FromSeconds(10));
+                return await db.AgentIncidents.AnyAsync(i => i.FailureReason == "ChannelNoOutboundReply"
+                    && i.HumanNotifiedAt != null, ct);
+            });
+            var incident = await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelNoOutboundReply", ct);
+            incident.Message.ShouldContain(seed.NativeMessageId);
+            h.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentChanged"
+                && JsonSerializer.Serialize(e.Payload, (JsonSerializerOptions?)null).Contains(incident.Id.ToString()));
+            h.Messaging.SentReplies.ShouldBeEmpty();
+        }
+        finally
+        {
+            stop.Cancel();
+            await loop;
+        }
     }
 
     [Test]
