@@ -37,9 +37,11 @@ public sealed class VerifiedSessionStopTests
     public async Task Stop_binds_to_the_verified_unattached_and_unowned_seat(string scenario)
     {
         var runner = new FakeSessionRunnerClient();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var harness = await BridgeQueueHarness.CreateAsync(new()
         {
             AlwaysOn = false,
+            ConnectionString = schema.ConnectionString,
             ConfigureServices = services => services.AddSingleton<ISessionRunnerClient>(runner),
         });
         harness.Runtime.TryRemove(harness.SessionId, out _);

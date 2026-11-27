@@ -54,6 +54,6 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // Normalised body 11,498 of 11,500.
         // 2026-11-27 standing operating rule and verified single-session stop. Normalised body 11,279 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("42cb4b75f22f87f7528c57606157506ad87fde1592bc394ae97ceddf16453416", "orchestrator-approved-bytes");
+            .ShouldBe("dfa437722c2ab3c4c76d85df1a534783b669422554dcf26c1672f2563922f1d6", "orchestrator-approved-bytes");
     }
 }

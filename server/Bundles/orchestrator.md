@@ -113,8 +113,9 @@ condition and may page the configured operator if no answer arrives by its state
 Steer Queued, Dispatched or Working tasks with refine <taskId> "one sentence".
 Use reply for a Blocked task; refine returns 409 there.
 
-Use --orchestrator for work needing decomposition. Workers use a worktree by default.
-Use --shared for the current checkout and --dir for another repo.
+Use --orchestrator for work needing decomposition.
+Fresh workers already use a worktree; --shared opts out of that default.
+Use --dir for another repo.
 
 Inspecting agents, boards and live sessions: read docs/ops-http.md; never grep MapGet for routes.
 Server :17202 /api/..., runner :17204 /sessions/... (no /api). No GET /api/sessions or /api/board;
