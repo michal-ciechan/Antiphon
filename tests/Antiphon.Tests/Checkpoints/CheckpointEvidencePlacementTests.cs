@@ -17,23 +17,20 @@ public sealed class CheckpointEvidencePlacementTests
     {
         using var repo = new ScratchGitRepo("disk-reference-placement");
         var protectedPath = "/work/evidence/reference-witness-" + Guid.NewGuid().ToString("N") + "/";
-        await repo.CommitFileAsync("child/Child.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup>
-                <TargetFramework>net9.0</TargetFramework>
-                <IntermediateOutputPath Condition="'$(PlacementVariant)' == 'unsafe'">REPLACE</IntermediateOutputPath>
-              </PropertyGroup>
-            </Project>
-            """.Replace("REPLACE", protectedPath, StringComparison.Ordinal));
-        await repo.CommitFileAsync("Main.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk">
-              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
-              <ItemGroup>
-                <ProjectReference Include="child/Child.csproj" AdditionalProperties="PlacementVariant=safe" />
-                <ProjectReference Include="child/Child.csproj" AdditionalProperties="PlacementVariant=unsafe" />
-              </ItemGroup>
-            </Project>
-            """);
+        var child = new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
+            new XElement("PropertyGroup",
+                new XElement("TargetFramework", "net9.0"),
+                new XElement("IntermediateOutputPath",
+                    new XAttribute("Condition", "'$(PlacementVariant)' == 'unsafe'"), protectedPath)));
+        await repo.CommitFileAsync("child/Child.csproj", child.ToString());
+        var entry = new XElement("Project", new XAttribute("Sdk", "Microsoft.NET.Sdk"),
+            new XElement("PropertyGroup", new XElement("TargetFramework", "net9.0")),
+            new XElement("ItemGroup",
+                new XElement("ProjectReference", new XAttribute("Include", "child/Child.csproj"),
+                    new XAttribute("AdditionalProperties", "PlacementVariant=safe")),
+                new XElement("ProjectReference", new XAttribute("Include", "child/Child.csproj"),
+                    new XAttribute("AdditionalProperties", "PlacementVariant=unsafe"))));
+        await repo.CommitFileAsync("Main.csproj", entry.ToString());
 
         var prepared = BuildConfinement.Prepare(repo.Path,
             BuildStep.BuildArguments("Main.csproj", "bin-placement/", [], 2), null, CancellationToken.None);

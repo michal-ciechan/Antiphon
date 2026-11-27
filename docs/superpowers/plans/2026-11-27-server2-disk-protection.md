@@ -63,13 +63,15 @@ caller volume with less than 20 GiB free, using
 `Card1277PtyHostFixtureTests` and `GrokDelegateEndToEndTests` before the rc
 pick, along with the native startup rehearsal.
 
-R-5 invokes `<current-checkout>/scripts/antiphon build-slot --label historical-build -- dotnet build sample.csproj`
-from a scratch checkout that predates the guard. Set an evaluated
-`MSBuildProjectExtensionsPath` to a fresh path under an evidence root
-and require `workspace_evidence_write` before any restore output.
-Run a second leased build with the default native directories and an
-evaluated safe relative intermediate override. Require a produced assembly
-and NuGet assets under the scratch checkout.
+R-5 runs the current checkout's leased build launcher from a fixture that
+predates the guard. Run each case separately. Refusal must occur before the
+restore sentinel and leave the protected path absent. The positive uses the
+fixture project's relative output and requires both its assembly and NuGet assets.
+
+```sh
+pwsh -NoProfile -File scripts/test-historical-build-placement.ps1 -Case Refusal
+pwsh -NoProfile -File scripts/test-historical-build-placement.ps1 -Case Relative
+```
 
 R-4 reads both systemd units. Install and enable the timer on the outer
 host during activation. The dispatcher settings and code take effect with the
