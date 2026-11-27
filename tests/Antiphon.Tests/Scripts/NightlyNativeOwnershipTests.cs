@@ -149,8 +149,31 @@ public sealed class NightlyNativeOwnershipTests
         native.Assert(!File.Exists(Path.Combine(r.Root, "breakaway-child.pid")), "no independently live breakaway descendant");
         native.Complete(r);
 
+        FixtureJobReapsDescendant(native);
         IdleCaptureAndJobTermination(native, cancellationToken);
     }, cancellationToken);
+
+    private static void FixtureJobReapsDescendant(NativeHarness native)
+    {
+        var root = native.NewRoot("fixture-owned descendant");
+        var log = Path.Combine(root, "native.log");
+        var hooks = new NativeProcessHooks { TerminateDescendantsOnRootExit = true };
+        var owner = NativeProcessOwner.Start(Fixture, [root, "descendant"], root, 30_000, log, null, hooks);
+        native.Owners.Add(owner);
+
+        var result = owner.Completion.GetAwaiter().GetResult();
+        result.ExitCode.ShouldBe(0, result.Error);
+        result.TimedOut.ShouldBeFalse();
+        result.TerminationSucceeded.ShouldBeTrue();
+        result.CleanupComplete.ShouldBeTrue();
+        result.RemainingProcessCount.ShouldBe(0);
+        var child = ReadMarker(Path.Combine(root, "child.pid")).Trim();
+        result.DescendantIdentities.ShouldContain(id => id.StartsWith(child + ":", StringComparison.Ordinal));
+        var bytes = File.ReadAllBytes(log);
+        var stdoutLength = checked((int)result.StandardOutputBytes);
+        System.Text.Encoding.UTF8.GetString(bytes.AsSpan(0, stdoutLength)).ShouldContain("ROOT-STDOUT-END");
+        System.Text.Encoding.UTF8.GetString(bytes.AsSpan(stdoutLength)).ShouldContain("ROOT-STDERR-END");
+    }
 
     [Test, Timeout(120_000)]
     public Task C1039_DrainBeforeReturn(CancellationToken cancellationToken) => RunAsync(nameof(C1039_DrainBeforeReturn), native =>

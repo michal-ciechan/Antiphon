@@ -30,6 +30,9 @@ namespace Antiphon.Nightly
         public string HangCapturePath { get; set; } = "";
         public NightlyChunkIdleMonitor IdleMonitor { get; set; }
         public string ActiveHeartbeatPath { get; set; } = "";
+        // Fixture launches can supply input and clean their job as soon as the root exits.
+        public string StandardInputPath { get; set; } = "";
+        public bool TerminateDescendantsOnRootExit { get; set; }
         internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
         {
             if (!Barriers.Contains(phase)) return;
@@ -55,6 +58,8 @@ namespace Antiphon.Nightly
         public string[] DescendantIdentities { get; set; } = Array.Empty<string>();
         public bool ChildrenExited { get; set; }
         public bool OutputDrained { get; set; }
+        // The merged log writes the stdout bytes before any stderr bytes.
+        public long StandardOutputBytes { get; set; }
         public bool CleanupComplete { get { return ChildrenExited && OutputDrained; } }
         public bool TerminationRequested { get; set; }
         public bool TerminationSucceeded { get; set; }
@@ -145,20 +150,23 @@ namespace Antiphon.Nightly
                 Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()), "SetInformationJobObject");
                 Pipe(out outRead, out outWrite, true);
                 Pipe(out errRead, out errWrite, true);
-                Pipe(out inputRead, out inputWrite, false);
+                using var inputFile = string.IsNullOrEmpty(_hooks.StandardInputPath) ? null
+                    : new FileStream(_hooks.StandardInputPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Inheritable);
+                if (inputFile == null) Pipe(out inputRead, out inputWrite, false);
+                IntPtr childInput = inputFile?.SafeFileHandle.DangerousGetHandle() ?? inputRead;
                 IntPtr size = IntPtr.Zero;
                 InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
                 attributes = Marshal.AllocHGlobal(size);
                 Check(InitializeProcThreadAttributeList(attributes, 1, 0, ref size), "InitializeProcThreadAttributeList");
                 handleList = Marshal.AllocHGlobal(IntPtr.Size * 3);
-                Marshal.WriteIntPtr(handleList, 0, inputRead);
+                Marshal.WriteIntPtr(handleList, 0, childInput);
                 Marshal.WriteIntPtr(handleList, IntPtr.Size, outWrite);
                 Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, errWrite);
                 Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)0x20002, handleList, (IntPtr)(IntPtr.Size * 3), IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute");
                 var startup = new StartupInfoEx();
                 startup.Startup.cb = Marshal.SizeOf<StartupInfoEx>();
                 startup.Startup.flags = 0x100; // USESTDHANDLES
-                startup.Startup.stdin = inputRead; startup.Startup.stdout = outWrite; startup.Startup.stderr = errWrite;
+                startup.Startup.stdin = childInput; startup.Startup.stdout = outWrite; startup.Startup.stderr = errWrite;
                 startup.Attributes = attributes;
                 // Null inherits via CreateProcess; even an empty explicit map replaces.
                 if (environment != null)
@@ -211,6 +219,7 @@ namespace Antiphon.Nightly
                     }
                     return beat;
                 }
+                bool stopOwnedChildren = false;
                 CompletionGraceResult graceResult = NightlyCompletionGrace.Wait(
                     () =>
                     {
@@ -219,7 +228,8 @@ namespace Antiphon.Nightly
                         Observation.RemainingProcessCount = active;
                         bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
                         Observation.ChildrenExited = rootExited && active == 0;
-                        return Observation.ChildrenExited;
+                        stopOwnedChildren = _hooks.TerminateDescendantsOnRootExit && rootExited && active > 0;
+                        return Observation.ChildrenExited || stopOwnedChildren;
                     },
                     watchEvidence ? (Func<bool>)(() => ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory, notBefore)) : null,
                     grace,
@@ -249,6 +259,9 @@ namespace Antiphon.Nightly
                 {
                     try { WriteHangCapture(job, root, logPath); }
                     catch (Exception captureEx) { Observation.HangCaptureError = captureEx.Message; }
+                }
+                if (Observation.TimedOut || stopOwnedChildren)
+                {
                     Observation.TerminationRequested = true;
                     Observation.TerminationSucceeded = TerminateJobObject(job, 1);
                     Check(Observation.TerminationSucceeded, "TerminateJobObject");
@@ -282,8 +295,9 @@ namespace Antiphon.Nightly
                     _hooks.Pause("log-write", _drainCancellation.Token);
                     using (var output = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read))
                     {
-                        foreach (string path in new[] { stdoutPath, stderrPath })
-                            using (var input = File.OpenRead(path)) input.CopyTo(output);
+                        using (var input = File.OpenRead(stdoutPath)) input.CopyTo(output);
+                        Observation.StandardOutputBytes = output.Position;
+                        using (var input = File.OpenRead(stderrPath)) input.CopyTo(output);
                         output.Flush(true);
                     }
                 });
