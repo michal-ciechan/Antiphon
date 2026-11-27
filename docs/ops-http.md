@@ -296,6 +296,10 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
     -ContentType 'application/json' -Body '{"fresh":true}'
 ```
 
+### Close a review run from a shell
+
+`scripts/antiphon review-run close <run-id> --reason-file <path>` reads the current run token and sends the close. Use `--reason <text>` for a short reason or `--token <number>` to compare against a version already read. The command uses `ANTIPHON_API`. A GitHub sign-in deployment requires its session cookie, which the command accepts from a private `--cookie-file` containing the Cookie header value. The close uses the signed-in actor and repository write grant.
+
 ## Caller handoff and Review correction routes (CARD-1303 R10)
 
 These are server routes on 17202, with full GUIDs (no task short IDs). `{id}` names the

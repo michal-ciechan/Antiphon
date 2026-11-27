@@ -199,6 +199,22 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 
 With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 'sign_in_required', signInUrl }` without a session; the client sends the browser to `signInUrl` with `returnUrl` set to the current page. A gate on a repo where the viewer lacks `Review:Auth:RequiredRepoPermission` has `viewerCanDecide: false` and says why, and deciding it is a 403.
 
+## GitHub run lifecycle
+
+The identity uses the existing GitHub host kind, case-normalized owner and repo, and PR number. The configured code-host binding selects the credential and installation for that repo. A different head SHA or title keeps the same run. Local commit-range reviews retain independent intake. A GitHub run in Merged continues to occupy its identity until Closed.
+
+Manual intake returns the existing run without queuing a round. Use Refresh to retry a failure or Request review round to start another round. The GitHub poller uses the same intake service and keeps working on the existing run. An ordinary poll does not automatically restart a deliberately closed run while the PR remains open. A trusted PR comment or manual intake can start the next run. The existing code-host close event also transitions the run to Closed.
+
+An explicit close removes open gates from the queue, skips outstanding workflow steps and records the viewer, reason and time. A code-host call already in progress can finish. Further workflow work stops when the executor observes the close.
+
+### Database activation
+
+Before starting a server build that includes `EnforceOneOpenReviewRunPerPullRequest`, pass the PostgreSQL snapshot and restore-drill gate. For production on server2, take a fresh snapshot with `scripts\antiphon.cmd postgres-snapshot --execute --plain --target server2` and verify its restore using `scripts\antiphon.cmd postgres-snapshot --execute --plain --restore-drill --target server2`. Record both receipts for the activation, and drain old review writers before starting the new version. [Production PostgreSQL backup and restore](../../docker-stack.md#server2-host-postgres-card-1406)
+
+The startup migration adds derived GitHub identity columns and an insert trigger. In the same transaction it keeps the newest non-Closed run per identity by start time and ID, closes older duplicates with the reason `superseded by duplicate-intake cleanup`, and installs a partial unique index. All runs, subjects, findings and workflow history remain. The audit names the surviving run and captures the prior run status, stage, waiting state and timestamp. A five-second lock timeout aborts the transaction if a lock cannot be acquired. Rehearse the migration on the restored copy to measure the review-table lock window.
+
+Down removes the derived columns, trigger, normalization function and index. The closure records and run history survive the downgrade. Use the pre-activation snapshot for a full data rewind.
+
 ## SignalR
 
 `ReviewRunChanged { runId }` → invalidates `['reviewRuns']`, `['reviewRun', runId]`,

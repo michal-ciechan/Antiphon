@@ -86,11 +86,33 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         using var client = OpenPullRequest(number);
         client.DefaultRequestHeaders.Add("X-Review-Viewer", "operator-alex");
         var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var id = Id(created);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var run = await db.ReviewRuns.SingleAsync(r => r.Id == id, ct);
+            run.Status = ReviewRunStatus.AtGate;
+            run.Stage = ReviewStage.HumanGate;
+            run.WaitingOn = ReviewWaitingOn.Humans;
+            db.ReviewGates.Add(new ReviewGate
+            {
+                Id = Guid.NewGuid(), RunId = id, Kind = ReviewGateKind.ReviewGate, NodeId = "human-review",
+                Iteration = 1, Status = ReviewQueueItemStatus.Unassigned, OpenedAt = DateTime.UtcNow,
+            });
+            db.ReviewNodeExecutions.Add(new ReviewNodeExecution
+            {
+                Id = Guid.NewGuid(), RunId = id, NodeId = "human-review", Iteration = 1, Sequence = 2,
+                Kind = ReviewNodeKind.Gate, Status = ReviewNodeStatus.Waiting,
+            });
+            await db.SaveChangesAsync(ct);
+        }
 
-        var closeUri = $"/api/review-runs/{Id(created)}/close";
-        using var stale = await client.PostAsJsonAsync(closeUri, new { concurrencyToken = uint.MaxValue, reason = "stale" }, ct);
+        var closeUri = $"/api/review-runs/{id}/close";
+        var previousToken = created.TryGetProperty("concurrencyToken", out var token) ? token.GetUInt32() : uint.MaxValue;
+        using var stale = await client.PostAsJsonAsync(closeUri, new { concurrencyToken = previousToken, reason = "stale" }, ct);
         stale.StatusCode.ShouldBe(HttpStatusCode.Conflict, await stale.Content.ReadAsStringAsync(ct));
-        var concurrencyToken = created.GetProperty("concurrencyToken").GetUInt32();
+        var atGate = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{id}", ct);
+        var concurrencyToken = atGate.GetProperty("concurrencyToken").GetUInt32();
         var request = new { concurrencyToken, reason = "  superseded by the author  " };
         using var closed = await client.PostAsJsonAsync(closeUri, request, ct);
         closed.StatusCode.ShouldBe(HttpStatusCode.OK, await closed.Content.ReadAsStringAsync(ct));
@@ -100,6 +122,11 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         var closure = detail.GetProperty("closure");
         closure.GetProperty("actor").GetString().ShouldBe("operator-alex");
         closure.GetProperty("reason").GetString().ShouldBe("superseded by the author");
+        var gate = detail.GetProperty("gates").EnumerateArray().Single();
+        gate.GetProperty("status").GetString().ShouldBe("Done");
+        gate.GetProperty("reasons").EnumerateArray().Single().GetString().ShouldBe("closed: superseded by the author");
+        var gateNode = detail.GetProperty("nodes").EnumerateArray().Single(node => node.GetProperty("nodeId").GetString() == "human-review");
+        gateNode.GetProperty("status").GetString().ShouldBe("Skipped");
 
         using var repeated = await client.PostAsJsonAsync(closeUri, request with { reason = "another reason" }, ct);
         repeated.StatusCode.ShouldBe(HttpStatusCode.OK);
