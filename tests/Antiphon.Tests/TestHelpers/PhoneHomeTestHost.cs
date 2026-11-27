@@ -123,6 +123,7 @@ internal sealed class PhoneHomeTestHost : IAsyncDisposable
             clock ?? TimeProvider.System,
             inventoryLogger: sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>(),
             observer: observer));
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
         if (connectionString is not null)
             builder.Services.AddScoped<IRunnerStateStore, DbRunnerStateStore>();
         else

@@ -66,7 +66,7 @@ public sealed class PhoneHomeRunnerRetirementCycleTests
         registration.Epoch.ShouldBeGreaterThan(liveA.Epoch);
         using var socket = System.Net.WebSockets.WebSocket.CreateFromStream(new MemoryStream(),
             new System.Net.WebSockets.WebSocketCreationOptions { IsServer = true });
-        var liveB = host.Directory.AcceptConnect(id, registration.Ticket, socket);
+        var liveB = await host.Directory.AcceptConnectAsync(id, registration.Ticket, socket);
         host.Directory.MarkRecovered(liveB);
         host.Directory.Status(id).DispatchEligible.ShouldBeTrue();
         host.Directory.Status(id).AcceptingNewWork.ShouldBeFalse();

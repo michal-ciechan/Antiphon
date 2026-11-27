@@ -58,7 +58,15 @@ public static class SessionRunnerEndpoints
             var secret = http.Request.Headers[PhoneHomeProtocol.SecretHeader].ToString();
             if (!directory.AuthenticateSecret(request.RunnerId, secret))
                 throw new ForbiddenException("Runner authentication failed.");
-            return Results.Ok(directory.Register(request));
+            try
+            {
+                return Results.Ok(directory.Register(request));
+            }
+            catch (ServiceUnavailableException ex) when (ex.Code == PhoneHomeRunnerDirectory.RegistrationBusy)
+            {
+                http.Response.Headers.RetryAfter = "1";
+                throw;
+            }
         }).WithTags("SessionRunners");
 
         app.MapGet("/api/session-runners/{runnerId}/status", (
@@ -373,7 +381,7 @@ public static class SessionRunnerEndpoints
             PhoneHomeLiveConnection connection;
             try
             {
-                connection = directory.AcceptConnect(runnerId, ticket, socket);
+                connection = await directory.AcceptConnectAsync(runnerId, ticket, socket);
             }
             catch
             {

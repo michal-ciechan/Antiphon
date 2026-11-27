@@ -7,8 +7,11 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.Pty;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.SessionRunner.Tests.TestHelpers;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using System.Net;
@@ -56,6 +59,108 @@ public sealed class PhoneHomeDirectoryTests
         // The whole point of D-14: two is now a legal seat count, where CARD-0490 allowed only one.
         var response = Directory(maxCapacity: 8).Register(Registration(capacity: 2));
         response.Ticket.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Test]
+    public async Task Shutdown_drains_a_held_superseded_close_and_observes_its_fault()
+    {
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closeFailure = new WebSocketException(WebSocketError.Faulted, "superseded socket handshake fault");
+        var disposeFailure = new IOException("superseded socket dispose fault");
+        var previous = new PhoneHomeTestWebSocket
+        {
+            BeforeClose = async ct =>
+            {
+                closing.SetResult();
+                await finishClose.Task.WaitAsync(ct);
+                throw closeFailure;
+            },
+            OnDispose = () => throw disposeFailure,
+        };
+        var first = await host.RegisterAsync();
+        await using var old = await host.Directory.AcceptConnectAsync(host.AllowedRunnerId, first.Ticket, previous);
+        var second = await host.RegisterAsync();
+        await using var current = await host.Directory.AcceptConnectAsync(
+            host.AllowedRunnerId, second.Ticket, new PhoneHomeTestWebSocket());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await closing.Task.WaitAsync(deadline.Token);
+
+        var hostedDirectory = host.App.Services.GetServices<IHostedService>()
+            .OfType<PhoneHomeRunnerDirectory>().ShouldHaveSingleItem();
+        var lifetime = (IHostedService)hostedDirectory;
+        using var stopCancellation = new CancellationTokenSource();
+        var canceledStop = lifetime.StopAsync(stopCancellation.Token);
+        var stopping = lifetime.StopAsync(deadline.Token);
+        try
+        {
+            canceledStop.IsCompleted.ShouldBeFalse("shutdown must join the held cleanup");
+            stopCancellation.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => canceledStop.WaitAsync(deadline.Token));
+            canceledStop.IsCanceled.ShouldBeTrue("canceling shutdown must release its own drain wait");
+            stopping.IsCompleted.ShouldBeFalse("shutdown must join the held cleanup");
+            Should.Throw<ServiceUnavailableException>(() => host.Directory.Register(host.Registration()))
+                .Code.ShouldBe(PhoneHomeRunnerDirectory.RegistrationBusy);
+        }
+        finally
+        {
+            finishClose.TrySetResult();
+            await stopping;
+        }
+        previous.State.ShouldBe(WebSocketState.Aborted);
+        var warning = host.Logs.Entries.Where(entry => entry.Level == LogLevel.Warning
+            && Equals(entry["RunnerId"], old.RunnerId)
+            && Equals(entry["Epoch"], old.Epoch)).ShouldHaveSingleItem();
+        var faults = warning.Exception is AggregateException aggregate
+            ? aggregate.Flatten().InnerExceptions
+            : (IReadOnlyList<Exception>)[warning.Exception!];
+        faults.ShouldContain(closeFailure, "the close-handshake fault must survive cleanup");
+        faults.ShouldContain(disposeFailure, "the socket must still be disposed after the handshake fault");
+    }
+
+    [Test]
+    public async Task Registration_returns_retry_after_without_minting_a_ticket_when_admission_is_busy()
+    {
+        var clock = new RegistrationClock();
+        await using var host = await PhoneHomeTestHost.StartAsync(clock);
+        await host.RegisterAsync();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        clock.OnNextRead = () =>
+        {
+            entered.SetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(5)))
+                throw new TimeoutException("The fixture did not release the registration clock.");
+        };
+        var owner = Task.Run(() => host.Directory.Register(host.Registration()));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            using var request = new HttpRequestMessage(HttpMethod.Post, PhoneHomeProtocol.RegisterPath);
+            request.Headers.Add(PhoneHomeProtocol.SecretHeader, host.Secret);
+            request.Content = JsonContent.Create(host.Registration(), options: PhoneHomeFraming.Json);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var response = await host.Http.SendAsync(request, deadline.Token);
+            response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+            (response.Headers.RetryAfter?.Delta).ShouldBe(TimeSpan.FromSeconds(1));
+        }
+        finally
+        {
+            release.Set();
+            await owner;
+        }
+        (await host.RegisterAsync()).Epoch.ShouldBe((await owner).Epoch + 1);
+    }
+
+    private sealed class RegistrationClock : TimeProvider
+    {
+        public Action? OnNextRead;
+        public override DateTimeOffset GetUtcNow()
+        {
+            Interlocked.Exchange(ref OnNextRead, null)?.Invoke();
+            return TimeProvider.System.GetUtcNow();
+        }
     }
 
     [Test]
@@ -162,12 +267,12 @@ public sealed class PhoneHomeDirectoryTests
     // CARD-0679 D-6 (card ask 2): between the socket closing and the connect route recording the
     // end, Resolve handed out a client bound to a closed socket because it checked only the flag.
     [Test]
-    public void Resolve_refuses_a_recovered_connection_whose_socket_is_closed()
+    public async Task Resolve_refuses_a_recovered_connection_whose_socket_is_closed()
     {
         var directory = Directory(maxCapacity: 8);
         var ticket = directory.Register(Registration(capacity: 1));
         var socket = WebSocket.CreateFromStream(new MemoryStream(), new WebSocketCreationOptions { IsServer = true });
-        var live = directory.AcceptConnect("server2", ticket.Ticket, socket);
+        var live = await directory.AcceptConnectAsync("server2", ticket.Ticket, socket);
         directory.MarkRecovered(live);
         directory.Resolve("server2").ShouldNotBeNull();
 
