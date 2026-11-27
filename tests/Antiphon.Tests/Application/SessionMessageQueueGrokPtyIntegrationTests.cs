@@ -74,7 +74,8 @@ public class SessionMessageQueueGrokPtyIntegrationTests
             await using (var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString)))
             {
                 var message = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == queued);
-                message.Status.ShouldBe(QueuedMessageStatus.Sent);
+                message.Status.ShouldBe(QueuedMessageStatus.Sent,
+                    $"queue delivery verdict {message.DeliveryVerdict?.ToString() ?? "unset"} after {message.DeliveryAttempts} attempt(s)");
                 var prompts = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == h.SessionId
                     && t.Kind == Antiphon.SessionRunner.Contracts.TranscriptKinds.UserPrompt).ToListAsync();
                 prompts.Count(t => t.Text?.Contains(nonce, StringComparison.Ordinal) == true).ShouldBe(1);
@@ -85,6 +86,11 @@ public class SessionMessageQueueGrokPtyIntegrationTests
                 "logs", h.SessionId.ToString("N") + ".log");
             File.Exists(hostLog).ShouldBeTrue();
             File.ReadAllText(hostLog).ShouldContain("pty backend: ModernConPty (requested 'modern')");
+        }
+        catch
+        {
+            await NativePtyDiagnostics.CaptureAsync(client, h.SessionId, "grok-spinner", logRoot);
+            throw;
         }
         finally
         {
@@ -131,6 +137,8 @@ public class SessionMessageQueueGrokPtyIntegrationTests
         BridgeQueueHarness.CreateAsync(new()
         {
             ConnectionString = connectionString,
+            // This capstone exercises readiness and delivery on a manually started session.
+            AlwaysOn = false,
             ConfigureServices = services =>
             {
                 if (client is not null) services.AddSingleton(client);
