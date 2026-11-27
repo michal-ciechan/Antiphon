@@ -23,6 +23,8 @@ namespace Antiphon.Nightly
         public string BarrierDirectory { get; set; } = "";
         public string[] Barriers { get; set; } = Array.Empty<string>();
         public bool FailAssignment { get; set; }
+        public bool FailJobTermination { get; set; }
+        public int CleanupTimeoutMilliseconds { get; set; } = 15000;
         public bool ZeroCountAtRootWait { get; set; }
         public string TrxPath { get; set; } = "";
         public string DiagnosticDirectory { get; set; } = "";
@@ -40,11 +42,11 @@ namespace Antiphon.Nightly
             while (!File.Exists(Path.Combine(BarrierDirectory, phase + ".release")))
             { cancellation.ThrowIfCancellationRequested(); Thread.Sleep(10); }
         }
-        internal bool HoldRootWait()
+        internal bool HoldWait(string phase)
         {
-            if (!Barriers.Contains("root-wait")) return false;
-            File.WriteAllText(Path.Combine(BarrierDirectory, "root-wait.entered"), "entered");
-            return !File.Exists(Path.Combine(BarrierDirectory, "root-wait.release"));
+            if (!Barriers.Contains(phase)) return false;
+            File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), "entered");
+            return !File.Exists(Path.Combine(BarrierDirectory, phase + ".release"));
         }
     }
 
@@ -226,7 +228,7 @@ namespace Antiphon.Nightly
                         int active = _hooks.ZeroCountAtRootWait ? 0 : Count(job);
                         CaptureDescendants(job);
                         Observation.RemainingProcessCount = active;
-                        bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
+                        bool rootExited = !_hooks.HoldWait("root-wait") && RootExited(root);
                         Observation.ChildrenExited = rootExited && active == 0;
                         stopOwnedChildren = _hooks.TerminateDescendantsOnRootExit && rootExited && active > 0;
                         return Observation.ChildrenExited || stopOwnedChildren;
@@ -262,8 +264,9 @@ namespace Antiphon.Nightly
                 }
                 if (Observation.TimedOut || stopOwnedChildren)
                 {
+                    _hooks.Pause("job-termination");
                     Observation.TerminationRequested = true;
-                    Observation.TerminationSucceeded = TerminateJobObject(job, 1);
+                    Observation.TerminationSucceeded = TryTerminateJob(job);
                     Check(Observation.TerminationSucceeded, "TerminateJobObject");
                 }
                 while (!RootExited(root) || Count(job) != 0)
@@ -329,10 +332,10 @@ namespace Antiphon.Nightly
                 if (root != IntPtr.Zero)
                 {
                     Observation.TerminationRequested = true;
-                    Observation.TerminationSucceeded = resumed ? TerminateJobObject(job, 1) : TerminateProcess(root, 1);
+                    Observation.TerminationSucceeded = resumed ? TryTerminateJob(job) : TerminateProcess(root, 1);
                     if (!Observation.TerminationSucceeded && !RootExited(root)) Close(ref job); // kill-on-close fallback
                     // Keep this foreground owner until the retained exact handles signal.
-                    while (!RootExited(root) || _descendants.Values.Any(p => !p.HasExited)) Thread.Sleep(100);
+                    while (_hooks.HoldWait("failure-cleanup") || !RootExited(root) || _descendants.Values.Any(p => !p.HasExited)) Thread.Sleep(100);
                     if (job != IntPtr.Zero)
                     {
                         Observation.RemainingProcessCount = Count(job);
@@ -370,6 +373,8 @@ namespace Antiphon.Nightly
             }
             return Observation;
         }
+
+        private bool TryTerminateJob(IntPtr job) => !_hooks.FailJobTermination && TerminateJobObject(job, 1);
 
         private sealed class ReaderWork
         {

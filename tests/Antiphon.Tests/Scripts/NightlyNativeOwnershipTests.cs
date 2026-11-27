@@ -176,6 +176,38 @@ public sealed class NightlyNativeOwnershipTests
     }
 
     [Test, Timeout(120_000)]
+    public Task C1039_JobTerminationFailureHasBoundedCleanup(CancellationToken cancellationToken) =>
+        RunAsync(nameof(C1039_JobTerminationFailureHasBoundedCleanup), native =>
+        {
+            var root = native.NewRoot("termination failure");
+            var log = Path.Combine(root, "native.log");
+            var hooks = new NativeProcessHooks
+            {
+                BarrierDirectory = root,
+                Barriers = ["job-termination", "failure-cleanup"],
+                TerminateDescendantsOnRootExit = true,
+                FailJobTermination = true,
+                CleanupTimeoutMilliseconds = 500,
+            };
+            var owner = NativeProcessOwner.Start(Fixture, [root, "descendant"], root, 30_000, log, null, hooks);
+            native.Owners.Add(owner);
+            var run = new NativeRun(root, owner, log);
+            native.WaitFor(() => File.Exists(Path.Combine(root, "job-termination.entered")), "termination after root exit");
+            var child = native.OpenHandle(run, "child");
+            child.HasExited.ShouldBeFalse();
+            native.Release(run, "job-termination");
+
+            child.WaitForExit(3000).ShouldBeTrue("kill-on-close must reap the live descendant even though the root exited");
+            owner.Completion.Wait(5000, cancellationToken)
+                .ShouldBeTrue("an unresolved cleanup probe must reach the owner deadline");
+            var result = owner.Completion.GetAwaiter().GetResult();
+            result.Error.ShouldContain("TerminateJobObject");
+            result.Error.ShouldContain("Native job cleanup not observed within 500ms");
+            result.JobEmptyObserved.ShouldBeFalse();
+            result.CleanupComplete.ShouldBeFalse();
+        }, cancellationToken);
+
+    [Test, Timeout(120_000)]
     public Task C1039_DrainBeforeReturn(CancellationToken cancellationToken) => RunAsync(nameof(C1039_DrainBeforeReturn), native =>
     {
         foreach (var phase in new[] { "stdout", "stderr", "log-write" })
@@ -599,7 +631,8 @@ public sealed class NightlyNativeOwnershipTests
             // Release every fixture barrier even when the guarded assertion goes red.
             foreach (var root in _roots)
             {
-                foreach (var phase in new[] { "assignment", "root-wait", "stdout", "stderr", "log-write", "root", "child" })
+                foreach (var phase in new[] { "assignment", "root-wait", "job-termination", "failure-cleanup",
+                             "stdout", "stderr", "log-write", "root", "child" })
                     File.WriteAllText(Path.Combine(root, phase + ".release"), "finally release");
                 // A deliberate breakaway mutant must also be joined by its exact fixture identity.
                 var childFile = Path.Combine(root, "breakaway-child.pid");
