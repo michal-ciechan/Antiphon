@@ -54,8 +54,7 @@ public sealed class ExpectedPlatformSkipRosterTests
         using var fixture = NightlyFixture.Create("eps-cross-suite");
         var tests = Directory.CreateDirectory(Path.Combine(fixture.Root, "tests")).FullName;
         File.WriteAllText(Path.Combine(tests, "MainTests.cs"), """
-            namespace First;
-            public class MainTests
+            namespace First; public class MainTests
             {
                 [Test] public void Required() => Removed();
                 private void Removed() { }

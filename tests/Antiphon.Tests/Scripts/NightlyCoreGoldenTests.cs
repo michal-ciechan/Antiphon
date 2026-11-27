@@ -1015,7 +1015,7 @@ public sealed class NightlyCoreGoldenTests
             var text = PsJson.Pipeline(NightlyExpectedSkips.SourceGaps(fixture, "windows", entries, null).Cast<object?>().ToList());
             Golden("sourceGaps", text);
             text.ShouldContain("N.Alpha.Missing");
-            text.ShouldNotContain("\"N.Alpha.Run\"");
+            text.ShouldNotContain("\"N.Alpha.Run\"", Case.Sensitive);
             // A same-length rewrite of a settled (cached) file must be seen by the next scan.
             var cached = Path.Combine(tests, "C/Cache.cs");
             File.WriteAllText(cached, "namespace N; class Cached { [Test] void Alpha() { } }");
