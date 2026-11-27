@@ -446,6 +446,50 @@ public class ClaudeDialogInputGuardTests
         f.Child.Inputs.ShouldBe([paste, "\r"]);
     }
 
+    [Test]
+    public async Task GuardedEnterRefusesForeignCollapsedTokenAfterOwnedPaste()
+    {
+        const string body = "fixture alpha\nfixture beta\nfixture gamma";
+        var paste = Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(body);
+        await using var f = new Fixture();
+        var request = await f.RequestAsync(paste);
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ [Pasted text #1 +2 lines]"));
+        await f.RequestAsync("\r");
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ [Pasted text #2 +2 lines]"));
+        var enter = await f.RequestAsync("\r");
+
+        (await f.Runtime.SendConditionalInputAsync(f.Id, enter with
+        {
+            ExpectedComposerDigest = ComposerInput.Digest(body),
+            RequireOwnedComposer = true,
+        }, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        f.Child.Inputs.ShouldBe([paste]);
+    }
+
+    [Test]
+    public async Task GuardedEnterAcceptsInlinePasteWithInteriorLineEndSpaces()
+    {
+        const string body = "fixture alpha  \n  fixture beta";
+        var paste = Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(body);
+        await using var f = new Fixture();
+        var request = await f.RequestAsync(paste);
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ fixture alpha  \n    fixture beta"));
+        var enter = await f.RequestAsync("\r");
+
+        (await f.Runtime.SendConditionalInputAsync(f.Id, enter with
+        {
+            ExpectedComposerDigest = ComposerInput.Digest(body),
+            RequireOwnedComposer = true,
+        }, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Child.Inputs.ShouldBe([paste, "\r"]);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));

@@ -40,6 +40,54 @@ public sealed partial class ChannelInputWithheldIncidentTests
 
     [Test]
     [Timeout(120_000)]
+    public async Task ChannelClaimDoesNotWriteIntoReplacementGeneration(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new OutageQueueClock();
+        var cut = new ChannelClaimCut();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, clock,
+            configureDb: options => options.AddInterceptors(cut));
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var chat = await h.BindChannelAsync();
+        h.Adapter.OnSubmitted = submitted => h.InsertStoreVisibleTurnAsync(submitted, "fixture answer");
+        DateTime? claimedGeneration = null;
+        cut.AfterClaim = async row =>
+        {
+            claimedGeneration = row.LastDeliveryGeneration.ShouldNotBeNull();
+            var replacement = claimedGeneration.Value.AddSeconds(1);
+            await using var db = Db(schema.ConnectionString);
+            (await db.AgentSessions.Where(s => s.Id == h.SessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.StartedAt, replacement), ct)).ShouldBe(1);
+            h.Adapter.AcceptedStartedAt = replacement;
+        };
+        using var bridge = Bridge(h);
+
+        await bridge.HandleInboundAsync(Message(chat, "fixture-replacement", "fixture inbound"), ct);
+
+        claimedGeneration.ShouldNotBeNull();
+        h.Adapter.Inputs.ShouldBeEmpty("the attempt was claimed by the previous generation");
+    }
+
+    private sealed class ChannelClaimCut : SaveChangesInterceptor
+    {
+        public Func<SessionQueuedMessage, Task>? AfterClaim { get; set; }
+
+        public override async ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (AfterClaim is { } cut && eventData.Context?.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Select(entry => entry.Entity).FirstOrDefault(row => row.Origin == QueuedMessageOrigin.Channel
+                    && row.Status == QueuedMessageStatus.Sent && row.DeliveryAttempts > 0) is { } claimed)
+            {
+                AfterClaim = null;
+                await cut(claimed);
+            }
+            return result;
+        }
+    }
+
+    [Test]
+    [Timeout(120_000)]
     public async Task NewInboundCannotBypassTheWithheldChannelRetrySchedule(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -998,12 +1046,16 @@ public sealed partial class ChannelInputWithheldIncidentTests
             ConfigureDbContext = configureDb,
         });
 
-    private static Task<BridgeQueueHarness> OpenProducerAsync(string connectionString, TimeProvider clock) =>
+    private static Task<BridgeQueueHarness> OpenProducerAsync(string connectionString, TimeProvider clock,
+        Guid? sessionId = null, Guid? agentId = null, Action<DbContextOptionsBuilder>? configureDb = null) =>
         ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
         {
             ConnectionString = connectionString,
             TimeProvider = clock,
             PreserveDatabaseOnDispose = true,
+            AttachSessionId = sessionId,
+            AttachAgentId = agentId,
+            ConfigureDbContext = configureDb,
             Bridge = new ChannelBridgeSettings
             {
                 Enabled = true,
