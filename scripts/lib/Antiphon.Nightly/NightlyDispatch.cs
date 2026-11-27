@@ -38,6 +38,8 @@ namespace Antiphon.Nightly
 
     public static class NightlyDispatch
     {
+        internal const string InvariantPrefixWriteFailed = "repository-invariant-prefix-write-failed";
+
         /// <summary>
         /// New-NightlyDispatchSchedule: the canonical rows of the prepared suites, the prior failures first (or the previous
         /// run's order), as DispatchSchedule.Build makes them; its refusal is thrown.
@@ -60,7 +62,10 @@ namespace Antiphon.Nightly
         /// suite, chunk, canonicalOrdinal, dispatchOrdinal and priorFailure (ConvertTo-Json's indented layout, no byte-order
         /// mark, written beside and moved into place). A failure is thrown.
         /// </summary>
-        public static void WriteSchedule(object schedule, string directory)
+        public static void WriteSchedule(object schedule, string directory) =>
+            WriteSchedule(schedule, directory, requireDurableWrite: false);
+
+        private static void WriteSchedule(object schedule, string directory, bool requireDurableWrite)
         {
             var document = new OrderedDictionary(StringComparer.OrdinalIgnoreCase);
             foreach (var field in new[] { "format", "runId", "attempt", "historyDigest", "canonicalPlanDigest", "preparationComplete", "unresolved" })
@@ -76,14 +81,18 @@ namespace Antiphon.Nightly
                 entries.Add(row);
             }
             document["entries"] = entries.ToArray();
-            WriteAtomic(Path.Combine(directory ?? "", "dispatch-schedule.json"), JsonText(document));
+            var path = Path.Combine(directory ?? "", "dispatch-schedule.json");
+            var text = JsonText(document);
+            WriteAtomic(path, text, requireDurableWrite);
+            if (requireDurableWrite && File.ReadAllText(path, Encoding.UTF8) != text)
+                throw new InvalidDataException("Completed dispatch schedule differs on read-back.");
         }
 
         /// <summary>
         /// Invoke-NightlyDispatchCoordinator over the selected suites. Priority members, unresolved rows, a nonempty
         /// history or a previous run make it a barrier (prepare all, then one schedule); otherwise each suite is prepared,
-        /// run and completed in turn. state.DispatchSchedule is each schedule it makes; a schedule write failure is a
-        /// warning and the dispatch-schedule-write-failed marker. Preparation stops once the prerequisites failed.
+        /// run and completed in turn. Diagnostic schedule write failures warn and leave a marker. Ordinary dispatch
+        /// stops when invariant prefix completion cannot be published. Preparation stops once the prerequisites fail.
         /// </summary>
         public static void Coordinate(NightlyRunState state, NightlyDispatchSteps steps, object[] suites, object[] priorityMembers, object[] unresolved,
             string historyDigest, object history, object previousRun, string fallbackReason)
@@ -234,7 +243,13 @@ namespace Antiphon.Nightly
                     {
                         PsValue.AddMemberForce(schedule, "invariantPrefix", PsValue.Record(("complete", true),
                             ("executedGroups", finishedPrefix.Count)));
-                        WriteBestEffort(state, schedule);
+                        try { WriteSchedule(schedule, state.LogRoot, requireDurableWrite: true); }
+                        catch (Exception ex)
+                        {
+                            state.Warn(InvariantPrefixWriteFailed + ": " + ex.Message);
+                            RecordIncompletePrefix(state, Identity(suite, chunk), ex.Message, finishedPrefix, selectedSuites);
+                            throw new NightlyRefusal(InvariantPrefixWriteFailed);
+                        }
                     }
                 }
                 else steps.RunChunk(suite, chunk);
@@ -417,7 +432,7 @@ namespace Antiphon.Nightly
 
         // Write-NightlyAtomicJson: the directory, then UTF-8 without a byte-order mark to a temporary file beside the
         // target, which replaces it (its .bak removed) or moves into place. The temporary file never stays behind.
-        private static void WriteAtomic(string path, string text)
+        private static void WriteAtomic(string path, string text, bool requireDurableWrite)
         {
             var directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory) && !File.Exists(directory)) Directory.CreateDirectory(directory);
@@ -425,7 +440,14 @@ namespace Antiphon.Nightly
             var backup = path + ".bak";
             try
             {
-                File.WriteAllText(temporary, text, new UTF8Encoding(false));
+                if (requireDurableWrite)
+                {
+                    var bytes = Encoding.UTF8.GetBytes(text);
+                    using var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    stream.Write(bytes, 0, bytes.Length);
+                    stream.Flush(flushToDisk: true);
+                }
+                else File.WriteAllText(temporary, text, new UTF8Encoding(false));
                 if (File.Exists(path) || Directory.Exists(path))
                 {
                     File.Replace(temporary, path, backup);

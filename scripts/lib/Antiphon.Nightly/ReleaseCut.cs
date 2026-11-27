@@ -408,6 +408,15 @@ namespace Antiphon.Nightly
             if (!result.Tested)
             {
                 result.Refusal = run.Refusal ?? "";
+                var reasons = run.Reasons;
+                if (result.Refusal.Length == 0 && run.Phase == "hop")
+                {
+                    var record = NightlyRun.ResultRecord(run);
+                    if (PsValue.Str(record["sha"]) == result.Sha)
+                        reasons = PsValue.AsArray(record["reasons"]);
+                }
+                if (result.Refusal.Length == 0 && reasons?.Contains(NightlyDispatch.InvariantPrefixWriteFailed) == true)
+                    result.Refusal = NightlyDispatch.InvariantPrefixWriteFailed;
                 result.ExitCode = run.ExitCode;
                 Say("rc run did not complete green; publishing nothing (exit " + result.ExitCode.ToString(CultureInfo.InvariantCulture) + ").");
                 return result;
