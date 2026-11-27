@@ -1047,9 +1047,7 @@ public sealed class ChannelReplyDispatcher
         TranscriptEntry? prompt = null;
         foreach (var candidate in candidates)
         {
-            if (!ChannelPromptCorrelation.Matches(message, candidate, _correlationTolerance, out _))
-                continue;
-            if ((await MatchChannelRowsAsync(db, candidate, ct)).Any(m => m.Id == message.Id))
+            if (await OwnsChannelPromptAsync(db, message, candidate, ct))
             {
                 prompt = candidate;
                 break;
@@ -1080,6 +1078,11 @@ public sealed class ChannelReplyDispatcher
             return (LossReason.TurnIncomplete, prompt, 0);
         return (LossReason.TurnUnmatched, prompt, text.Length);
     }
+
+    internal async Task<bool> OwnsChannelPromptAsync(AppDbContext db, SessionQueuedMessage row,
+        TranscriptEntry prompt, CancellationToken ct) =>
+        ChannelPromptCorrelation.Matches(row, prompt, _correlationTolerance, out _)
+        && (await MatchChannelRowsAsync(db, prompt, ct)).Any(m => m.Id == row.Id);
 
     // Include settled rows: they still own their turn after a process restart. Limit candidates
     // to this session and the attempt window before looking at text, including in machine gate 2.

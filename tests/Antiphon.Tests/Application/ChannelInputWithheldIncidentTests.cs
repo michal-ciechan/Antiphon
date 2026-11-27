@@ -1040,7 +1040,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         var candidates = await ChannelWithheldResolution.Candidates(db).ToListAsync(ct);
         candidates.Count.ShouldBe(2);
         var candidate = candidates.Single(c => c.QueueId == (quoted ? first.QueueId : second.QueueId));
-        (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate, disputed, h.Now, ct)).ShouldBeNull();
+        (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, h.Dispatcher, candidate, disputed, h.Now, ct)).ShouldBeNull();
         await bridge.ScanChannelReplyAlertsAsync(ct);
         var closed = (await db.AgentIncidents.Where(i => i.Kind == AgentIncidentKind.ChannelInputWithheldClosed)
             .ToListAsync(ct)).ShouldHaveSingleItem();

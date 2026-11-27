@@ -138,7 +138,8 @@ public static class AgentEndpoints
         });
 
         agents.MapPost("/{id:guid}/incidents/{incidentId:guid}/close", async (
-            Guid id, Guid incidentId, long promptSequence, AppDbContext db, IEventBus events, TimeProvider clock, CancellationToken ct) =>
+            Guid id, Guid incidentId, long promptSequence, AppDbContext db, ChannelReplyDispatcher dispatcher,
+            IEventBus events, TimeProvider clock, CancellationToken ct) =>
         {
             if (promptSequence < 1) return Results.BadRequest();
             if (!await db.AgentIncidents.AnyAsync(a => a.Id == incidentId && a.AgentId == id
@@ -147,7 +148,7 @@ public static class AgentEndpoints
             var candidate = await ChannelWithheldResolution.Candidates(db)
                 .SingleOrDefaultAsync(c => c.IncidentId == incidentId && c.AgentId == id, ct);
             var closed = candidate == null ? null : await ChannelWithheldResolution.CloseWithEvidenceAsync(
-                db, candidate, promptSequence, clock.GetUtcNow().UtcDateTime, ct);
+                db, dispatcher, candidate, promptSequence, clock.GetUtcNow().UtcDateTime, ct);
             if (closed == null && !await db.AgentIncidents.AnyAsync(a => a.Id == closureId && a.AgentId == id, ct))
                 return Results.Conflict(new { reason = "confirmed_channel_prompt_required" });
             await events.PublishToAllAsync("AgentChanged", new { agentId = id, incidentId = closureId }, ct);

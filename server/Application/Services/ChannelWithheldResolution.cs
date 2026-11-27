@@ -37,26 +37,36 @@ internal static class ChannelWithheldResolution
     internal static Guid ClosureId(Guid incidentId) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes("channel-input-withheld-closed/" + incidentId.ToString("D"))).AsSpan(0, 16));
 
-    internal static async Task<Guid?> CloseWithEvidenceAsync(AppDbContext db, Candidate candidate, long? requestedSequence,
+    internal static async Task<Guid?> CloseWithEvidenceAsync(AppDbContext db, ChannelReplyDispatcher dispatcher,
+        Candidate candidate, long? requestedSequence,
         DateTime now, CancellationToken ct)
     {
         var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(q => q.Id == candidate.QueueId, ct);
         var floor = row.LastDeliveryBaselineSequence ?? 0;
         var query = db.TranscriptEntries.AsNoTracking().Where(p => p.AgentSessionId == row.AgentSessionId
-            && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > floor && p.Text != null);
+            && p.Kind == TranscriptKinds.UserPrompt && p.Text != null);
         if (requestedSequence != null) query = query.Where(p => p.Sequence == requestedSequence);
         // The complete marker/body remains in the persisted prompt, including each member of a batch.
         if (string.IsNullOrWhiteSpace(row.Body)) return null;
         if (ChannelPromptCorrelation.OpeningMarker(row.Body) is { } marker)
             query = query.Where(p => p.Text!.Contains(marker));
         TranscriptEntry? proof = null;
-        await foreach (var prompt in query.OrderBy(p => p.Sequence).AsAsyncEnumerable().WithCancellation(ct))
+        // Finish each read before checking competing attempts on the same connection.
+        // A marker narrows the search. The dispatcher's decision establishes ownership.
+        while (proof is null)
         {
-            if (!ChannelPromptCorrelation.Matches(row, prompt, TimeSpan.Zero, out _)) continue;
-            proof = prompt;
-            break;
+            var page = await query.Where(p => p.Sequence > floor).OrderBy(p => p.Sequence).Take(32).ToListAsync(ct);
+            if (page.Count == 0) return null;
+            foreach (var prompt in page)
+            {
+                if (await dispatcher.OwnsChannelPromptAsync(db, row, prompt, ct))
+                {
+                    proof = prompt;
+                    break;
+                }
+            }
+            floor = page[^1].Sequence;
         }
-        if (proof == null) return null;
         var id = ClosureId(candidate.IncidentId);
         var message = $"Closed incident {candidate.IncidentId:D}; queueId={row.Id:D}, sessionId={row.AgentSessionId:D}, promptSequence={proof.Sequence}, transcriptEntryId={proof.Id:D}.";
         await db.Database.ExecuteSqlInterpolatedAsync($"""

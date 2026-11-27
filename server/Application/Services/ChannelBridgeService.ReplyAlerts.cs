@@ -42,7 +42,7 @@ public sealed partial class ChannelBridgeService
             }
         }
 
-        try { await CloseDeliveredWithholdsAsync(db, now, ct); }
+        try { await CloseDeliveredWithholdsAsync(db, scope.ServiceProvider.GetRequiredService<ChannelReplyDispatcher>(), now, ct); }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "Withheld closure scan failed; retrying");
@@ -102,14 +102,15 @@ public sealed partial class ChannelBridgeService
         }
     }
 
-    private async Task CloseDeliveredWithholdsAsync(AppDbContext db, DateTime now, CancellationToken ct)
+    private async Task CloseDeliveredWithholdsAsync(AppDbContext db, ChannelReplyDispatcher dispatcher,
+        DateTime now, CancellationToken ct)
     {
         var closing = await ChannelWithheldResolution.Candidates(db)
             .Where(c => c.IncidentId.CompareTo(_withheldClosureCursor) > 0)
             .OrderBy(c => c.IncidentId).Take(WithheldIncidentPageSize).ToListAsync(ct);
         foreach (var candidate in closing)
         {
-            if (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate, null, now, ct) is Guid closed)
+            if (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, dispatcher, candidate, null, now, ct) is Guid closed)
                 await _eventBus.PublishToAllAsync("AgentChanged", new { agentId = candidate.AgentId, incidentId = closed }, ct);
         }
         _withheldClosureCursor = closing.Count == WithheldIncidentPageSize ? closing[^1].IncidentId : Guid.Empty;
