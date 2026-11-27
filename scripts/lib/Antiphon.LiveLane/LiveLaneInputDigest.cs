@@ -91,9 +91,11 @@ namespace Antiphon.LiveLane
         /// whose witnesses now run their commands in process, and its policy hash was resealed. Unit 65 moved it from 906e5c35
         /// to 214ae333: tests/test-execution-policy.json lost the Windows row of DeployServer2ApiDefaultTests (it runs the
         /// deploy-server2 command in process now) and tests/test-selection-policy.json's P-DOCKER set lost the deleted
-        /// scripts/deploy-server2.ps1; both hashes were resealed.
+        /// scripts/deploy-server2.ps1; both hashes were resealed. Unit 66 moved it from 214ae333 to 7276a6e6:
+        /// tests/test-execution-policy.json lost the two Windows rows of VolumeRetirementHostProofTests (the retirement coordinator
+        /// and the desktop origin proof run in process now, C1609Coordinator and C1609HostProof), and its policy hash was resealed.
         /// </summary>
-        public const string Pinned = "214ae3337f7dbedfe894ddb8bc9afeff1bfda3d53b008a8ba980b21ef0c8b657";
+        public const string Pinned = "7276a6e63980cdcdc050397a50f34aafa2a59f63efd792c9a97f1a8f906f8dd9";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";
