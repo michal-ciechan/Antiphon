@@ -2600,6 +2600,8 @@ public sealed partial class SessionMessageQueueService
         {
             if (flushWithhold.ChargeAttempt)
                 await ChargeDurableWithholdAsync(db, sessionId, flushWithhold.Text, ct);
+            if (_bridgeSettings.Enabled)
+                await ScheduleChannelRetryAfterWithholdAsync(db, sessionId, ct);
             return TemporaryBlock();
         }
 
@@ -2677,6 +2679,13 @@ public sealed partial class SessionMessageQueueService
         // CARD-0330: a completion note the distiller is still improving is not in the flush's
         // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
         var nowUtc = UtcNow();
+        if (pending.FirstOrDefault(m => ChannelRetryHeld(m, nowUtc)) is { } heldChannel)
+        {
+            // A wake for a newer inbound cannot submit the older row early or pass it.
+            pending.RemoveAll(m => m.Origin == QueuedMessageOrigin.Channel && m.Sequence >= heldChannel.Sequence);
+            if (pending.Count == 0)
+                return TemporaryBlock();
+        }
         pending = pending.Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc
             || (IsCodexPointer(rulesSession.AgentKind, m) && m.LastDeliveryStartedAt != null)).ToList();
         if (pending.Count == 0)
@@ -3101,6 +3110,10 @@ public sealed partial class SessionMessageQueueService
                 db.Entry(message).CurrentValues.SetValues(beforeChannelAttempt[message.Id]);
             }
             await db.SaveChangesAsync(CancellationToken.None);
+            if (outcome.RecordText is ConditionalInputOutcomes.ComposerMismatch
+                or ConditionalInputOutcomes.ObservationUnknown)
+                await ChargeDurableWithholdAsync(db, sessionId, outcome.RecordText, ct, channelOnly: true);
+            await ScheduleChannelRetryAfterWithholdAsync(db, sessionId, ct);
             return TemporaryBlock();
         }
 

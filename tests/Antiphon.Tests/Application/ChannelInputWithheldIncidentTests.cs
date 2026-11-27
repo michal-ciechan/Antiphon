@@ -133,7 +133,8 @@ public sealed partial class ChannelInputWithheldIncidentTests
     public async Task AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await OpenProducerAsync(schema.ConnectionString, TimeProvider.System);
+        var clock = new OutageQueueClock();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, clock);
         await using var db = Db(schema.ConnectionString);
         await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AlwaysOn, false), ct);
         await h.InsertStoreVisibleTurnAsync("prior prompt", "prior answer");
@@ -154,9 +155,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         h.Adapter.AdoptedHistoryVerified = true;
         await bridge.DrainPendingAsync(ct);
         h.Adapter.SentInput.ShouldBeEmpty("the first retry waits for backoff");
-        await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(s => s
-            .SetProperty(m => m.FirstWithheldAt, h.Now.AddMinutes(-20))
-            .SetProperty(m => m.LastWithheldAt, h.Now.AddMinutes(-20)), ct);
+        clock.Advance(TimeSpan.FromSeconds(10));
         await bridge.DrainPendingAsync(ct);
         await bridge.DrainPendingAsync(ct);
         var submitted = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();

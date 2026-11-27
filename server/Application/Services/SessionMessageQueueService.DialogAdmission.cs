@@ -14,6 +14,7 @@ public sealed partial class SessionMessageQueueService
     public const int PendingNotePageMax = 100;
     public const int PendingNotePageMaxBytes = 256 * 1024;
     public const int WithholdReasonMaxLength = 200;
+    internal const int ChannelInitialRetrySeconds = 10;
 
     private async Task<DialogWithhold?> ReadDialogWithholdAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
@@ -43,7 +44,7 @@ public sealed partial class SessionMessageQueueService
     /// remote-control menu, and a missing snapshot do not call this.
     /// </summary>
     private async Task ChargeDurableWithholdAsync(
-        AppDbContext db, Guid sessionId, string reason, CancellationToken ct)
+        AppDbContext db, Guid sessionId, string reason, CancellationToken ct, bool channelOnly = false)
     {
         var now = UtcNow();
         var recorded = reason.Length <= WithholdReasonMaxLength
@@ -52,6 +53,7 @@ public sealed partial class SessionMessageQueueService
         await db.SessionQueuedMessages
             .Where(m => m.AgentSessionId == sessionId
                 && m.Status == QueuedMessageStatus.Pending
+                && (!channelOnly || m.Origin == QueuedMessageOrigin.Channel)
                 && m.DeliveryAttempts == 0
                 && m.LastDeliveryStartedAt == null
                 && m.LastDeliveryBaselineSequence == null
@@ -63,6 +65,24 @@ public sealed partial class SessionMessageQueueService
                 .SetProperty(m => m.LastWithheldAt, now)
                 .SetProperty(m => m.LastWithholdReason, recorded), ct);
     }
+
+    private Task ScheduleChannelRetryAfterWithholdAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    {
+        var now = UtcNow();
+        var minuteAgo = now.AddMinutes(-1);
+        var fiveMinutesAgo = now.AddMinutes(-5);
+        return db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId
+                && m.Status == QueuedMessageStatus.Pending && m.Origin == QueuedMessageOrigin.Channel
+                && m.FirstWithheldAt != null && (m.HoldUntil == null || m.HoldUntil <= now))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.HoldUntil,
+                m => m.FirstWithheldAt <= fiveMinutesAgo ? now.AddSeconds(120)
+                    : m.FirstWithheldAt <= minuteAgo ? now.AddSeconds(30)
+                    : now.AddSeconds(ChannelInitialRetrySeconds)), ct);
+    }
+
+    private static bool ChannelRetryHeld(SessionQueuedMessage row, DateTime now) =>
+        row.Origin == QueuedMessageOrigin.Channel && row.FirstWithheldAt is { } first
+        && (row.HoldUntil ?? first.AddSeconds(ChannelInitialRetrySeconds)) > now;
 
     /// <summary>
     /// Pending notes for one destination, in sequence order, after <paramref name="since"/>.

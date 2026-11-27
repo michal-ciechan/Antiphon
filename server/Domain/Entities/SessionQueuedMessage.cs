@@ -93,8 +93,8 @@ public class SessionQueuedMessage
     public string? NoteHeader { get; set; }
 
     /// <summary>
-    /// CARD-0330: a completion note the output distiller is still improving. The flush skips a
-    /// Pending row whose hold is in the future; SendNow ignores it; a hold in the past is not a hold.
+    /// Automatic delivery waits for a distillation hold or a withheld channel retry to expire.
+    /// An explicit SendNow ignores the deadline and still needs current input authority.
     /// </summary>
     public DateTime? HoldUntil { get; set; }
 
