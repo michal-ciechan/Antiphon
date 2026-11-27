@@ -37,6 +37,8 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
     }
 
+    public HerdrPaneSidecar? TryReadSaved(TimeSpan remaining) => TryReadSaved();
+
     public async Task<SessionRunnerRuntime> AdoptRuntimeAsync()
     {
         await Child.DisposeAsync();
@@ -48,14 +50,19 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         return runtime;
     }
 
-    public static async Task WaitAsync(Func<bool> condition)
+    public static Task WaitAsync(Func<bool> condition) => WaitAsync(_ => condition());
+
+    public static async Task WaitAsync(Func<TimeSpan, bool> condition, TimeProvider? timeProvider = null)
     {
-        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        timeProvider ??= TimeProvider.System;
+        var timeout = TimeSpan.FromSeconds(2);
+        var started = timeProvider.GetTimestamp();
+        using var limit = new CancellationTokenSource(timeout, timeProvider);
         while (true)
         {
             limit.Token.ThrowIfCancellationRequested();
-            if (condition()) return;
-            await Task.Delay(5, limit.Token);
+            if (condition(timeout - timeProvider.GetElapsedTime(started))) return;
+            await Task.Delay(TimeSpan.FromMilliseconds(5), timeProvider, limit.Token);
         }
     }
 

@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -197,6 +199,58 @@ public class HerdrLabelFollowSchedulingTests
         }
 
         f.Saved.TabLabel.ShouldBe("Old");
+    }
+
+    [Test]
+    public async Task Saved_snapshot_poll_expires_under_contention_and_rejects_late_success()
+    {
+        await using var f = new HerdrLabelFollowFixture();
+        f.Binding.SaveAtomic(f.Path);
+        var handoff = TimeSpan.FromSeconds(1);
+        var pollWindow = TimeSpan.FromSeconds(2);
+        var writerHasLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = Task.Factory.StartNew(() =>
+        {
+            using var lease = HerdrSnapshotFile.Acquire(f.Path);
+            writerHasLock.SetResult();
+            releaseWriter.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        Task? poll = null;
+        try
+        {
+            await writerHasLock.Task.WaitAsync(handoff);
+            var elapsed = Stopwatch.StartNew();
+            poll = Task.Run(() => HerdrLabelFollowFixture.WaitAsync(remaining => f.TryReadSaved(remaining) is not null));
+            await Should.ThrowAsync<OperationCanceledException>(() => poll.WaitAsync(pollWindow + TimeSpan.FromMilliseconds(500)));
+            elapsed.Elapsed.ShouldBeGreaterThanOrEqualTo(pollWindow);
+            writer.IsCompleted.ShouldBeFalse();
+
+            var clock = new FakeTimeProvider();
+            HerdrPaneSidecar? observed = null;
+            // Release the real writer only after this attempt crosses the deadline.
+            var latePoll = HerdrLabelFollowFixture.WaitAsync(_ =>
+            {
+                clock.Advance(pollWindow);
+                releaseWriter.SetResult();
+                writer.WaitAsync(handoff).GetAwaiter().GetResult();
+                observed = f.Saved;
+                return observed.TabLabel == "Old";
+            }, clock);
+            await Should.ThrowAsync<OperationCanceledException>(() => latePoll);
+            observed.ShouldNotBeNull().TabLabel.ShouldBe("Old");
+        }
+        finally
+        {
+            releaseWriter.TrySetResult();
+            await writer.WaitAsync(handoff);
+            if (poll is not null)
+            {
+                try { await poll.WaitAsync(handoff); }
+                catch (OperationCanceledException) { }
+            }
+        }
     }
 
     [Test]
