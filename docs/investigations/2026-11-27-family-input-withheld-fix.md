@@ -117,3 +117,21 @@ CHECKPOINT recovery-plans commit=74110bc24a0b03e8117395624608e350d40ede2e build=
 ```
 
 </details>
+
+## Cold checkpoint retry after disk recovery
+
+On the operator’s request, the runner test assembly and both server selections built in fresh output directories on server2 at `45d445a82b29132572e7a415513d2aaa3d64e86f`. Each of the five receipts passed `checkpoints validate` against that SHA. The runner passed all three named witnesses, the server passed all seven delivery and alert witnesses, and the six-class guard passed 57/57. The boundary and unknown-dialog rows reused the verified runner build.
+
+The operator assigned the three inherited plan operands listed above to Merge or a separate repair task. The retirement ledger on this branch matches the assigned base (Git blob `e57863002f79520f3de1485a086d51124efb6c87`). The plan-selection result remains 1/2 on this branch. Review is the next stage.
+
+<details><summary>Validated retry receipts</summary>
+
+```text
+CHECKPOINT disk-runner commit=45d445a82b29132572e7a415513d2aaa3d64e86f build=ok filter=/*/*/ClaudeDialogInputGuardTests/AdoptedClaudeRequiresOwnedCompletedTurnAndEmptyComposer executed=1 passed=1 failed=0 skipped=0 trx=/tmp/de62-disk-runner/.antiphon/de62-evidence/disk-runner-20261127-112703-44c7/run.trx slot=granted waited=60s dirty=0 source=45d445a82b29132572e7a415513d2aaa3d64e86f sourceState=clean buildSource=verified
+CHECKPOINT disk-boundary commit=45d445a82b29132572e7a415513d2aaa3d64e86f build=reused filter=/*/*/ResumeReceiptReadinessTests/AdoptedInputBoundaryRequiresAnOwnedFullyReadIdleTurn executed=1 passed=1 failed=0 skipped=0 trx=/tmp/de62-disk-runner/.antiphon/de62-evidence/disk-boundary-20261127-113013-6277/run.trx slot=granted waited=330s dirty=0 source=45d445a82b29132572e7a415513d2aaa3d64e86f sourceState=clean buildSource=verified
+CHECKPOINT disk-dialog commit=45d445a82b29132572e7a415513d2aaa3d64e86f build=reused filter=/*/*/ClaudeDialogInputGuardTests/C1591_AdoptedIdleDraftDialogAndWorkingWriteNothing executed=1 passed=1 failed=0 skipped=0 trx=/tmp/de62-disk-runner/.antiphon/de62-evidence/disk-dialog-20261127-113014-b9a7/run.trx slot=granted waited=345s dirty=0 source=45d445a82b29132572e7a415513d2aaa3d64e86f sourceState=clean buildSource=verified
+CHECKPOINT disk-server commit=45d445a82b29132572e7a415513d2aaa3d64e86f build=ok filter=/*/*/(ChannelInputWithheldIncidentTests)|(AgentSessionLaunchFailureTests)/(StartupAssistantCannotAnswerThePreviousGenerationsInbound)|(ConfirmedWithholdAppendsOneClosureWithPromptEvidence)|(PriorGenerationStandingResumeNoteIsClosedWithoutWriting)|(AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory)|(UnansweredGroupInboundPushesAttentionAtTenMinutes)|(C1591_ProducerPathPagesOneAgedWithhold)|(StartupRenameOwnsTheQueueWriterUntilSubmissionFinishes) executed=7 passed=7 failed=0 skipped=0 trx=/work/worktrees/ws-07-d2/.antiphon/de62-evidence/disk-server-20261127-112648-b57f/run.trx slot=granted waited=75s dirty=0 source=45d445a82b29132572e7a415513d2aaa3d64e86f sourceState=clean buildSource=verified
+CHECKPOINT disk-guards commit=45d445a82b29132572e7a415513d2aaa3d64e86f build=ok filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(TestLaneCategoryGuardTests*)/* executed=57 passed=57 failed=0 skipped=0 trx=/tmp/de62-disk-guards/.antiphon/de62-evidence/disk-guards-20261127-112715-b0fd/run.trx slot=granted waited=45s dirty=0 source=45d445a82b29132572e7a415513d2aaa3d64e86f sourceState=clean buildSource=verified
+```
+
+</details>
