@@ -678,4 +678,7 @@ public enum AgentIncidentKind
     /// update the observation and a restart does not write another.
     /// </summary>
     PooledSessionWorkingPastTtl = 85,
+
+    /// <summary>Closure of a withheld channel input with durable UserPrompt evidence. FailureReason identifies the incident.</summary>
+    ChannelInputWithheldClosed = 86,
 }

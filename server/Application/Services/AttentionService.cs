@@ -2234,6 +2234,8 @@ public sealed partial class AttentionService
             .Where(i => i.Severity >= AlertSeverity.Error
                 && (i.CreatedAt >= since || (i.HumanNotifiedAt >= since &&
                     (i.FailureReason == ChannelBridgeService.WithheldReason || i.FailureReason == ChannelBridgeService.NoOutboundReason)))
+                && (i.FailureReason != ChannelBridgeService.WithheldReason || !_db.AgentIncidents.Any(closed =>
+                    closed.Kind == AgentIncidentKind.ChannelInputWithheldClosed && closed.FailureReason == i.Id.ToString()))
                 && i.Kind != AgentIncidentKind.HerdrSupervisionHeld
                 && i.Kind != AgentIncidentKind.StandingSpecialistHealth
                 && i.Kind != AgentIncidentKind.StandingContinuityHeld)

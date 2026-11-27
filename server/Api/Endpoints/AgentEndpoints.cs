@@ -1,3 +1,6 @@
+using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Application.Interfaces;
+using Microsoft.EntityFrameworkCore;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
@@ -132,6 +135,25 @@ public static class AgentEndpoints
             CancellationToken cancellationToken) =>
         {
             return Results.Ok(await service.GetIncidentsAsync(id, take ?? 50, cancellationToken));
+        });
+
+        agents.MapPost("/{id:guid}/incidents/{incidentId:guid}/close", async (
+            Guid id, Guid incidentId, long promptSequence, AppDbContext db, IEventBus events, TimeProvider clock, CancellationToken ct) =>
+        {
+            if (promptSequence < 1) return Results.BadRequest();
+            if (!await db.AgentIncidents.AnyAsync(a => a.Id == incidentId && a.AgentId == id
+                    && a.FailureReason == ChannelBridgeService.WithheldReason, ct)) return Results.NotFound();
+            var closureId = ChannelWithheldResolution.ClosureId(incidentId);
+            if (!await db.AgentIncidents.AnyAsync(a => a.Id == closureId && a.AgentId == id, ct))
+            {
+                var candidate = await ChannelWithheldResolution.Candidates(db)
+                    .SingleOrDefaultAsync(c => c.IncidentId == incidentId && c.AgentId == id, ct);
+                if (candidate == null || await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate,
+                        promptSequence, clock.GetUtcNow().UtcDateTime, ct) == null)
+                    return Results.Conflict(new { reason = "confirmed_channel_prompt_required" });
+            }
+            await events.PublishToAllAsync("AgentChanged", new { agentId = id, incidentId = closureId }, ct);
+            return Results.Ok(new { incidentId, closureId });
         });
 
         // Cardless start launches an idle interactive session. Details is standing-job metadata

@@ -11,6 +11,8 @@ public sealed partial class ChannelBridgeService
     internal const string WithheldReason = "ChannelInputWithheld";
     internal const string NoOutboundReason = "ChannelNoOutboundReply";
 
+    private Guid _withheldClosureCursor;
+
     private static string ChannelRecoveryRoute(Guid agent, Guid? session, Guid? pending)
     {
         if (session is not Guid id)
@@ -40,6 +42,16 @@ public sealed partial class ChannelBridgeService
             }
         }
 
+        var closing = await ChannelWithheldResolution.Candidates(db)
+            .Where(c => c.IncidentId.CompareTo(_withheldClosureCursor) > 0)
+            .OrderBy(c => c.IncidentId).Take(WithheldIncidentPageSize).ToListAsync(ct);
+        foreach (var candidate in closing)
+        {
+            if (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate, null, now, ct) is Guid closed)
+                await _eventBus.PublishToAllAsync("AgentChanged", new { agentId = candidate.AgentId, incidentId = closed }, ct);
+        }
+        _withheldClosureCursor = closing.Count == WithheldIncidentPageSize ? closing[^1].IncidentId : Guid.Empty;
+
         // Pre-upgrade withheld incidents used independent IDs. Match the committed stamp,
         // agent, session and complete native identity before attaching a recovery route.
         var pending = await db.Database.SqlQuery<PendingChannelPage>($"""
@@ -56,9 +68,11 @@ public sealed partial class ChannelBridgeService
             WHERE a."Kind" = {(int)AgentIncidentKind.ChannelReplyLost}
               AND a."Severity" = {(int)AlertSeverity.Critical} AND a."HumanNotifiedAt" IS NULL
               AND a."FailureReason" IN ({WithheldReason}, {NoOutboundReason})
+              AND NOT EXISTS (SELECT 1 FROM "AgentIncidents" AS closed WHERE closed."Kind" = {(int)AgentIncidentKind.ChannelInputWithheldClosed}
+                  AND closed."FailureReason" = a."Id"::text)
               AND (a."SessionId" IS NULL OR a."SessionId" = q."AgentSessionId")
               AND ((a."FailureReason" = {WithheldReason} AND q."Status" = 0 AND q."DeliveryAttempts" = 0)
-                OR (c."Enabled" AND c."AgentId" = i."AgentId" AND
+                OR (a."FailureReason" = {NoOutboundReason} AND c."Enabled" AND c."AgentId" = i."AgentId" AND
                     (c."LastReplyAt" IS NULL OR c."LastReplyAt" < i."AcceptedAt")))
             ORDER BY a."CreatedAt", a."Id" LIMIT {WithheldIncidentPageSize}
             """).ToListAsync(ct);
