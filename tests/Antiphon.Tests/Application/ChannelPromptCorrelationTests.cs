@@ -294,7 +294,15 @@ public class ChannelPromptCorrelationTests
         pointer.ShouldStartWith($"[antiphon-channel:{a:N}] {Envelope.TrimEnd()}");
         pointer.ShouldContain(TypedBodySpill.PointerHeadline);
         (await RowAsync(h, b)).Body.ShouldBe(pointer);
-        (await RowAsync(h, a)).Status.ShouldBe(QueuedMessageStatus.Pending);
+        h.Adapter.SubmittedBodies.ShouldHaveSingleItem().ShouldBe(pointer);
+        h.Adapter.Inputs.Count(input => input != "\r").ShouldBe(1);
+        foreach (var id in new[] { a, b })
+        {
+            var attempt = await RowAsync(h, id);
+            attempt.Status.ShouldBe(QueuedMessageStatus.Sent);
+            attempt.DeliveryVerdict.ShouldBeNull();
+            attempt.DeliveryAttempts.ShouldBe(1);
+        }
         var folder = Path.Combine(h.TempRoot, "workspace", ".antiphon", "inbox");
         var path = Directory.GetFiles(folder).ShouldHaveSingleItem();
         var content = File.ReadAllText(path);
@@ -310,17 +318,25 @@ public class ChannelPromptCorrelationTests
             ConfigureServices = services => services.RemoveAll<ChannelReplyDispatcher>(),
         });
         await restarted.Queue.OnTurnEndAsync(h.SessionId, Ct);
-        restarted.Adapter.SubmittedBodies.ShouldBe([pointer]);
+        restarted.Adapter.Inputs.ShouldBeEmpty();
+        restarted.Adapter.SubmittedBodies.ShouldBeEmpty();
         (await RowAsync(h, a)).Body.ShouldBe(pointer);
         (await RowAsync(h, b)).Body.ShouldBe(pointer);
         File.ReadAllText(path).ShouldBe(content);
         Directory.GetFiles(folder).Length.ShouldBe(1);
         await ReplayAsync(restarted, pointer.ReplaceLineEndings("\n").Replace("\n", ""));
+        await restarted.Queue.OnTurnEndAsync(h.SessionId, Ct);
         await Dispatcher(restarted).OnTurnEndAsync(h.SessionId, Ct);
         await restarted.DrainOutboundAsync();
         restarted.Messaging.SentReplies.ShouldHaveSingleItem().ConversationId.ShouldBe(chat);
-        (await RowAsync(h, a)).ChannelReplySettledAt.ShouldNotBeNull();
-        (await RowAsync(h, b)).ChannelReplySettledAt.ShouldNotBeNull();
+        restarted.Adapter.Inputs.ShouldBeEmpty();
+        foreach (var id in new[] { a, b })
+        {
+            var confirmed = await RowAsync(h, id);
+            confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+            confirmed.DeliveryAttempts.ShouldBe(1);
+            confirmed.ChannelReplySettledAt.ShouldNotBeNull();
+        }
         var courier = new RemoteSpillCourier();
         await using var remote = await ClaudeDialogFixture.CreateBridgeAsync(new()
         {

@@ -261,20 +261,26 @@ public class SessionMessageQueueInterruptedAttemptTests
     }
 
     [Test]
-    public async Task Verdict_less_channel_attempt_with_empty_composer_awaits_transcript()
+    [Arguments(QueuedMessageStatus.Sent, false)]
+    [Arguments(QueuedMessageStatus.Pending, false)]
+    [Arguments(QueuedMessageStatus.Pending, true)]
+    public async Task Verdict_less_channel_attempt_with_empty_composer_awaits_transcript(QueuedMessageStatus state, bool sendNow)
     {
         await using var h = await ClaudeDialogFixture.CreateBridgeAsync();
         var started = DateTime.UtcNow - InterruptedAge - TimeSpan.FromSeconds(5);
-        await h.SeedPendingMessageAsync(
+        var id = await h.SeedPendingMessageAsync(
             Body,
             deliveryAttempts: 1,
-            status: QueuedMessageStatus.Sent,
+            status: state,
             origin: QueuedMessageOrigin.Channel,
             lastDeliveryStartedAt: started);
 
-        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        if (sendNow)
+            await h.Queue.SendNowAsync(h.SessionId, id, CancellationToken.None);
+        else
+            await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
 
-        h.Adapter.Inputs.ShouldBeEmpty("an empty composer cannot distinguish submission from a missing paste");
+        h.Adapter.Inputs.Count.ShouldBe(0, "an empty composer cannot distinguish submission from a missing paste");
         await using var db = CreateContext();
         var message = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId);
         message.Status.ShouldBe(QueuedMessageStatus.Sent);

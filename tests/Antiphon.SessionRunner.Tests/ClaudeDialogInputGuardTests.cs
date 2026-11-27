@@ -371,6 +371,13 @@ public class ClaudeDialogInputGuardTests
         result.Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
         f.Child.Inputs.ShouldBeEmpty();
 
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ Try \"fixture draft\""));
+        request = await f.RequestAsync("queued fixture");
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        f.Child.Inputs.ShouldBeEmpty();
+
         f.Session.RenderDialogScreenForTest(Clear);
         await f.Runtime.SendInputAsync(f.Id, " ", CancellationToken.None);
         request = await f.RequestAsync("queued fixture");
