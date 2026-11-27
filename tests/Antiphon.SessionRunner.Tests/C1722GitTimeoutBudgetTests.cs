@@ -68,6 +68,8 @@ public sealed class C1722GitTimeoutBudgetTests
     [Arguments(typeof(C0824WorkspaceSlotRehomeTests), nameof(C0824WorkspaceSlotRehomeTests.C2061_QuarantineRecoveryClosesOneDurableRecord), 2.091)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_LeaseResetsToExactShaFromUnrelatedState), 0.843)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_VerifyQuarantinesSilentCheckout), 1.182)]
+    // rc 419ed669: provisional p95 from five loaded Linux runs at 561591c562. Collect Windows timings under CARD-1722.
+    [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_ResetClearsMergeRebaseAndSequencerState), 3.227)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_WarmResetWipesEveryNonKeepListClass), 2.884)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_WarmResetKeepsNativeOutputByteAndMtime), 0.967)]
     [Arguments(typeof(C0824WorkspaceSlotResetTests), nameof(C0824WorkspaceSlotResetTests.C0824_FreeSlotDetachedAtPublishedShaWithNoTaskRefs), 0.529)]
@@ -167,7 +169,11 @@ public sealed class C1722GitTimeoutBudgetTests
             .Concat(duplicates.Select(name => "Duplicate budget rows for " + name))
             .Order(StringComparer.Ordinal).ToArray();
 
-        discrepancies.ShouldBeEmpty("every Git-spawning method needs exactly one recorded measurement");
+        discrepancies.ShouldBeEmpty(
+            "For each missing Git-spawning method, measure five exact-method runs under load per docs/test-performance-standards.md. "
+            + "Record the provenance and nearest-rank p95 in seconds "
+            + $"with [Arguments(typeof(TestClass), nameof(TestClass.TestMethod), p95Seconds)] on {nameof(Git_budget_covers_measured_method)}. "
+            + $"For a missing Git-free method, add its qualified name to {nameof(PureMethods)}.");
     }
 
     [Test]
