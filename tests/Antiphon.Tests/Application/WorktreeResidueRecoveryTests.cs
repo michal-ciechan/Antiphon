@@ -421,6 +421,8 @@ public sealed class WorktreeResidueRecoveryTests
             ready,
             cut));
         prepared.Start.WorkingDirectory = h.Host.Fixture.Root;
+        // Each child runs one retirement and exits or is killed before it can benefit from a profile.
+        prepared.Start.Environment["DOTNET_TieredPGO"] = "0";
         prepared.Start.Environment.Remove(WorktreeRetirementCrashWorker.CompiledModelVariable);
         if (useCompiledModel)
             prepared.Start.Environment[WorktreeRetirementCrashWorker.CompiledModelVariable] = "1";
