@@ -1239,7 +1239,7 @@ routes except the four `/api/review-auth/*` routes. In GitHub mode, gate decisio
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` with iterations, node executions and gates |
 | GET | `/api/review-runs/{id}/findings` | Optional query `status` | `{ items: ReviewFindingDto[], total }`, including response history |
 | GET | `/api/review-runs/{id}/packs/{iteration}/{group}` | Integer iteration and reviewer group key | Stored pack as `text/markdown; charset=utf-8`. 404 for a missing pack. |
-| POST | `/api/review-runs/{id}/refresh` | No body | 202 with an empty body. Re-reads the code host asynchronously. |
+| POST | `/api/review-runs/{id}/refresh` | No body | 202 with an empty body. Checks the code host and queues follow-up work when needed. |
 | POST | `/api/review-runs/{id}/rounds` | Optional body `{ steerPrompt? }` | `ReviewRunDetailDto` after requesting another review at the current head |
 | POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` | `{ items: ReviewFindingDto[] }` |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` (`{ action, reasonCategory?, scope?, text? }`) | Updated `ReviewFindingDto` |

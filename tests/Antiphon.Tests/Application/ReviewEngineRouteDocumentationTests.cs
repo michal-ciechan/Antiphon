@@ -18,9 +18,10 @@ public sealed class ReviewEngineRouteDocumentationTests
 
         foreach (var document in new[] { "antiphon-api.md", "features/012-review-engine/api.md" })
         {
-            var documented = DocumentedRoutes(Path.Combine(root, "docs", document));
+            var documented = DocumentedRoutes(Path.Combine(root, "docs", document)).ToArray();
             registered.Except(documented).Order(StringComparer.Ordinal).ShouldBeEmpty($"Missing from {document}");
             documented.Except(registered).Order(StringComparer.Ordinal).ShouldBeEmpty($"Unregistered in {document}");
+            documented.Length.ShouldBe(registered.Count, $"Duplicate route entries in {document}");
         }
 
         var ops = Path.Combine(root, "docs", "ops-http.md");
