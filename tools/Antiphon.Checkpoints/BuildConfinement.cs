@@ -640,7 +640,7 @@ public static class BuildConfinement
             if (!document.RootElement.TryGetProperty("TargetResults", out var targets)
                 || !targets.TryGetProperty("AntiphonEvaluateBuildGraph", out var evaluation)
                 || !evaluation.TryGetProperty("Items", out var destinations)
-                || destinations.ValueKind != JsonValueKind.Array)
+                || destinations.ValueKind != JsonValueKind.Array || destinations.GetArrayLength() == 0)
                 return new WalkResult([], "msbuild graph destinations missing");
             foreach (var destination in destinations.EnumerateArray())
             {
@@ -651,7 +651,7 @@ public static class BuildConfinement
                 var projectDirectory = directory.GetString()!;
                 var property = name.GetString();
                 var value = path.GetString()!;
-                if (CheckpointBuildPlacement.IsEvidencePath(Path.GetFullPath(value, projectDirectory)))
+                if (CheckpointBuildPlacement.IsEvidencePath(Path.GetFullPath(value.Replace('\\', '/'), projectDirectory)))
                     return new WalkResult([], null, $"{property}={value} in {projectDirectory}");
             }
             return new WalkResult([], null);
@@ -725,10 +725,6 @@ public static class BuildConfinement
         {
             "msbuild", project, "-getItem:ProjectReference", "-nologo", "-nodeReuse:false",
         };
-, CheckpointBuildPlacement.EvaluatedPaths)
-                + ",TargetFramework,TargetFrameworks");
-',', CheckpointBuildPlacement.EvaluatedPaths)
-                + ",TargetFramework,TargetFrameworks");
         args.AddRange(properties);
 
         var psi = EvaluationStart(workingDirectory, environment);

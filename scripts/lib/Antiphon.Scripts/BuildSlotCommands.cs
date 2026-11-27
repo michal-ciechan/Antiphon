@@ -56,8 +56,10 @@ namespace Antiphon.Scripts
             // Use the launcher checkout. An older project still imports this guard for restore,
             // including the cross-targeting evaluation used by SDK projects with TargetFrameworks.
             var targets = Path.Combine(Checkout, "scripts", "guard-build-placement.targets");
-            start.ArgumentList.Add("-p:CustomBeforeMicrosoftCommonTargets=" + targets);
-            start.ArgumentList.Add("-p:CustomBeforeMicrosoftCommonCrossTargetingTargets=" + targets);
+            var separator = start.ArgumentList.IndexOf("--");
+            var insertion = separator < 0 ? start.ArgumentList.Count : separator;
+            start.ArgumentList.Insert(insertion, "-p:CustomBeforeMicrosoftCommonTargets=" + targets);
+            start.ArgumentList.Insert(insertion + 1, "-p:CustomBeforeMicrosoftCommonCrossTargetingTargets=" + targets);
         }
 
         // The command's own code; 4 no slot within the wait; 1 the command cannot be resolved or started; 130 interrupted;

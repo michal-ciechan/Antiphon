@@ -23,7 +23,7 @@
             var value = destination.GetMetadata("Destination");
             if (string.IsNullOrEmpty(value))
                 continue;
-            var path = Path.GetFullPath(Path.Combine(ProjectDirectory, value));
+            var path = Path.GetFullPath(Path.Combine(ProjectDirectory, value.Replace('\\', '/')));
             var physical = "/";
             var blocked = evidence.IsMatch(path);
             foreach (var component in path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries))
