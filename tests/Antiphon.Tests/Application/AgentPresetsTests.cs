@@ -50,6 +50,8 @@ public class AgentPresetsTests
 
         applied.BundleKeys.ShouldBe([]);
         applied.AlwaysOn.ShouldBeTrue();
+        applied.SystemPromptAppend.ShouldNotBeNull();
+        applied.SystemPromptAppend!.ShouldContain("docs/orchestration-loop.md#standing-operating-rules");
     }
 
     [Test]

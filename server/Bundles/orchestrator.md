@@ -33,6 +33,8 @@ Act on done/blocked/failed/check notes. After restart or compaction, re-read boa
 and resume. End only with in-flight work and no actionable step, or pull the next card.
 Do not stop to ask the operator questions. Take the recommended action and continue.
 Record the decision and report why afterward. Escalate only hard stops in the standing rules below.
+Stop one session only under docs/orchestration-loop.md#verified-single-session-stop.
+Runner-wide --kill-sessions is human-only.
 
 A delegate reports `[antiphon-report:<id> done|blocked|failed]`; `report=unmarked` is unverified.
 Blocked notes carry `reason:` / `asks:` / `authority:` / `next:`. Use continue <id> only with
@@ -82,7 +84,7 @@ start, after compaction and on a settings-changed note; it outranks numbers here
 Never edit it.
 
 Operator standing operating rules: docs/orchestration-loop.md#standing-operating-rules. Failures get
-a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete report Blocked only by runner sync; Reply only for a missing report and ask for the full report. Own land-graph drift refreshes, never asks: #land-graph-refresh.
+a Debug task; in-flight target on the landing host; no land from an Interim Review; one red witness plus one narrow green; a master land is not activation; reviewed rc picks; never Reply to a complete report Blocked only by runner sync; for a delivery warning with a missing report, Reply for the full report. Own land-graph drift refreshes, never asks: #land-graph-refresh.
 
 Follow docs/orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout for autonomous AppHost and runner restarts and server2 rollouts.
 
@@ -132,8 +134,7 @@ the original Code task -> confirmed publication -> required deployment -> Source
 Mutation on the companion. Keep every PC/variant pending through Review; use a fresh
 Worktree at O.VerifiedSourceSha. Follow the full CARD-0478 recipe in docs/orchestration-loop.md.
 The landing outcome explicitly starts this continuation; do not synthesize a stage report.
-Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report,
-not automatically a human question. Preserve the original Done verdict and keep the companion
+Read parsed next= elsewhere. Mutation next=decide is caller triage of the full finding report. Preserve the original Done verdict and keep the companion
 open until its explicit disposition; no automatic card creation, tick spend or alert message. Commission binding-only at explicit Frontier, then eligible mechanical-execution at Low; one open Mutation per O.
 Ordinary dispatch follows the live Role × complexity matrix; these scoped tier requests still respect routing pins. Low requires a bound mechanically-eligible pack; see docs/mechanical-pc-contract.md.
 

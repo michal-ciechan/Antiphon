@@ -313,7 +313,7 @@ automatically — see "What the delegate is told" below; don't type them into `-
 - **One task, one deliverable.** Don't delegate what you could finish in two tool calls.
 - **Always pass `--title`.** It is a 2–5 word label (max 80) for check headers, completion notes, and the board — not a second Goal.
 - **Write `--goal` as an outcome, not a procedure.** The delegate decides how.
-- **Operator standing operating rules apply to every dispatch** (a failed launch gets a Debug task; never Reply to a complete report Blocked only by runner sync, Reply only for a missing report and ask for the full report; verify the card title before binding): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
+- **Operator standing operating rules apply to every dispatch** (a failed launch gets a Debug task; never Reply to a complete report Blocked only by runner sync, for a delivery warning with a missing report, Reply for the full report; verify the card title before binding): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
 - **A Review brief names its round** (three ordinary rounds per subject): the round number, the previous reviewed SHA, the exact range (`<previous reviewed SHA>..<tip>`; round 1 the full candidate range) and the stringency (full; diff with round-1 defect closure; blockers only), and asks for `reviewRound:` and `reviewedRange:` lines in the review evidence block. After round 3, give the orchestrator the blocker's recommended disposition under [Review rounds](../../../docs/orchestration-loop.md#review-rounds) (CARD-1635).
 - **Put the state of today in `--goal`, not the standing rules.** Known-red tests, what already
   landed, what is out of scope, which ports are taken — that is what only you know. The harness
@@ -461,7 +461,7 @@ caller reads the full report, creates linked remediation and keeps verification 
 interrupted, unavailable or unknown evidence is failed/blocked, not clean. Explicit abandonment
 uses Canceled with reason/successor, never Done/Clean.
 
-Mutation's `next: decide` is a triage continuation, not automatically AskUserQuestion. Distinguish
+Mutation's `next: decide` continues triage under the standing operating rules. Distinguish
 coverage survivor/missing detection from reproducible unmutated-L product regression, invalid/
 noncompiling/equivalent control and infrastructure failure. Report Where/Failure/Why/Fix,
 severity, guard/PC and C/O/L evidence. Check the companion thread before creating each actionable

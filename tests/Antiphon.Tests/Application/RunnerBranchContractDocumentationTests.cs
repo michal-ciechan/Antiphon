@@ -269,7 +269,8 @@ public class RunnerBranchContractDocumentationTests
         const string seat =
             "A live Blocked child keeps its runner seat; an accepted Reply resumes work and does not itself free the seat.";
         const string overnight =
-            "Decide and Reply within the session, or surface a human-only hold before leaving.";
+            "Decide and Reply within the session, or surface a human-only hold before leaving. "
+            + "For decisions within your authority, do not leave one overnight.";
         const string slots =
             "At capacity, read GET /api/session-runners/{id}/slots: orphan=true is not a count of free seats; "
             + "a live Blocked owner reads orphan=false with its park field.";

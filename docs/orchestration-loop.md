@@ -34,7 +34,8 @@ through those rolling phases. Follow the
 During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `--wait-idle-minutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle. Canonical statement: [Continuous dispatch during the rollout](docker-stack.md#continuous-dispatch-during-rollout).
 For a desktop runner restart, use `scripts/antiphon restart-session-runner`;
 use `--hard` only for a planned supervisor refresh under the AppHost runbook.
-`--kill-sessions` kills detached sessions and is human-only, never part of this autonomy grant.
+The runner-wide `--kill-sessions` switch remains human-only. An orchestrator may stop a single
+session under the [verified single-session stop rule](#verified-single-session-stop).
 
 Before and after an AppHost pull or restart, verify that queued lands have finished, no worktree is
 half-reset, the canonical source-root `HEAD` matches `GET /api/version` SHA, and `/health` succeeds.
@@ -680,7 +681,7 @@ The operator's standing rules for card work. The `orchestrator` bundle, AGENTS.m
 3. **An Interim Review cannot approve a land.** When the plan's closed checkpoint list holds a row that cannot finish on the loaded host, have the Code owner amend the plan first, descoping the row with the reason and the minimal-testing rule below and recording inherited reds as documented non-receipt rows, so that scope Full is reachable before the Final Review is commissioned.
 4. **Review verdict policy, no whack-a-mole.** `found` is for a regression, a new reachable fail-open or a test that cannot fail. When a Review reports examples of one bypass class, the fix changes the design (default-deny, one canonical pipeline or normaliser, a table with a witness per row), and the next round checks that the class is closed with one witness, never more examples of a closed class. After round 1 a Review reports no new attack classes. The ordinary loop is capped at three under [Review rounds](#review-rounds).
 5. **Verify the card binding.** Read the card title before binding a task to a card identifier (a task was once bound to the wrong card from memory); when no card fits, file the card first.
-6. **Do not Reply to a complete report that is Blocked only by runner sync.** A task whose report is complete and whose desktop sync is pending needs no Reply, even when an older settlement's warning asks for one (CARD-1082; CARD-1472 fixes the server side): Review and `land` use the pushed branch, and the settlement sync sweep clears the block. Since CARD-1802 lease contention (`runner_sync_lease_busy`) never Blocks a correlated complete report: with Delegation:RunnerSyncDebtOnSettlement on (the default) it settles Succeeded or Failed with a sync-debt row, and the sweep fetches the pushed objects and fast-forwards the desktop (`syncDebt` on task detail goes Ready). Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802). Bind-refusal recovery has no correlated report, so its lease-contention result stays Blocked on runner_sync_lease_busy with no debt row, and its handoff asks for the correlated completion report that settles it (CARD-1805). A complete report that is Blocked is blocked by something a Reply alone cannot fix: a refused sync (dirty, diverged, rewound, identity) or a progress read that could not verify the pushed work (`runner_sync_progress_unverified`, `baseline_lineage_broken`, `primary_log_unavailable`); its handoff names the repair, and the Reply follows the repair. A Reply reopens the task as a new model turn, and a token-only answer then replaces the retained report with an empty result (Debug fc28850a, [docs/investigations/2026-10-22-report-contract-and-first-prompt-noise.md](investigations/2026-10-22-report-contract-and-first-prompt-noise.md)). Reply only when the report is genuinely missing, and then ask for the full report with its closing token, never just "stop".
+6. **Do not Reply to a complete report that is Blocked only by runner sync.** A task whose report is complete and whose desktop sync is pending needs no Reply, even when an older settlement's warning asks for one (CARD-1082; CARD-1472 fixes the server side): Review and `land` use the pushed branch, and the settlement sync sweep clears the block. Since CARD-1802 lease contention (`runner_sync_lease_busy`) never Blocks a correlated complete report: with Delegation:RunnerSyncDebtOnSettlement on (the default) it settles Succeeded or Failed with a sync-debt row, and the sweep fetches the pushed objects and fast-forwards the desktop (`syncDebt` on task detail goes Ready). Lease contention alone never leaves Pending evidence of a correlated complete report without a debt row (CARD-1802). Bind-refusal recovery has no correlated report, so its lease-contention result stays Blocked on runner_sync_lease_busy with no debt row, and its handoff asks for the correlated completion report that settles it (CARD-1805). A complete report that is Blocked is blocked by something a Reply alone cannot fix: a refused sync (dirty, diverged, rewound, identity) or a progress read that could not verify the pushed work (`runner_sync_progress_unverified`, `baseline_lineage_broken`, `primary_log_unavailable`); its handoff names the repair, and the Reply follows the repair. A Reply reopens the task as a new model turn, and a token-only answer then replaces the retained report with an empty result (Debug fc28850a, [docs/investigations/2026-10-22-report-contract-and-first-prompt-noise.md](investigations/2026-10-22-report-contract-and-first-prompt-noise.md)). For a delivery warning, reply only when the report is genuinely missing. Ask for the full report with its closing token. A bare "stop" is insufficient. For a genuine Blocked decision, use rule 14.
 7. **Master lands are not activation.** AppHost and server2 run the rc tip, so a land never needs a restart by itself; restart only when the rc tip changed (the post-land server activation check in section 0).
 8. **Minimal testing.** One red witness plus one narrow green per task, with the rc roster as the gate; no whole-Unit or whole-lane runs from Code or Review. The whole Unit lane is owned by the nightly backstop and the rc qualification run, not by per-task Final; a failure there gets a Debug task under the rc run-group repair loop.
 9. **rc ports.** Bug and test fixes for code already on the rc line go to master and to the rc line (a reviewed cherry-pick that makes a new rc tip); feature work is master-only. Check that the rc carries the prerequisite chain before porting (CARD-0856 found the rc lacked 27 CARD-1427/1428/1432 commits). Startup-path picks also require the exact-candidate native probe before publication and the post-push restore rehearsal in [Startup-path rc picks](release-gates.md#startup-path-rc-picks); use the [forward recovery](apphost-runbook.md#failed-startup-path-pick) if activation fails.
@@ -692,10 +693,28 @@ The operator's standing rules for card work. The `orchestrator` bundle, AGENTS.m
     Delete only by exact literal path: `Remove-Item -LiteralPath` in a loop that re-verifies each path (expected parent, exact leaf pattern, the directory is not a link, `GetFullPath` equals the string, and the path is not held open). Run that loop through a Custom delegate on the owning host, with explicit authority, a list regenerated fresh, and a report of counts and bytes freed.
     Never `rm` a variable or a glob, never `rm -rf` a computed parent (the safety watchdog stops it), and never delete live worktrees or sessions, `.git` of a live repo, databases, Docker volumes, `/state`, secrets or credentials, anything younger than the threshold, or anything with no identified owner. Worked examples: [server2 /tmp growth](investigations/2026-11-19-server2-tmp-growth.md), [server2 housekeeping census](investigations/2026-11-19-server2-housekeeping-census.md).
 13. **Fast-track lane (operator, 2026-11-20).** `[fast]` in a task title is a request; the classifier decides; a mislabelled `[fast]` is demoted to NORMAL and noted. Full rules: [Fast-track lane](#fast-track-lane-operator-2026-11-20).
-14. **Keep working without operator questions (operator, 2026-11-27).** An orchestrator or agent working a card takes the recommended action within its authority, records the decision on the card, in the task note or in the report, and continues. Report what you chose and why afterward. Resolve conventions and defaults from their owners, and check the code or card for verifiable answers.
-    - A worker or reviewer who needs a decision outside its authority ends Blocked. State the blocker in `reason:` and the recommended action in `asks:` so the orchestrator can decide and use `Reply`. Stage roles carry that recommendation in `handoff:` as well. A delegate never ends its turn with an open question to the user.
-    - Reserve operator involvement for hard stops: creating tags, publishing or promoting releases, stopping a qualification run, restoring or moving a production database, killing sessions (`--kill-sessions`), handling secrets or credentials, and other actions the repository already marks human-only. Record the recommended action and continue independent work while the held action awaits authorization.
+14. **Keep working without operator questions (operator, 2026-11-27).** An orchestrator or agent working a card takes the recommended action within its authority, records the decision on the card, in the task note or in the report, and continues without stopping to ask the operator questions. Report what you chose and why afterward. Resolve conventions and defaults from their owners, and check the code or card for verifiable answers.
+    - A worker or reviewer who needs a decision outside its authority ends Blocked. State the blocker in `reason:` and the recommended action in `asks:` so the orchestrator can decide and use `Reply`. Stage roles carry that recommendation in `handoff:` as the last line of the block and omit `artifact:` on a Blocked report. A delegate never ends its turn with an open question to the user.
+    - Reserve operator involvement for hard stops: creating tags, publishing or promoting releases, stopping a qualification run, restoring or moving a production database, runner-wide session termination (`restart-session-runner --kill-sessions`), handling secrets or credentials, and other actions the repository already marks human-only. Record the recommended action and continue independent work while the held action awaits authorization.
     - A blocker remaining after Review round 3 goes to the orchestrator for a recorded decision under [Review rounds](#review-rounds).
+
+<a id="verified-single-session-stop"></a>
+#### Verified single-session stop (operator, 2026-11-27)
+
+An orchestrator may stop one session after verifying all of the following immediately before
+calling `POST /api/sessions/{id}/kill` or using the authorized single-slot release path.
+
+1. The session still matches the current row in `GET /api/session-runners/{runnerId}/slots`.
+   It has no open task (`openTaskId: null`), and `GET /api/agent-tasks/{taskId}` confirms
+   its last task is terminal. Cross-check the session owner in `GET /api/agents` to verify that
+   it is neither a standing agent nor an AlwaysOn Check seat.
+2. The current transcript ends in `TurnEnd` with no subsequent activity. Read it with `GET /api/sessions/{id}/transcript?since={sequence}`.
+3. Verify that the task worktree is clean and its HEAD is in published history using a fresh
+   remote ref or the existing publication audit. There must be no unpublished work.
+
+Record the session ID, slot row, task ID, verification time and outcome on the card or in the
+report. Skip the stop if any check is unknown or changes. Runner-wide `--kill-sessions`
+remains human-only.
 
 <a id="fast-track-lane-operator-2026-11-20"></a>
 #### Fast-track lane (operator 2026-11-20)
@@ -2090,7 +2109,8 @@ CARD-1082. Delegation:RunnerSyncDebtOnSettlement defaults to true. A complete re
 **`next: land` in the completion header is the cue to run `land`** (CARD-0146 D2/§1) — read it
 off `next=land` rather than deciding from the report body that a stage is done. `next: code` or
 `next: review` naming remaining work is the cue to dispatch that stage instead; `next: decide`
-routes to `AskUserQuestion`, not to a land.
+routes the recommendation to the orchestrator for disposition under the
+[standing operating rules](#standing-operating-rules).
 
 **Landing order comes from the completion header.** A note whose header carries
 `overlapping-running=<ids>` says those tasks were still running when this one settled and touched
@@ -3199,7 +3219,7 @@ caller reads the full report, creates linked remediation and keeps verification 
 interrupted, unavailable or unknown evidence is failed/blocked, not clean. Explicit abandonment
 uses Canceled with reason/successor, never Done/Clean.
 
-Mutation's `next: decide` is a triage continuation, not automatically AskUserQuestion. Distinguish
+Mutation's `next: decide` continues triage under the [standing operating rules](#standing-operating-rules). Distinguish
 coverage survivor/missing detection from reproducible unmutated-L product regression, invalid/
 noncompiling/equivalent control and infrastructure failure. Report Where/Failure/Why/Fix,
 severity, guard/PC and C/O/L evidence. Check the companion thread before creating each actionable

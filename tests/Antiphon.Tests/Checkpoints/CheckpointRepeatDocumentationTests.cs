@@ -52,8 +52,8 @@ public sealed class CheckpointRepeatDocumentationTests : CheckpointTestBase
         // Unit 28 of the 2026-11-22 ps1-to-C# plan: the delegate command replaced delegate.ps1, so the bundle names
         // scripts/antiphon delegate and its kebab-case flags; two clauses are shorter to stay in the allocation.
         // Normalised body 11,498 of 11,500.
-        // 2026-11-27 standing operating rule. Normalised body 11177 of 11,500.
+        // 2026-11-27 standing operating rule and verified single-session stop. Normalised body 11,281 of 11,500.
         Convert.ToHexString(SHA256.HashData(orchestrator)).ToLowerInvariant()
-            .ShouldBe("99ccc9e4dbeaa048651e6077963cd7b7c2795ad988f6ce548c49e9fcf8325634", "orchestrator-approved-bytes");
+            .ShouldBe("5dd50934c6cda740f8d973e8473be9b4914998d499a8b2de668965c33f094818", "orchestrator-approved-bytes");
     }
 }

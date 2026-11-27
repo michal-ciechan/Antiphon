@@ -653,7 +653,8 @@ transcript. Census inspection opens `/attention?census=zombie-census:<class>` an
 preview and links to identified sessions. A resolved condition disappears on the next feed read.
 
 `POST /api/agents/{id}/stop` is the front door for a named agent; `POST /api/sessions/{id}/kill`
-kills one session and records `OperatorRequest` as the termination source. The session summary
+kills one session and records `OperatorRequest` as the termination source. Orchestrators use
+it only under the [verified single-session stop rule](orchestration-loop.md#verified-single-session-stop). The session summary
 now carries `terminationSource`; `Unknown` on a row closed after CARD-0316 ships is a bug to
 file, not a state. The runner's
 `POST :17204/sessions/{id}/kill` and `POST :17204/sessions/kill-all` bypass all of that
