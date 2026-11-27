@@ -2902,7 +2902,21 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private readonly ClaudeSubmittedInputHistory _submittedInput = new();
         private long? _lastInputOutputSequence;
         private OwnedComposer? _ownedComposer;
-        private sealed record OwnedComposer(string Digest, int Newlines);
+        private sealed record OwnedComposer(string Digest, string RenderedDigest, int Newlines, string? CollapsedToken = null);
+
+        // Bind the first complete token painted after this guarded write. The Enter
+        // observation may check the token's identity, but it cannot establish ownership.
+        private void CaptureCollapsedComposer()
+        {
+            if (_ownedComposer is not { Newlines: > 0, CollapsedToken: null } owned
+                || _lastInputOutputSequence >= _lastSequence
+                || _screen?.GetScreenText() is not { } screen
+                || !ClaudeScreen.TryReadComposer(screen, out var draft, preserveDraftWhitespace: true)
+                || !IsWholeCollapsedPaste(draft, owned.Newlines))
+                return;
+
+            _ownedComposer = owned with { CollapsedToken = draft };
+        }
         private bool _composerMayHoldWrittenInput;
 
         internal void WithScreenLock(Action action) { lock (_gate) action(); }
@@ -2985,8 +2999,10 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             var owned = _ownedComposer;
             if (request.Input != "\r" || (request.RequireOwnedComposer && owned?.Digest != expected))
                 return ConditionalInputOutcomes.ComposerMismatch;
-            if (ComposerInput.Digest(draft) == expected
-                || (owned is not null && owned.Digest == expected && IsWholeCollapsedPaste(draft, owned.Newlines)))
+            var renderedDigest = ComposerInput.Digest(draft);
+            if (renderedDigest == expected
+                || (owned is not null && owned.Digest == expected
+                    && (renderedDigest == owned.RenderedDigest || draft == owned.CollapsedToken)))
                 return null;
             return ConditionalInputOutcomes.ComposerMismatch;
         }
@@ -4479,6 +4495,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 _screen = new TerminalScreen(120, 40);
                 _screen.Feed(screen.ReplaceLineEndings("\r\n"));
                 _lastSequence++;
+                CaptureCollapsedComposer();
             }
         }
 
@@ -4768,8 +4785,12 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     _inputRevision++;
                     _lastInputOutputSequence = _lastSequence;
                     var guardedDraft = guardedBody ? ReadGuardedBody(input) : null;
-                    _ownedComposer = guardedDraft is null
-                        ? null : new(ComposerInput.Digest(guardedDraft), guardedDraft.Count(c => c == '\n'));
+                    // TerminalScreen drops ASCII spaces at each rendered row's end.
+                    // Keep the wire digest to bind Enter to the exact write as well.
+                    _ownedComposer = guardedDraft is null ? null : new(
+                        ComposerInput.Digest(guardedDraft),
+                        ComposerInput.Digest(string.Join('\n', guardedDraft.Split('\n').Select(row => row.TrimEnd(' ')))),
+                        guardedDraft.Count(c => c == '\n'));
                     if (!dialogAction) _composerMayHoldWrittenInput = input != "\r";
                     _submittedInput.BeforeWrite(input, _inputRevision, _acceptedStartedAt,
                         _tailer?.NativeBindingIdentity, _tailer?.Snapshot().LastSequence ?? -1,
@@ -5043,6 +5064,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 _liveBuffer.Append(chunk);
                 TrimLiveBuffer();
                 _screen?.Feed(chunk);
+                CaptureCollapsedComposer();
                 _ptyContentEpoch++;
             }
 
