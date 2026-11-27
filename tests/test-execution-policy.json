@@ -902,6 +902,13 @@
         },
         {
           "suite": "session-runner",
+          "class": "PhoneHomePendingPlacementCleanupTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the real runner admits Linux cgroup placement on Linux only.",
+          "owner": "CARD-2084"
+        },
+        {
+          "suite": "session-runner",
           "class": "CustodyNamespaceBootstrapTests",
           "platform": "windows",
           "reason": "Linux-only by construction: Linux custody namespace shell executes on Linux only. The case remains required on Linux.",

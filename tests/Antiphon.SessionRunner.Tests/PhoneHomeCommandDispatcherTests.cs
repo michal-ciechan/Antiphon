@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Text.Json;
+using Antiphon.PtyHost.Protocol;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.Extensions.Hosting;
@@ -350,12 +352,233 @@ public class PhoneHomeCommandDispatcherTests
     {
         var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
         var dispatcher = Dispatcher(runtime);
+        var request = TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId);
 
-        var frame = await dispatcher.DispatchAsync(
-            Launch(TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId)), CancellationToken.None);
+        var frame = await dispatcher.DispatchAsync(Launch(request), CancellationToken.None);
 
         frame.Kind.ShouldBe(PhoneHomeFrameKind.Result);
         runtime.Mutations.ShouldContain("start");
+        var release = await dispatcher.DispatchAsync(ReleaseSlot(request.SessionId), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+        release.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.List().ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task Unrelated_slot_release_does_not_wait_for_stuck_linux_placement()
+    {
+        var runtime = new RecordingRuntime { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
+        var dispatcher = Dispatcher(runtime, capacity: 2);
+        var other = Request("grok", "/work");
+        (await dispatcher.DispatchAsync(Launch(other), CancellationToken.None)).Kind.ShouldBe(PhoneHomeFrameKind.Result);
+        runtime.MarkExited(other.SessionId, 0, "test done");
+
+        var tracked = TrackedRequest(VerificationCustodyBackends.LinuxCgroup, runtime.RunnerStoreId);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var stop = new CancellationTokenSource();
+        runtime.BeforeStart = async () =>
+        {
+            // Model a silent stage from the runtime's placement wait, using the production cutoff.
+            var stamp = LinuxPlacementLaunch.Stamp(0, 0);
+            var budget = Stopwatch.GetElapsedTime(0, LinuxPlacementLaunch.ClampAtReceipt(stamp, 0));
+            entered.SetResult();
+            try { await Task.Delay(budget, stop.Token); }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+            expired.SetResult();
+            throw new VerificationCustodyException("verification_custody_start_failed");
+        };
+
+        var launch = dispatcher.DispatchAsync(Launch(tracked), CancellationToken.None);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var stopwatch = Stopwatch.StartNew();
+            var release = dispatcher.DispatchAsync(ReleaseSlot(other.SessionId), CancellationToken.None);
+            var sameSession = dispatcher.DispatchAsync(ReleaseSlot(tracked.SessionId), CancellationToken.None);
+            try
+            {
+                var result = await release;
+                Console.WriteLine($"Unrelated ReleaseSlot elapsedMs={stopwatch.ElapsedMilliseconds} placementEnded={expired.Task.IsCompleted}");
+                result.Kind.ShouldBe(PhoneHomeFrameKind.Result);
+                runtime.List().ShouldNotContain(session => session.SessionId == other.SessionId);
+                expired.Task.IsCompleted.ShouldBeFalse("the unrelated seat must be released while placement is still pending");
+                sameSession.IsCompleted.ShouldBeFalse("the release for the launching session must stay ordered after placement");
+            }
+            finally
+            {
+                await stop.CancelAsync();
+                (await AwaitReplyAsync(launch, "The failed placement did not return."))
+                    .ErrorDetail.ShouldBe("verification_custody_start_failed");
+                (await AwaitReplyAsync(sameSession, "The pending placement reservation blocked ReleaseSlot after failure."))
+                    .Kind.ShouldBe(PhoneHomeFrameKind.Result);
+            }
+        }
+        finally
+        {
+            await stop.CancelAsync();
+            await AwaitReplyAsync(launch, "The placement did not return after cancellation.");
+        }
+    }
+
+    [Test]
+    public async Task Pending_linux_placement_orders_admission_of_the_last_seat()
+    {
+        await using var placement = new PendingLinuxLaunch();
+        await placement.Entered;
+        var contender = Request("grok", "/work");
+        var next = placement.Dispatcher.DispatchAsync(Launch(contender), CancellationToken.None);
+
+        next.IsCompleted.ShouldBeFalse("capacity admission overtook the pending placement");
+        placement.Runtime.StartCalls.ShouldBe(1);
+        await placement.CompleteAsync();
+
+        var refusal = await AwaitReplyAsync(next, "Capacity admission stayed blocked after successful placement.");
+        refusal.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refusal.ErrorCode.ShouldBe(PhoneHomeProblemTypes.Capacity);
+        placement.Runtime.StartCalls.ShouldBe(1);
+        placement.Runtime.Owned.ShouldBe(1);
+        placement.Runtime.List().ShouldNotContain(session => session.SessionId == contender.SessionId);
+    }
+
+    [Test]
+    public async Task Same_generation_resend_waits_for_placement_and_acks_the_first_start()
+    {
+        await using var placement = new PendingLinuxLaunch();
+        await placement.Entered;
+        var resend = Launch(placement.Request);
+        var next = placement.Dispatcher.DispatchAsync(resend, CancellationToken.None);
+
+        next.IsCompleted.ShouldBeFalse("the resend answered before the first launch published its session");
+        placement.Runtime.StartCalls.ShouldBe(1);
+        var first = await placement.CompleteAsync();
+
+        var duplicate = await AwaitReplyAsync(next, "The same-generation resend stayed blocked after placement.");
+        duplicate.Kind.ShouldBe(PhoneHomeFrameKind.Result, duplicate.ErrorDetail);
+        duplicate.RequestId.ShouldBe(resend.RequestId);
+        duplicate.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json)
+            .ShouldBe(first.Payload!.Value.Deserialize<RunnerSessionDto>(PhoneHomeFraming.Json));
+        placement.Runtime.StartCalls.ShouldBe(1, "the duplicate ack must reuse the first start");
+    }
+
+    [Test]
+    public async Task Newer_generation_waits_for_placement_and_cannot_replace_the_live_session()
+    {
+        await using var placement = new PendingLinuxLaunch();
+        await placement.Entered;
+        var newer = placement.Request with
+        {
+            AcceptedStartedAt = placement.Request.AcceptedStartedAt!.Value.AddSeconds(1),
+            VerificationBinding = null,
+        };
+        var next = placement.Dispatcher.DispatchAsync(Launch(newer), CancellationToken.None);
+
+        next.IsCompleted.ShouldBeFalse("the newer generation overtook the pending placement");
+        placement.Runtime.StartCalls.ShouldBe(1);
+        await placement.CompleteAsync();
+
+        var refusal = await AwaitReplyAsync(next, "The newer-generation launch stayed blocked after placement.");
+        refusal.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refusal.ErrorCode.ShouldBe(PhoneHomeProblemTypes.SessionAlreadyRunning);
+        placement.Runtime.StartCalls.ShouldBe(1);
+        placement.Runtime.List().Single().AcceptedStartedAt.ShouldBe(placement.Request.AcceptedStartedAt);
+    }
+
+    [Test]
+    public async Task Kill_generation_waits_for_the_launching_session_to_be_registered()
+    {
+        await using var placement = new PendingLinuxLaunch();
+        await placement.Entered;
+        var request = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+            PhoneHomeOperation.KillGeneration, JsonSerializer.SerializeToElement(new
+            {
+                sessionId = placement.Request.SessionId,
+                expectedAcceptedStartedAt = placement.Request.AcceptedStartedAt!.Value,
+            }, PhoneHomeFraming.Json));
+        var kill = placement.Dispatcher.DispatchAsync(request, CancellationToken.None);
+
+        kill.IsCompleted.ShouldBeFalse("KillGeneration overtook registration of the launching session");
+        await placement.CompleteAsync();
+
+        var reply = await AwaitReplyAsync(kill, "KillGeneration stayed blocked after placement.");
+        reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+        var killed = reply.Payload!.Value.Deserialize<RunnerKillGenerationResult>(PhoneHomeFraming.Json).ShouldNotBeNull();
+        killed.Killed.ShouldBeTrue();
+        killed.Outcome.ShouldBe(KillGenerationOutcomes.Killed);
+        placement.Runtime.List().Single().Status.ShouldBe("Exited");
+    }
+
+    [Test]
+    public async Task Workspace_mirror_admission_waits_for_pending_linux_placement()
+    {
+        await using var placement = new PendingLinuxLaunch();
+        await placement.Entered;
+        // Repository admission runs inside the workspace mutation fence, before Git.
+        var request = new PhoneHomeFrame(PhoneHomeFrameKind.Request, 1, Guid.NewGuid(),
+            PhoneHomeOperation.WorkspaceMirror, JsonSerializer.SerializeToElement(new PhoneHomeWorkspaceMirrorRequest(
+                "main", new string('a', 40), "task-deadbeef", "https://github.com/outside/repo.git"), PhoneHomeFraming.Json));
+        var mirror = placement.Dispatcher.DispatchAsync(request, CancellationToken.None);
+
+        mirror.IsCompleted.ShouldBeFalse("WorkspaceMirror admission overtook the pending placement");
+        await placement.CompleteAsync();
+
+        var refusal = await AwaitReplyAsync(mirror, "WorkspaceMirror stayed blocked after placement.");
+        refusal.Kind.ShouldBe(PhoneHomeFrameKind.Error);
+        refusal.ErrorCode.ShouldBe(PhoneHomeProblemTypes.RepositoryNotAdmitted);
+    }
+
+    private static async Task<PhoneHomeFrame> AwaitReplyAsync(Task<PhoneHomeFrame> reply, string timeoutMessage)
+    {
+        try { return await reply.WaitAsync(TimeSpan.FromSeconds(5)); }
+        catch (TimeoutException ex) { throw new TimeoutException(timeoutMessage, ex); }
+    }
+
+    // With the auth probe disabled by the fixture and a free mutation lock, a request
+    // runs inline until it reaches the pending placement. No delay is needed to observe it.
+    private sealed class PendingLinuxLaunch : IAsyncDisposable
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _finish = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Task<PhoneHomeFrame> _launch;
+
+        public RecordingRuntime Runtime { get; } = new() { CustodyBackend = VerificationCustodyBackends.LinuxCgroup };
+        public RunnerLaunchRequest Request { get; }
+        public PhoneHomeCommandDispatcher Dispatcher { get; }
+        public Task Entered => _entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        public PendingLinuxLaunch()
+        {
+            var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+            var tracked = TrackedRequest(VerificationCustodyBackends.LinuxCgroup, Runtime.RunnerStoreId);
+            var binding = tracked.VerificationBinding!;
+            Request = tracked with
+            {
+                AcceptedStartedAt = generation,
+                VerificationBinding = binding with { Generation = new(tracked.SessionId, generation) },
+            };
+            Dispatcher = PhoneHomeCommandDispatcherTests.Dispatcher(Runtime, capacity: 1, grokAuthProbeEnabled: false);
+            Runtime.BeforeStart = () =>
+            {
+                Runtime.BeforeStart = null;
+                _entered.SetResult();
+                return _finish.Task;
+            };
+            _launch = Dispatcher.DispatchAsync(Launch(Request), CancellationToken.None);
+        }
+
+        public async Task<PhoneHomeFrame> CompleteAsync()
+        {
+            _finish.TrySetResult();
+            var reply = await AwaitReplyAsync(_launch, "The pending Linux launch did not finish after its gate opened.");
+            reply.Kind.ShouldBe(PhoneHomeFrameKind.Result, reply.ErrorDetail);
+            return reply;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            _finish.TrySetResult();
+            await AwaitReplyAsync(_launch, "The pending Linux launch did not finish during fixture cleanup.");
+        }
     }
 
     private static RunnerLaunchRequest TrackedRequest(string backend, Guid storeId) =>
@@ -1406,6 +1629,8 @@ public class PhoneHomeCommandDispatcherTests
         }
         public List<string> Mutations { get; } = [];
         public List<RunnerLaunchRequest> Started { get; } = [];
+        private int _startCalls;
+        public int StartCalls => Volatile.Read(ref _startCalls);
 
         /// <summary>CARD-0631: a runtime fault Health and Get throw, standing in for an escaping handler.</summary>
         public Func<Exception>? Fault { get; set; }
@@ -1413,6 +1638,7 @@ public class PhoneHomeCommandDispatcherTests
 
         /// <summary>Null (the default) is a runner that advertises no custody at all.</summary>
         public string? CustodyBackend { get; init; }
+        public Func<Task>? BeforeStart { get; set; }
         public string? VerificationCustodyBackend => CustodyBackend;
         public Guid RunnerStoreId { get; } = Guid.NewGuid();
 
@@ -1424,8 +1650,11 @@ public class PhoneHomeCommandDispatcherTests
         public IReadOnlyList<RunnerSessionDto> List() => [.. _sessions.Values];
         public Task<RunnerSessionDto> GetAsync(Guid sessionId, CancellationToken ct) =>
             throw (Fault?.Invoke() ?? new KeyNotFoundException());
-        public Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
+        public async Task<RunnerSessionDto> StartAsync(RunnerLaunchRequest request, CancellationToken ct)
         {
+            Interlocked.Increment(ref _startCalls);
+            if (BeforeStart is { } beforeStart)
+                await beforeStart();
             // The real runtime refuses a second live session with the same id.
             if (_sessions.TryGetValue(request.SessionId, out var running) && running.Status != "Exited")
                 throw new InvalidOperationException($"Session '{request.SessionId}' is already running.");
@@ -1435,7 +1664,7 @@ public class PhoneHomeCommandDispatcherTests
             var session = new RunnerSessionDto(request.SessionId, 1, DateTime.UtcNow, "Running", null, "", 0,
                 AcceptedStartedAt: request.AcceptedStartedAt);
             _sessions[request.SessionId] = session;
-            return Task.FromResult(session);
+            return session;
         }
 
         /// <summary>The session's process exited; like the real runtime, it stays listed as Exited.</summary>
@@ -1465,7 +1694,20 @@ public class PhoneHomeCommandDispatcherTests
             Task.FromResult(new RunnerConditionalInputResult(sessionId, ConditionalInputOutcomes.Unsupported, null, null));
         public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) => Task.CompletedTask;
         public Task ResizeAsync(Guid sessionId, int cols, int rows, CancellationToken ct) => Task.CompletedTask;
-        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct) =>
-            Task.FromResult(new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null));
+        public Task<RunnerKillGenerationResult> KillGenerationAsync(Guid sessionId, DateTime expectedAcceptedStartedAt, CancellationToken ct)
+        {
+            if (!_sessions.TryGetValue(sessionId, out var session))
+                return Task.FromResult(new RunnerKillGenerationResult(sessionId, false, KillGenerationOutcomes.Missing, null));
+            if (!SessionGeneration.Equal(session.AcceptedStartedAt, expectedAcceptedStartedAt))
+                return Task.FromResult(new RunnerKillGenerationResult(sessionId, false,
+                    KillGenerationOutcomes.Mismatch, session.AcceptedStartedAt));
+            if (session.Status == "Exited")
+                return Task.FromResult(new RunnerKillGenerationResult(sessionId, false,
+                    KillGenerationOutcomes.AlreadyExited, session.AcceptedStartedAt, session.ExitReason));
+
+            MarkExited(sessionId, null, "test kill");
+            return Task.FromResult(new RunnerKillGenerationResult(sessionId, true,
+                KillGenerationOutcomes.Killed, session.AcceptedStartedAt));
+        }
     }
 }
