@@ -30,6 +30,12 @@ public sealed class ReviewEvidenceResettlementTests
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan GitHelperBound = TimeSpan.FromSeconds(120);
     private static CancellationToken TestCancellation => TestContext.Current!.Execution.CancellationToken;
+    // All variants begin with the same blocked review. Keep that receipt in a frozen
+    // template and give each variant its own Git root, database and service provider.
+    private static readonly Lazy<Task<IncidentSeed>> Incident = new(CaptureIncidentAsync);
+
+    private sealed record IncidentSeed(RunnerSettlementWorld World, Guid Subject, string Token,
+        string Database, string Fingerprint);
 
     [Test]
     public async Task C2053_GitHelperDeadlineNamesTestAndHelper(CancellationToken ct)
@@ -117,6 +123,71 @@ public sealed class ReviewEvidenceResettlementTests
 
     private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> IncidentAsync()
     {
+        if (!PostLandWorldSnapshot.Enabled)
+            return await BuildIncidentAsync();
+
+        var seed = await Incident.Value;
+        using var span = TestTrace.ChunkSpan("review incident copy");
+        var token = Guid.NewGuid().ToString("N")[..12];
+        var root = Path.Combine(Path.GetTempPath(), "c657-" + token);
+        RunnerSettlementWorld? world = null;
+        IsolatedTestSchema? schema = null;
+        try
+        {
+            PostLandWorldSnapshot.CopyTree(seed.World.Git.Root, root, seed.Token, token);
+            var desktop = Path.Combine(root, "desktop");
+            var fingerprint = await new TaskProgressGit(seed.World.Git.Leases)
+                .EndpointFingerprintAsync(desktop, TestCancellation)
+                ?? throw new InvalidOperationException("Cloned review incident has no remote endpoint.");
+            schema = await PostLandWorldSnapshot.CloneDatabaseAsync(seed.Database, seed.World.Schema.ConnectionString,
+                seed.Token, token, (seed.Fingerprint, fingerprint));
+            var git = seed.World.Git.AttachPreparedTree(root, text => text?
+                .Replace(seed.Token, token, StringComparison.OrdinalIgnoreCase)
+                .Replace(seed.Fingerprint, fingerprint, StringComparison.Ordinal));
+            world = seed.World.AttachPreparedCopy(git, schema);
+            await world.ReloadAsync();
+            return (world, seed.Subject, await AssertIncidentAsync(world));
+        }
+        catch
+        {
+            if (world is not null)
+                await world.DisposeAsync();
+            else
+            {
+                try { if (schema is not null) await schema.DisposeAsync(); }
+                finally { RunnerSettlementSyncTests.SyncWorld.DeleteTree(root); }
+            }
+            throw;
+        }
+    }
+
+    private static async Task<IncidentSeed> CaptureIncidentAsync()
+    {
+        using var span = TestTrace.ChunkSpan("review incident capture");
+        var (world, subject, _) = await BuildIncidentAsync();
+        try
+        {
+            var leaf = Path.GetFileName(world.Git.Root);
+            if (!leaf.StartsWith("c657-", StringComparison.Ordinal) || leaf.Length != 17
+                || !leaf[5..].All(Uri.IsHexDigit) || !PostLandWorldSnapshot.IsPlainTree(world.Git.Root))
+                throw new InvalidOperationException("Review incident is not a plain fixture tree.");
+            var fingerprint = await new TaskProgressGit(world.Git.Leases)
+                .EndpointFingerprintAsync(world.Git.Desktop, TestCancellation)
+                ?? throw new InvalidOperationException("Review incident has no remote endpoint.");
+            var connection = world.Schema.ConnectionString;
+            await world.Services.DisposeAsync();
+            await PostLandWorldSnapshot.FreezeDatabaseAsync(connection);
+            // The test container owns the frozen database. The fixture directory has
+            // the same process lifetime as the template.
+            PostLandWorldSnapshot.DeleteTreeAtExit(world.Git.Root);
+            return new IncidentSeed(world, subject, leaf[5..],
+                new NpgsqlConnectionStringBuilder(connection).Database!, fingerprint);
+        }
+        catch { await world.DisposeAsync(); throw; }
+    }
+
+    private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> BuildIncidentAsync()
+    {
         // CARD-1082 D-8: the CARD-1043 incident stays reachable with the kill switch off.
         var w = await AwaitGitAsync(RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
             controlledSyncClock: true, mirrorPublish: true, syncDebt: false), nameof(RunnerSettlementWorld.CreateAsync));
@@ -125,12 +196,19 @@ public sealed class ReviewEvidenceResettlementTests
             await AwaitGitAsync(w.Git.EnsureRunnerAsync(), nameof(w.Git.EnsureRunnerAsync));
             var subject = await AwaitGitAsync(w.AddReviewSubjectAsync(w.Git.Baseline), nameof(w.AddReviewSubjectAsync));
             await BlockAsync(w, Report(w, subject, w.Git.Baseline));
-            var old = (await RowsAsync(w)).ShouldHaveSingleItem();
-            old.Outcome.ShouldBe(StageOutcomeKind.Clean);
-            old.ReviewedSourceSha.ShouldBeNull("incident: first Review is UNBOUND");
-            return (w, subject, old);
+            return (w, subject, await AssertIncidentAsync(w));
         }
         catch { await w.DisposeAsync(); throw; }
+    }
+
+    private static async Task<StageOutcome> AssertIncidentAsync(RunnerSettlementWorld world)
+    {
+        world.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
+        world.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        var old = (await RowsAsync(world)).ShouldHaveSingleItem();
+        old.Outcome.ShouldBe(StageOutcomeKind.Clean);
+        old.ReviewedSourceSha.ShouldBeNull("incident: first Review is UNBOUND");
+        return old;
     }
 
     private static async Task BlockAsync(RunnerSettlementWorld w, string report)
