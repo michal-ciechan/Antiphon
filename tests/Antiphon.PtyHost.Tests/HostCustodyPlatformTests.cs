@@ -31,7 +31,7 @@ public sealed class HostCustodyPlatformTests
             CustodyBackend = refusedBackend,
         });
         host.Session.RefusePlatformBackendForTests = forceLinuxBackendRefusal;
-        var (store, binding, marker) = Reserve(host, opposite);
+        var (store, binding, marker) = Reserve(host, refusedBackend);
         Guid? container = null;
         try
         {
@@ -75,7 +75,7 @@ public sealed class HostCustodyPlatformTests
             backend, RunnerStoreId: store.StoreId);
         store.Reserve(binding);
         store.WriteRecord(binding, "runner-start-intent.json", new CustodyStamp(1, DateTime.UtcNow));
-        return (store, binding, Path.Combine(root, "payload-ran"));
+        return (store, binding, Path.Combine(snapshot, "payload-ran"));
     }
 
     private static LaunchMessage Launch(HostHarness host, VerificationCustodyStore store,
