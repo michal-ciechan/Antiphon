@@ -366,35 +366,77 @@ public class ClaudeDialogInputGuardTests
         f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ operator fixture"));
         var request = await f.RequestAsync("queued fixture");
         var result = await f.Runtime.SendConditionalInputAsync(
-            f.Id, request with { ExpectedComposer = "" }, CancellationToken.None);
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None);
 
-        result.Outcome.ShouldNotBe(ConditionalInputOutcomes.Written);
+        result.Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
         f.Child.Inputs.ShouldBeEmpty();
+
+        f.Session.RenderDialogScreenForTest(Clear);
+        await f.Runtime.SendInputAsync(f.Id, " ", CancellationToken.None);
+        request = await f.RequestAsync("queued fixture");
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        f.Session.RenderDialogScreenForTest(Clear);
+        request = await f.RequestAsync("queued fixture");
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        f.Child.Inputs.ShouldBe([" "]);
     }
 
     [Test]
     public async Task GuardedEnterRefusesAnEditBetweenPasteAndSubmit()
     {
         const string body = "queued fixture";
+        var digest = ComposerInput.Digest(body);
         await using var f = new Fixture();
         var request = await f.RequestAsync(body);
         (await f.Runtime.SendConditionalInputAsync(
-            f.Id, request with { ExpectedComposer = "" }, CancellationToken.None))
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
             .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
         f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {body} edited"));
         var enter = await f.RequestAsync("\r");
 
         (await f.Runtime.SendConditionalInputAsync(
-            f.Id, enter with { ExpectedComposer = body }, CancellationToken.None))
-            .Outcome.ShouldNotBe(ConditionalInputOutcomes.Written);
+            f.Id, enter with { ExpectedComposerDigest = digest, RequireOwnedComposer = true }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
         f.Child.Inputs.ShouldBe([body]);
 
         f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {body}"));
         enter = await f.RequestAsync("\r");
         (await f.Runtime.SendConditionalInputAsync(
-            f.Id, enter with { ExpectedComposer = body }, CancellationToken.None))
+            f.Id, enter with { ExpectedComposerDigest = digest, RequireOwnedComposer = true }, CancellationToken.None))
             .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
         f.Child.Inputs.ShouldBe([body, "\r"]);
+    }
+
+    [Test]
+    public async Task CollapsedPasteRequiresTheUninterruptedOwningWrite()
+    {
+        const string body = "fixture alpha\nfixture beta\nfixture gamma";
+        const string token = "[Pasted text #1 +2 lines]";
+        var digest = ComposerInput.Digest(body);
+        await using var f = new Fixture();
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {token}"));
+        var enter = await f.RequestAsync("\r");
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, enter with { ExpectedComposerDigest = digest }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        f.Child.Inputs.ShouldBeEmpty();
+
+        f.Session.RenderDialogScreenForTest(Clear);
+        var paste = Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(body);
+        var request = await f.RequestAsync(paste);
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {token}"));
+        enter = await f.RequestAsync("\r");
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, enter with { ExpectedComposerDigest = digest, RequireOwnedComposer = true }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Child.Inputs.ShouldBe([paste, "\r"]);
     }
 
     private sealed class Fixture : IAsyncDisposable

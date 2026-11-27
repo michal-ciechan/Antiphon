@@ -152,7 +152,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             : session.HasExited ? InputAuthorization.Exited : InputAuthorization.Allowed;
 
     private async Task<InputAuthorization> WriteInputUnderGateAsync(
-        RunnerSession session, string input, CancellationToken ct, Action? beforeBackendWrite = null)
+        RunnerSession session, string input, CancellationToken ct, Action? beforeBackendWrite = null,
+        bool guardedBody = false, bool dialogAction = false)
     {
         var authorization = AuthorizeInputUnderGate(session);
         if (authorization != InputAuthorization.Allowed) return authorization;
@@ -166,7 +167,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             }
             // Capture precedes every backend/composer byte. WriteAsync still owns the
             // original input log, composer custody and completed-write revision.
-            await session.WriteAsync(input, ct, beforeBackendWrite);
+            await session.WriteAsync(input, ct, beforeBackendWrite, guardedBody, dialogAction);
             session.CompleteDeliveryWrite(input);
         }
         catch
@@ -1809,14 +1810,16 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     : session.HasExited ? ConditionalInputOutcomes.Exited
                     : session.TerminalReleaseInProgress ? ReleaseInProgressInputOutcome
                     : session.LastSequence != request.ExpectedLastSequence ? ConditionalInputOutcomes.StaleObservation
-                    : request.RequireClaudeDialogClear ? session.CheckDialogInput(request, _terminalSeatEpoch) : null;
+                    : request.RequireClaudeDialogClear || request.ExpectedComposerDigest is not null || request.RequireOwnedComposer
+                        ? session.CheckDialogInput(request, _terminalSeatEpoch) : null;
                 if (refusal is not null) throw new DialogInputRefusedException(refusal);
             }
             InputAuthorization authorization;
             try
             {
                 session.WithScreenLock(Fence);
-                authorization = await WriteInputUnderGateAsync(session, request.Input, ct, Fence);
+                authorization = await WriteInputUnderGateAsync(session, request.Input, ct, Fence,
+                    guardedBody: request.ExpectedComposerDigest is "", dialogAction: request.DialogIntent != ClaudeDialogInputIntent.None);
             }
             catch (DialogInputRefusedException refusal)
             {
@@ -2897,6 +2900,10 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private long _dialogSequence = -1;
         private ClaudeDialogObservation? _dialogObservation;
         private readonly ClaudeSubmittedInputHistory _submittedInput = new();
+        private long? _lastInputOutputSequence;
+        private OwnedComposer? _ownedComposer;
+        private sealed record OwnedComposer(string Digest, int Newlines);
+        private bool _composerMayHoldWrittenInput;
 
         internal void WithScreenLock(Action action) { lock (_gate) action(); }
 
@@ -2924,7 +2931,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 known && _terminalInputWriters == 0 && !_terminalComposerPending);
             return new(_sessionId, runtimeEpoch, _acceptedStartedAt, _lastSequence, _inputRevision,
                 state, _dialogObservation.Kind.ToString(), _dialogObservation.CanCancel, known, proof,
-                _adopted, _terminalInputUncertain, classified);
+                _adopted, _terminalInputUncertain, classified, ComposerGuardSupported: true);
         }
 
         internal string? CheckDialogInput(RunnerConditionalInputRequest request, Guid runtimeEpoch)
@@ -2934,6 +2941,8 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             var observation = ObserveDialog(runtimeEpoch);
             if (request.DialogIntent != ClaudeDialogInputIntent.None)
             {
+                if (request.ExpectedComposerDigest is not null || request.RequireOwnedComposer)
+                    return ConditionalInputOutcomes.ObservationUnknown;
                 if (!observation.InputHistoryKnown) return ConditionalInputOutcomes.ObservationUnknown;
                 var screen = _screen?.GetScreenText() ?? "";
                 var allowed = request.DialogIntent switch
@@ -2949,10 +2958,56 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             }
             return observation.State switch
             {
-                ProviderDialogState.Clear => null,
+                ProviderDialogState.Clear => CheckComposerInput(request),
                 ProviderDialogState.Blocked => ConditionalInputOutcomes.ModalBlocked,
                 _ => ConditionalInputOutcomes.ObservationUnknown
             };
+        }
+
+        private string? CheckComposerInput(RunnerConditionalInputRequest request)
+        {
+            if (request.ExpectedComposerDigest is not { } expected)
+                return request.RequireOwnedComposer ? ConditionalInputOutcomes.ObservationUnknown : null;
+            if (_lastInputOutputSequence >= _lastSequence || _screen?.GetScreenText() is not { } screen
+                || !ClaudeScreen.TryReadComposer(screen, out var draft, preserveDraftWhitespace: true))
+                return ConditionalInputOutcomes.ObservationUnknown;
+
+            if (expected.Length == 0)
+            {
+                var body = ReadGuardedBody(request.Input);
+                if (!_composerMayHoldWrittenInput && body.Length > 0
+                    && request.Input == PtyInputEncoding.WrapIfMultiline(body)
+                    && !body.Any(c => char.IsControl(c) && c != '\n')
+                    && ClaudeScreen.ComposerContentIsEmpty(draft))
+                    return null;
+                return ConditionalInputOutcomes.ComposerMismatch;
+            }
+            var owned = _ownedComposer;
+            if (request.Input != "\r" || (request.RequireOwnedComposer && owned?.Digest != expected))
+                return ConditionalInputOutcomes.ComposerMismatch;
+            if (ComposerInput.Digest(draft) == expected
+                || (owned is not null && owned.Digest == expected && IsWholeCollapsedPaste(draft, owned.Newlines)))
+                return null;
+            return ConditionalInputOutcomes.ComposerMismatch;
+        }
+
+        private static string ReadGuardedBody(string input) =>
+            input.StartsWith(PtyInputEncoding.PasteStart, StringComparison.Ordinal)
+            && input.EndsWith(PtyInputEncoding.PasteEnd, StringComparison.Ordinal)
+                ? input[PtyInputEncoding.PasteStart.Length..^PtyInputEncoding.PasteEnd.Length]
+                : input;
+
+        private static bool IsWholeCollapsedPaste(string draft, int lineBreaks)
+        {
+            // Only the uninterrupted write into our previously empty composer can own a
+            // fresh, whole paste token. The token alone cannot authorize a recovery Enter.
+            const string prefix = "[Pasted text #";
+            if (lineBreaks == 0 || !draft.StartsWith(prefix, StringComparison.Ordinal))
+                return false;
+            var separator = draft.IndexOf(' ', prefix.Length);
+            return separator > prefix.Length
+                && draft[prefix.Length..separator].All(char.IsAsciiDigit)
+                && draft.AsSpan(separator).SequenceEqual(FormattableString.Invariant($" +{lineBreaks} lines]"));
         }
         private bool _terminalComposerPending;
         private readonly TerminalSeatDeliveryEvidence _deliveryEvidence = new();
@@ -3003,6 +3058,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 _dialogObservation = null;
                 _verifiedAdoptedBinding = null;
                 _adoptedComposer = null;
+                _ownedComposer = null;
+                _lastInputOutputSequence = null;
+                _composerMayHoldWrittenInput = false;
                 _acceptedStartedAt = value is { } v ? SessionGeneration.Normalize(v) : null;
             }
         }
@@ -4653,12 +4711,13 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             return read with { AcceptedStartedAt = _acceptedStartedAt, Stream = current };
         }
 
-        public async Task WriteAsync(string input, CancellationToken ct, Action? beforeBackendWrite = null)
+        public async Task WriteAsync(string input, CancellationToken ct, Action? beforeBackendWrite = null,
+            bool guardedBody = false, bool dialogAction = false)
         {
             lock (_gate) _terminalInputWriters++;
             try
             {
-                await WriteCoreAsync(input, ct, beforeBackendWrite);
+                await WriteCoreAsync(input, ct, beforeBackendWrite, guardedBody, dialogAction);
                 lock (_gate) _terminalComposerPending = input != "\r";
             }
             catch (DialogInputRefusedException) { throw; }
@@ -4668,13 +4727,15 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 {
                     _terminalInputUncertain = true;
                     _submittedInput.Clear();
+                    _ownedComposer = null;
                 }
                 throw;
             }
             finally { lock (_gate) _terminalInputWriters--; }
         }
 
-        private async Task WriteCoreAsync(string input, CancellationToken ct, Action? beforeBackendWrite)
+        private async Task WriteCoreAsync(string input, CancellationToken ct, Action? beforeBackendWrite,
+            bool guardedBody, bool dialogAction)
         {
             if (VerificationBinding is { } binding
                 && _custodyLedger!.Store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null)
@@ -4705,6 +4766,11 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                     // Advance before invoking the backend, including a synchronous exception.
                     // A modal refusal reaches neither the input log nor the backend.
                     _inputRevision++;
+                    _lastInputOutputSequence = _lastSequence;
+                    var guardedDraft = guardedBody ? ReadGuardedBody(input) : null;
+                    _ownedComposer = guardedDraft is null
+                        ? null : new(ComposerInput.Digest(guardedDraft), guardedDraft.Count(c => c == '\n'));
+                    if (!dialogAction) _composerMayHoldWrittenInput = input != "\r";
                     _submittedInput.BeforeWrite(input, _inputRevision, _acceptedStartedAt,
                         _tailer?.NativeBindingIdentity, _tailer?.Snapshot().LastSequence ?? -1,
                         DialogInputHistoryKnown);

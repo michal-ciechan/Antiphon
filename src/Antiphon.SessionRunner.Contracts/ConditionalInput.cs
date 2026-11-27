@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace Antiphon.SessionRunner.Contracts;
 
 /// <summary>
@@ -17,6 +20,7 @@ public static class ConditionalInputOutcomes
     public const string Unknown = "unknown";
     public const string ModalBlocked = "modal-blocked";
     public const string ObservationUnknown = "observation-unknown";
+    public const string ComposerMismatch = "composer-mismatch";
 }
 
 public sealed record RunnerConditionalInputRequest(
@@ -27,7 +31,14 @@ public sealed record RunnerConditionalInputRequest(
     long? ExpectedInputRevision = null,
     Guid? ExpectedRuntimeEpoch = null,
     ClaudeDialogInputIntent DialogIntent = ClaudeDialogInputIntent.None,
-    string? ExpectedComposer = null);
+    string? ExpectedComposerDigest = null,
+    bool RequireOwnedComposer = false);
+
+public static class ComposerInput
+{
+    /// <summary>A digest of the exact LF-encoded composer text, without normalization.</summary>
+    public static string Digest(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+}
 
 // Finite internal maintenance actions; none can carry arbitrary task text into a dialog.
 public enum ClaudeDialogInputIntent { None, StartupTrust, StartupEffortKeep, StartupEffortSwitch, UnsafeDeleteNo, RemoteControlDismiss }

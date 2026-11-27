@@ -77,7 +77,7 @@ public static partial class ClaudeScreen
     /// can read as present and empty while the body is still in the live composer, so a caller that
     /// treats "empty" as proof needs a second snapshot, settled, that reads empty too.</para>
     /// </summary>
-    public static bool TryReadComposer(string screen, out string content)
+    public static bool TryReadComposer(string screen, out string content, bool preserveDraftWhitespace = false)
     {
         content = string.Empty;
         if (string.IsNullOrEmpty(screen))
@@ -140,6 +140,25 @@ public static partial class ClaudeScreen
         var first = rows[top + 1].Trim().Trim('│').Trim();
         if (first.Length == 0 || first[0] is not ('❯' or '>'))
             return false;
+
+        if (preserveDraftWhitespace)
+        {
+            // Remove exactly the prompt gutter. Trimming the draft would make different
+            // input compare equal, including a leading space typed by another writer.
+            var prompt = rows[top + 1].TrimStart();
+            if (prompt[0] is not ('❯' or '>') || (prompt.Length > 1 && prompt[1] is not (' ' or '\u00a0')))
+                return false;
+            var gutter = new string(' ', rows[top + 1].Length - prompt.Length + 2);
+            var draft = new List<string> { prompt.Length > 1 ? prompt[2..] : "" };
+            for (var r = top + 2; r < bottom; r++)
+            {
+                if (rows[r].Length == 0) draft.Add("");
+                else if (rows[r].StartsWith(gutter, StringComparison.Ordinal)) draft.Add(rows[r][gutter.Length..]);
+                else return false;
+            }
+            content = string.Join('\n', draft);
+            return true;
+        }
 
         var lines = new List<string> { first[1..].Trim() };
         for (var r = top + 2; r < bottom; r++)

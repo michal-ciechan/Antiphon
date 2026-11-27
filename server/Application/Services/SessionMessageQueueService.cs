@@ -1741,12 +1741,24 @@ public sealed partial class SessionMessageQueueService
                 outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
                     firstInputDeadlineAt: FirstInputDeadline([message]),
                     pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message),
-                    resumeNote: StandingResumeNote.IsNote(message));
+                    resumeNote: StandingResumeNote.IsNote(message),
+                    channelDelivery: message.Origin == QueuedMessageOrigin.Channel);
             }
             catch (OptionalBriefExpiredException)
             {
                 await CancelJustClaimedExpiredBriefsAsync(db, [message], ct);
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            }
+            if (message.Origin == QueuedMessageOrigin.Channel && outcome.Verdict == DeliveryVerdict.ModalBlocked)
+            {
+                BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, message);
+                db.Entry(message).CurrentValues.SetValues(beforeCall);
+                await db.SaveChangesAsync(CancellationToken.None);
+                return await GetQueueAsync(sessionId, ct) with
+                {
+                    ModalBlocked = true,
+                    ModalBlockedReason = outcome.RecordText,
+                };
             }
             if (outcome.SpillWriteFailedBeforeInput)
             {
@@ -2936,6 +2948,7 @@ public sealed partial class SessionMessageQueueService
             ? TaskCompletionNotification.TryReadDelivery(completionRows[0].CompletionDeliveryJson)!.WireText
             : null;
         var logicalBodies = run.ToDictionary(m => m.Id, m => m.Body);
+        var channelDelivery = head.Origin == QueuedMessageOrigin.Channel;
         var body = committedWire ?? await SpillQueueBodyAsync(
             sessionId, composed, head.Id.ToString("D"), channelEnvelope, db, ct, ceilings,
             head.SpecialistInputPolicyJson,
@@ -2986,6 +2999,9 @@ public sealed partial class SessionMessageQueueService
         var now = UtcNow();
         var baseline = await CaptureTranscriptBaselineAsync(db, sessionId, ct);
         if (await CancelExpiredBriefsAsync(db, run, ct)) return FlushResult.Nothing;
+        var beforeChannelAttempt = channelDelivery
+            ? run.ToDictionary(m => m.Id, m => db.Entry(m).CurrentValues.Clone())
+            : null;
         foreach (var m in run)
         {
             if (m.RulesRefreshKey is not null && m.RulesDeadlineAt is null)
@@ -3032,7 +3048,7 @@ public sealed partial class SessionMessageQueueService
             capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
                 pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration),
-                resumeNote: StandingResumeNote.IsNote(head));
+                resumeNote: StandingResumeNote.IsNote(head), channelDelivery: channelDelivery);
         }
         catch (OptionalBriefExpiredException)
         {
@@ -3070,6 +3086,18 @@ public sealed partial class SessionMessageQueueService
             await RevertRunAsync(db, run);
             await RecordTransportFailureAsync(sessionId, ex, ct);
             return FlushResult.Failed;
+        }
+
+        if (beforeChannelAttempt is not null && outcome.Verdict == DeliveryVerdict.ModalBlocked)
+        {
+            // A definitive pre-body refusal leaves the previous attempt and its floor intact.
+            foreach (var message in run)
+            {
+                BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, message);
+                db.Entry(message).CurrentValues.SetValues(beforeChannelAttempt[message.Id]);
+            }
+            await db.SaveChangesAsync(CancellationToken.None);
+            return TemporaryBlock();
         }
 
         if (outcome.SpillWriteFailedBeforeInput)
@@ -3790,7 +3818,12 @@ public sealed partial class SessionMessageQueueService
         }
         try
         {
-            await _runtime.SendInputAsync(sessionId, "\r", ct);
+            await _runtime.SendInputAsync(sessionId, "\r", ct,
+                expectedComposer: kind == AgentKind.ClaudeCode ? PtyInputEncoding.NormalizeBody(body) : null);
+        }
+        catch (ProviderDialogInputRefusedException)
+        {
+            return FlushResult.Nothing;
         }
         catch (Exception ex) when (IsHerdrUnreachable(ex))
         {
@@ -3808,7 +3841,7 @@ public sealed partial class SessionMessageQueueService
             outcome = await WaitForTranscriptConfirmAsync(
                 sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
                 ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run), pointerAttempt: pointerAttempt,
-                resumeNote: StandingResumeNote.IsNote(head));
+                resumeNote: StandingResumeNote.IsNote(head), guardRecoveryEnter: kind == AgentKind.ClaudeCode);
             outcome = outcome with { PointerConsumed = pointerAttempt is not null };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -4242,7 +4275,8 @@ public sealed partial class SessionMessageQueueService
         PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null,
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
-        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false)
+        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
+        bool channelDelivery = false)
     {
         if (pointerAttempt is not null) overlayRecovery = false;
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
@@ -4264,6 +4298,8 @@ public sealed partial class SessionMessageQueueService
         // Belt-and-braces for rows already in the queue when the EnqueueAsync pre-check lands, and
         // for any future caller that reaches DeliverAsync without going through EnqueueAsync.
         var kind = await TryGetSessionKindAsync(sessionId, ct);
+        var guardComposer = channelDelivery && kind == AgentKind.ClaudeCode;
+        if (guardComposer) overlayRecovery = false;
         if (kind is { } refusedKind && TryGetForbiddenReason(refusedKind, trimmed, out var forbiddenReason))
         {
             _logger.LogError(
@@ -4439,7 +4475,7 @@ public sealed partial class SessionMessageQueueService
         if (pointerAttempt is not null) PointerMilestone(sessionId, pointerAttempt, "write-start", trimmed.Length);
         try
         {
-            await _runtime.SendInputAsync(sessionId, payload, ct);
+            await _runtime.SendInputAsync(sessionId, payload, ct, expectedComposer: guardComposer ? "" : null);
         }
         catch (ProviderDialogInputRefusedException ex)
         {
@@ -4520,13 +4556,15 @@ public sealed partial class SessionMessageQueueService
             await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
             // CARD-0693: the body already left, so an unreachable runner here is not a refund (see
             // the body write above): it propagates and the attempt keeps its floor.
-            await _runtime.SendInputAsync(sessionId, "\r", ct);
+            await _runtime.SendInputAsync(sessionId, "\r", ct,
+                expectedComposer: guardComposer ? trimmed : null, requireOwnedComposer: guardComposer);
 
             if (confirmTranscript)
             {
                 return await WaitForTranscriptConfirmAsync(
                     sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
-                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt, resumeNote: resumeNote);
+                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt, resumeNote: resumeNote,
+                    channelDelivery: channelDelivery);
             }
 
             // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
@@ -4544,6 +4582,7 @@ public sealed partial class SessionMessageQueueService
         }
         catch (ProviderDialogInputRefusedException)
         {
+            if (guardComposer) throw new InputDeliveryUncertainException(sessionId);
             // The body has custody even when Enter/retry wrote zero bytes. Never refund,
             // Esc or retype it; the existing receipt/composer reconciliation owns the hold.
             return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
@@ -4582,7 +4621,8 @@ public sealed partial class SessionMessageQueueService
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit,
         string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null,
-        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null, bool resumeNote = false)
+        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
+        bool channelDelivery = false, bool guardRecoveryEnter = false)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
         var fullInline = resumeNote || await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
@@ -4766,7 +4806,7 @@ public sealed partial class SessionMessageQueueService
             // cannot help transcript confirmation (and would break the measured empty-composer
             // contract only if something else stood in the composer). Observable path keeps today's
             // schedule unconditionally (stale-body recovery needs the re-press even after a redraw).
-            var mayReEnter = entersSent < _verification.SubmitAttempts
+            var mayReEnter = !channelDelivery && !guardRecoveryEnter && entersSent < _verification.SubmitAttempts
                 && UtcNow() - lastEnter >= reEnterAfter
                 && (observable || !sawPositiveSubmit);
             if (mayReEnter)

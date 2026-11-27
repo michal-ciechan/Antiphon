@@ -2376,7 +2376,8 @@ public sealed partial class AgentSessionRuntime
     }
 
     public async Task SendInputAsync(
-        Guid sessionId, string input, CancellationToken ct, bool trackManualTurn = true)
+        Guid sessionId, string input, CancellationToken ct, bool trackManualTurn = true,
+        string? expectedComposer = null, bool requireOwnedComposer = false)
     {
         if (string.IsNullOrEmpty(input)) return;
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -2389,8 +2390,16 @@ public sealed partial class AgentSessionRuntime
             return;
         }
         var observation = await ObserveDialogAsync(sessionId, ct);
+        if ((expectedComposer is not null || requireOwnedComposer) && observation?.ComposerGuardSupported != true)
+            throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.ObservationUnknown);
         var request = ProviderDialogObservationService.Request(observation, sessionId,
-            SessionGeneration.Normalize(session.StartedAt), input);
+            SessionGeneration.Normalize(session.StartedAt), input)
+            with
+            {
+                ExpectedComposerDigest = expectedComposer is { Length: > 0 }
+                    ? ComposerInput.Digest(expectedComposer) : expectedComposer,
+                RequireOwnedComposer = requireOwnedComposer,
+            };
         ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId, request, ct));
         var submitted = RecordTerminalInput(sessionId, input);
         if (submitted && trackManualTurn) TryStartManualTurnTracking(sessionId, observation!.OutputSequence);
@@ -2470,8 +2479,16 @@ public sealed partial class AgentSessionRuntime
                 return new(sessionId, ConditionalInputOutcomes.StaleObservation);
             try
             {
-                request = ProviderDialogObservationService.Request(observation, sessionId,
+                if ((request.ExpectedComposerDigest is not null || request.RequireOwnedComposer)
+                    && !observation.ComposerGuardSupported)
+                    return new(sessionId, ConditionalInputOutcomes.ObservationUnknown);
+                var fresh = ProviderDialogObservationService.Request(observation, sessionId,
                     request.ExpectedAcceptedStartedAt, request.Input, request.DialogIntent);
+                request = fresh with
+                {
+                    ExpectedComposerDigest = request.ExpectedComposerDigest,
+                    RequireOwnedComposer = request.RequireOwnedComposer,
+                };
             }
             catch (ProviderDialogInputRefusedException ex) { return new(sessionId, ex.Reason); }
         }

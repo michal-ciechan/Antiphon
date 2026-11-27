@@ -420,7 +420,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         var state = known ? classified : ProviderDialogState.Unknown;
         return Task.FromResult<ProviderDialogObservation?>(new(sessionId, _dialogEpoch, AcceptedStartedAt,
             SnapshotSequence, _dialogInputRevision, state, observed.Kind.ToString(), observed.CanCancel,
-            known, null, DialogAdopted, DialogInputUncertain, classified));
+            known, null, DialogAdopted, DialogInputUncertain, classified, ComposerGuardSupported: true));
     }
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];
@@ -471,6 +471,10 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
             };
             if (!allowed) return new(Guid.Empty, state == ClaudeDialogState.Unknown
                 ? ConditionalInputOutcomes.ObservationUnknown : ConditionalInputOutcomes.ModalBlocked);
+            if (request.ExpectedComposerDigest is { } expected
+                && (!ClaudeScreen.TryReadComposer(screen, out var draft, preserveDraftWhitespace: true)
+                    || (expected.Length == 0 ? draft.Length != 0 : ComposerInput.Digest(draft) != expected)))
+                return new(Guid.Empty, ConditionalInputOutcomes.ComposerMismatch);
         }
 
         ConditionalInputs.Add(request.Input);
