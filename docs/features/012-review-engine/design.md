@@ -172,7 +172,7 @@ dismissal, prompt layers), the D-n row wins.
 | D-26 | Scoring settings live in the database: leaderboard and impact weights, trust weights and thresholds. They are instance defaults plus team overrides, edited in a settings UI with revision history, like the dispatch-concurrency settings (CARD-0505). Files hold only config that travels with a repo: checks, prompts, workflow and policy. |
 | D-27 | `workflow.yaml` has named `sections` (for example Intake, Review, Decide, Branch maintenance). The UI shows them as collapsible groups that expand on click. A collapsed fan-out shows as "reviewers ×4" and also expands (3.3, section 17). |
 | D-28 | ABF is a **draft**: breaking changes are allowed until v1 is declared settled. The legacy scan does not look inside ABF documents. The two report-block parsers (`PipelineHandoff.cs`, `ReviewEvidence.cs`) are replaced by the ABF parser in P0, before the P1 shadow run, so the two readings never diverge in use. |
-| D-29 | The enterprise Jev default is `{proxy}/v1/systemone` on the latest LiteLLM, with a request shape identical to TypeSafe's. The response field names and description fields are settled by the first live call from work (OQ-2, OQ-3). |
+| D-29 | The enterprise Jev default is `{proxy}/v1/systemone` on LiteLLM. It uses TypeSafe's System One request shape. The live response in GH-58 records the answer fields (OQ-2, OQ-3). |
 | D-30 | Enterprise takes **every** GitHub webhook event. The engine acts on a listed set; the rest are stored or ignored. An install without a public webhook (home) polls at a configurable interval (default 2 minutes), and a manual **Refresh** is available in the UI and the API (8.5). |
 | D-31 | Enterprise runs on Kubernetes: the Antiphon server container with a Postgres sidecar, and agent runner containers as sidecars, possibly one instance per team (to be confirmed). Home runs on the desktop and server2, moving fully to Docker on server2 (CARD-1744) (16.2). |
 | D-32 | Promotion thresholds: the same adjustment in 2 repos of a team goes by PR to the team layer; in 2 teams, to the company layer. Promotion PRs target those layers from day 1. A language or framework facet layer comes later (section 13). |
@@ -873,13 +873,21 @@ option. Those probabilities are **not calibrated**; see 7.5.
 
 ### 7.3 Jev dialects
 
-The request body is the same for every dialect: `{ model, state, questions }`. Question types are:
-- `noul`: `instructions`
-- `choice`: `instructions`, `choices: [{value}]`
-- `score`: `instructions`, `levels: [{label}]`
+Each Jev dialect sends `{ model, state, questions }`. Each key in `questions` names a question with
+one of these `type` values.
 
-Whether choices and levels take optional description fields is settled by the first live call from
-work (OQ-3).
+- `noul`: `instructions`
+- `choice`: `instructions` and a `criteria` object mapping option values to descriptions. Use JSON
+  `null` for an option whose name is enough.
+- `score`: `instructions` and a `criteria` array of level labels, lowest first.
+
+The response keys `answers` by question name. Choice answers carry `choice`, `confidence` and
+`probabilities`. A `noul` answer carries the probability of yes in `noul`. A numeric `score` selects
+the zero-based level in the request. For a fractional score, the adapter uses the nearest level and
+rounds ties up. It translates score probability keys that name level indices to level labels. The
+resolved `model` and `usage.input_tokens` and `usage.output_tokens` feed the call record. See
+[GH-58](https://github.com/michal-ciechan/Antiphon/issues/58) and the
+[System One OpenAPI](https://docs.typesafe.ai/api/system-one.md).
 
 | Dialect | Endpoint | `model` | Errors | Cost |
 |---|---|---|---|---|
@@ -890,8 +898,8 @@ work (OQ-3).
 
 - **Cost basis.** Every dialect's cost is an **actual** cost, as the table gives it, and is recorded
   as such in `llm_call` (D-20).
-- **First live call.** The P1 smoke call from work, against the enterprise default, settles the
-  response field names (OQ-2) and description fields (OQ-3), and captures a sanitised fixture.
+- **Proxy errors.** The client bounds the proxy's error message and redacts credentials before
+  surfacing it. A 400 is `Rejected`, so it stops the chain (7.4).
 - **Auth.** Every dialect sends `Authorization: Bearer <key>`. Enterprise uses the existing proxy
   virtual key, which is the same key used for its OpenAI-compatible endpoints, with no separate Jev
   key. Keys go through Antiphon credential custody (`docs/agent-credentials.md`).
@@ -1715,8 +1723,8 @@ be A/B'd in shadow on live PRs.
 | # | Question | Answer or recommendation |
 |---|---|---|
 | OQ-1 | Which LiteLLM version the enterprise proxy runs, and whether it configures `/v1/systemone` (alias `jev-latest`, as the example shows) or the `/typesafe` pass-through. | **Resolved 2026-11-21 (D-29).** `{proxy}/v1/systemone` on the latest LiteLLM, with a request shape identical to TypeSafe's. The adapter keeps the pass-through dialect. |
-| OQ-2 | Exact answer field names. They were checked against LiteLLM's code, not TypeSafe's OpenAPI. | **Settled by the first live call from work** (D-29), in P1. It captures a sanitised fixture. |
-| OQ-3 | Whether choices and levels accept a description field (it improves question quality). | **Settled by the first live call from work** (D-29). Until then descriptions are folded into `instructions` (ABF spec 7.2). |
+| OQ-2 | Exact answer field names. | The sanitised GH-58 fixture covers `choice`, `noul` and numeric `score`. See 7.3. |
+| OQ-3 | How to send descriptions for choices and levels. | System One uses `criteria`. The adapter sends choice descriptions in the map and score labels in rubric order. See 7.3. |
 | OQ-4 | Webhook reachability at home and in the enterprise. | **Resolved 2026-11-21 (D-30).** Enterprise takes every webhook event. Home polls at a configurable interval, with a manual Refresh (8.5). |
 | OQ-5 | Whether enterprise runs its own Antiphon instance (data residency) or a tenant of a shared one. | **Partly resolved 2026-11-21 (D-31).** Enterprise runs its own instance on Kubernetes (16.2). Still open: one instance per team, or one for several teams. |
 | OQ-6 | Promotion thresholds N and M. | **Resolved 2026-11-21 (D-32).** 2 repos → team layer; 2 teams → company layer (language and framework facets later). The context-note part moved to OQ-15. |
