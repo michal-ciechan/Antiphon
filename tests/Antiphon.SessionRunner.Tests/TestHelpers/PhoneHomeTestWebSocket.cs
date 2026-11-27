@@ -31,6 +31,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     public int Overlaps { get; private set; }
     public int PeakConcurrentSends { get; private set; }
     public Func<CancellationToken, Task>? BeforeClose { get; init; }
+    public Action? BeforeAbort { get; init; }
     public Action? OnDispose { get; init; }
 
     public IReadOnlyList<PhoneHomeFrame> Sent
@@ -100,6 +101,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
 
     public override void Abort()
     {
+        BeforeAbort?.Invoke();
         lock (_sync) _state = WebSocketState.Aborted;
         _incoming.Writer.TryComplete(new WebSocketException(WebSocketError.ConnectionClosedPrematurely));
     }
