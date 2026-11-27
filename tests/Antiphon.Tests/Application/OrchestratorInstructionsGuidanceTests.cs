@@ -84,6 +84,15 @@ public sealed class OrchestratorInstructionsGuidanceTests
     }
 
     [Test]
+    public void The_bundle_tells_orchestrators_to_act_and_record_the_decision()
+    {
+        var bundle = Collapse(Read("server", "Bundles", "orchestrator.md"));
+        bundle.ShouldContain("Do not stop to ask the operator questions.");
+        bundle.ShouldContain("Record the decision");
+        bundle.ShouldContain("docs/orchestration-loop.md#standing-operating-rules");
+    }
+
+    [Test]
     public void The_policy_copies_keep_every_pinned_phrase_and_each_names_the_file()
     {
         foreach (var relative in new[]
