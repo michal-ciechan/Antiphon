@@ -18,6 +18,7 @@ public sealed class ScriptedCodeHost : ICodeHost
     internal Func<CancellationToken, Task>? AfterReviewPosted { get; set; }
     internal Func<CodeHostTarget, string, CancellationToken, Task<CodeHostThreadReply>>? ConversationReply { get; set; }
     internal IReadOnlySet<int>? IncludedPollPullRequests { get; set; }
+    internal Func<CodeHostTarget, long>? RepositoryIdForTarget { get; set; }
 
     public bool Serves(ReviewHost kind) => kind == ReviewHost.GitHub;
 
@@ -51,13 +52,16 @@ public sealed class ScriptedCodeHost : ICodeHost
         var pr = Of(target);
         lock (pr)
         {
+            var repositoryId = RepositoryIdForTarget?.Invoke(target) ?? pr.RepositoryId;
+            if (target.GitHubRepositoryId is { } expected && expected != repositoryId)
+                throw new CodeHostException(CodeHostFailureKind.Rejected, "GitHub returned a different repository for the stored pull request.");
             return Task.FromResult(new CodeHostPullRequest(pr.Number, pr.Title, "Keeps the lease until the save completes.", pr.Author, null,
                 "main", pr.BaseSha, $"fix/pr-{pr.Number}", pr.HeadSha, $"https://github.example/acme/widgets/pull/{pr.Number}", pr.State, false,
-                pr.RepositoryId, target.Repo));
+                repositoryId, target.Repo));
         }
     }
 
-    public Task<long> GetRepositoryIdAsync(CodeHostTarget target, CancellationToken ct) => Task.FromResult(1234L);
+    public Task<long> GetRepositoryIdAsync(CodeHostTarget target, CancellationToken ct) => Task.FromResult(RepositoryIdForTarget?.Invoke(target) ?? 1234L);
 
     public Task<IReadOnlyList<CodeHostChangedFile>> ListChangedFilesAsync(CodeHostTarget target, CodeHostRange range, CancellationToken ct)
     {

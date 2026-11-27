@@ -660,6 +660,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Polling_refuses_a_run_reply_when_close_wins_before_GitHub_send(CancellationToken ct)
     {
+        await factory.ResetAsync();
         const int number = 209670;
         using var client = OpenPullRequest(number);
         var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
@@ -732,6 +733,66 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         node.Status.ShouldBe(ReviewNodeStatus.Skipped);
         ReviewWalk.Output<PublishOutput>(node).ShouldNotBeNull().ReviewId.ShouldBe("r1");
         (await db.ReviewRuns.AsNoTracking().SingleAsync(r => r.Id == runId, ct)).Status.ShouldBe(ReviewRunStatus.Closed);
+    }
+
+    [Test]
+    public async Task Polling_follows_a_push_on_the_renamed_repository_after_slug_reuse(CancellationToken ct)
+    {
+        await factory.ResetAsync();
+        const int number = 209672;
+        const string renamed = "transferred/widgets";
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        await SetRunStatusAsync(runId, ReviewRunStatus.Failed, ct);
+        factory.Host.RepositoryIdForTarget = target => target.Repo == Repo ? 9876543210 : 1234;
+        var pushed = new string('c', 40);
+        factory.Host.Pr(number).Push(pushed, [], "");
+        try
+        {
+            var pass = await PollRepoAsync(renamed, ct, number);
+            pass.Error.ShouldBeNull();
+            (pass.RunsStarted, pass.RunsRefreshed).ShouldBe((0, 1));
+            var run = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{runId}", ct);
+            run.GetProperty("subject").GetProperty("repo").GetString().ShouldBe(renamed);
+            var iteration = run.GetProperty("iterations").EnumerateArray().Last();
+            iteration.GetProperty("trigger").GetString().ShouldBe("push");
+            iteration.GetProperty("headSha").GetString().ShouldBe(pushed);
+            await AssertStoredRunsAsync(number, 1, ct);
+        }
+        finally
+        {
+            factory.Host.RepositoryIdForTarget = null;
+        }
+    }
+
+    [Test]
+    public async Task Polling_surfaces_unresolved_legacy_runs_and_respects_their_deliberate_closure(CancellationToken ct)
+    {
+        await factory.ResetAsync();
+        const int openNumber = 209673;
+        const int closedNumber = 209674;
+        using var client = OpenPullRequest(openNumber);
+        factory.Host.Open(closedNumber, "Legacy closed PR", "maintainer", new string('a', 40), new string('b', 40), [], "");
+        var legacyOpen = Id(await IntakeAsync(client, Repo, openNumber, HttpStatusCode.Created, ct));
+        var legacyClosed = Id(await IntakeAsync(client, Repo, closedNumber, HttpStatusCode.Created, ct));
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await db.ReviewRuns.Where(r => r.Id == legacyOpen || r.Id == legacyClosed).ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.GitHubRepositoryId, (long?)null).SetProperty(r => r.GitHubRepo, Repo), ct);
+        await CloseCurrentAsync(client, legacyClosed, ct);
+
+        var pass = await PollRepoAsync(Repo, ct, openNumber, closedNumber);
+        pass.Error.ShouldNotBeNull().ShouldContain(legacyOpen.ToString("D"));
+        pass.Error.ShouldContain(legacyClosed.ToString("D"));
+        (pass.RunsStarted, pass.RunsRefreshed).ShouldBe((0, 0));
+        await AssertStoredRunsAsync(openNumber, 1, ct);
+        var storedClosed = await db.ReviewRuns.AsNoTracking().SingleAsync(r => r.GitHubPrNumber == closedNumber, ct);
+        storedClosed.Id.ShouldBe(legacyClosed);
+        storedClosed.Status.ShouldBe(ReviewRunStatus.Closed);
+
+        var explicitRestart = await IntakeAsync(client, Repo, closedNumber, HttpStatusCode.Created, ct);
+        Id(explicitRestart).ShouldNotBe(legacyClosed);
     }
 
     private async Task SetRunStatusAsync(Guid id, ReviewRunStatus status, CancellationToken ct)
