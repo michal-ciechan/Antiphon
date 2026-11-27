@@ -807,6 +807,7 @@ public class SessionRuntimeActionRecoveryTests
         });
         const string promptB = "[Telegram Work] Question for the other chat";
         const string promptA = "[Telegram Family] Question for the note chat";
+        const string latePrompt = "[Telegram Work] Late-confirmed question for the other chat";
         const string notePrompt = "[check] publish this machine note";
         const string laterPrompt = "[Telegram Work] Question that arrives while the note waits";
         var actions = h.Provider.GetRequiredService<SessionRuntimeActionCoordinator>();
@@ -840,7 +841,7 @@ public class SessionRuntimeActionRecoveryTests
             lastDeliveryStartedAt: h.Now,
             legacyNullGeneration: true);
         // Sequence 0 keeps this other-chat source from becoming the newest key before the note resolves.
-        var late = await h.SeedPendingMessageAsync(notePrompt, deliveryAttempts: 1, baselineSequence: floor,
+        var late = await h.SeedPendingMessageAsync(latePrompt, deliveryAttempts: 1, baselineSequence: floor,
             origin: QueuedMessageOrigin.Channel, conversationKey: "telegram:" + chatB);
         await using (var db = h.CreateObserverContext())
         {
@@ -849,13 +850,17 @@ public class SessionRuntimeActionRecoveryTests
             await db.SaveChangesAsync();
         }
 
+        // A real receipt precedes the note without a completed turn of its own.
         await h.Runtime.PersistTranscriptAsync(h.SessionId,
-            [Entry(h, 7, "UserPrompt", notePrompt), Entry(h, 8, "AssistantText", "machine note"), Entry(h, 9, "TurnEnd", null)]);
+            [Entry(h, 7, "UserPrompt", latePrompt), Entry(h, 8, "UserPrompt", notePrompt),
+                Entry(h, 9, "AssistantText", "machine note"), Entry(h, 10, "TurnEnd", null)]);
         await actions.DrainPageAsync(h.SessionId, default);
 
         producer.Sent.ShouldBeEmpty("the note waits; the late source does not publish past the other chat");
         await using (var db = h.CreateObserverContext())
         {
+            (await db.SessionQueuedMessages.Where(m => m.Id == late)
+                .Select(m => m.DeliveryVerdict).SingleAsync()).ShouldBe(DeliveryVerdict.LateConfirmed);
             var debts = await db.SessionRuntimeActions.AsNoTracking()
                 .Where(a => a.AgentSessionId == h.SessionId
                     && a.TriggerKind == SessionRuntimeActionCoordinator.ChannelReplyDebt)
@@ -905,7 +910,7 @@ public class SessionRuntimeActionRecoveryTests
 
         await h.SeedChannelCorrelationAsync(laterPrompt, "telegram:" + chatB);
         await h.Runtime.PersistTranscriptAsync(h.SessionId,
-            [Entry(h, 10, "UserPrompt", laterPrompt), Entry(h, 11, "AssistantText", "later answer"), Entry(h, 12, "TurnEnd", null)]);
+            [Entry(h, 11, "UserPrompt", laterPrompt), Entry(h, 12, "AssistantText", "later answer"), Entry(h, 13, "TurnEnd", null)]);
         await actions.DrainPageAsync(h.SessionId, default);
         producer.Sent.Select(r => r.Text).ShouldBe(["owed answer A"],
             "the later reply waits behind the other chat, and the note does not retarget");
