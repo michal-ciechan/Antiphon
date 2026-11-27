@@ -256,6 +256,74 @@ public partial class AgentTaskReplyIntegrationTests
         await service.ReconcileAsync(id, CancellationToken.None);
     }
 
+    [Test]
+    [Arguments("none", false)]
+    [Arguments("none", true)]
+    [Arguments("settlement-saved", false)]
+    [Arguments("settlement-saved", true)]
+    [Arguments("before-enqueue", false)]
+    [Arguments("before-enqueue", true)]
+    public async Task Structured_blocked_note_reaches_the_caller_once_with_parking_disabled(string cut, bool busy)
+    {
+        var seeded = await SeedC527Async(t => t.StandingAuthority = "Run read-only checks.");
+        using var repo = seeded.Repo;
+        if (busy)
+            await SeedEntryAsync(seeded.Parent, TranscriptKinds.AssistantText, "Still working.", DateTime.UtcNow);
+        var boundary = new C527FailureBoundary(cut);
+        var factory = C527Factory(repo.WorktreeRoot, boundary: boundary);
+        var terminal = AttachTerminal(factory, seeded.Parent);
+        var report = $"""
+            reason: Publishing is outside my authority.
+            asks: Decide how to dispose of the release.
+            recommended: Hold the release and retain the candidate.
+            authority: The grant covers inspection only.
+            next: decide
+            [antiphon-finding:{seeded.Task.Id.ToString("N")[..8]} found] verification incomplete
+            """;
+        await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id),
+            report + $"\n[antiphon-report:{seeded.Task.Id.ToString("N")[..8]} blocked]", closingVerdict: false);
+        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+
+        await using var verify = CreateContext();
+        var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seeded.Task.Id);
+        task.Status.ShouldBe(AgentTaskStatus.Blocked);
+        task.Result.ShouldBe(report);
+        var notes = await verify.AgentTaskLandNotifications.AsNoTracking().Where(n => n.TaskId == task.Id).ToListAsync();
+        var note = notes.ShouldHaveSingleItem("the Blocked settlement must commit its caller obligation");
+        note.Kind.ShouldBe(LandNotificationKind.TaskCompletion);
+        var source = await verify.AgentTaskEvents.SingleAsync(e => e.Id == note.SourceEventId);
+        source.Type.ShouldBe(AgentTaskEventType.Blocked);
+        note.ConfirmedAt.ShouldBeNull();
+        boundary.Hits.ShouldBe(cut == "none" ? 0 : 1);
+        if (cut != "none")
+            (await verify.SessionQueuedMessages.AnyAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBeFalse();
+
+        await C527ReconcileAsync(factory, note.Id);
+        await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
+        if (busy)
+        {
+            terminal.SubmittedBodies.ShouldBeEmpty();
+            await SeedEntryAsync(seeded.Parent, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+            await Queue(factory).OnTurnEndAsync(seeded.Parent, CancellationToken.None);
+        }
+        await C527ReconcileAsync(factory, note.Id);
+        await C527ReconcileAsync(factory, note.Id);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, task, report);
+        receipt.Note.SourceLandNotificationId.ShouldBe(note.Id);
+        receipt.Prompt.Text.ShouldBe(note.Body);
+        receipt.Note.NoteHeader.ShouldNotBeNull();
+        receipt.Note.NoteHeader.ShouldContain("reason: Publishing is outside my authority.");
+        receipt.Note.NoteHeader.ShouldContain("asks: Decide how to dispose of the release.");
+        receipt.Note.NoteHeader.ShouldContain("recommended: Hold the release and retain the candidate.");
+        receipt.Note.NoteHeader.ShouldContain("authority: \"Run read-only checks.\" (given at dispatch)");
+        receipt.Note.NoteHeader.ShouldContain("reported authority: The grant covers inspection only.");
+        receipt.Note.NoteHeader.ShouldContain("reported next: decide");
+        receipt.Note.NoteHeader.ShouldNotContain("[antiphon-finding:");
+        var confirmed = await verify.AgentTaskLandNotifications.AsNoTracking().SingleAsync(n => n.Id == note.Id);
+        confirmed.ConfirmingPromptSequence.ShouldBe(receipt.Prompt.Sequence);
+        terminal.SubmittedBodies.Count.ShouldBe(1);
+    }
+
     private sealed class C527FailureBoundary(string target) : LandDeliveryBoundary
     {
         public int Hits { get; private set; }

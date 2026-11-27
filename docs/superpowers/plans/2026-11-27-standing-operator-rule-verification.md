@@ -21,6 +21,7 @@ Full task base: 561591c562f31dd4fe0fc8f940f2ea7e947ce965. The Code brief specifi
 | CP-7 | S3 | CP-2 | land-graph-pointer | `/*/*/LandGraphLandRefreshTests/instructions_say_the_land_path_refreshes_and_bare_update_stays_forbidden` | R-1 | The named method passes | 1 | 1 | true |
 | CP-8 | S3 | CP-2 | migration-prompt-pins | `/*/*/AdditiveMigrationRuleWitnessTests/(stage_code_runs_the_downgrade_selector*)\|(stage_review_runs_the_downgrade_selector*)\|(stage_test_design_requires_existing_tests_affected*)\|(orchestrator_skill_requires_the_migration_blast_radius*)` | R-1 | All four methods pass | 4 | 1 | true |
 | CP-9 | S3 | CP-2 | report-prompt-contract | `/*/*/DelegationReportFormatterTests/(a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt*)\|(a_blocked_note_without_authority_names_reply_not_continue*)\|(the_stage_handoff_contract_is_at_most_700_characters*)\|(the_handoff_block_paragraph_appears_for_every_stage_role*)` | R-1 | All four methods represented and pass | 8 | 1 | true |
+| CP-10 | S4 | `tests/Antiphon.Tests -> bin-2ae5-note-red/` | blocked-note-witness | `/*/*/AgentTaskReplyIntegrationTests/Structured_blocked_note_reaches_the_caller_once_with_parking_disabled` | V-3 | Missing durable Blocked obligation | 6 | 3 | true |
 
 ### Final rerun
 
