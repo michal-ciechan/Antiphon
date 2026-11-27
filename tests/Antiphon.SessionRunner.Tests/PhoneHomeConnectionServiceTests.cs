@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests.TestHelpers;
 using Microsoft.Extensions.Configuration;
@@ -571,6 +572,25 @@ public class PhoneHomeConnectionServiceTests
     }
 
     [Test]
+    [Arguments("3600")]
+    [Arguments("http-date")]
+    public async Task Oversized_retry_after_arms_a_timer_of_at_most_thirty_seconds(string hint)
+    {
+        var clock = new ReconnectClock();
+        var gate = new PhoneHomeAdoptionGate();
+        gate.SignalReady();
+        var header = hint == "http-date" ? clock.GetUtcNow().AddHours(1).ToString("R") : hint;
+        using var service = Service(new RecordingRuntime(), RunnableSettings(),
+            new StatusHandler(HttpStatusCode.ServiceUnavailable, rawRetryAfter: header), clock, gate);
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            (await clock.NextDelayAsync()).TotalMilliseconds.ShouldBeInRange(29_500, 30_000);
+        }
+        finally { await service.StopAsync(CancellationToken.None); }
+    }
+
+    [Test]
     public async Task Websocket_connect_that_hangs_ends_within_the_connect_timeout()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -831,7 +851,31 @@ public class PhoneHomeConnectionServiceTests
         }
     }
 
-    private sealed class StatusHandler(HttpStatusCode status, TimeSpan? retryAfter = null) : HttpMessageHandler
+    private sealed class ReconnectClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 11, 27, 0, 0, 0, TimeSpan.Zero));
+        private readonly Channel<TimeSpan> _delays = Channel.CreateUnbounded<TimeSpan>();
+
+        public override DateTimeOffset GetUtcNow() => _time.GetUtcNow();
+        public override long GetTimestamp() => _time.GetTimestamp();
+        public override long TimestampFrequency => _time.TimestampFrequency;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _time.CreateTimer(callback, state, dueTime, period);
+            _delays.Writer.TryWrite(dueTime);
+            return timer;
+        }
+
+        public async Task<TimeSpan> NextDelayAsync()
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            return await _delays.Reader.ReadAsync(deadline.Token);
+        }
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status, TimeSpan? retryAfter = null, string? rawRetryAfter = null)
+        : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
@@ -839,6 +883,8 @@ public class PhoneHomeConnectionServiceTests
             var response = new HttpResponseMessage(status);
             if (retryAfter is { } delay)
                 response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(delay);
+            if (rawRetryAfter is not null)
+                response.Headers.TryAddWithoutValidation("Retry-After", rawRetryAfter);
             return Task.FromResult(response);
         }
     }

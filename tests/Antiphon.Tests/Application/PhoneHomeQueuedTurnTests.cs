@@ -1,4 +1,5 @@
 using System.Text;
+using System.Net.WebSockets;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -8,10 +9,12 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.SessionRunner.Tests.TestHelpers;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
@@ -22,6 +25,99 @@ namespace Antiphon.Tests.Application;
 [NotInParallel("MessageQueue")]
 public class PhoneHomeQueuedTurnTests
 {
+    [Test]
+    public async Task Open_replacement_recovers_and_confirms_queued_prompt_while_old_socket_closes()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await ClaudeDialogFixture.CreateBridgeAsync(new() { ConnectionString = schema.ConnectionString });
+        var observer = new SupersedeObserver();
+        await using var host = await PhoneHomeTestHost.StartAsync(connectionString: schema.ConnectionString,
+            observer: observer, configureServices: services => services.AddSingleton(h.Runtime));
+        await PrepareGrokSessionAsync(h, host.StoreId);
+        await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        var body = "Replacement prompt head " + Guid.NewGuid().ToString("N") + " and unique tail.";
+        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
+            deliverIfIdle: false);
+
+        var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var oldSocket = new PhoneHomeTestWebSocket
+        {
+            // Simulate a transport that cannot finish closing until the test releases it.
+            BeforeClose = _ => { closing.SetResult(); return finishClose.Task; },
+        };
+        var registration = await host.RegisterAsync();
+        var old = await host.Directory.AcceptConnectAsync(host.AllowedRunnerId, registration.Ticket, oldSocket);
+        host.Directory.MarkRecovered(old);
+        using var pump = new PhoneHomeRecoveryPump(host.Directory,
+            host.App.Services.GetRequiredService<IOptions<PhoneHomeRunnerSettings>>(),
+            host.App.Services.GetRequiredService<IServiceScopeFactory>(), NullLogger<PhoneHomeRecoveryPump>.Instance);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var replacement = host.ConnectPeerAsync();
+        try
+        {
+            await closing.Task.WaitAsync(deadline.Token);
+            var peer = await replacement.WaitAsync(deadline.Token);
+            var live = host.Directory.SnapshotLive();
+            live.ShouldNotBeNull();
+            live.Epoch.ShouldBe(registration.Epoch + 1);
+            await observer.Superseded.Task.WaitAsync(deadline.Token);
+            (await pump.RunCycleAsync(deadline.Token)).ShouldBeTrue("the open replacement can answer List while the old close is held");
+            peer.RequestCount(PhoneHomeOperation.List).ShouldBe(1);
+
+            host.Directory.Disconnect(old, "late_transport_abort");
+            host.Directory.SnapshotLive().ShouldBeSameAs(live);
+            host.Directory.Status(host.AllowedRunnerId).DispatchEligible.ShouldBeTrue();
+            peer.Socket.State.ShouldBe(WebSocketState.Open);
+
+            var submitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            h.Adapter.OnSubmitted = async input =>
+            {
+                await host.Directory.Resolve(host.AllowedRunnerId).SendInputAsync(h.SessionId, input, deadline.Token);
+                submitted.SetResult();
+            };
+            var flush = h.Queue.FlushIfIdleAsync(h.SessionId, deadline.Token);
+            try
+            {
+                await submitted.Task.WaitAsync(deadline.Token);
+                var input = await peer.WaitForAsync(PhoneHomeOperation.Input);
+                input.Epoch.ShouldBe(live.Epoch);
+                IndependentFullBody(body, ReadInput(input)).ShouldBeTrue();
+                await peer.EmitTranscriptAsync(Prompt(h.SessionId, ReadInput(input), "replacement-receipt", floor + 1), live.Epoch);
+            }
+            finally { await flush; }
+
+            await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.Body == body);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            var receipt = await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Sequence > floor);
+            IndependentFullBody(body, receipt.Text).ShouldBeTrue();
+            oldSocket.State.ShouldBe(WebSocketState.Open, "delivery completed before the old close was released");
+            (await host.RegisterAsync()).Epoch.ShouldBe(live.Epoch + 1);
+        }
+        finally
+        {
+            finishClose.TrySetResult();
+            await pump.EndPumpForTest();
+            await using var peer = await replacement;
+        }
+    }
+
+    private sealed class SupersedeObserver : IRunnerEligibilityObserver
+    {
+        private int _notifications;
+        public TaskCompletionSource Superseded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Changed(string runnerId)
+        {
+            if (Interlocked.Increment(ref _notifications) == 2)
+                Superseded.SetResult();
+        }
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
