@@ -5,9 +5,8 @@ using OpenTelemetry.Trace;
 namespace Antiphon.Tests.TestHelpers;
 
 /// <summary>
-/// OTLP export for <see cref="TestTrace"/>: with <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> set (for example
-/// <c>http://localhost:4317</c>), every span from every source is exported, so the run can be read
-/// as traces in a collector, Jaeger or the Aspire dashboard. Endpoint, protocol and headers come from
+/// OTLP export for <see cref="TestTrace"/>. A trace directory and <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
+/// enable OTLP export of fixture and TUnit spans. Endpoint, protocol and headers come from
 /// the standard OTEL_* variables. The queue is large so a busy run is not thinned by dropped spans.
 /// Only assemblies that reference OpenTelemetry.Exporter.OpenTelemetryProtocol compile this file.
 /// </summary>

@@ -54,6 +54,13 @@ namespace Antiphon.Nightly
 
 
             var children = timed.Where(s => s.ParentId != null).ToLookup(s => (s.TraceId, s.ParentId));
+            // TUnit test cases have independent trace IDs; suite membership is carried by tags.
+            var firstBodyBySuite = timed.Where(s => Framework(s) && s.Name == "test case")
+                .SelectMany(test => children[(test.TraceId, test.SpanId)]
+                    .Where(child => Framework(child) && child.Name == "test body")
+                    .Select(body => (Suite: Suite(test), body.Start)))
+                .GroupBy(item => item.Suite)
+                .ToDictionary(group => group.Key, group => group.Min(item => item.Start));
             var phases = Phases.ToDictionary(phase => phase,
                 _ => new List<(DateTime Start, DateTime End, string Owner)>());
             var classes = new Dictionary<string, double>();
@@ -62,8 +69,8 @@ namespace Antiphon.Nightly
             foreach (var span in timed)
             {
                 var parent = byId[(span.TraceId, span.ParentId)].FirstOrDefault();
-                var phase = Phase(span, parent, children);
                 var owner = Owner(span, byId);
+                var phase = Phase(span, parent, children, firstBodyBySuite, owner);
                 if (phase is not null)
                     Add(phase, span.Start, End(span), phase.StartsWith("Per-test ", StringComparison.Ordinal) ? owner : "");
                 if (Framework(span) && span.Name == "test case")
@@ -120,13 +127,20 @@ namespace Antiphon.Nightly
         }
 
         private static string Phase(TestTraceSpan span, TestTraceSpan parent,
-            ILookup<(string, string), TestTraceSpan> children)
+            ILookup<(string, string), TestTraceSpan> children,
+            IReadOnlyDictionary<(string Namespace, string Name), DateTime> firstBodyBySuite, string owner)
         {
             if (IsProcess(span, "process startup"))
                 return "Startup";
-            if (Tag(span, "antiphon.fixture") is not null)
-                return span.Name.EndsWith(" dispose", StringComparison.Ordinal) ||
-                       Tag(span, "antiphon.phase") == "host-shutdown" ? "One-time teardown" : "One-time setup";
+            var fixture = Tag(span, "antiphon.fixture");
+            if (fixture is not null && (owner.Length == 0 ||
+                fixture is "SharedApp" or "db-assembly" or "db-runtime" or "harness-runtime" or
+                    "c0824-producer-seed" or "c0824-producer-transport"))
+            {
+                var teardown = span.Name.EndsWith(" dispose", StringComparison.Ordinal) ||
+                    Tag(span, "antiphon.phase") is "host-shutdown" or "fixture-teardown" or "db-cleanup";
+                return teardown ? "One-time teardown" : "One-time setup";
+            }
             if (!Framework(span))
                 return null;
             if (span.Name == "test discovery" || parent?.Name == "test discovery")
@@ -152,6 +166,9 @@ namespace Antiphon.Nightly
                 .Where(s => Framework(s) && (perTest ? s.Name == "test body" :
                     s.Name is "test assembly" or "test suite" or "test case"))
                 .Select(s => (DateTime?)s.Start).Min();
+            if (firstWork is null && parent.Name == "test suite" &&
+                firstBodyBySuite.TryGetValue(Suite(parent), out var firstBody))
+                firstWork = firstBody;
             if (firstWork is null)
                 return null;
             var before = span.Start < firstWork;
@@ -164,6 +181,8 @@ namespace Antiphon.Nightly
             // Terminate even if a malformed input file contains a cycle.
             for (var depth = 0; depth < 32 && span is not null; depth++)
             {
+                if (Tag(span, "tunit.test.id") is { } id)
+                    return id;
                 if (Framework(span) && span.Name == "test case")
                     return span.TraceId + "/" + span.SpanId;
                 span = byId[(span.TraceId, span.ParentId)].FirstOrDefault();
@@ -184,6 +203,9 @@ namespace Antiphon.Nightly
             }
             return total;
         }
+
+        private static (string Namespace, string Name) Suite(TestTraceSpan span) =>
+            (Tag(span, "tunit.class.namespace"), Tag(span, "test.suite.name"));
 
         private static string TestLabel(TestTraceSpan span) => Tag(span, "test.case.name") is { } name ? " " + name : "";
         private static string Tag(TestTraceSpan span, string key) => span.Tags.FirstOrDefault(pair => pair.Key == key).Value;

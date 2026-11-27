@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Tests.TestHelpers;
 using System.Globalization;
 using System.Security.Cryptography;
 
@@ -164,6 +165,9 @@ internal static class MaintenanceFixture
         UseShellExecute = false,
     };
 
-    private static Process Start(ProcessStartInfo psi) =>
-        Process.Start(psi) ?? throw new InvalidOperationException(psi.FileName + " did not start");
+    private static Process Start(ProcessStartInfo psi)
+    {
+        using var span = TestTrace.Span("MaintenanceFixture process launch");
+        return Process.Start(psi) ?? throw new InvalidOperationException(psi.FileName + " did not start");
+    }
 }

@@ -11,12 +11,14 @@ namespace Antiphon.Tests.TestHelpers;
 /// <list type="bullet">
 /// <item>TUnit's HTML report nests spans started inside a test under that test's trace (as
 /// "external spans", capped per run by <c>TUNIT_OTEL_MAX_EXTERNAL_SPANS</c>, default 100).</item>
-/// <item>With <see cref="FileVariable"/> set, every completed span from every source (this one,
+/// <item>With <see cref="DirectoryVariable"/> set, fixture and TUnit spans are written to one
+/// JSONL file per process. Use <c>scripts/antiphon test-trace-summary &lt;file or directory&gt;</c>.</item>
+/// <item>With only <see cref="FileVariable"/> set, every completed span from every source (this one,
 /// TUnit, Npgsql, HttpClient, ASP.NET Core) is appended to that file as one JSON object per line,
 /// with no cap. <c>scripts/antiphon summarize-test-trace --path &lt;file&gt;</c> (Antiphon.Nightly.TestTraceSummary) turns it
 /// into per-test and per-span totals.</item>
-/// <item>In assemblies that compile <c>TestTraceOtlp.cs</c>, with <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
-/// set, every span is also exported over OTLP (a collector, Jaeger or the Aspire dashboard).</item>
+/// <item>With both <see cref="DirectoryVariable"/> and <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
+/// set, the fixture and TUnit spans are also exported over OTLP.</item>
 /// </list>
 /// With no listener, <see cref="Span"/> returns null and costs nothing. Span names and tag values
 /// are code-supplied labels; never pass payloads, prompts, paths with secrets or credentials.
@@ -109,14 +111,12 @@ public static partial class TestTrace
 
     static partial void DisposeOtlp();
 
-    internal static string? TracePath(string? directory, string? legacyPath, Func<string> processFileName) =>
-        !string.IsNullOrWhiteSpace(directory)
-            ? Path.Combine(directory, processFileName())
-            : string.IsNullOrWhiteSpace(legacyPath) ? null : legacyPath;
+    internal static bool HasFileDestination(string? directory, string? legacyPath) =>
+        !string.IsNullOrWhiteSpace(directory) || !string.IsNullOrWhiteSpace(legacyPath);
 
     /// <summary>
-    /// Installs the JSONL exporter once when <see cref="FileVariable"/> names a file. Unset or blank
-    /// installs nothing. Idempotent and cheap; also called from the assembly's test-start receiver.
+    /// Installs the JSONL exporter when a trace directory or a legacy trace file is configured.
+    /// Idempotent; also called from the assembly's test-start receiver.
     /// </summary>
     public static void EnsureFileExporter()
     {
@@ -124,6 +124,8 @@ public static partial class TestTrace
             return;
         var directory = Environment.GetEnvironmentVariable(DirectoryVariable);
         var legacyPath = Environment.GetEnvironmentVariable(FileVariable);
+        if (!HasFileDestination(directory, legacyPath))
+            return;
         var started = default(DateTime);
         lock (Gate)
         {
@@ -131,15 +133,14 @@ public static partial class TestTrace
                 return;
             try
             {
-                var path = TracePath(directory, legacyPath, () =>
+                var path = legacyPath;
+                if (!string.IsNullOrWhiteSpace(directory))
                 {
                     using var process = Process.GetCurrentProcess();
                     started = process.StartTime.ToUniversalTime();
-                    return $"test-trace-{process.Id}-{started.Ticks}.jsonl";
-                });
-                if (path is null)
-                    return;
-                _sink = new FileSink(Path.GetFullPath(path));
+                    path = Path.Combine(directory, $"test-trace-{process.Id}-{started.Ticks}.jsonl");
+                }
+                _sink = new FileSink(Path.GetFullPath(path!));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {

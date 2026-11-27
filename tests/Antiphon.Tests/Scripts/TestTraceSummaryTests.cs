@@ -162,13 +162,14 @@ public sealed class TestTraceSummaryTests
             {"TraceId":"t","SpanId":"a","Source":"TUnit.Lifecycle","Name":"test assembly","Start":"2026-11-23T10:00:00.020Z","DurationMs":65}
             {"TraceId":"t","SpanId":"h1","ParentId":"a","Source":"TUnit.Lifecycle","Name":"hook: Open()","Start":"2026-11-23T10:00:00.020Z","DurationMs":10}
             {"TraceId":"t","SpanId":"f","ParentId":"h1","Source":"Antiphon.Tests","Name":"fixture initialize","Start":"2026-11-23T10:00:00.021Z","DurationMs":8,"Tags":{"antiphon.fixture":"shared"}}
-            {"TraceId":"t","SpanId":"g","ParentId":"a","Source":"TUnit.Lifecycle","Name":"test suite","Start":"2026-11-23T10:00:00.030Z","DurationMs":45}
-            {"TraceId":"t","SpanId":"x","ParentId":"g","Source":"TUnit","Name":"test case","Start":"2026-11-23T10:00:00.030Z","DurationMs":35,"Tags":{"tunit.test.class":"Alpha"}}
-            {"TraceId":"t","SpanId":"x1","ParentId":"x","Source":"TUnit","Name":"hook: Prepare()","Start":"2026-11-23T10:00:00.033Z","DurationMs":3}
-            {"TraceId":"t","SpanId":"x2","ParentId":"x","Source":"TUnit","Name":"test body","Start":"2026-11-23T10:00:00.040Z","DurationMs":20}
-            {"TraceId":"t","SpanId":"x3","ParentId":"x","Source":"TUnit","Name":"dispose Alpha","Start":"2026-11-23T10:00:00.060Z","DurationMs":5,"Tags":{"tunit.trace.scope":"test"}}
-            {"TraceId":"t","SpanId":"y","ParentId":"g","Source":"TUnit","Name":"test case","Start":"2026-11-23T10:00:00.055Z","DurationMs":20,"Tags":{"tunit.test.class":"Beta"}}
-            {"TraceId":"t","SpanId":"y2","ParentId":"y","Source":"TUnit","Name":"test body","Start":"2026-11-23T10:00:00.055Z","DurationMs":20}
+            {"TraceId":"t","SpanId":"g","ParentId":"a","Source":"TUnit.Lifecycle","Name":"test suite","Start":"2026-11-23T10:00:00.030Z","DurationMs":47,"Tags":{"test.suite.name":"Alpha"}}
+            {"TraceId":"tx","SpanId":"x","Source":"TUnit","Name":"test case","Start":"2026-11-23T10:00:00.030Z","DurationMs":35,"Tags":{"tunit.test.class":"Alpha","test.suite.name":"Alpha","tunit.test.id":"1"}}
+            {"TraceId":"tx","SpanId":"x1","ParentId":"x","Source":"TUnit","Name":"hook: Prepare()","Start":"2026-11-23T10:00:00.033Z","DurationMs":3}
+            {"TraceId":"tx","SpanId":"x2","ParentId":"x","Source":"TUnit","Name":"test body","Start":"2026-11-23T10:00:00.040Z","DurationMs":20}
+            {"TraceId":"t","SpanId":"x3","ParentId":"g","Source":"TUnit","Name":"dispose Alpha","Start":"2026-11-23T10:00:00.060Z","DurationMs":5,"Tags":{"tunit.trace.scope":"test","tunit.test.id":"1"}}
+            {"TraceId":"ty","SpanId":"y","Source":"TUnit","Name":"test case","Start":"2026-11-23T10:00:00.055Z","DurationMs":20,"Tags":{"tunit.test.class":"Beta"}}
+            {"TraceId":"ty","SpanId":"y2","ParentId":"y","Source":"TUnit","Name":"test body","Start":"2026-11-23T10:00:00.055Z","DurationMs":20}
+            {"TraceId":"t","SpanId":"c1","ParentId":"g","Source":"TUnit.Lifecycle","Name":"hook: CloseClass()","Start":"2026-11-23T10:00:00.075Z","DurationMs":2}
             {"TraceId":"t","SpanId":"h2","ParentId":"a","Source":"TUnit.Lifecycle","Name":"hook: Close()","Start":"2026-11-23T10:00:00.080Z","DurationMs":5}
             """);
         var path = fixture.PathOf("trace.jsonl");
@@ -178,22 +179,24 @@ public sealed class TestTraceSummaryTests
         output.ShouldContain("Startup 10.000");
         output.ShouldContain("Discovery 5.000");
         output.ShouldContain("One-time setup 10.000");
-        output.ShouldContain("One-time teardown 5.000");
+        output.ShouldContain("One-time teardown 7.000");
         output.ShouldContain("Per-test setup 10.000");
         output.ShouldContain("Per-test body 40.000");
         output.ShouldContain("Per-test teardown 5.000");
         output.ShouldContain("Limiter wait -");
         output.ShouldContain("Process exit/teardown 15.000");
-        output.ShouldContain("Idle/unaccounted 10.000");
+        output.ShouldContain("Idle/unaccounted 8.000");
         output.ShouldContain("35.000 Alpha");
         output.ShouldContain("20.000 Beta");
     }
 
     [Test]
-    public void Exporter_has_no_destination_or_process_probe_without_opt_in()
+    public void Exporter_has_no_destination_without_opt_in()
     {
-        TestTrace.TracePath(null, null, () => throw new InvalidOperationException()).ShouldBeNull();
-        TestTrace.TracePath(" ", "", () => throw new InvalidOperationException()).ShouldBeNull();
+        TestTrace.HasFileDestination(null, null).ShouldBeFalse();
+        TestTrace.HasFileDestination(" ", "").ShouldBeFalse();
+        TestTrace.HasFileDestination("traces", null).ShouldBeTrue();
+        TestTrace.HasFileDestination(null, "trace.jsonl").ShouldBeTrue();
     }
 
     [Test]
