@@ -6,6 +6,7 @@ using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.TestSupport;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -102,6 +103,18 @@ public sealed class ExpectedDurationSyncTests
         {
             Directory.Delete(scratch, recursive: true);
         }
+    }
+
+    [Test]
+    public void MovedE2EInvariantHasExpectedDuration()
+    {
+        const string source = "tests/Antiphon.E2E/Invariants/AntiphonAppFixtureHostPathInvariantTests.cs";
+        var tree = CSharpSyntaxTree.ParseText(File.ReadAllText(RepoPath(source)));
+        var invariantNamespace = tree.GetRoot().DescendantNodes().OfType<BaseNamespaceDeclarationSyntax>().ShouldHaveSingleItem();
+        var fixture = invariantNamespace.Members.OfType<ClassDeclarationSyntax>().ShouldHaveSingleItem();
+        var name = $"{invariantNamespace.Name}.{fixture.Identifier.ValueText}";
+
+        LoadRoster().Classes.ShouldContainKey(name, $"Preserve the class cost for the invariant fixture in {source}.");
     }
 
     [Test, Timeout(120_000)]
