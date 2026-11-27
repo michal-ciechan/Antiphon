@@ -179,7 +179,11 @@ public class HerdrLabelFollowSchedulingTests
             f.Saved.TabLabel.ShouldBe("New"); f.Tab.Label = "Later";
             f.Clock.Advance(TimeSpan.FromHours(1));
             await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.TabLabel == "Later");
-            f.Saved.LabelFollow!.Sequence.ShouldBe(2); runtime.Get(f.Binding.SessionId).Status.ShouldBe("Running");
+            var follow = f.Saved.LabelFollow.ShouldNotBeNull();
+            follow.Sequence.ShouldBe(2);
+            follow.Observation.ShouldNotBeNull().ResultCode.ShouldBe("validated");
+            f.GetterCount.ShouldBe(4);
+            runtime.Get(f.Binding.SessionId).Status.ShouldBe("Running");
         }
         finally { await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2)); }
     }
