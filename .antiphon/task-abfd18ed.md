@@ -476,3 +476,95 @@ Nested Docker reported the following 21 local volumes. Its JSON log paths were u
 | 1,605,632 | build-output | `76b77db6` | `/tmp/review-76b77db6-merge-now/src/Antiphon.Agents.Pty/bin` |
 | 1,605,632 | build-output | `76b77db6` | `/tmp/review-76b77db6-merge/src/Antiphon.Agents.Pty/bin` |
 | 1,605,632 | build-output | `d5ecb5af` | `/tmp/s5c-review-d5ecb5af/merge/src/Antiphon.Agents.Pty/bin` |
+
+## 24-hour refinement
+
+The operator widened on-host eligibility to trees older than 24 hours, including terminal worktrees with local changes. The follow-up removed 47 trees with 94,460,014,592 measured allocated bytes. The scheduled evidence sweep now defaults to 24 hours and retains its release-list and reference checks.
+
+| Sample | Used bytes | Available bytes | Usage |
+| --- | --- | --- | --- |
+| 09:23 UTC, observed baseline after the operator’s Docker passes | 600,294,375,424 | 125,529,497,600 | 83% |
+| Fri Nov 27 09:31:43 UTC 2026 | 507,596,857,344 | 218,227,015,680 | 70% |
+
+| Category | Trees | Allocated bytes |
+| --- | --- | --- |
+| evidence | 9 | 22,566,338,560 |
+| temp | 38 | 71,893,676,032 |
+
+Twenty deleted paths were registered scratch or evidence checkouts. Git unregistered those paths by name. The branch records were preserved. The pass reached 70% before the terminal task mirrors in /work/worktrees entered the deletion order.
+
+The current project scope included its unscoped tasks and reconciled zero exclusions. The pass held open task and pending-land paths, current slot bindings, running Docker mounts visible in the runner, and the four protected evidence paths. It refreshed the open and pending-land census every 12 candidates and confirmed terminal status for each named task worktree. Each exact directory was checked for age, mount boundaries, links, protected descendants, registration and visible process holders. The filesystem totals include other workloads on the shared mount. The three protected evidence directories were present after cleanup. The protected timing JSON was verified at /work/evidence/invariant-qualification/card-2082-windows-class-timing.json.
+
+The orchestrator had already completed the Docker prune passes. The nested Docker socket and missing trusted SSH host key still limited visibility into the outer host. Volume-by-volume sizes for the outer 34 and outer JSON log sizes remain unverified. This pass performed zero Docker removals. A PowerShell parser and parameter metadata check confirmed the revised 24-hour sweep minimum. The first-pass checkpoint and dispatcher build verification remains applicable.
+
+### Fifteen largest removals
+
+| Allocated bytes | Previous directory mtime UTC | Path |
+| --- | --- | --- |
+| 4,060,782,592 | 2026-11-25T17:28:46.745Z | `/work/review-evidence/task-8b2639b7` |
+| 3,257,544,704 | 2026-11-25T16:28:49.237Z | `/work/review-evidence/a34bcfae-88dc-40a8-8f6b-facffb43f051` |
+| 3,256,590,336 | 2026-11-25T14:15:22.571Z | `/work/review-evidence/task-6ea7f02f` |
+| 3,246,280,704 | 2026-11-26T08:24:27.092Z | `/work/merge-evidence/task-3a44eb7e-red-pin` |
+| 3,032,457,216 | 2026-11-25T15:07:28.516Z | `/tmp/card2054-a8bd4504-r2.5ZvywbbS` |
+| 2,886,332,416 | 2026-11-14T19:20:04.620Z | `/tmp/c1915-compose` |
+| 2,842,841,088 | 2026-11-25T16:52:22.156Z | `/tmp/16611b04-review-Ay41w7W8` |
+| 2,841,227,264 | 2026-11-25T14:30:17.177Z | `/tmp/6445cb21-master-proof` |
+| 2,806,116,352 | 2026-11-26T02:47:11.079Z | `/tmp/c2078-red-Z7i2XWXt` |
+| 2,734,497,792 | 2026-11-25T09:19:40.739Z | `/tmp/c2061-ec24e3e3-base.2eKL8S` |
+| 2,716,901,376 | 2026-11-25T13:09:57.367Z | `/work/review-evidence/02226efb-6f05-4ca9-bf35-ea3b5081f7d0` |
+| 2,606,223,360 | 2026-11-22T01:51:02.457Z | `/tmp/c2015-lock-base.PuZDDc` |
+| 2,592,649,216 | 2026-11-21T10:26:36.449Z | `/tmp/card-2046-base.RByisG` |
+| 2,486,358,016 | 2026-11-15T07:20:42.401Z | `/tmp/card-1884-review-compose` |
+| 2,482,110,464 | 2026-11-14T21:27:24.869Z | `/tmp/c0824-compose` |
+
+### Refinement deletion ledger
+
+| Category | Allocated bytes | Previous directory mtime UTC | Task prefix | Path |
+| --- | --- | --- | --- | --- |
+| evidence | 4,060,782,592 | 2026-11-25T17:28:46.745Z | — | `/work/review-evidence/task-8b2639b7` |
+| evidence | 3,257,544,704 | 2026-11-25T16:28:49.237Z | — | `/work/review-evidence/a34bcfae-88dc-40a8-8f6b-facffb43f051` |
+| evidence | 3,256,590,336 | 2026-11-25T14:15:22.571Z | — | `/work/review-evidence/task-6ea7f02f` |
+| evidence | 3,246,280,704 | 2026-11-26T08:24:27.092Z | — | `/work/merge-evidence/task-3a44eb7e-red-pin` |
+| temp | 3,032,457,216 | 2026-11-25T15:07:28.516Z | — | `/tmp/card2054-a8bd4504-r2.5ZvywbbS` |
+| temp | 2,886,332,416 | 2026-11-14T19:20:04.620Z | — | `/tmp/c1915-compose` |
+| temp | 2,842,841,088 | 2026-11-25T16:52:22.156Z | — | `/tmp/16611b04-review-Ay41w7W8` |
+| temp | 2,841,227,264 | 2026-11-25T14:30:17.177Z | — | `/tmp/6445cb21-master-proof` |
+| temp | 2,806,116,352 | 2026-11-26T02:47:11.079Z | — | `/tmp/c2078-red-Z7i2XWXt` |
+| temp | 2,734,497,792 | 2026-11-25T09:19:40.739Z | — | `/tmp/c2061-ec24e3e3-base.2eKL8S` |
+| evidence | 2,716,901,376 | 2026-11-25T13:09:57.367Z | — | `/work/review-evidence/02226efb-6f05-4ca9-bf35-ea3b5081f7d0` |
+| temp | 2,606,223,360 | 2026-11-22T01:51:02.457Z | — | `/tmp/c2015-lock-base.PuZDDc` |
+| temp | 2,592,649,216 | 2026-11-21T10:26:36.449Z | — | `/tmp/card-2046-base.RByisG` |
+| temp | 2,486,358,016 | 2026-11-15T07:20:42.401Z | — | `/tmp/card-1884-review-compose` |
+| temp | 2,482,110,464 | 2026-11-14T21:27:24.869Z | — | `/tmp/c0824-compose` |
+| temp | 2,478,768,128 | 2026-11-14T03:25:09.360Z | — | `/tmp/c1910-merged-now` |
+| temp | 2,467,389,440 | 2026-11-16T04:53:37.000Z | — | `/tmp/cc5b4299-rc22` |
+| temp | 2,465,370,112 | 2026-11-15T04:05:26.375Z | — | `/tmp/card-1925-mutant` |
+| temp | 2,464,980,992 | 2026-11-16T04:53:38.705Z | — | `/tmp/cc5b4299-rc21` |
+| temp | 1,974,333,440 | 2026-11-16T18:06:12.605Z | — | `/tmp/card-1908-cf58c961` |
+| temp | 1,856,069,632 | 2026-11-13T10:50:00.150Z | — | `/tmp/rh-bacbef2b6dba4fc0b4ca520d051692f2` |
+| temp | 1,856,065,536 | 2026-11-13T03:06:20.407Z | — | `/tmp/task-08e79898-stream-phases` |
+| temp | 1,856,065,536 | 2026-11-13T03:03:04.455Z | — | `/tmp/task-08e79898-stream-target-green` |
+| temp | 1,856,065,536 | 2026-11-13T02:57:39.467Z | — | `/tmp/task-08e79898-stream-target-red` |
+| temp | 1,856,053,248 | 2026-11-13T05:26:35.802Z | — | `/tmp/rhp-f84b96d344cb496c81991cfd69c5fefb` |
+| temp | 1,856,049,152 | 2026-11-13T05:27:08.511Z | — | `/tmp/rhp-e055c0b20ab949f7bc1a9e129e731182` |
+| temp | 1,767,399,424 | 2026-11-25T15:50:38.936Z | — | `/tmp/c2060-base.NCb9Xu` |
+| evidence | 1,524,285,440 | 2026-11-23T02:30:10.704Z | — | `/work/review-evidence/task-a5ebf1e9` |
+| evidence | 1,507,180,544 | 2026-11-22T15:49:40.591Z | — | `/work/review-evidence/task-b6bdc5c9` |
+| evidence | 1,503,088,640 | 2026-11-22T21:28:31.526Z | — | `/work/review-evidence/task-7a972462` |
+| evidence | 1,493,684,224 | 2026-11-22T05:15:28.953Z | — | `/work/code-evidence/c0824-base-d2cYmT` |
+| temp | 1,493,024,768 | 2026-11-21T19:53:20.664Z | — | `/tmp/c1514-r2-base-7589c103` |
+| temp | 1,492,733,952 | 2026-11-21T19:30:23.499Z | — | `/tmp/c2013-base-e3531ec6.8KN3bY` |
+| temp | 1,482,358,784 | 2026-11-21T10:40:50.130Z | — | `/tmp/card-2046-historical.DC3er5` |
+| temp | 1,457,893,376 | 2026-11-11T00:42:53.314Z | — | `/tmp/card0395` |
+| temp | 1,424,162,816 | 2026-11-17T08:53:23.252Z | — | `/tmp/card-1964-red-d32418928` |
+| temp | 1,219,379,200 | 2026-11-14T02:29:18.509Z | — | `/tmp/c1886-layering-red` |
+| temp | 1,163,411,456 | 2026-11-20T00:37:43.716Z | — | `/tmp/bin-codex170-20261120-002635-170a` |
+| temp | 1,161,170,944 | 2026-11-17T19:29:12.502Z | — | `/tmp/c1893-bin-c1893s0-old` |
+| temp | 1,160,552,448 | 2026-11-18T08:26:14.952Z | — | `/tmp/card-1976-kept-proof` |
+| temp | 1,160,552,448 | 2026-11-18T09:07:48.382Z | — | `/tmp/card-1976-kept-proof-6b8e` |
+| temp | 1,158,455,296 | 2026-11-15T03:15:03.658Z | — | `/tmp/c1820-r4-green-run1-4f8dc817` |
+| temp | 1,154,383,872 | 2026-11-13T15:40:51.944Z | — | `/tmp/c1884-bin-guards-344c8f13` |
+| temp | 1,154,269,184 | 2026-11-13T10:53:23.909Z | — | `/tmp/card-1850-s2-bin-c1850-s2-green-kept` |
+| temp | 1,153,765,376 | 2026-11-13T11:12:24.182Z | — | `/tmp/s5a-bin-c1836-s5a-kept-9afb7a90` |
+| temp | 1,045,970,944 | 2026-11-14T21:35:07.103Z | — | `/tmp/c0824-witness` |
+| temp | 946,167,808 | 2026-11-18T08:40:57.295Z | — | `/tmp/card-1976-kept-contract` |
