@@ -86,6 +86,82 @@ public sealed class InboxConsumerServiceTests
         rows.Single(x => x.ConversationId == "chat-2").Offset.ShouldBe(1);
     }
 
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Outbound_replay_after_provider_acceptance_never_calls_the_provider_twice(bool lostResponse)
+    {
+        if (_broker is null) Skip.Test("set ANTIPHON_BROKER_TESTS=1 with Docker running");
+        var bootstrap = _broker!.GetBootstrapAddress();
+        var topic = $"outbound-{Guid.NewGuid():N}";
+        using (var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build())
+            await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        using var producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrap }).Build();
+        var reply = new ChannelReply { Channel = "telegram", ConversationId = "11", AnsweredMessageIds = ["12"] };
+        await producer.ProduceAsync(topic, new Message<string, string>
+        {
+            Key = "11", Value = JsonSerializer.Serialize(reply, MessagingJson.Options),
+        });
+        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync();
+        await store.Store.RecordAsync(EfInboxReceiptStoreTests.Sample("12", "11"), "{}", "in", 0, 0, CancellationToken.None);
+        var adapter = new AcceptanceProbe(lostResponse);
+        GatewayOutboundService NewConsumer(string group) => new([adapter], Options.Create(new AntiphonGatewayOptions
+        {
+            BootstrapServers = bootstrap, ConsumerGroup = group, OutboundTopic = topic,
+        }), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayOutboundService>.Instance, store.Store);
+        // A new group reads the exact same record even if the first host committed its offset.
+        // The second record is a barrier proving the replay was actually examined.
+        using (var first = NewConsumer(Guid.NewGuid().ToString("N")))
+        {
+            await first.StartAsync(CancellationToken.None);
+            try
+            {
+                await adapter.Accepted.Task.WaitAsync(TimeSpan.FromSeconds(45));
+                if (!lostResponse)
+                {
+                    using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    while ((await store.LoadAsync()).Single().Status != InboxStatus.Answered)
+                        await Task.Delay(10, bound.Token);
+                }
+            }
+            finally { await first.StopAsync(CancellationToken.None); }
+        }
+        await producer.ProduceAsync(topic, new Message<string, string>
+        {
+            Key = "11", Value = JsonSerializer.Serialize(reply with { AnsweredMessageIds = ["13"] }, MessagingJson.Options),
+        });
+        using (var replay = NewConsumer(Guid.NewGuid().ToString("N")))
+        {
+            await replay.StartAsync(CancellationToken.None);
+            try { await adapter.Barrier.Task.WaitAsync(TimeSpan.FromSeconds(45)); }
+            finally { await replay.StopAsync(CancellationToken.None); }
+        }
+        adapter.Calls.ShouldBe(1, "one broker operation can enter the provider only once");
+        (await store.LoadAsync()).Single().Status.ShouldBe(lostResponse ? InboxStatus.Pending : InboxStatus.Answered);
+    }
+
+    private sealed class AcceptanceProbe(bool loseFirstResponse) : IChannelAdapter
+    {
+        public int Calls;
+        public TaskCompletionSource Accepted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Barrier { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string Channel => "telegram";
+        public ChannelCapabilities Capabilities => new() { Channel = Channel };
+        public IAsyncEnumerable<ChannelMessage> ReceiveAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public async Task<SendResult> SendAsync(ChannelReply reply, CancellationToken cancellationToken)
+        {
+            if (reply.AnsweredMessageIds.Single() == "13") Barrier.TrySetResult();
+            else
+            {
+                var attempt = Interlocked.Increment(ref Calls);
+                Accepted.TrySetResult();
+                if (loseFirstResponse && attempt == 1)
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            return SendResult.Sent("14");
+        }
+    }
+
     private sealed class ObservedSink(IInboundReceiptSink inner) : IInboundReceiptSink
     {
         private int _calls;

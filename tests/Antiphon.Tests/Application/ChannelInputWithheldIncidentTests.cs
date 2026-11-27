@@ -925,6 +925,129 @@ public sealed partial class ChannelInputWithheldIncidentTests
             },
         });
 
+    [Test]
+    public async Task Partial_operator_page_resumes_once_across_concurrent_scans(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenAsync(schema.ConnectionString, Clock());
+        await SeedAsync(h, h.Now.AddHours(-1), h.Now.AddMinutes(-20), 1);
+        using var first = Bridge(h);
+        using var second = Bridge(h);
+        await first.ScanWithheldChannelIncidentsAsync(ct);
+        h.EventBus.ThrowOnceOnEvent = "AgentChanged";
+        await Should.ThrowAsync<InvalidOperationException>(() => first.ScanChannelReplyAlertsAsync(ct));
+        await Task.WhenAll(first.ScanChannelReplyAlertsAsync(ct), second.ScanChannelReplyAlertsAsync(ct));
+        h.EventBus.PublishedEvents.Count(e => e.EventName == "AlertRaised").ShouldBe(1);
+        await using var db = Db(schema.ConnectionString);
+        (await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelInputWithheld", ct))
+            .HumanNotifiedAt.ShouldNotBeNull();
+        h.Messaging.SentReplies.ShouldBeEmpty();
+    }
+
+    [Test]
+    [Arguments(120)]
+    [Arguments(-120)]
+    public async Task Group_deadline_uses_elapsed_time_despite_a_wall_clock_step(int minutes, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var timer = Clock();
+        var clock = new CorrectedClock(timer);
+        await using var h = await OpenAsync(schema.ConnectionString, clock);
+        using var bridge = Bridge(h);
+        var seed = await SeedUnansweredGroupAsync(h, ct);
+        clock.Correction = TimeSpan.FromMinutes(minutes);
+        timer.Advance(TimeSpan.FromMinutes(9));
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        await using var db = Db(schema.ConnectionString);
+        (await db.AgentIncidents.AnyAsync(i => i.Id == seed.InboundId, ct)).ShouldBeFalse();
+        timer.Advance(TimeSpan.FromMinutes(1));
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        (await db.AgentIncidents.AnyAsync(i => i.Id == seed.InboundId, ct)).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task Broker_published_reply_without_provider_acceptance_remains_overdue(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = Clock();
+        await using var h = await OpenAsync(schema.ConnectionString, clock);
+        using var bridge = Bridge(h);
+        var seed = await SeedUnansweredGroupAsync(h, ct);
+        await using var db = Db(schema.ConnectionString);
+        await db.SessionQueuedMessages.Where(q => q.Id == seed.QueueId)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.DirectReplyThroughSequence, 5L), ct);
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        (await db.AgentIncidents.CountAsync(i => i.Id == seed.InboundId, ct)).ShouldBe(1);
+        h.Messaging.SentReplies.ShouldBeEmpty();
+    }
+
+    private static async Task<SeedRow> SeedUnansweredGroupAsync(BridgeQueueHarness h, CancellationToken ct)
+    {
+        var seed = await SeedAsync(h, h.Now, null, 0);
+        await h.BindChannelAsync(seed.ConversationId);
+        await using var db = Db(h.ConnectionString);
+        var chat = await db.ChatChannels.SingleAsync(c => c.ExternalId == seed.ConversationId, ct);
+        chat.Kind = ChatChannelKind.Group;
+        var inbound = await db.ChannelInbounds.SingleAsync(i => i.Id == seed.InboundId, ct);
+        inbound.ChatChannelId = chat.Id;
+        await db.SaveChangesAsync(ct);
+        return seed;
+    }
+
+    private sealed class CorrectedClock(TimeProvider timer) : TimeProvider
+    {
+        public TimeSpan Correction { get; set; }
+        public override DateTimeOffset GetUtcNow() => timer.GetUtcNow() + Correction;
+        public override long GetTimestamp() => timer.GetTimestamp();
+        public override long TimestampFrequency => timer.TimestampFrequency;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            timer.CreateTimer(callback, state, dueTime, period);
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Withheld_closure_requires_the_owning_prompt(bool quoted, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenAsync(schema.ConnectionString, Clock());
+        var first = await SeedAsync(h, h.Now.AddHours(-1), h.Now.AddMinutes(-20), 1);
+        var second = await SeedAsync(h, h.Now.AddHours(-1), h.Now.AddMinutes(-20), 1);
+        using var bridge = Bridge(h);
+        await bridge.ScanWithheldChannelIncidentsAsync(ct);
+        await using var db = Db(schema.ConnectionString);
+        await db.SessionQueuedMessages.Where(m => m.Id == first.QueueId || m.Id == second.QueueId)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Sent)
+                .SetProperty(m => m.DeliveryAttempts, 1).SetProperty(m => m.LastDeliveryBaselineSequence, 0L)
+                .SetProperty(m => m.LastDeliveryStartedAt, h.Now)
+                .SetProperty(m => m.DeliveryVerdict, DeliveryVerdict.Delivered), ct);
+        var body = quoted ? ChannelPromptCorrelation.Mark(first.QueueId, WithheldBody) : WithheldBody;
+        if (quoted)
+            await db.SessionQueuedMessages.Where(q => q.Id == first.QueueId)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.Body, body), ct);
+        var owned = await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body, timestamp: h.Now);
+        await db.SessionQueuedMessages.Where(q => q.Id == second.QueueId)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.LastDeliveryBaselineSequence, owned), ct);
+        var disputedBody = quoted ? "Synthetic machine delivery quoting " + body : body;
+        if (quoted)
+        {
+            var machine = await h.SeedChannelCorrelationAsync(disputedBody, "telegram:fixture");
+            await db.SessionQueuedMessages.Where(q => q.Id == machine)
+                .ExecuteUpdateAsync(s => s.SetProperty(q => q.Origin, QueuedMessageOrigin.Check), ct);
+        }
+        var disputed = await h.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, disputedBody, timestamp: h.Now);
+        var candidates = await ChannelWithheldResolution.Candidates(db).ToListAsync(ct);
+        candidates.Count.ShouldBe(2);
+        var candidate = candidates.Single(c => c.QueueId == (quoted ? first.QueueId : second.QueueId));
+        (await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate, disputed, h.Now, ct)).ShouldBeNull();
+        await bridge.ScanChannelReplyAlertsAsync(ct);
+        var closed = (await db.AgentIncidents.Where(i => i.Kind == AgentIncidentKind.ChannelInputWithheldClosed)
+            .ToListAsync(ct)).ShouldHaveSingleItem();
+        closed.Message.ShouldContain(first.QueueId.ToString());
+        closed.Message.ShouldContain($"promptSequence={owned},");
+    }
+
     private static ChannelBridgeService Bridge(BridgeQueueHarness h, TimeProvider? clock = null,
         ILogger<ChannelBridgeService>? logger = null) => new(
         h.Messaging, h.Queue, h.Provider.GetRequiredService<ChannelInboundDebouncer>(), h.EventBus,
