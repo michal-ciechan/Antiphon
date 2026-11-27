@@ -1272,6 +1272,40 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
 A tree left in the retiring root (`retiring_refused`) stays registered, is reported, and is retried by phase B
 only on the next request for that task; it is never moved back.
 
+#### Evidence expiry and disk admission
+
+Keep runnable checkouts and build products in the task worktree or its owned scratch directory.
+Write checkpoint receipts, TRX, logs and reports to the external evidence root. The MSBuild guard
+rejects source trees and standard build or publish output paths under server2's evidence roots.
+
+Run the evidence sweep alongside the regular worktree retention cadence, inside the runner
+container as its app user. The caller maintains a release list off the task branch. Each entry
+names the exact task evidence directory and the full owning task ID, for example
+`[{"path":"/work/review-evidence/task-12345678","taskId":"12345678-1234-1234-1234-123456789abc"}]`.
+Release a directory only after its durable receipts have been retained and its references have been
+cleared, including card discussions. The sweep itself checks settlement, the owner's card,
+open task records, board search, Git references and the file tree. It keeps evidence for at least
+72 hours after both the task's completion and the newest write in the tree.
+
+```sh
+pwsh -NoProfile -File scripts/sweep-server2-evidence.ps1 -ReleaseList <release-list> -Repository <antiphon-repo> -ProjectId <project-id>
+```
+
+Use the current production `ANTIPHON_API` and the runner's authorized read context. The command
+previews by default. Use `-Apply` for the scheduled invocation after the preview. Keep the sweep's
+per-path output with the host maintenance logs. Task mirrors use the separate worktree retention
+gate above. Incident evidence with a custom directory name remains outside the evidence sweep.
+
+Install `scripts/server2-docker-builder-prune.service` and its matching timer in
+`/etc/systemd/system/` on the outer server2 host, reload systemd and enable the timer.
+The timer runs hourly, targeting the host daemon's unused build cache older than 24 hours.
+Inspect the scheduled run in the host journal.
+
+The existing `WorkspaceDiskLow` attention item warns at 85% usage. The dispatcher also keeps
+new work queued on a configured runner when its latest fresh workspace sample has less than
+20 GiB available. Checkpoint launches check available space locally and return exit 9 with
+`workspace_disk_low` when they hit that floor.
+
 #### Runner temp sweep (CARD-1677 S2)
 
 The same tick can also sweep the runner's `/tmp`, under its own switch. It ships **OFF and dry-run**
