@@ -46,8 +46,12 @@ public sealed class ReviewRun
     public Guid Id { get; set; }
     public Guid SubjectId { get; set; }
     public ReviewSubject Subject { get; set; } = null!;
-    public string? GitHubRepo { get; private set; }
-    public int? GitHubPrNumber { get; private set; }
+    // Repository names are display data. The legacy slug is used only for unverifiable historical rows.
+    public string? GitHubRepo { get; set; }
+    public int? GitHubPrNumber { get; set; }
+    public string? GitHubAuthority { get; set; }
+    public long? GitHubRepositoryId { get; set; }
+    public bool IsDemo { get; set; }
     public uint ConcurrencyToken { get; private set; }
     public ReviewRunStatus Status { get; set; }
     public ReviewStage Stage { get; set; }

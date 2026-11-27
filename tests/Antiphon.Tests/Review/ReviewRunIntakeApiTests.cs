@@ -234,6 +234,25 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         Id(real).ShouldNotBe(Id(sample));
     }
 
+    [Test]
+    public async Task Legacy_slug_without_an_id_does_not_identify_a_live_repository(CancellationToken ct)
+    {
+        const int number = 209667;
+        using var client = OpenPullRequest(number);
+        var legacy = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var changed = await db.ReviewRuns.Where(r => r.Id == Id(legacy)).ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.GitHubRepositoryId, (long?)null)
+            .SetProperty(r => r.GitHubRepo, Repo), ct);
+        changed.ShouldBe(1);
+
+        var verified = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+
+        Id(verified).ShouldNotBe(Id(legacy));
+        (await db.ReviewRuns.CountAsync(r => r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed, ct)).ShouldBe(2);
+    }
+
     private HttpClient OpenPullRequest(int number)
     {
         factory.Host.Open(number, "Fix the lease", "author", new string('a', 40), new string('b', 40), [], "");

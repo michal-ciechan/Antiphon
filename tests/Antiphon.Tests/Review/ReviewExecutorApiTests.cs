@@ -123,7 +123,7 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
     {
         public static readonly CodeHostPullRequest Pr = new(77, "Release the lease after the save", "The lease leaked when the save threw.",
             "dana", null, "main", new string('a', 40), "fix/lease", new string('b', 40), "https://github.example/acme/widgets/pull/77",
-            CodeHostPullRequestState.Open, false);
+            CodeHostPullRequestState.Open, false, RepositoryId: 1234);
 
         public const string Diff = "diff --git a/src/Lease.cs b/src/Lease.cs\n+        finally { lease.Release(); }\n";
 

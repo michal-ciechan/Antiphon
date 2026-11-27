@@ -135,12 +135,15 @@ public sealed class ReviewPoller(
             var binding = scope.ServiceProvider.GetRequiredService<CodeHostRouter>().Resolve(repo.Host, name, null, null, null);
             if (!binding.Host.Capabilities.CanListPullRequests)
                 throw new CodeHostException(CodeHostFailureKind.Unsupported, $"The {repo.Host} code host cannot list pull requests, so {name} cannot be polled.");
+            if (repo.Host == ReviewHost.GitHub)
+                binding = binding with { Target = binding.Target with
+                    { GitHubRepositoryId = await binding.Host.GetRepositoryIdAsync(binding.Target, ct) } };
 
             var open = (await binding.Host.ListOpenPullRequestsAsync(binding.Target, ct)).GroupBy(p => p.Number).ToDictionary(g => g.Key, g => g.First());
             tally.Open = open.Count;
             await HandleCommentsAsync(db, binding, repo, name, open, settings, tally, ct);
 
-            var existing = await LatestRunsAsync(db, repo.Host, name, ct);
+            var existing = await LatestRunsAsync(db, binding.Target, ct);
             foreach (var pr in open.Values.Where(p => !existing.ContainsKey(p.Number) && Matches(repo, p)).OrderBy(p => p.Number).ToList())
             {
                 await ActAsync(tally, $"#{pr.Number}", async () =>
@@ -157,7 +160,7 @@ public sealed class ReviewPoller(
             // mid-walk: its own branch update may have just moved the head that the walk has not saved
             // yet (live, 2026-11-23: the bot's base-only rebase was refreshed as a push and started a
             // new round). The next pass sees the settled run.
-            var current = await LatestRunsAsync(db, repo.Host, name, ct);
+            var current = await LatestRunsAsync(db, binding.Target, ct);
             foreach (var run in current.Values.Where(r => r.Walked
                          && r.Status is not (ReviewRunStatus.Closed or ReviewRunStatus.Merged or ReviewRunStatus.Queued or ReviewRunStatus.Running)))
             {
@@ -193,7 +196,8 @@ public sealed class ReviewPoller(
         IReadOnlyDictionary<int, CodeHostOpenPullRequest> open, ReviewPollingSettings settings, Tally tally, CancellationToken ct)
     {
         var floor = _startedAt - 2 * settings.Interval;
-        var key = $"{repo.Host}|{name}";
+        var key = binding.Target.GitHubRepositoryId is { } repositoryId
+            ? $"{binding.Target.GitHubAuthority}|{repositoryId}" : $"{repo.Host}|{name}";
         DateTime since;
         lock (_cursors)
             since = _cursors.TryGetValue(key, out var cursor) ? cursor : floor;
@@ -218,7 +222,7 @@ public sealed class ReviewPoller(
                 continue;
             }
 
-            if (answered.Contains(comment.Id) || await HandledAsync(db, marker, ct))
+            if (answered.Contains(comment.Id) || await HandledAsync(db, binding.Target, comment.PrNumber, marker, ct))
             {
                 Remember(seenKey);
                 continue;
@@ -263,7 +267,7 @@ public sealed class ReviewPoller(
         }
         else
         {
-            var latest = (await LatestRunsAsync(db, repo.Host, name, ct)).GetValueOrDefault(comment.PrNumber);
+            var latest = (await LatestRunsAsync(db, binding.Target, ct)).GetValueOrDefault(comment.PrNumber);
             try
             {
                 if (latest is null || latest.Status == ReviewRunStatus.Closed)
@@ -300,28 +304,35 @@ public sealed class ReviewPoller(
     }
 
     /// <summary>True when an iteration's trigger is the marker, or a wait completed for it names it.</summary>
-    private static async Task<bool> HandledAsync(AppDbContext db, string marker, CancellationToken ct)
+    private static async Task<bool> HandledAsync(AppDbContext db, CodeHostTarget target, int number, string marker, CancellationToken ct)
     {
         var token = $"({marker})";
-        return await db.ReviewIterations.AnyAsync(i => i.Trigger == marker, ct)
-            || await db.ReviewNodeExecutions.AnyAsync(n => n.Kind == ReviewNodeKind.Wait && n.Summary != null && n.Summary.Contains(token), ct);
+        var runs = RunsForRepository(db, target).Where(r => r.Subject.PrNumber == number).Select(r => r.Id);
+        return await db.ReviewIterations.AnyAsync(i => runs.Contains(i.RunId) && i.Trigger == marker, ct)
+            || await db.ReviewNodeExecutions.AnyAsync(n => runs.Contains(n.RunId) && n.Kind == ReviewNodeKind.Wait
+                && n.Summary != null && n.Summary.Contains(token), ct);
     }
 
     private sealed record RunHead(Guid Id, int PrNumber, ReviewRunStatus Status, string HeadSha, DateTime StartedAt, bool Walked);
 
     /// <summary>Each PR's open run, or its latest closed run if it has no open run.</summary>
-    private static async Task<Dictionary<int, RunHead>> LatestRunsAsync(AppDbContext db, ReviewHost host, string repo, CancellationToken ct)
+    private static async Task<Dictionary<int, RunHead>> LatestRunsAsync(AppDbContext db, CodeHostTarget target, CancellationToken ct)
     {
-        var lower = repo.ToLowerInvariant();
-        var query = db.ReviewRuns.AsNoTracking();
-        query = host == ReviewHost.GitHub
-            ? query.Where(r => r.GitHubRepo == lower && r.GitHubPrNumber != null)
-            : query.Where(r => r.Subject.Host == host && r.Subject.Repo.ToLower() == lower && r.Subject.PrNumber != null);
-        var rows = await query
+        var rows = await RunsForRepository(db, target)
             .Select(r => new RunHead(r.Id, r.Subject.PrNumber!.Value, r.Status, r.Subject.HeadSha, r.StartedAt, r.Iterations.Any(i => i.HeadSha != null)))
             .ToListAsync(ct);
         return rows.GroupBy(r => r.PrNumber).ToDictionary(g => g.Key,
             g => g.OrderBy(r => r.Status == ReviewRunStatus.Closed).ThenByDescending(r => r.StartedAt).ThenByDescending(r => r.Id).First());
+    }
+
+    private static IQueryable<ReviewRun> RunsForRepository(AppDbContext db, CodeHostTarget target)
+    {
+        var lower = target.Repo.ToLowerInvariant();
+        var query = db.ReviewRuns.AsNoTracking().Where(r => !r.IsDemo);
+        return target.Kind == ReviewHost.GitHub
+            ? query.Where(r => r.GitHubAuthority == target.GitHubAuthority && r.GitHubRepositoryId != null
+                && r.GitHubRepositoryId == target.GitHubRepositoryId && r.GitHubPrNumber != null)
+            : query.Where(r => r.Subject.Host == target.Kind && r.Subject.Repo.ToLower() == lower && r.Subject.PrNumber != null);
     }
 
     /// <summary>The repo's filters for an automatic run: drafts, base branches, skip labels and the required label.</summary>

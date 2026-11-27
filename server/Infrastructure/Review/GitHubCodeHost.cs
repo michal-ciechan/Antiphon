@@ -25,7 +25,7 @@ public sealed class GitHubCodeHost(
 {
     private readonly GitHubAppTokens _appTokens = appTokens ?? new GitHubAppTokens();
 
-    public const string DefaultApiRoot = "https://api.github.com";
+    public const string DefaultApiRoot = ReviewCodeHost.DefaultGitHubApiRoot;
     public const string JsonMediaType = "application/vnd.github+json";
     public const string DiffMediaType = "application/vnd.github.diff";
     public const string ApiVersion = "2022-11-28";
@@ -79,7 +79,17 @@ public sealed class GitHubCodeHost(
     {
         var body = await GetAsync(target, $"{RepoPath(target)}/pulls/{RequirePr(target)}", JsonMediaType, ct);
         using var doc = Parse(body, "pull request");
-        return ParsePullRequest(doc.RootElement);
+        var pr = ParsePullRequest(doc.RootElement);
+        if (target.GitHubRepositoryId is { } expected && pr.RepositoryId != expected)
+            throw new CodeHostException(CodeHostFailureKind.Rejected, "GitHub returned a different repository for the stored pull request.");
+        return pr;
+    }
+
+    public async Task<long> GetRepositoryIdAsync(CodeHostTarget target, CancellationToken ct)
+    {
+        using var repo = Parse(await GetAsync(target, RepoPath(target), JsonMediaType, ct), "repository");
+        return RepositoryId(repo.RootElement)
+            ?? throw new CodeHostException(CodeHostFailureKind.Unavailable, "GitHub did not confirm the repository identity.");
     }
 
     /// <summary>
@@ -615,6 +625,8 @@ public sealed class GitHubCodeHost(
             : CodeHostPullRequestState.Open;
         var head = root.GetProperty("head");
         var @base = root.GetProperty("base");
+        var repo = @base.TryGetProperty("repo", out var repository) && repository.ValueKind == JsonValueKind.Object
+            ? repository : default;
         return new CodeHostPullRequest(
             root.GetProperty("number").GetInt32(),
             Text(root, "title") ?? "",
@@ -627,8 +639,13 @@ public sealed class GitHubCodeHost(
             Text(head, "sha") ?? "",
             Text(root, "html_url"),
             state,
-            root.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True);
+            root.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True,
+            RepositoryId(repo), repo.ValueKind == JsonValueKind.Object ? Text(repo, "full_name") : null);
     }
+
+    private static long? RepositoryId(JsonElement repo) =>
+        repo.ValueKind == JsonValueKind.Object && repo.TryGetProperty("id", out var id)
+            && id.ValueKind == JsonValueKind.Number && id.TryGetInt64(out var number) && number > 0 ? number : null;
 
     public static CodeHostChangedFile ParseFile(JsonElement file) => new(
         Text(file, "filename") ?? "",

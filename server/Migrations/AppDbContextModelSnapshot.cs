@@ -8478,12 +8478,21 @@ namespace Antiphon.Server.Migrations
                         .HasPrecision(18, 6)
                         .HasColumnType("numeric(18,6)");
 
+                    b.Property<string>("GitHubAuthority")
+                        .HasColumnType("text");
+
                     b.Property<int?>("GitHubPrNumber")
                         .HasColumnType("integer");
 
                     b.Property<string>("GitHubRepo")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<long?>("GitHubRepositoryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("IsDemo")
+                        .HasColumnType("boolean");
 
                     b.Property<bool?>("NeedsHumanApproval")
                         .HasColumnType("boolean");
@@ -8536,17 +8545,19 @@ namespace Antiphon.Server.Migrations
 
                     b.HasIndex("WorkflowRevisionId");
 
-                    b.HasIndex("GitHubRepo", "GitHubPrNumber")
+                    b.HasIndex("GitHubAuthority", "GitHubRepo", "GitHubPrNumber")
                         .IsUnique()
-                        .HasDatabaseName("IX_ReviewRuns_GitHubRepo_GitHubPrNumber_Open")
-                        .HasFilter("\"Status\" <> 'Closed' AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+                        .HasDatabaseName("IX_ReviewRuns_GitHubLegacyIdentity_Open")
+                        .HasFilter("\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepositoryId\" IS NULL AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+
+                    b.HasIndex("GitHubAuthority", "GitHubRepositoryId", "GitHubPrNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_ReviewRuns_GitHubIdentity_Open")
+                        .HasFilter("\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepositoryId\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
 
                     b.HasIndex("Status", "UpdatedAt");
 
-                    b.ToTable("ReviewRuns", null, t =>
-                        {
-                            t.HasTrigger("TR_ReviewRuns_FillGitHubIdentity");
-                        });
+                    b.ToTable("ReviewRuns", (string)null);
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ReviewSubject", b =>

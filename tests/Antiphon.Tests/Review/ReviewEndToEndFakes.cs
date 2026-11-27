@@ -48,9 +48,12 @@ public sealed class ScriptedCodeHost : ICodeHost
         lock (pr)
         {
             return Task.FromResult(new CodeHostPullRequest(pr.Number, pr.Title, "Keeps the lease until the save completes.", pr.Author, null,
-                "main", pr.BaseSha, $"fix/pr-{pr.Number}", pr.HeadSha, $"https://github.example/acme/widgets/pull/{pr.Number}", pr.State, false));
+                "main", pr.BaseSha, $"fix/pr-{pr.Number}", pr.HeadSha, $"https://github.example/acme/widgets/pull/{pr.Number}", pr.State, false,
+                pr.RepositoryId, target.Repo));
         }
     }
+
+    public Task<long> GetRepositoryIdAsync(CodeHostTarget target, CancellationToken ct) => Task.FromResult(1234L);
 
     public Task<IReadOnlyList<CodeHostChangedFile>> ListChangedFilesAsync(CodeHostTarget target, CodeHostRange range, CancellationToken ct)
     {

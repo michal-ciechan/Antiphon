@@ -201,7 +201,7 @@ With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 
 
 ## GitHub run lifecycle
 
-The identity uses the existing GitHub host kind, case-normalized owner and repo, and PR number. The configured code-host binding selects the credential and installation for that repo. A different head SHA or title keeps the same run. Local commit-range reviews retain independent intake. A GitHub run in Merged continues to occupy its identity until Closed.
+GitHub identity consists of the configured REST API root, the numeric ID of the PR's base repository and the PR number. Intake confirms that identity with GitHub before reusing a run. A rename or transfer on the same authority preserves the ID, and reassigning the old slug to a different repository gives it a separate run. A different head SHA or title keeps the same run. Demo records and local commit-range reviews use independent intake. A GitHub run in Merged continues to occupy its identity until Closed.
 
 Manual intake returns the existing run without queuing a round. Use Refresh to retry a failure or Request review round to start another round. The GitHub poller uses the same intake service and keeps working on the existing run. An ordinary poll does not automatically restart a deliberately closed run while the PR remains open. A trusted PR comment or manual intake can start the next run. The existing code-host close event also transitions the run to Closed.
 
@@ -211,9 +211,11 @@ An explicit close removes open gates from the queue, skips outstanding workflow 
 
 Before starting a server build that includes `EnforceOneOpenReviewRunPerPullRequest`, pass the PostgreSQL snapshot and restore-drill gate. For production on server2, take a fresh snapshot with `scripts\antiphon.cmd postgres-snapshot --execute --plain --target server2` and verify its restore using `scripts\antiphon.cmd postgres-snapshot --execute --plain --restore-drill --target server2`. Record both receipts for the activation, and drain old review writers before starting the new version. [Production PostgreSQL backup and restore](../../docker-stack.md#server2-host-postgres-card-1406)
 
-The startup migration adds derived GitHub identity columns and an insert trigger. In the same transaction it keeps the newest non-Closed run per identity by start time and ID, closes older duplicates with the reason `superseded by duplicate-intake cleanup`, and installs a partial unique index. All runs, subjects, findings and workflow history remain. The audit names the surviving run and captures the prior run status, stage, waiting state and timestamp. A five-second lock timeout aborts the transaction if a lock cannot be acquired. Rehearse the migration on the restored copy to measure the review-table lock window.
+The startup migration adds GitHub identity columns and installs partial unique indexes for live and historical keys. Existing rows have no repository ID. The migration groups them by the lowercased slug, PR number and historical authority inferred from the PR URL or the legacy input URL. GitHub.com and missing URLs use the public API root. An enterprise web origin supplies its standard `/api/v3` root because historical data contains no proxy API path. Manual intake and polling require a confirmed numeric ID, so a legacy row cannot be reused by a repository that later acquires its slug. Operators can still inspect and explicitly close legacy runs. The migration identifies historical demos by their completed intake node and unpinned first iteration, which the demo seeder used for its synthetic graphs.
 
-Down removes the derived columns, trigger, normalization function and index. The closure records and run history survive the downgrade. Use the pre-activation snapshot for a full data rewind.
+In the same transaction the migration keeps the newest non-Closed run per key by start time and ID and closes older duplicates with the reason `superseded by duplicate-intake cleanup`. All runs, subjects, findings and workflow history remain. The audit names the surviving run and captures its predecessor's prior status, stage, waiting state and timestamp. A five-second lock timeout aborts the transaction if a lock cannot be acquired. Rehearse the migration on the restored copy to measure the review-table lock window.
+
+Down removes the identity columns and indexes. The closure records and run history survive the downgrade. Use the pre-activation snapshot for a full data rewind.
 
 ## SignalR
 

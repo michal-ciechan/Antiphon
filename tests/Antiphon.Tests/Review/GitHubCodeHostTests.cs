@@ -21,7 +21,8 @@ public class GitHubCodeHostTests
           "title": "Release the lock after the save", "body": "Fixes the stuck lease.",
           "html_url": "https://ghe.example/acme/widgets/pull/42",
           "user": { "login": "dana" },
-          "base": { "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+          "base": { "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "repo": { "id": 9876543210, "full_name": "Acme/Widgets" } },
           "head": { "ref": "fix/lock", "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
         """;
 
@@ -54,6 +55,8 @@ public class GitHubCodeHostTests
         handler.Requests.Count.ShouldBe(3, "one PR read and two file pages; the short second page ends the listing");
 
         pr.Number.ShouldBe(42);
+        pr.RepositoryId.ShouldBe(9876543210L);
+        pr.RepositoryName.ShouldBe("Acme/Widgets");
         pr.Title.ShouldBe("Release the lock after the save");
         pr.Description.ShouldBe("Fixes the stuck lease.");
         pr.AuthorLogin.ShouldBe("dana");

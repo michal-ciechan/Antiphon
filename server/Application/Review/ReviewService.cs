@@ -69,7 +69,8 @@ public sealed class ReviewService(
         if (!string.IsNullOrWhiteSpace(repo))
         {
             var canonicalRepo = repo.Trim().ToLowerInvariant();
-            query = query.Where(r => r.GitHubRepo == canonicalRepo || (r.GitHubRepo == null && r.Subject.Repo == repo));
+            query = query.Where(r => (r.Subject.Host == ReviewHost.GitHub && r.Subject.Repo.ToLower() == canonicalRepo)
+                || r.GitHubRepo == canonicalRepo || (r.Subject.Host != ReviewHost.GitHub && r.Subject.Repo == repo));
         }
         if (!string.IsNullOrWhiteSpace(q))
         {
@@ -138,15 +139,22 @@ public sealed class ReviewService(
         var prNumber = request.PrNumber;
         var github = request.Host == ReviewHost.GitHub;
         if (github)
-        {
             (repo, prNumber) = GitHubReviewIdentity.Parse(repo, prNumber);
-            if (await FindOpenRunAsync(repo, prNumber, ct) is { } existingRun)
-                return await GetRunAsync(existingRun, existing: true, ct);
+
+        var binding = await ReadIntakeAsync(() => Task.FromResult(
+            router.Resolve(request.Host, repo, prNumber, request.BaseSha?.Trim(), request.HeadSha?.Trim())));
+        var pr = await ReadIntakeAsync(() => binding.Host.GetPullRequestAsync(binding.Target, ct));
+        var authority = binding.Target.GitHubAuthority;
+        var repositoryId = pr.RepositoryId;
+        if (github)
+        {
+            if (authority is null || repositoryId is not > 0 || pr.Number != prNumber)
+                throw new ServiceUnavailableException("GitHub did not confirm the pull request's repository identity.", "review_github_identity_unavailable");
+            if (await FindOpenRunAsync(authority, repositoryId.Value, prNumber!.Value, ct) is { } existingRun)
+                return await ReuseRunAsync(existingRun, repo, pr, ct);
         }
 
-        var snapshot = await ReadIntakeAsync(
-            () => intake.ReadAsync(request.Host, repo, prNumber, request.BaseSha?.Trim(), request.HeadSha?.Trim(), ct));
-        var pr = snapshot.PullRequest;
+        var snapshot = await ReadIntakeAsync(() => ReviewIntake.ReadFilesAsync(binding, pr, ct));
         var now = Now();
         var local = request.Host == ReviewHost.Local;
         var subject = new ReviewSubject
@@ -168,6 +176,9 @@ public sealed class ReviewService(
             Id = Guid.NewGuid(),
             SubjectId = subject.Id,
             Subject = subject,
+            GitHubAuthority = authority,
+            GitHubRepositoryId = github ? repositoryId : null,
+            GitHubPrNumber = github ? prNumber : null,
             Status = ReviewRunStatus.Queued,
             Stage = ReviewStage.Intake,
             Round = 1,
@@ -198,8 +209,8 @@ public sealed class ReviewService(
                 // SaveChanges rolled back the whole new graph, including its subject. If the
                 // winner closed before this read, it is now legitimate to insert a new run.
                 db.ChangeTracker.Clear();
-                if (await FindOpenRunAsync(repo, prNumber, ct) is { } winner)
-                    return await GetRunAsync(winner, existing: true, ct);
+                if (await FindOpenRunAsync(authority!, repositoryId!.Value, prNumber!.Value, ct) is { } winner)
+                    return await ReuseRunAsync(winner, repo, pr, ct);
             }
         }
         await PublishAsync(run.Id, ct);
@@ -207,9 +218,25 @@ public sealed class ReviewService(
         return await GetRunAsync(run.Id, existing: false, ct);
     }
 
-    private Task<Guid?> FindOpenRunAsync(string repo, int? number, CancellationToken ct) =>
-        db.ReviewRuns.Where(r => r.GitHubRepo == repo && r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed)
+    private Task<Guid?> FindOpenRunAsync(string authority, long repositoryId, int number, CancellationToken ct) =>
+        db.ReviewRuns.Where(r => !r.IsDemo && r.GitHubAuthority == authority && r.GitHubRepositoryId == repositoryId
+                && r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed)
             .Select(r => (Guid?)r.Id).SingleOrDefaultAsync(ct);
+
+    private async Task<ReviewRunDetailDto> ReuseRunAsync(Guid runId, string requestedRepo, CodeHostPullRequest pr, CancellationToken ct)
+    {
+        // Adopt a renamed slug only after GitHub confirms both the immutable id and the slug used
+        // to reach that id on this authority. Keep the current routing if the old name redirected.
+        if (string.Equals(pr.RepositoryName, requestedRepo, StringComparison.OrdinalIgnoreCase))
+        {
+            var subject = db.ReviewRuns.Where(r => r.Id == runId).Select(r => r.SubjectId);
+            var changed = await db.ReviewSubjects.Where(s => subject.Contains(s.Id) && s.Repo != requestedRepo)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Repo, requestedRepo).SetProperty(x => x.Url, pr.Url), ct);
+            if (changed != 0)
+                await PublishAsync(runId, ct);
+        }
+        return await GetRunAsync(runId, existing: true, ct);
+    }
 
     internal static bool IsOpenRunConflict(DbUpdateException error) =>
         error.InnerException is PostgresException

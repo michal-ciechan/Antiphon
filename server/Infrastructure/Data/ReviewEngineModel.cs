@@ -6,7 +6,8 @@ namespace Antiphon.Server.Infrastructure.Data;
 /// <summary>Review engine tables, first slice (docs/features/012-review-engine/design.md section 18).</summary>
 public partial class AppDbContext
 {
-    public const string OpenReviewRunIndex = "IX_ReviewRuns_GitHubRepo_GitHubPrNumber_Open";
+    public const string OpenReviewRunIndex = "IX_ReviewRuns_GitHubIdentity_Open";
+    private const string OpenLegacyReviewRunIndex = "IX_ReviewRuns_GitHubLegacyIdentity_Open";
 
     public DbSet<ReviewSubject> ReviewSubjects => Set<ReviewSubject>();
     public DbSet<ReviewRun> ReviewRuns => Set<ReviewRun>();
@@ -43,16 +44,17 @@ public partial class AppDbContext
 
         model.Entity<ReviewRun>(e =>
         {
-            e.ToTable("ReviewRuns", table => table.HasTrigger("TR_ReviewRuns_FillGitHubIdentity"));
+            e.ToTable("ReviewRuns");
             e.HasKey(r => r.Id);
             e.Property(r => r.Status).HasConversion<string>().HasMaxLength(32).IsConcurrencyToken();
-            // The insert trigger derives these nullable columns from the subject.
             e.Property(r => r.GitHubRepo).HasMaxLength(256);
             // Close compares the full row version. Workflow saves compare Status so a metadata
             // edit need not interrupt a node already running.
             e.Property(r => r.ConcurrencyToken).HasColumnName("xmin").HasColumnType("xid").ValueGeneratedOnAddOrUpdate();
-            e.HasIndex(r => new { r.GitHubRepo, r.GitHubPrNumber }).HasDatabaseName(OpenReviewRunIndex).IsUnique()
-                .HasFilter("\"Status\" <> 'Closed' AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+            e.HasIndex(r => new { r.GitHubAuthority, r.GitHubRepositoryId, r.GitHubPrNumber }).HasDatabaseName(OpenReviewRunIndex).IsUnique()
+                .HasFilter("\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepositoryId\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+            e.HasIndex(r => new { r.GitHubAuthority, r.GitHubRepo, r.GitHubPrNumber }).HasDatabaseName(OpenLegacyReviewRunIndex).IsUnique()
+                .HasFilter("\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubRepositoryId\" IS NULL AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
             e.Property(r => r.Stage).HasConversion<string>().HasMaxLength(32);
             e.Property(r => r.WaitingOn).HasConversion<string>().HasMaxLength(32);
             e.Property(r => r.CostUsd).HasPrecision(18, 6);

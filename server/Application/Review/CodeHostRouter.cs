@@ -35,7 +35,10 @@ public sealed class CodeHostRouter(IEnumerable<ICodeHost> hosts, IOptions<Review
 
         var adapter = _hosts.FirstOrDefault(h => h.Serves(kind))
             ?? throw new CodeHostException(CodeHostFailureKind.NotConfigured, $"No code host adapter serves {kind}.");
-        return new CodeHostBinding(adapter, new CodeHostTarget(hostId, kind, repo, prNumber, row?.LocalPath, baseRef, headRef));
+        return new CodeHostBinding(adapter, new CodeHostTarget(hostId, kind, repo, prNumber, row?.LocalPath, baseRef, headRef)
+        {
+            GitHubAuthority = kind == ReviewHost.GitHub ? host.GitHubAuthority : null,
+        });
     }
 
     /// <summary>

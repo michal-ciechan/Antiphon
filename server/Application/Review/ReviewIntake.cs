@@ -33,6 +33,11 @@ public sealed class ReviewIntake(CodeHostRouter router)
     private static async Task<IntakeSnapshot> ReadAsync(CodeHostBinding binding, CancellationToken ct)
     {
         var pr = await binding.Host.GetPullRequestAsync(binding.Target, ct);
+        return await ReadFilesAsync(binding, pr, ct);
+    }
+
+    public static async Task<IntakeSnapshot> ReadFilesAsync(CodeHostBinding binding, CodeHostPullRequest pr, CancellationToken ct)
+    {
         var files = await binding.Host.ListChangedFilesAsync(binding.Target, new CodeHostRange(pr.BaseSha, pr.HeadSha), ct);
         return new IntakeSnapshot(pr, files);
     }

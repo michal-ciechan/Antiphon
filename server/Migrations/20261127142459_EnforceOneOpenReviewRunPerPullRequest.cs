@@ -26,42 +26,43 @@ namespace Antiphon.Server.Migrations
                 maxLength: 256,
                 nullable: true);
 
+            migrationBuilder.AddColumn<string>(name: "GitHubAuthority", table: "ReviewRuns", type: "text", nullable: true);
+            migrationBuilder.AddColumn<long>(name: "GitHubRepositoryId", table: "ReviewRuns", type: "bigint", nullable: true);
+            migrationBuilder.AddColumn<bool>(name: "IsDemo", table: "ReviewRuns", type: "boolean", nullable: false, defaultValue: false);
+
             migrationBuilder.Sql(
                 """
-                CREATE FUNCTION "NormalizeReviewGitHubRepo"(repo text) RETURNS text
-                LANGUAGE sql IMMUTABLE STRICT AS $$
-                    SELECT lower(regexp_replace(btrim(repo, E' \t\r\n'),
-                        '^(https?://github[.]com/)?([a-z0-9_.-]+/[a-z0-9_.-]+)(/(pull/)?[0-9]+)?/?([?#].*)?$',
-                        '\2', 'i') COLLATE "C");
-                $$;
+                UPDATE "ReviewRuns" AS r SET "IsDemo" = true
+                WHERE EXISTS (SELECT FROM "ReviewIterations" i WHERE i."RunId" = r."Id" AND i."Iteration" = 1
+                    AND i."HeadSha" IS NULL)
+                  AND EXISTS (SELECT FROM "ReviewNodeExecutions" n WHERE n."RunId" = r."Id" AND n."Iteration" = 1
+                    AND n."NodeId" = 'intake' AND n."Status" = 'Succeeded');
 
+                -- No numeric repository id was persisted before this migration. Use the
+                -- historical PR URL (or legacy input URL) solely to group historical rows.
                 UPDATE "ReviewRuns" AS r
-                SET "GitHubRepo" = "NormalizeReviewGitHubRepo"(s."Repo"), "GitHubPrNumber" = s."PrNumber"
+                SET "GitHubRepo" = substring(lower(btrim(s."Repo", E' \t\r\n') COLLATE "C")
+                        from '^(?:https?://[^/?#]+/)?([a-z0-9_.-]+/[a-z0-9_.-]+)(?:/(?:pull/)?[0-9]+)?/?(?:[?#].*)?$'),
+                    "GitHubPrNumber" = s."PrNumber",
+                    "GitHubAuthority" = CASE WHEN origin.web_root IS NULL OR origin.web_root IN
+                        ('https://github.com', 'http://github.com', 'https://api.github.com')
+                        THEN 'https://api.github.com' ELSE origin.web_root || '/api/v3' END
                 FROM "ReviewSubjects" AS s
-                WHERE s."Id" = r."SubjectId" AND s."Host" = 'GitHub' AND s."PrNumber" > 0;
-
-                CREATE FUNCTION "FillReviewRunGitHubIdentity"() RETURNS trigger
-                LANGUAGE plpgsql AS $$
-                BEGIN
-                    SELECT "NormalizeReviewGitHubRepo"(s."Repo"), s."PrNumber"
-                    INTO NEW."GitHubRepo", NEW."GitHubPrNumber"
-                    FROM "ReviewSubjects" AS s
-                    WHERE s."Id" = NEW."SubjectId" AND s."Host" = 'GitHub' AND s."PrNumber" > 0;
-                    RETURN NEW;
-                END;
-                $$;
-
-                CREATE TRIGGER "TR_ReviewRuns_FillGitHubIdentity"
-                BEFORE INSERT OR UPDATE OF "SubjectId", "GitHubRepo", "GitHubPrNumber" ON "ReviewRuns"
-                FOR EACH ROW EXECUTE FUNCTION "FillReviewRunGitHubIdentity"();
+                CROSS JOIN LATERAL (SELECT coalesce(
+                    substring(lower(s."Url" COLLATE "C") from '^https?://[a-z0-9.-]+(?::[0-9]+)?'),
+                    substring(lower(btrim(s."Repo") COLLATE "C") from '^https?://[a-z0-9.-]+(?::[0-9]+)?')) AS web_root) origin
+                WHERE s."Id" = r."SubjectId" AND s."Host" = 'GitHub' AND s."PrNumber" > 0 AND NOT r."IsDemo";
 
                 CREATE TEMP TABLE "_ReviewRunDuplicates" ON COMMIT DROP AS
                 SELECT "Id", "Status", "Stage", "WaitingOn", "UpdatedAt", "KeepId"
                 FROM (
                     SELECT "Id", "Status", "Stage", "WaitingOn", "UpdatedAt", first_value("Id") OVER pr AS "KeepId"
                     FROM "ReviewRuns"
-                    WHERE "Status" <> 'Closed' AND "GitHubRepo" IS NOT NULL AND "GitHubPrNumber" IS NOT NULL
-                    WINDOW pr AS (PARTITION BY "GitHubRepo", "GitHubPrNumber" ORDER BY "StartedAt" DESC, "Id" DESC)
+                    WHERE "Status" <> 'Closed' AND NOT "IsDemo" AND "GitHubAuthority" IS NOT NULL AND "GitHubPrNumber" IS NOT NULL
+                        AND ("GitHubRepositoryId" IS NOT NULL OR "GitHubRepo" IS NOT NULL)
+                    WINDOW pr AS (PARTITION BY "GitHubAuthority", "GitHubRepositoryId",
+                        CASE WHEN "GitHubRepositoryId" IS NULL THEN "GitHubRepo" END, "GitHubPrNumber"
+                        ORDER BY "StartedAt" DESC, "Id" DESC)
                 ) AS ranked
                 WHERE "Id" <> "KeepId";
 
@@ -93,28 +94,35 @@ namespace Antiphon.Server.Migrations
                 """);
 
             migrationBuilder.CreateIndex(
-                name: "IX_ReviewRuns_GitHubRepo_GitHubPrNumber_Open",
+                name: "IX_ReviewRuns_GitHubIdentity_Open",
                 table: "ReviewRuns",
-                columns: new[] { "GitHubRepo", "GitHubPrNumber" },
+                columns: new[] { "GitHubAuthority", "GitHubRepositoryId", "GitHubPrNumber" },
                 unique: true,
-                filter: "\"Status\" <> 'Closed' AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+                filter: "\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepositoryId\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+            migrationBuilder.CreateIndex(
+                name: "IX_ReviewRuns_GitHubLegacyIdentity_Open",
+                table: "ReviewRuns",
+                columns: new[] { "GitHubAuthority", "GitHubRepo", "GitHubPrNumber" },
+                unique: true,
+                filter: "\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubRepositoryId\" IS NULL AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             // The keys are derived. Keep the run closures and their audit when removing them.
-            migrationBuilder.Sql(
-                """
-                SET LOCAL lock_timeout = '5s';
-                DROP TRIGGER "TR_ReviewRuns_FillGitHubIdentity" ON "ReviewRuns";
-                DROP FUNCTION "FillReviewRunGitHubIdentity"();
-                DROP FUNCTION "NormalizeReviewGitHubRepo"(text);
-                """);
+            migrationBuilder.Sql("SET LOCAL lock_timeout = '5s';");
 
             migrationBuilder.DropIndex(
-                name: "IX_ReviewRuns_GitHubRepo_GitHubPrNumber_Open",
+                name: "IX_ReviewRuns_GitHubIdentity_Open",
                 table: "ReviewRuns");
+            migrationBuilder.DropIndex(
+                name: "IX_ReviewRuns_GitHubLegacyIdentity_Open",
+                table: "ReviewRuns");
+
+            migrationBuilder.DropColumn(name: "GitHubAuthority", table: "ReviewRuns");
+            migrationBuilder.DropColumn(name: "GitHubRepositoryId", table: "ReviewRuns");
+            migrationBuilder.DropColumn(name: "IsDemo", table: "ReviewRuns");
 
             migrationBuilder.DropColumn(
                 name: "GitHubPrNumber",

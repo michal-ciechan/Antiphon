@@ -16,6 +16,9 @@ namespace Antiphon.Server.Application.Interfaces;
 /// </summary>
 public interface ICodeHost
 {
+    Task<long> GetRepositoryIdAsync(CodeHostTarget target, CancellationToken ct) =>
+        throw new CodeHostException(CodeHostFailureKind.Unsupported, "This code host has no GitHub repository identity.");
+
     /// <summary>True when this adapter serves subjects on <paramref name="kind"/>.</summary>
     bool Serves(ReviewHost kind);
 
@@ -119,7 +122,11 @@ public sealed record CodeHostTarget(
     int? PrNumber = null,
     string? LocalPath = null,
     string? BaseRef = null,
-    string? HeadRef = null);
+    string? HeadRef = null)
+{
+    public string? GitHubAuthority { get; init; }
+    public long? GitHubRepositoryId { get; init; }
+}
 
 /// <summary>
 /// The commits a file list or diff covers. With <see cref="SinceSha"/> null it is the whole change:
@@ -151,7 +158,9 @@ public sealed record CodeHostPullRequest(
     string HeadSha,
     string? Url,
     CodeHostPullRequestState State,
-    bool IsDraft);
+    bool IsDraft,
+    long? RepositoryId = null,
+    string? RepositoryName = null);
 
 public enum CodeHostFileStatus
 {

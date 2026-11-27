@@ -36,6 +36,8 @@ public sealed class ReviewCodeHostSettings
 
 public sealed class ReviewCodeHost
 {
+    public const string DefaultGitHubApiRoot = "https://api.github.com";
+
     public ReviewHost Kind { get; set; } = ReviewHost.GitHub;
 
     /// <summary>
@@ -43,6 +45,22 @@ public sealed class ReviewCodeHost
     /// <c>https://ghe.example.com/api/v3</c>. A company proxy goes here too.
     /// </summary>
     public string? BaseUrl { get; set; }
+
+    internal Uri GitHubApiRoot
+    {
+        get
+        {
+            var configured = string.IsNullOrWhiteSpace(BaseUrl) ? DefaultGitHubApiRoot : BaseUrl.Trim();
+            if (!Uri.TryCreate(configured.TrimEnd('/') + "/", UriKind.Absolute, out var uri)
+                || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0)
+                throw new Antiphon.Server.Application.Interfaces.CodeHostException(
+                    Antiphon.Server.Application.Interfaces.CodeHostFailureKind.NotConfigured,
+                    "The GitHub REST API root must be an HTTP(S) URL without credentials, a query or a fragment.");
+            return uri;
+        }
+    }
+
+    internal string GitHubAuthority => GitHubApiRoot.GetLeftPart(UriPartial.Path).TrimEnd('/');
 
     /// <summary>
     /// The GraphQL endpoint (thread resolution). Absent, it follows <see cref="BaseUrl"/>:
