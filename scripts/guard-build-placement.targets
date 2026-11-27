@@ -37,7 +37,10 @@
                 blocked = evidence.IsMatch(physical);
             }
             if (blocked)
+            {
                 Log.LogError("workspace_evidence_write: {0}={1} in {2}", destination.ItemSpec, value, ProjectDirectory);
+                return false;
+            }
         }
       ]]></Code>
     </Task>
