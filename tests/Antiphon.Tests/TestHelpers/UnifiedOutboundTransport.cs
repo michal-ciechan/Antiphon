@@ -181,7 +181,7 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     public static async Task<UnifiedOutboundTransport> CreateAsync(RedpandaContainer broker,
         bool gatewayStarted = true, Action<IServiceCollection>? configure = null,
         Action<DbContextOptionsBuilder>? configureDb = null, int? maxMessageBytes = null,
-        TimeProvider? clock = null, int warmProbes = 0)
+        TimeProvider? clock = null, int warmProbes = 0, int? postEvidenceSettleMs = null)
     {
         using var timing = TestTrace.ChunkSpan("C519 create world");
         await AwaitEarlierTeardownsAsync();
@@ -218,6 +218,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
             Bridge = new ChannelBridgeSettings
             { Enabled = true, DebounceWindowMs = 0, MachineTurnTextOrigins = [QueuedMessageOrigin.Check] },
             ConfigureDbContext = configureDb,
+            ConfigureDeliveryVerification = postEvidenceSettleMs is int settle
+                ? verification => verification.PostEvidenceSettleMs = settle : null,
             ConfigureServices = services =>
             {
                 services.AddSingleton<IAntiphonMessagingProducer>(producer);

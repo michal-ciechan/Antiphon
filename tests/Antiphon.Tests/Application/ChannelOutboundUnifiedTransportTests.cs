@@ -90,7 +90,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         };
                         return service;
                     });
-                }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave), clock: clock);
+                }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave),
+                // The fake adapter writes the complete prompt in its submit callback. The matrix
+                // exercises durable handoff faults, so it does not need a terminal redraw window.
+                clock: clock, postEvidenceSettleMs: 0);
             producer.Inner = w.Producer;
             using (TestTrace.ChunkSpan("C519 receive source"))
                 await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
