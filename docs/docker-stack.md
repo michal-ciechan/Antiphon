@@ -1272,39 +1272,13 @@ so an override can empty it), age `MinTerminalHours=12`, at most `MaxRemovalsPer
 A tree left in the retiring root (`retiring_refused`) stays registered, is reported, and is retried by phase B
 only on the next request for that task; it is never moved back.
 
-#### Evidence expiry and disk admission
+#### Build placement and disk admission
 
 Keep runnable checkouts and build products in the task worktree or its owned scratch directory.
 Write checkpoint receipts, TRX, logs and reports to the external evidence root. The checkpoint
 tool checks evaluated build, intermediate, NuGet and publish destinations before invoking the
 SDK build, including in a historical checkout. A direct build from a revision with the MSBuild
 guard also refuses those standard output, intermediate and publish paths.
-
-Run the evidence sweep alongside the regular worktree retention cadence, inside the runner
-container as its app user. The caller maintains a release list off the task branch. Each entry
-names the exact task evidence directory, the full owning task ID and that directory's device
-and inode, for example
-`[{"path":"/work/review-evidence/task-12345678","taskId":"12345678-1234-1234-1234-123456789abc","identity":"2049:5678"}]`.
-Establish the full owner from the task's evidence record. Capture the identity of that exact
-directory at release with `stat --printf '%d:%i' -- <exact-directory>`.
-Release a directory only after its durable receipts have been retained and its references have been
-cleared, including card discussions. The sweep itself checks task settlement,
-open task records, board search, Git references and the file tree. It keeps evidence for at least
-24 hours after both the task's completion and the newest write in the tree. Set
-`-MinAgeHours` to a higher value when a deployment requires a longer retention period.
-
-```sh
-pwsh -NoProfile -File scripts/sweep-server2-evidence.ps1 -ReleaseList <release-list> -Repository <antiphon-repo> -ProjectId <project-id>
-```
-
-Use the current production `ANTIPHON_API` and the runner's authorized read context. The command
-previews by default. Use `-Apply` for the scheduled invocation after the preview. Keep the sweep's
-per-path output with the host maintenance logs. Apply moves the released directory into an
-exclusive sibling quarantine on the same filesystem and repeats the owner, references and tree
-checks there. A refusal restores the same directory if its original path is still free. A
-`quarantined` line identifies retained bytes that need manual reconciliation. An unreadable
-process holder check retains the directory. Run in the namespace that owns the evidence volume
-and can inspect its processes. Task mirrors use the separate worktree retention gate above.
 
 Install `scripts/server2-docker-builder-prune.service` and its matching timer in
 `/etc/systemd/system/` on the outer server2 host, reload systemd and enable the timer.

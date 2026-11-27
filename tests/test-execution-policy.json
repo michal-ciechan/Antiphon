@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "4aad09d626e2af942ac6b734043c250ebad98ea3d9f3192435b62767fa54dae5",
+  "policyHash": "4b32b309ac85e239f336fa864975757d0e9f4dfaa82a179db4b1cfb93306d06c",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -769,13 +769,6 @@
           "class": "CheckpointEvidencePlacementTests",
           "platform": "windows",
           "reason": "Linux-only by construction: the checkpoint build placement gate protects Linux runner evidence roots. The cases remain required on Linux.",
-          "owner": "CARD-1677"
-        },
-        {
-          "suite": "antiphon",
-          "class": "Server2EvidenceRetentionTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: the runner sweep uses procfs and GNU file tools. The cases remain required on Linux.",
           "owner": "CARD-1677"
         },
         {
