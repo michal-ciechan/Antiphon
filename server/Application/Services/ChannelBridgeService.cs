@@ -63,6 +63,8 @@ public sealed partial class ChannelBridgeService : BackgroundService
     private readonly Dictionary<Guid, long> _lastMemberScanSequence = [];
     private long _lastInboundScanSequence;
     private int _completedDrainIterations;
+    // A restart rediscovers durable queue ownership. Only the bounded retry delay is local.
+    private readonly ConcurrentDictionary<Guid, DateTime> _withheldRetryAfter = new();
     private readonly DateTimeOffset _createdAt;
     private DateTimeOffset? _stallRaisedSince;
 
@@ -338,14 +340,31 @@ public sealed partial class ChannelBridgeService : BackgroundService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+            foreach (var wait in _withheldRetryAfter)
+                if (wait.Value <= now) _withheldRetryAfter.TryRemove(wait);
+            var deferred = _withheldRetryAfter.Keys.ToArray();
+            var firstRetry = now.AddSeconds(-10);
             var ownedSessions = await db.SessionQueuedMessages.AsNoTracking()
-                .Where(q => q.SourceChannelInboundId != null
-                    && q.Status == QueuedMessageStatus.Pending
-                    && q.AgentSession.Status == SessionStatus.Running)
-                .OrderBy(q => q.CreatedAt).Take(64)
-                .Select(q => q.AgentSessionId).Distinct().ToListAsync(ct);
-            foreach (var sessionId in ownedSessions)
+                .Where(q => q.Status == QueuedMessageStatus.Pending && q.Origin == QueuedMessageOrigin.Channel
+                    && q.AgentSession.Status == SessionStatus.Running
+                    && (q.SourceChannelInboundId != null || (q.WithholdCount > 0
+                        && db.ChannelInbounds.Any(i => i.QueueMessageId == q.Id)))
+                    && (q.FirstWithheldAt == null || (q.FirstWithheldAt <= firstRetry
+                        && !deferred.Contains(q.AgentSessionId))))
+                .GroupBy(q => q.AgentSessionId)
+                .Select(g => new { SessionId = g.Key, Oldest = g.Min(q => q.CreatedAt),
+                    Withheld = g.Min(q => q.FirstWithheldAt) })
+                .OrderBy(s => s.Oldest).ThenBy(s => s.SessionId).Take(64).ToListAsync(ct);
+            foreach (var owned in ownedSessions)
             {
+                var sessionId = owned.SessionId;
+                if (owned.Withheld is { } since)
+                {
+                    var age = now - since;
+                    var seconds = age.TotalMinutes < 1 ? 10 : age.TotalMinutes < 5 ? 30 : 120;
+                    _withheldRetryAfter[sessionId] = now.AddSeconds(seconds);
+                }
                 // CARD-1716: one held queue lock must not stall this pass for every other agent.
                 if (pass.IsBusy(sessionId)) continue;
                 try { await _queue.FlushSessionAsync(sessionId, ct, ScanQueueLockWait); }
