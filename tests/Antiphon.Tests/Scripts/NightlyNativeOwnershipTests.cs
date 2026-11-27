@@ -208,6 +208,47 @@ public sealed class NightlyNativeOwnershipTests
         }, cancellationToken);
 
     [Test, Timeout(120_000)]
+    public Task C1039_ConcurrentLaunchDoesNotInheritStdin(CancellationToken cancellationToken) =>
+        RunAsync(nameof(C1039_ConcurrentLaunchDoesNotInheritStdin), native =>
+        {
+            var root = native.NewRoot("isolated stdin");
+            var input = Path.Combine(root, "stdin");
+            var log = Path.Combine(root, "native.log");
+            File.WriteAllText(input, "private input");
+            var hooks = new NativeProcessHooks
+            {
+                BarrierDirectory = root,
+                Barriers = ["create-process"],
+                StandardInputPath = input,
+            };
+            var owner = NativeProcessOwner.Start(Fixture, [root, "stdin"], root, 30_000, log, null, hooks);
+            native.Owners.Add(owner);
+            var run = new NativeRun(root, owner, log);
+            native.WaitFor(() => File.Exists(Path.Combine(root, "create-process.entered")) || owner.Completion.IsCompleted,
+                "stdin launch preparation");
+            owner.Completion.IsCompleted.ShouldBeFalse("stdin launch should pause immediately before CreateProcess");
+
+            var siblingRoot = native.NewRoot("unrelated redirected launch");
+            var sibling = native.Hold(Process.Start(new ProcessStartInfo(Fixture)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                ArgumentList = { siblingRoot, "root-held" },
+            }).ShouldNotBeNull());
+            native.WaitFor(() => File.Exists(Path.Combine(siblingRoot, "started")), "unrelated sibling running");
+            var inputHandle = long.Parse(ReadMarker(Path.Combine(root, "create-process.entered")),
+                System.Globalization.CultureInfo.InvariantCulture);
+            JobObserver.InheritedSameHandle(sibling.Handle, inputHandle)
+                .ShouldBeFalse("the concurrent redirected launch inherited the native owner's stdin file");
+            native.Release(run, "create-process");
+            native.Complete(run);
+            File.ReadAllText(log).ShouldContain("FIXTURE-STDIN:private input");
+            sibling.HasExited.ShouldBeFalse("the independent launch is still holding every handle it inherited");
+            Should.NotThrow(() => File.Delete(input), "the sibling must not inherit the stdin file");
+            File.Exists(input).ShouldBeFalse();
+        }, cancellationToken);
+
+    [Test, Timeout(120_000)]
     public Task C1039_DrainBeforeReturn(CancellationToken cancellationToken) => RunAsync(nameof(C1039_DrainBeforeReturn), native =>
     {
         foreach (var phase in new[] { "stdout", "stderr", "log-write" })
@@ -631,7 +672,7 @@ public sealed class NightlyNativeOwnershipTests
             // Release every fixture barrier even when the guarded assertion goes red.
             foreach (var root in _roots)
             {
-                foreach (var phase in new[] { "assignment", "root-wait", "job-termination", "failure-cleanup",
+                foreach (var phase in new[] { "create-process", "assignment", "root-wait", "job-termination", "failure-cleanup",
                              "stdout", "stderr", "log-write", "root", "child" })
                     File.WriteAllText(Path.Combine(root, phase + ".release"), "finally release");
                 // A deliberate breakaway mutant must also be joined by its exact fixture identity.
@@ -664,6 +705,8 @@ public sealed class NightlyNativeOwnershipTests
             System.Reflection.Assembly.LoadFrom(Path.ChangeExtension(Fixture, ".dll")).GetType("NativeJobObserver", throwOnError: true)!);
 
         public static bool Contains(IntPtr process, IntPtr job) => (bool)Invoke("Contains", process, job)!;
+
+        public static bool InheritedSameHandle(IntPtr process, long handle) => (bool)Invoke("InheritedSameHandle", process, handle)!;
 
         public static uint ReadLimitFlags(IntPtr job) => (uint)Invoke("ReadLimitFlags", job)!;
 

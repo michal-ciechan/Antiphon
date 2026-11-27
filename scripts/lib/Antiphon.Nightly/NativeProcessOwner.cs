@@ -35,10 +35,10 @@ namespace Antiphon.Nightly
         // Fixture launches can supply input and clean their job as soon as the root exits.
         public string StandardInputPath { get; set; } = "";
         public bool TerminateDescendantsOnRootExit { get; set; }
-        internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
+        internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken), string evidence = "entered")
         {
             if (!Barriers.Contains(phase)) return;
-            File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), "entered");
+            File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), evidence);
             while (!File.Exists(Path.Combine(BarrierDirectory, phase + ".release")))
             { cancellation.ThrowIfCancellationRequested(); Thread.Sleep(10); }
         }
@@ -186,6 +186,7 @@ namespace Antiphon.Nightly
                 }
                 var command = new StringBuilder(Quote(executable) + " " + string.Join(" ", (arguments ?? Array.Empty<string>()).Select(Quote)));
                 ProcessInfo info;
+                _hooks.Pause("create-process", evidence: childInput.ToInt64().ToString(CultureInfo.InvariantCulture));
                 Check(CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, true,
                     0x4 | 0x400 | 0x80000 | 0x08000000, envBlock, directory, ref startup, out info), "CreateProcess suspended");
                 root = info.Process; thread = info.Thread; Observation.Pid = (int)info.Pid;
