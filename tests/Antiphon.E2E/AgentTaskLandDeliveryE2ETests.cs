@@ -451,8 +451,7 @@ public class AgentTaskLandDeliveryE2ETests
                 // CARD-1892: the Grok caller has no composer reader, so a crash after the attempt
                 // claim is an unknown delivery the restarted host holds for an orchestrator
                 // decision; it is never retyped, so no receipt is owed.
-                await f.WaitForInterruptedDispatchEligibilityAsync(f.ReviewTaskId);
-                await f.UseChildAsync("none");
+                await f.RestartBeforeInterruptedDispatchEligibilityAsync(f.ReviewTaskId);
                 await f.AssertUnknownPreTypingAttemptHeldAsync(f.ReviewTaskId, "review-evidence=");
                 await f.AssertReviewSettledOnceHeldAsync();
                 return;

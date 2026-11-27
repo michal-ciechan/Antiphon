@@ -67,6 +67,20 @@ public sealed partial class LandDeliveryFixture
         await db.SaveChangesAsync();
     }
 
+    public async Task RestartBeforeInterruptedDispatchEligibilityAsync(Guid sourceTaskId)
+    {
+        await using var db = CreateContext();
+        var row = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == sourceTaskId
+            && m.SourceLandNotificationId != null && m.Status == QueuedMessageStatus.Sent
+            && m.DeliveryVerdict == null && m.DeliveryAttempts > 0 && m.LastDeliveryStartedAt != null)
+            .OrderBy(m => m.LastDeliveryStartedAt).FirstAsync();
+        var started = row.LastDeliveryStartedAt!.Value;
+        // Pin only the queue clock during the early scan, so restarting Kestrel cannot consume
+        // the test's one-second margin. Leave the persisted attempt timestamps untouched.
+        await UseChildAsync("none", new(row.AgentSessionId, row.Id, row.DeliveryAttempts,
+            started, started + InterruptedAttemptAge - TimeSpan.FromSeconds(1)));
+    }
+
     /// <summary>
     /// V-16: zero ordinary sibling warnings. The project's <c>trunk</c> default is deleted under
     /// the claim lease, after the pre-lease observation. The cut falls back to HEAD and owes the
@@ -439,8 +453,8 @@ public sealed partial class LandDeliveryFixture
     /// Grok session, which has no composer reader, so the restarted host holds that attempt for a
     /// complete UserPrompt or an orchestrator decision: no Enter, no retype, no attempt charge.
     /// Once the attempt is older than InterruptedAttemptAge the stranded-queue watchdog records a
-    /// durable input-delivery-unknown warning. Call after <see cref="WaitForInterruptedDispatchEligibilityAsync"/>
-    /// and the restart. <paramref name="promptMarker"/> identifies the held body in a prompt.
+    /// durable input-delivery-unknown warning. Call after restarting the recovery child.
+    /// <paramref name="promptMarker"/> identifies the held body in a prompt.
     /// </summary>
     public async Task AssertUnknownPreTypingAttemptHeldAsync(Guid sourceTaskId, string promptMarker)
     {

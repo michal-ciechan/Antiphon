@@ -21,8 +21,22 @@ using Antiphon.Server.Infrastructure.Orchestration;
 namespace Antiphon.E2E.Fixtures;
 
 internal sealed record LandDeliveryOptions(
-    string Root, string Cut = "none", string CompletionForm = "raw", bool UseShortInterruptedAttemptGuard = false)
+    string Root, string Cut = "none", string CompletionForm = "raw", bool UseShortInterruptedAttemptGuard = false,
+    LandDeliveryOptions.RecoveryClock? QueueClock = null)
 {
+    internal sealed class RecoveryClock(DateTime at) : TimeProvider
+    {
+        private long _heldTicks = at.Ticks;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            var ticks = Interlocked.Read(ref _heldTicks);
+            return ticks == 0 ? TimeProvider.System.GetUtcNow() : new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
+
+        public void Resume() => Interlocked.Exchange(ref _heldTicks, 0);
+    }
+
     public string Gate => Path.Combine(Root, "caller-busy");
     public void Configure(Dictionary<string, string?> settings)
     {
@@ -70,6 +84,8 @@ internal sealed record LandDeliveryOptions(
     }
     public void ConfigureServices(IServiceCollection services)
     {
+        if (QueueClock is { } queueClock)
+            services.AddSingleton(p => ActivatorUtilities.CreateInstance<SessionMessageQueueService>(p, queueClock));
         // The CLI probes the real version endpoint before sending a land request. Give this
         // fixture's unstamped server a checkout identity while preserving its advertised capabilities.
         services.ConfigureHttpJsonOptions(options =>

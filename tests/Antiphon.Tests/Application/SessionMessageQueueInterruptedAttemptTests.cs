@@ -9,6 +9,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -29,6 +30,46 @@ public class SessionMessageQueueInterruptedAttemptTests
 
     private static TimeSpan InterruptedAge =>
         TimeSpan.FromSeconds(3 + 3 + 30); // harness confirm + grace + unobservable tolerance
+
+    [Test]
+    public async Task C1892_DefaultGuardBecomesEligibleAtEightySeconds()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var settings = new SupervisionSettings();
+        settings.DeliveryVerification.Enabled = true;
+        settings.DeliveryVerification.TranscriptConfirmEnabled = true;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await BridgeQueueHarness.CreateAsync(new()
+        {
+            ConnectionString = schema.ConnectionString, TimeProvider = clock, Supervision = settings,
+        });
+        var id = await h.SeedPendingMessageAsync(Body, deliveryAttempts: 1, origin: QueuedMessageOrigin.Delegation,
+            status: QueuedMessageStatus.Sent, lastDeliveryStartedAt: h.Now);
+        await using (var setup = h.CreateObserverContext())
+            await setup.AgentSessions.Where(s => s.Id == h.SessionId).ExecuteUpdateAsync(u => u
+                .SetProperty(s => s.AgentKind, AgentKind.Grok)
+                .SetProperty(s => s.GrokRulesState, GrokRulesState.Ready));
+        h.Adapter.RenderedScreenOverride = "Waiting for response";
+
+        clock.Advance(TimeSpan.FromSeconds(79));
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        await AssertHeldAsync(0);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await h.Queue.FlushStrandedQueuesAsync(CancellationToken.None);
+        await AssertHeldAsync(1);
+
+        async Task AssertHeldAsync(int incidents)
+        {
+            await using var db = h.CreateObserverContext();
+            (await db.AgentIncidents.CountAsync(i => i.SessionId == h.SessionId
+                && i.FailureReason == "input-delivery-unknown")).ShouldBe(incidents);
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == id);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBeNull();
+            row.DeliveryAttempts.ShouldBe(1);
+            h.Adapter.Inputs.ShouldBeEmpty();
+        }
+    }
 
     // CARD-1892 D-1: the durable shape left by an uncertain launch Input. Scrollback
     // is not a composer reading. Each later flush must independently forbid another write.

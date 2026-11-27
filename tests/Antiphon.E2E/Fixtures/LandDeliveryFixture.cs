@@ -260,7 +260,10 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
             : null;
     }
 
-    public async Task UseChildAsync(string cut)
+    public sealed record EarlyRecoveryScan(Guid SessionId, Guid MessageId, int Attempts,
+        DateTime AttemptStartedAt, DateTime ScanAt);
+
+    public async Task UseChildAsync(string cut, EarlyRecoveryScan? earlyRecovery = null)
     {
         if (!_hostSuspended) { await _app.SuspendLandHostAsync(); _hostSuspended = true; }
         if (_child is not null) await KillChildAsync();
@@ -270,7 +273,8 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         foreach (var arg in new[] { typeof(LandDeliveryFixture).Assembly.Location, "--treenode-filter", "/*/*/AgentTaskLandDeliveryE2ETests/C467_V22*" }) start.ArgumentList.Add(arg);
         start.Environment["ANTIPHON_C467_CONNECTION"] = _connection;
         start.Environment["ANTIPHON_C467_CHILD"] = JsonSerializer.Serialize(new[] {
-            Root, _app.OwnedRunnerUrl, cut, ready, _useShortInterruptedAttemptGuard.ToString()
+            Root, _app.OwnedRunnerUrl, cut, ready, _useShortInterruptedAttemptGuard.ToString(),
+            JsonSerializer.Serialize(earlyRecovery)
         });
         using (Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("LandDeliveryFixture owned child launch"))
             _child = Process.Start(start)!;
@@ -284,11 +288,14 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         _http.Dispose(); _http = new HttpClient { BaseAddress = new Uri(_address) };
     }
 
-    public static async Task RunChildAsync(string root, string runner, string cut, string ready, bool useShortInterruptedAttemptGuard)
+    public static async Task RunChildAsync(string root, string runner, string cut, string ready,
+        bool useShortInterruptedAttemptGuard, EarlyRecoveryScan? earlyRecovery)
     {
         var connection = Environment.GetEnvironmentVariable("ANTIPHON_C467_CONNECTION") ?? throw new InvalidOperationException("Missing owned database");
+        var clock = earlyRecovery is null ? null : new LandDeliveryOptions.RecoveryClock(earlyRecovery.ScanAt);
         var factory = new AntiphonAppFixture.KestrelWebApplicationFactory(null, connection, false, root,
-            Path.Combine(root, "child-logs"), runner, land: new(root, cut, UseShortInterruptedAttemptGuard: useShortInterruptedAttemptGuard));
+            Path.Combine(root, "child-logs"), runner,
+            land: new(root, cut, UseShortInterruptedAttemptGuard: useShortInterruptedAttemptGuard, QueueClock: clock));
         try { factory.CreateClient(); } catch when (factory.KestrelHost is not null) { }
         var host = factory.KestrelHost ?? throw new InvalidOperationException("No real child host");
         AssertNoMaintenanceServer(host.Services);
@@ -296,6 +303,24 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         var settings = host.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
         settings.ApiBaseUrl = address;
         settings.AllowedRoots.ShouldBe(new[] { Path.Combine(root, "repo"), Path.Combine(root, "trees", "source") });
+        if (earlyRecovery is { } scan)
+        {
+            var queue = host.Services.GetRequiredService<SessionMessageQueueService>();
+            await queue.FlushStrandedQueuesAsync(CancellationToken.None);
+            await queue.FlushIfIdleAsync(scan.SessionId, CancellationToken.None);
+            await using var scope = host.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == scan.MessageId);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBeNull();
+            row.DeliveryAttempts.ShouldBe(scan.Attempts);
+            row.LastDeliveryStartedAt.ShouldBe(scan.AttemptStartedAt);
+            (await db.AgentIncidents.AnyAsync(i => i.SessionId == scan.SessionId
+                && i.FailureReason == "input-delivery-unknown" && i.CreatedAt >= scan.AttemptStartedAt))
+                .ShouldBeFalse("a recovery scan one second before eligibility must not classify the attempt");
+            await File.WriteAllTextAsync(Path.Combine(root, "early-recovery-scan.json"), JsonSerializer.Serialize(scan));
+            clock!.Resume();
+        }
         await File.WriteAllTextAsync(ready + ".tmp", JsonSerializer.Serialize(new { address, pid = Environment.ProcessId, mvid = typeof(Program).Assembly.ManifestModule.ModuleVersionId }));
         File.Move(ready + ".tmp", ready);
         await Task.Delay(Timeout.Infinite);

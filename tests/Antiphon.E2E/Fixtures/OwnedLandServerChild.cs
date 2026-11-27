@@ -12,9 +12,10 @@ public static class OwnedLandServerChild
         if (settings is null) return;
         var args = JsonSerializer.Deserialize<string[]>(settings)!;
         var owner = Path.GetFullPath(Path.Combine(AntiphonAppFixture.FindRepositoryRoot(), ".antiphon", "acceptance", "card-0467")) + Path.DirectorySeparatorChar;
-        if (args.Length != 5 || !bool.TryParse(args[4], out var useShortInterruptedAttemptGuard)
+        if (args.Length != 6 || !bool.TryParse(args[4], out var useShortInterruptedAttemptGuard)
             || !Path.GetFullPath(args[0]).StartsWith(owner, StringComparison.OrdinalIgnoreCase)
             || new Uri(args[1]).Port == 17204) throw new InvalidOperationException("Child resources are not fixture-owned");
-        await LandDeliveryFixture.RunChildAsync(args[0], args[1], args[2], args[3], useShortInterruptedAttemptGuard);
+        await LandDeliveryFixture.RunChildAsync(args[0], args[1], args[2], args[3], useShortInterruptedAttemptGuard,
+            JsonSerializer.Deserialize<LandDeliveryFixture.EarlyRecoveryScan>(args[5]));
     }
 }
