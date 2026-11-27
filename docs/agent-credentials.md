@@ -278,7 +278,7 @@ After the CARD-1744 control-plane move, the desktop copy of that file holds the 
 The server creates the 32-byte hex value at `Operator:TokenPath` on first start; the production path is
 `/state/operator-token`. The operator copies it over SSH without display into
 `%LOCALAPPDATA%\Antiphon\operator-token`, or into the path named by `ANTIPHON_OPERATOR_TOKEN_FILE`.
-`scripts/deploy-server2.ps1` reads that copy for every phase except `check-census` and never prints it.
+`scripts/antiphon deploy-server2` reads that copy for every phase except `check-census` and never prints it.
 The operator owns the copy. Names and locations only.
 
 The same token guards the Hangfire dashboard (CARD-0658). `/hangfire` admits a request carrying the header, or a

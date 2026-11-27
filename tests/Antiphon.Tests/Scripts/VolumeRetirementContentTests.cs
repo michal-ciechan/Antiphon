@@ -1688,56 +1688,41 @@ public sealed class VolumeRetirementContentTests
             .ShouldBeFalse("c1673-t: the refusal precedes the recycle journal");
     }
 
-    // Task 5b7656a9: the real census read (no C727 stub) streams the packet to ssh stdin.
-    // Its awaited write must not leak a VoidTaskResult into the function output, or the
-    // manifest check sees two items and every real deploy-temp stops TempRetirementJournalUnknown.
+    // Task 5b7656a9: the real census read (no fixture seam) streams the packet to ssh stdin and returns only the census text. Unit 65:
+    // the deploy-server2 command's transport (Server2RollingOs) with the output witness's fake ssh first on its children's PATH; the
+    // hold-lift cases of that witness are Server2RollingWitnessTests.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Real_census_read_returns_only_the_census_text()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var rows = await VolumeRetirementFixture.RunOutputWitness("Census");
-        rows.ShouldBe(new[]
+        var root = Directory.CreateTempSubdirectory("ds2-census-").FullName;
+        try
         {
-            "OUTPUT census count=1 types=System.String streamed=True",
-            "OUTPUT proof count=1 types=System.String",
-            "OUTPUT clearable ok",
-        }, string.Join("\n", rows));
+            var bin = Path.Combine(root, "bin");
+            Directory.CreateDirectory(bin);
+            // The FD8 rollout lock answers ready and holds until released; anything else is a census read.
+            await FixtureExecutable.WriteAsync(Path.Combine(bin, "ssh"),
+                "#!/bin/sh\ncase \"$*\" in *rollout.lock*) printf 'C1008_LOCKED\\n'; read -r release; exit 0 ;; esac\nprintf '%s\\n' \"$*\" > \"$W_ROOT/argv\"\ncat > \"$W_ROOT/stdin\"\ncat \"$W_ROOT/reply\"\n");
+            const string reply = "{\"volumes\":[],\"journals\":[]}\n";
+            File.WriteAllText(Path.Combine(root, "reply"), reply);
+            var os = new Antiphon.Nightly.Server2RollingOs(DelegateScriptRunner.RepoRoot, new Dictionary<string, string>
+            {
+                ["PATH"] = bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"), ["W_ROOT"] = root,
+            });
+            var census = os.TempRetirementRead(new Antiphon.Nightly.Server2RollingCall { Sha = new string('a', 40), RunId = "c727witness00", Operation = "" });
+            File.Exists(Path.Combine(root, "argv")).ShouldBeTrue("the fake ssh answered");
+            var packet = Antiphon.Nightly.RollingPs.NewC1609RetirementReadPacket(
+                File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c1008-retirement.sh")),
+                File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-remote.sh")), "", true);
+            (census.Exit, census.Stdout).ShouldBe((0, reply), "OUTPUT census count=1 types=System.String");
+            File.ReadAllText(Path.Combine(root, "stdin")).ShouldBe(packet, "streamed=True");
+            var proof = os.TempRetirementRead(new Antiphon.Nightly.Server2RollingCall { Sha = new string('a', 40), RunId = "c727witness00", Operation = VolumeRetirementFixture.Operation });
+            (proof.Exit, proof.Stdout).ShouldBe((0, reply), "OUTPUT proof count=1 types=System.String");
+            Should.NotThrow(() => Antiphon.Nightly.Server2RollingDeploy.CheckTempRetirementCensus(census.Stdout), "OUTPUT clearable ok");
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
-
-    // Task bb0cd0ec: deploy-temp lifts its own deployment hold after deploy-temp-runner has
-    // created the four temp volumes. Only the reactivation clear of a retired placeholder
-    // runs the volume/journal check; the hold lift must reach its POST, and the reactivation
-    // clear must still refuse while the volumes are present.
-    [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task Hold_lift_clear_after_deploy_is_not_refused_for_its_own_volumes()
-    {
-        NativeLinuxGate.Require(NativeLinuxReason);
-        var rows = await VolumeRetirementFixture.RunOutputWitness("HoldLift");
-        rows.ShouldBe(new[]
-        {
-            "OUTPUT reactivate ok posts=1",
-            "OUTPUT holdlift ok posts=2",
-            "OUTPUT reactivate-retained threw:TempVolumesRetained antiphon-runner-temp_work posts=2",
-        }, string.Join("\n", rows));
-    }
-
-    // Task bb0cd0ec: the hold lift skips the volume check only for the runner this run
-    // deployed. A retired runner or another build refuses under the lock before the POST.
-    [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task Hold_lift_clear_refuses_a_retired_or_other_build_runner()
-    {
-        NativeLinuxGate.Require(NativeLinuxReason);
-        var rows = await VolumeRetirementFixture.RunOutputWitness("HoldLiftRefused");
-        rows.ShouldBe(new[]
-        {
-            "OUTPUT holdlift-retired threw:TempRunnerRetiredDuringHold posts=0",
-            "OUTPUT holdlift-other-build threw:TempHoldLiftBuildMismatch posts=0",
-        }, string.Join("\n", rows));
-    }
-
     // CARD-1689: the temp-retirement exchange refused three different causes as the
     // same bare RecycleGitAuditUnknown, and the coordinator console shows only that
     // diagnosis. Each cause now names itself and the host file that holds its detail.

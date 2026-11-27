@@ -230,7 +230,9 @@ public sealed class Server2ProductionServerContractTests
         doc.ShouldContain("InMemory");
         doc.ShouldContain("CARD-1774");
         doc.ShouldContain("adds no cache");
-        DockerStackDocuments.Read("scripts/deploy-server2.ps1").ShouldNotContain("docker-compose.server2-server.yml");
+        // Unit 65: the rolling runner deploy is the deploy-server2 command.
+        DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs").ShouldNotContain("docker-compose.server2-server.yml");
+        DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/Server2RollingOs.cs").ShouldNotContain("docker-compose.server2-server.yml");
         DockerStackDocuments.Read("docker-compose.yml").ShouldNotContain("17400");
         DockerStackDocuments.Read("docker-compose.server2-staging-server.yml").ShouldNotContain("17400");
         DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/LinuxServerRestart.cs").ShouldNotContain("deploy-server2-server");

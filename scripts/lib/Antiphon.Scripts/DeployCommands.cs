@@ -17,6 +17,11 @@
 //   Antiphon.Nightly's Server2ServerDeploy, Server2StagingDeploy and LinuxServerRestart on the production host (docker, hostname, git
 //   and curl as children, found on PATH by OperatorToolOs), the real file system, this machine's POSIX mode calls and the production
 //   HTTP; the production deploy runs the gate in this process.
+// - deploy-server2 (unit 65, W8 slice C), the CARD-0727 staged server2 rolling runner deploy and its recycle, temp retirement and
+//   census phases. It replaced scripts/deploy-server2.ps1 (the W10 node harnesses that started the script by path now start
+//   scripts/antiphon deploy-server2). The behaviour is Antiphon.Nightly's Server2RollingDeploy on the production host, the real file
+//   system and Server2RollingOs (ssh, git and the scripts/verify-docker-stack.ps1 host cases as children, found on PATH), or the
+//   script's C727_TEST_* fixture seams (Server2RollingStubOs) when a harness sets them.
 // The checkout is the one this executable was built in, else the current directory. ASCII only.
 using System;
 using System.IO.Abstractions;
@@ -39,8 +44,11 @@ namespace Antiphon.Scripts
 
         internal const string RestartLinuxServerName = "restart-linux-server";
 
+        internal const string DeployServer2Name = "deploy-server2";
+
         internal const string Usage = DeployLocalOptions.Usage + " | " + AmServiceDeployOptions.Usage + " | " + Server2PostgresDeployOptions.Usage
-            + " | " + Server2ServerDeployOptions.Usage + " | " + Server2StagingDeployOptions.Usage + " | " + LinuxServerRestartOptions.Usage;
+            + " | " + Server2ServerDeployOptions.Usage + " | " + Server2StagingDeployOptions.Usage + " | " + LinuxServerRestartOptions.Usage
+            + " | " + Server2RollingOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -99,6 +107,23 @@ namespace Antiphon.Scripts
             var options = Server2StagingDeployOptions.Parse(args.Skip(1).ToArray(), Checkout);
             var host = NightlyHost.Production(Console.Out, Console.Error);
             return Server2StagingDeploy.Run(options, host, new FileSystem(), new Server2ServerDeploySeams { Resolve = new OperatorToolOs(host.Variables).Find });
+        }
+
+        // Exit 0 complete, 2 a refusal ("Rolling deploy stopped: <reason>", the ANTIPHON_API or operator-token line), 1 a refusal before
+        // the main block; usage 2. With C727_TEST_VERIFY_STUB or C727_TEST_HTTP_STUB set (the W10 node harnesses), the script's
+        // offline fixture seams answer instead of ssh, the verifier and HTTP (Server2RollingStubOs), as the script's did.
+        internal static int RunDeployServer2(string[] args)
+        {
+            var options = Server2RollingOptions.Parse(args.Skip(1).ToArray(), Checkout);
+            var host = NightlyHost.Production(Console.Out, Console.Error);
+            var production = new Server2RollingOs(options.Checkout);
+            var seams = new Server2RollingSeams { World = production };
+            if (Server2RollingStubOs.Wanted(host.Variables))
+            {
+                var stub = new Server2RollingStubOs(host.Variables, production);
+                seams = new Server2RollingSeams { World = stub, Timing = stub.Timing, C994Now = () => stub.C994Now() ?? host.UtcNow, C994Advance = stub.C994Advance };
+            }
+            return Server2RollingDeploy.Run(options, host, new FileSystem(), seams);
         }
 
         // Exit 0 VERIFIED, 1 a what-if /health that is not 200 (or a terminating error), 3 refused before the probe, 5 unverified

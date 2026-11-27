@@ -103,7 +103,8 @@ function run(extra=[]){
  // CARD-1609 measured complete calls: auto Preview/Apply 111.733s, DryRun 35.806s.
  // Rounded 2x single-sample collection limits; population p95 remains unknown.
  const timeout=extra.length?90000:240000;
- const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',repo+'/scripts/deploy-server2.ps1','-Rolling','-Sha','a'.repeat(40),'-Phase','retire-temp',...extra],
+ // Unit 65: the deploy-server2 command, with the script's C727_TEST_* fixture seams.
+ const r=cp.spawnSync(repo+'/scripts/antiphon',['deploy-server2','--rolling','--sha','a'.repeat(40),'--phase','retire-temp',...extra],
  {env,encoding:'utf8',timeout,maxBuffer:4*1024*1024});
  calls.push({extra,exit:r.status,milliseconds:performance.now()-started});
  assert(!r.error,'bounded wrapper child: '+r.error);
@@ -117,7 +118,7 @@ process.once('exit',code=>{
 });
 const operations=()=>fs.readdirSync(root+'/server/retirement').filter(x=>/^c1008[0-9a-f]{32}$/.test(x));
 const prior=new Set(operations());
-let r=run(['-DryRun']);
+let r=run(['--dry-run']);
 assert.equal(r.code,0,'real v2 wrapper must renew publication after the content scan: '+r.text);
 const created=operations().filter(x=>!prior.has(x));assert.equal(created.length,1);
 const previewFile=root+'/server/retirement/'+created[0]+'/receipt.json';
@@ -139,7 +140,7 @@ git(['-C',publisher,'checkout','-q','--orphan','unrelated']);git(['-C',publisher
 // Transfer the new graph before pointing the bare advertisement at it.
 git(['--git-dir',bare,'fetch','-q',publisher,'refs/heads/unrelated']);
 git(['--git-dir',bare,'update-ref','refs/heads/main',git(['-C',publisher,'rev-parse','HEAD'])]);
-r=run(['-RetirementProof',created[0]]);assert.notEqual(r.code,0,'withdrawn origin coverage refuses Apply');
+r=run(['--retirement-proof',created[0]]);assert.notEqual(r.code,0,'withdrawn origin coverage refuses Apply');
 assert.equal(JSON.parse(fs.readFileSync(root+'/docker.json')).removed.length,0);
 assert.deepEqual(fs.readFileSync(previewFile),preview,'refusal cannot consume Ready');
 git(['--git-dir',bare,'update-ref','refs/heads/main',b]);

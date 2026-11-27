@@ -155,7 +155,7 @@ public sealed class StandingPipelinePolicyDocumentationTests
             "git pull --rebase", "queued lands have finished", "no worktree is half-reset",
             "GET /api/version", "/health", "child journal", "-AllowWorktree",
             "never pull while a land runs", "user's untracked files",
-            "cold first Seed", "deploy-server2.ps1 -Rolling", "deploy-temp", "drain-old", "redeploy-old", "drain-temp",
+            "cold first Seed", "scripts/antiphon deploy-server2 --rolling", "deploy-temp", "drain-old", "redeploy-old", "drain-temp",
             "Still requires a human", "Reset", "Prune", "retire-temp",
             "donor tars", "other sessions or alwaysOn agents", "budgets, routing pins, or settings",
             "spend beyond a sanctioned canary", "secrets", "standing server2 runner container outside",

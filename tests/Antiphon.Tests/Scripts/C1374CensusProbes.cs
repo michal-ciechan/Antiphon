@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Antiphon.Tests.Application;
 using Shouldly;
@@ -139,7 +138,6 @@ internal static class C1374CensusProbes
             foreach (var scope in scopes)
             foreach (var kind in new[] { "open", "land" }) queries[ListPath(scope.Key, kind)] = scope.Value![kind]!.DeepClone();
             wrapper.State["taskQueries"] = queries; wrapper.State["details"] = details; wrapper.State["readFaults"] = faults;
-            File.WriteAllText(wrapper.StatePath, wrapper.State.ToJsonString());
             var run = await WrapperProbe(wrapper);
             run.Exit.ShouldBe(0, v.Name + " fixture: " + run.Output);
             output = run.Output;
@@ -208,38 +206,30 @@ internal static class C1374CensusProbes
     private static string Outcome(string fault) => fault is "timeout" or "typed-timeout" ? "Timeout" :
         fault == "empty" ? "Empty" : fault == "malformed" ? "Malformed" : int.TryParse(fault, out _) ? "Http" : "Transport";
 
-    private static async Task<(int Exit, string Output)> WrapperProbe(C1008WrapperFixture fixture)
+    // Unit 65: the deploy-server2 command's census on the fixture's world, in process: Start-RecycleReceipt (probe, server2) in the
+    // fixture root, --land-wait-minutes 0 and Wait-RecycleTaskCensus; C727_TEST_POLL_MS was empty, so a retried read waits one second.
+    private static Task<(int Exit, string Output)> WrapperProbe(C1008WrapperFixture fixture)
     {
-        var script = Path.Combine(fixture.Root, "probe.ps1");
-        File.WriteAllText(script, $$"""
-            $ErrorActionPreference='Stop'
-            $root='{{fixture.Root}}'; $evidenceRoot=$root
-            $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-            foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) { Invoke-Expression $f.Extent.Text }
-            $script:sleeps=[Collections.Generic.List[int]]::new()
-            function Start-Sleep { param($Seconds,$Milliseconds)
-                if (-not $env:C727_TEST_HTTP_STUB -or $Milliseconds) { throw 'unexpected clock seam' }
-                $script:sleeps.Add([int]$Seconds)
-                # The failed physical attempt must already be durable before backoff.
-                $saved=Get-Content -Raw $script:recycleReceiptPath | ConvertFrom-Json
-                if ($saved.reads[-1].outcome -notin @('Http','Timeout','Transport')) { throw 'missing pre-sleep receipt' }
-            }
-            $LandWaitMinutes=0
-            Start-RecycleReceipt -ExecutingPhase probe -RunnerId server2
-            $code=0; $errorText=''
-            try { $null=Wait-RecycleTaskCensus -RunnerId server2 -ProjectId '{{Project}}' } catch { $code=2; $errorText=$_.Exception.Message }
-            @{code=$code;error=$errorText;sleeps=@($script:sleeps)} | ConvertTo-Json -Depth 30 | Set-Content "$root/result.json"
-            """);
-        var psi = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-File", script }) psi.ArgumentList.Add(arg);
-        psi.Environment["C727_TEST_HTTP_STUB"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c727-fake-http.ps1");
-        psi.Environment["C727_TEST_STATE"] = fixture.StatePath; psi.Environment["C727_TEST_TRACE"] = fixture.TracePath;
-        psi.Environment["C727_TEST_POLL_MS"] = "";
-        using var child = Process.Start(psi)!;
-        var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await child.WaitForExitAsync(deadline.Token); }
-        catch { if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); } throw; }
-        return (child.ExitCode, await stdout + await stderr);
+        var world = fixture.World;
+        world.Timing = new Antiphon.Nightly.Server2RollingTiming { StubbedReads = true };
+        var sleeps = new List<int>();
+        string receiptPath = Path.Combine(fixture.Root, "census-probe-server2.json");
+        var result = world.Probe(new Antiphon.Nightly.Server2RollingCensusProbe
+        {
+            RunnerId = "server2", ProjectId = Project, Phase = "probe", EvidenceRoot = fixture.Root, LandWaitMinutes = 0, Wait = true,
+        }, wait =>
+        {
+            if (wait.TotalMilliseconds % 1000 != 0) throw new InvalidOperationException("unexpected clock seam");
+            sleeps.Add((int)wait.TotalSeconds);
+            // The failed physical attempt must already be durable before backoff.
+            var saved = JsonNode.Parse(File.ReadAllText(receiptPath))!;
+            var outcome = saved["reads"]!.AsArray().Last()!["outcome"]!.GetValue<string>();
+            if (outcome is not ("Http" or "Timeout" or "Transport")) throw new InvalidOperationException("missing pre-sleep receipt");
+        });
+        File.WriteAllText(Path.Combine(fixture.Root, "result.json"), new JsonObject
+        {
+            ["code"] = result.Code, ["error"] = result.Error, ["sleeps"] = new JsonArray(sleeps.Select(x => (JsonNode)JsonValue.Create(x)).ToArray()),
+        }.ToJsonString());
+        return Task.FromResult((0, ""));
     }
 }

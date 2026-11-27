@@ -19,10 +19,11 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public class ScriptModelSpawnLaneTests
 {
-    // D-5 keep list. Each one starts a child whose working directory is the shared checkout and
-    // that writes there (deploy-server2.ps1 -Rolling, the jq roster's .antiphon/c973-jq-*
-    // evidence, or the host-proof pwsh writer). Round 2 (W-11) returned the two HostJq methods
-    // that run the real deploy-server2.ps1 -Rolling through C1025RolloutFixture.
+    // D-5 keep list. Each one started a child whose working directory is the shared checkout and
+    // that wrote there (deploy-server2.ps1 -Rolling, or the host-proof pwsh writer). Round 2 (W-11)
+    // returned the two HostJq methods that ran it through C1025RolloutFixture. Unit 65: the rolling
+    // deploy is the deploy-server2 command in process, in a temporary checkout; the entries stay on
+    // the strict lane, and the jq rosters' four methods are gone with their drivers.
     private static readonly HashSet<string> StrictKeep =
     [
         "HostJqPrerequisiteScriptTests.C1025_Preflight_precedes_every_phase",
@@ -37,10 +38,6 @@ public class ScriptModelSpawnLaneTests
         "RollingVolumeRecycleScriptTests.C1353_Wrapper_waits_for_a_bound_land_then_proceeds",
         "RollingVolumeRecycleScriptTests.C1008_Same_sha_and_partial_retries_are_safe",
         "RollingVolumeRecycleScriptTests.C1008_Wrapper_option_manifest_is_strict",
-        "RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain_present",
-        "RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain_absent",
-        "RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain_missing_shell",
-        "RollingVolumeRecycleScriptTests.C1008_Legacy_rolling_and_jq_rosters_remain_failing_shell",
         "RollingVolumeRecycleScriptTests.C1008_Wrapper_refusal_receipts_do_not_leak_secrets",
         "RollingVolumeRecycleScriptTests.C1008_Retired_absent_null_is_accepted",
         "RollingVolumeRecycleScriptTests.C1008_Wrapper_retired_absent_null_is_accepted",
@@ -299,9 +296,10 @@ public class ScriptModelSpawnLaneTests
         private static void MakeExecutable(string path) => File.SetUnixFileMode(path, (UnixFileMode)Convert.ToInt32("755", 8));
     }
 
-    // W-11 (round 2). C1008WrapperFixture runs the real scripts/deploy-server2.ps1 -Rolling with the shared
-    // checkout as its working directory, and that script writes .antiphon/rolling-server2/c727<hex> there,
-    // so its callers keep the strict lane (D-5).
+    // W-11 (round 2). C1008WrapperFixture ran the real scripts/deploy-server2.ps1 -Rolling with the shared
+    // checkout as its working directory, and that script wrote .antiphon/rolling-server2/c727<hex> there,
+    // so its callers keep the strict lane (D-5). Unit 65: it runs the deploy-server2 command in process in a
+    // temporary checkout; the rule still keeps its callers off the wide lane.
     private static readonly string[] CheckoutWriters = ["C1008WrapperFixture"];
 
     [Test]

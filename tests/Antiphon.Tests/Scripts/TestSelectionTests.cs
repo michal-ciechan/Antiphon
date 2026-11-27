@@ -158,7 +158,7 @@ public sealed class TestSelectionTests
             ("client/src/App.tsx", "P-CLIENT", "narrow", "e2e.browser"), ("clientish/src/App.tsx", "P-UNKNOWN", "full", "core"),
             ("src/Antiphon.Messaging.Service/Program.cs", "P-MSG", "narrow", "main.outbound-broker"), ("src/Antiphon.MessagingExtra/Program.cs", "P-UNKNOWN", "full", "core"),
             ("tools/Antiphon.MarkdownPdf/MarkdownPdfRenderer.cs", "P-PDF", "narrow", "pdf.browser-linux"), ("tools/Antiphon.MarkdownPdfExtra/Renderer.cs", "P-UNKNOWN", "full", "core"),
-            ("scripts/deploy-server2.ps1", "P-DOCKER", "narrow", "docker.operations"), ("scripts/deploy-server20-unknown.ps1", "P-UNKNOWN", "full", "core"),
+            ("docker-compose.yml", "P-DOCKER", "narrow", "docker.operations"), ("scripts/deploy-server20-unknown.ps1", "P-UNKNOWN", "full", "core"),
             ("notes/release-authority.ps1", "P-UNKNOWN", "full", "core"), ("notes/Directory.Build.props.txt", "P-UNKNOWN", "full", "core"),
         ];
         var bad = new List<string>();

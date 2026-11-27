@@ -70,23 +70,19 @@ public sealed class C1364BoundLandWaitProofTests
         if (clears) sequence.Add(empty.DeepClone());
         fixture.State["taskQueries"] = new JsonObject { [LandPath] = sequence };
         var args = new List<string>();
-        if (mode == "resume") args.AddRange(["-ResumeRecycle", Operation]);
-        if (mode == "preview") args.Add("-DryRun");
+        if (mode == "resume") args.AddRange(["--resume-recycle", Operation]);
+        if (mode == "preview") args.Add("--dry-run");
         if (clears) fixture.Environment["C727_TEST_LAND_WAIT_MS"] = "60000";
-        else args.AddRange(["-LandWaitMinutes", "0"]);
-        var observer = Path.Combine(fixture.Root, "observe-case.ps1");
+        else args.AddRange(["--land-wait-minutes", "0"]);
+        // Unit 65: the observer the driver wrapped around the fake verifier is the world's case hook: it keeps the census receipt
+        // as the next host effect starts.
         var observedReceipt = Path.Combine(fixture.Root, "selected-census.json");
-        File.WriteAllText(observer, $$"""
-            param([string]$Case, [string]$Manifest)
-            $ErrorActionPreference = 'Stop'
-            if ($Case -eq '{{nextCase}}') {
-                $request = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
-                Copy-Item -LiteralPath (Join-Path $request.evidenceRoot 'census-{{phase}}-{{runner}}.json') -Destination '{{observedReceipt}}'
-            }
-            & '{{DelegateScriptRunner.RepoRoot}}/scripts/fixtures/c727-fake-verify.ps1' -Case $Case -Manifest $Manifest
-            exit $LASTEXITCODE
-            """);
-        fixture.Environment["C727_TEST_VERIFY_STUB"] = observer;
+        fixture.World.OnCase = (hostCase, manifest) =>
+        {
+            if (hostCase != nextCase) return;
+            var request = JsonNode.Parse(File.ReadAllText(manifest))!;
+            File.Copy(Path.Combine(request["evidenceRoot"]!.GetValue<string>(), $"census-{phase}-{runner}.json"), observedReceipt, overwrite: true);
+        };
         var run = await fixture.Run(phase, args.ToArray());
         label += clears ? "/clears" : "/expires";
         run.Exit.ShouldBe(clears ? 0 : 2, label + ": " + run.Output);

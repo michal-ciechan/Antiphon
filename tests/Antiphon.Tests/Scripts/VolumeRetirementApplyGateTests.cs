@@ -69,20 +69,20 @@ public sealed class VolumeRetirementApplyGateTests
         var bridge = Read("scripts/c590-real.ps1");
         bridge.ShouldContain("^enabled-c1008[0-9a-f]{32}$", Case.Sensitive);
         bridge.ShouldContain("export ANTIPHON_VOLUME_RETIREMENT_APPLY='$applyGate'", Case.Sensitive);
-        Read("scripts/deploy-server2.ps1").ShouldContain("Invoke-HostCase -Case 'retire-temp-runner'", Case.Sensitive);
+        Read("scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs").ShouldContain("InvokeHostCase(\"retire-temp-runner\"", Case.Sensitive);
         Read("scripts/c1609-manual.ps1").ShouldContain("-Case retire-temp-runner", Case.Sensitive);
 
         var runbook = Read("docs/docker-stack.md");
         var upgrade = runbook.Split('\n').Single(line => line.StartsWith("| 6. Upgrade old |", StringComparison.Ordinal));
         foreach (var pin in new[]
                  {
-                     "C1008_RECYCLE skipped=redeploy-old reason=not-requested", "-RecycleVolumes",
+                     "C1008_RECYCLE skipped=redeploy-old reason=not-requested", "--recycle-volumes",
                      "apply-gate-off", "before any stop, remove, journal write, or preview consume"
                  })
             upgrade.ShouldContain(pin, Case.Sensitive, "apply-gate: gate 6 " + pin);
         var gateRow = runbook.Split('\n').Single(line => line.StartsWith("| 9. Retire temp |", StringComparison.Ordinal));
-        var preview = gateRow.IndexOf("-Phase retire-temp -DryRun", StringComparison.Ordinal);
-        var enabled = gateRow.IndexOf("-RetirementProof <operation-id>", StringComparison.Ordinal);
+        var preview = gateRow.IndexOf("--phase retire-temp --dry-run", StringComparison.Ordinal);
+        var enabled = gateRow.IndexOf("--retirement-proof <operation-id>", StringComparison.Ordinal);
         (preview >= 0 && enabled > preview).ShouldBeTrue("apply-gate: gate 9 previews before the enabled second rollout");
         foreach (var pin in new[]
                  {
@@ -385,12 +385,12 @@ public sealed class VolumeRetirementApplyGateTests
         using var drifted = new C1008WrapperFixture();
         drifted.MainDrained();
         drifted.State["allowClear"] = true;
-        var run = await drifted.Run("redeploy-old", "-RecycleVolumes");
+        var run = await drifted.Run("redeploy-old", "--recycle-volumes");
         run.Exit.ShouldBe(0, "apply-gate: an explicit recycle still reaches deploy-parent; " + run.Output);
         run.Output.ShouldNotContain("skipped=redeploy-old");
         var parent = run.Trace.Single(row => row["kind"]?.GetValue<string>() == "case" &&
             row["name"]?.GetValue<string>() == "deploy-parent");
-        parent["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse("apply-gate: -RecycleVolumes is an apply, not a preview");
+        parent["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeFalse("apply-gate: --recycle-volumes is an apply, not a preview");
         parent["recycle"]!["operationId"]!.GetValue<string>().ShouldMatch(@"^c1008[0-9a-f]{32}$");
     }
 

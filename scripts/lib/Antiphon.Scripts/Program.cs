@@ -329,6 +329,10 @@ namespace Antiphon.Scripts
             [DeployCommands.DeployServer2ServerName] = DeployCommands.RunDeployServer2Server,
             [DeployCommands.DeployServer2StagingServerName] = DeployCommands.RunDeployServer2StagingServer,
             [DeployCommands.RestartLinuxServerName] = DeployCommands.RunRestartLinuxServer,
+            // The CARD-0727 rolling server2 runner deploy answers every input itself (unit 65): exit 0 complete, 2 a refusal ("Rolling
+            // deploy stopped: <reason>", or the ANTIPHON_API or operator-token line), 1 a refusal of the arguments, the SHA or the saved
+            // donor before the main block. Usage is 2.
+            [DeployCommands.DeployServer2Name] = DeployCommands.RunDeployServer2,
             // The CARD-1776 repository mirrors answer every input themselves (unit 52): exit 0 the plan (the default, --what-if) or the
             // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
             // Usage is 2.

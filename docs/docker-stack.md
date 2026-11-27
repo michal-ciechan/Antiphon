@@ -3,9 +3,9 @@
 ## Staged server2 rolling rollout (CARD-0934)
 
 The SHA deployed to AppHost and server2 is the current `rc/YYYY-MM-DD` tip, never master
-([release gates](release-gates.md)). Use one `scripts/deploy-server2.ps1 -Rolling -Sha <sha>
--Phase <name>` call per gate, with `<sha>` that tip; never use the default `-Phase all`.
-The phase list in that script is the authority. Keep the
+([release gates](release-gates.md)). Use one `scripts/antiphon deploy-server2 --rolling --sha <sha>
+--phase <name>` call per gate, with `<sha>` that tip; never use the default `--phase all`.
+The phase list in that command is the authority. Keep the
 standing `server2` container accepting until `server2-temp` has passed its canary. Do not drain
 both runners or drain the only accepting runner. A refusal means stop, record its exact code and
 receipt under `.antiphon/rolling-server2/`, and report it; do not force a phase or improvise a
@@ -15,9 +15,9 @@ Docker replacement. The only timed stop exception is step 5 below.
 
 ### Continuous dispatch during the rollout (CARD-1311)
 
-During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `-WaitIdleMinutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle.
+During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `--wait-idle-minutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle.
 
-That paragraph is the rule. The orchestrator copy is [operational autonomy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout). `redeploy-old` clears the standing runner's drain before gate 7's separate smoke and Both. Readiness for moving new work is that exit 0 together with smoke/Both passed, so pin new work to `server2-temp` until both have passed. Start `drain-temp` at that moment; tasks already running on temp settle under `-WaitIdleMinutes 240`.
+That paragraph is the rule. The orchestrator copy is [operational autonomy](orchestration-loop.md#orchestrator-operational-autonomy-restart-rollout). `redeploy-old` clears the standing runner's drain before gate 7's separate smoke and Both. Readiness for moving new work is that exit 0 together with smoke/Both passed, so pin new work to `server2-temp` until both have passed. Start `drain-temp` at that moment; tasks already running on temp settle under `--wait-idle-minutes 240`.
 
 Before starting, verify the checkout has no half-reset worktree and the running server's
 `/health` and `GET /api/version` SHA match that `rc/YYYY-MM-DD` tip (see
@@ -29,7 +29,7 @@ Before host qualification or gate 1, check project identity and both filtered ta
 closures without changing runner state:
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census
+scripts/antiphon deploy-server2 --rolling --sha <sha> --phase check-census
 ```
 
 Expect `RECYCLE_PROJECT id=<guid> name=<name> resolvedBy=url|path|both|explicit` and
@@ -42,7 +42,7 @@ retain the redacted `census-check-census-<runner>.json` receipts under the print
 
 `RecycleProjectUnresolved cause=NoMatch` means neither canonical Git URL nor this
 checkout's path matches the project row. Set either identity through project settings
-(a full-row update), or pass `-ProjectId <lowercase-guid>` to this check and every later
+(a full-row update), or pass `--project-id <lowercase-guid>` to this check and every later
 phase and record it in the rollout receipt. Never use a partial project PUT. Multiple
 matches (`cause=Ambiguous`), an archived row (`cause=Archived`), an absent explicit id
 (`cause=NotFound`) or invalid id (`cause=InvalidId`) require correcting the identity.
@@ -55,15 +55,15 @@ deployment shell. The runner image's jq does not satisfy this prerequisite.
 Use that same `<sha>`:
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-host-jq
+scripts/antiphon deploy-server2 --rolling --sha <sha> --phase check-host-jq
 ```
 
 Only `HostJqMissing` permits the explicit provision phase:
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase provision-host-jq
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-host-jq
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase provision-host-jq
+scripts/antiphon deploy-server2 --rolling --sha <sha> --phase provision-host-jq
+scripts/antiphon deploy-server2 --rolling --sha <sha> --phase check-host-jq
+scripts/antiphon deploy-server2 --rolling --sha <sha> --phase provision-host-jq
 ```
 
 Retain the independently checked and both provision receipts under the printed
@@ -119,15 +119,15 @@ Keep dispatching through every gate under [Continuous dispatch](#continuous-disp
 
 | Gate | Exact phase / verification command | Stop and rollback |
 |---|---|---|
-| 1. Deploy beside old | Before and after, `ssh mc@server2 'docker inspect -f "{{.Id}} {{.State.StartedAt}}" antiphon-runner-session-runner-1'`; the ID and start time must be identical. Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase deploy-temp`. Check both runner statuses. | If temp fails or old changes, stop; leave old accepting and temp for diagnosis. Never touch the standing container to fix temp. |
+| 1. Deploy beside old | Before and after, `ssh mc@server2 'docker inspect -f "{{.Id}} {{.State.StartedAt}}" antiphon-runner-session-runner-1'`; the ID and start time must be identical. Run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase deploy-temp`. Check both runner statuses. | If temp fails or old changes, stop; leave old accepting and temp for diagnosis. Never touch the standing container to fix temp. |
 | 2. Smoke temp | Run the command block below for `server2-temp`, then dispatch a sanctioned `Plan` canary pinned with `--runner server2-temp`; inspect its task until it starts, runs, and reports. | A version/tool/canary failure blocks handoff. Keep old accepting; do not run `drain-old`. |
 | 3. Mark temp primary | There is **no independent promotion phase today**. Verify `server2-temp` is accepting and the canary succeeded; record the runner-defaults read. The next phase, `drain-old`, atomically writes `server2.draining=true` and `redirectTo=server2-temp`; `DefaultRunnerRoutingPolicy` then redirects automatic placement from a `server2` default to temp. It does not PUT `/api/runner-defaults`. | If the redirect cannot be made with a healthy accepting temp, stop with old accepting. CARD-0935 tracks a separate promotion gate. Explicit pins and already running sessions need separate inspection; do not assume they moved. |
-| 4. Drain old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-old -WaitIdleMinutes 240`; check `server2` status shows `draining=true`, `redirectTo=server2-temp`, and temp still accepts new work. A new unpinned canary should resolve to temp. | If the phase refuses before drain, keep old accepting. If it refuses after drain, stop and report the code. To roll back while old is healthy, `scripts\antiphon.cmd runner-drain clear --runner-id server2 --reason 'rolling rollback'`, then verify it accepts; only then consider draining temp. |
-| 5. Wait up to four hours | `drain-old -WaitIdleMinutes 240` performs this wait. Check `scripts\antiphon.cmd runner-slots list --runner-id server2` and old status at the deadline. Proceed to `redeploy-old` only when all three counters are zero. | `OldRunnerStillBusy` at 240 minutes is a reportable cap, not permission to redeploy a busy runner. The operator explicitly authorizes stopping the remaining **server2** sessions at this cap: prefer a resumable owner/session stop; for each exact remaining seat, use `scripts\antiphon.cmd runner-slots release --runner-id server2 --session-id <guid> --reason 'CARD-0934 four-hour drain cap'`. Record the IDs and effects, recheck all counters, and rerun `drain-old`; if anything remains or a stop refuses, stop and report. Do not kill sessions on other runners. |
-| 6. Upgrade old | Run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. It accepts the running container's own generation and requires the new one after recreate. Its task census, and the host census of a recycle, compare only rows bound to `server2` across the two passes (CARD-1697): off-runner work moving between the passes does not refuse `cause=Unstable`, while a task or pending land bound to `server2` still refuses `RecycleBoundTasks` or `RecycleLandInFlight` before any comparison. Default redeploy-old keeps main `work`, `runner-tmp` and `dind-data`. It prints `C1008_RECYCLE skipped=redeploy-old reason=not-requested`, does not stop the runner for a recycle, and needs no token. `-RecycleVolumes` is the explicit volume recycle. A recycle without `enabled-<operation-id>` in `ANTIPHON_VOLUME_RETIREMENT_APPLY` refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. `-DryRun` only previews. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
+| 4. Drain old | Run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase drain-old --wait-idle-minutes 240`; check `server2` status shows `draining=true`, `redirectTo=server2-temp`, and temp still accepts new work. A new unpinned canary should resolve to temp. | If the phase refuses before drain, keep old accepting. If it refuses after drain, stop and report the code. To roll back while old is healthy, `scripts\antiphon.cmd runner-drain clear --runner-id server2 --reason 'rolling rollback'`, then verify it accepts; only then consider draining temp. |
+| 5. Wait up to four hours | `drain-old --wait-idle-minutes 240` performs this wait. Check `scripts\antiphon.cmd runner-slots list --runner-id server2` and old status at the deadline. Proceed to `redeploy-old` only when all three counters are zero. | `OldRunnerStillBusy` at 240 minutes is a reportable cap, not permission to redeploy a busy runner. The operator explicitly authorizes stopping the remaining **server2** sessions at this cap: prefer a resumable owner/session stop; for each exact remaining seat, use `scripts\antiphon.cmd runner-slots release --runner-id server2 --session-id <guid> --reason 'CARD-0934 four-hour drain cap'`. Record the IDs and effects, recheck all counters, and rerun `drain-old`; if anything remains or a stop refuses, stop and report. Do not kill sessions on other runners. |
+| 6. Upgrade old | Run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. It accepts the running container's own generation and requires the new one after recreate. Its task census, and the host census of a recycle, compare only rows bound to `server2` across the two passes (CARD-1697): off-runner work moving between the passes does not refuse `cause=Unstable`, while a task or pending land bound to `server2` still refuses `RecycleBoundTasks` or `RecycleLandInFlight` before any comparison. Default redeploy-old keeps main `work`, `runner-tmp` and `dind-data`. It prints `C1008_RECYCLE skipped=redeploy-old reason=not-requested`, does not stop the runner for a recycle, and needs no token. `--recycle-volumes` is the explicit volume recycle. A recycle without `enabled-<operation-id>` in `ANTIPHON_VOLUME_RETIREMENT_APPLY` refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. `--dry-run` only previews. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
 | 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `--runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `scripts\antiphon.cmd runner-drain drain --runner-id server2 --redirect-to server2-temp --reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
-| 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase drain-temp -WaitIdleMinutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired/offline, then prove temp container absence. The phase observes exit and removes only proven owned exited runner/state-init IDs without volumes. Retirement and exit share one deadline from `WaitIdleMinutes`; `TempContainerExitTimeout` removes nothing live. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
-| 9. Retire temp | Apply is off by default in the script, and the orchestrator always runs gate 9 itself, automatically and without asking a human (operator direction, 2026-11-03): the preview, then at once the enabled apply with that preview's token. Prerequisite: the operator-written host trust registry `/home/mc/antiphon-server2/retirement-origins.json` ([Temp retirement trusted origins](#temp-retirement-trusted-origins-card-1689)); without it every preview of a non-empty temp work volume refuses `RecycleGitAuditUnknown reason=registry-missing`. First, preview only: `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp -DryRun` immediately after successful gate 8, including already-absent cleanup. The preview reports `would delete:` and its operation id (`C1609_RETIREMENT state=Ready operation=<operation-id>`), and removes nothing. The Ready preview expires after 900 s, so the second rollout needs a fresh `-DryRun` and then an apply within 15 minutes. A following apply without the matching token refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. Immediately after a Ready preview the orchestrator sets `$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'` and runs `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase retire-temp -RetirementProof <operation-id>`. Unset, `1`, `true`, `enabled`, or another operation's token does not enable deletion. Reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Stop and report only on `RecycleUnpublishedWork` or `RecycleWorktreeDirty` (protected work on the temp volume). A missing registry (`RecycleGitAuditUnknown reason=registry-missing`) is also stop-and-report: only the operator writes that file, so neither a retry nor a Debug task can fix it. Any other refusal (a census `RecycleTaskCensusUnknown`, any other `RecycleGitAuditUnknown`, an expired preview) gets one fresh preview and apply, then a Debug task; it is never a question for the operator. Other refusals stop the rollout until then. A preview that is not followed by the enabled apply leaves the temp volumes; the next `deploy-temp` refuses `TempVolumesRetained` while any of them exists. |
+| 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase drain-temp --wait-idle-minutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired/offline, then prove temp container absence. The phase observes exit and removes only proven owned exited runner/state-init IDs without volumes. Retirement and exit share one deadline from `WaitIdleMinutes`; `TempContainerExitTimeout` removes nothing live. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
+| 9. Retire temp | Apply is off by default in the command, and the orchestrator always runs gate 9 itself, automatically and without asking a human (operator direction, 2026-11-03): the preview, then at once the enabled apply with that preview's token. Prerequisite: the operator-written host trust registry `/home/mc/antiphon-server2/retirement-origins.json` ([Temp retirement trusted origins](#temp-retirement-trusted-origins-card-1689)); without it every preview of a non-empty temp work volume refuses `RecycleGitAuditUnknown reason=registry-missing`. First, preview only: `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase retire-temp --dry-run` immediately after successful gate 8, including already-absent cleanup. The preview reports `would delete:` and its operation id (`C1609_RETIREMENT state=Ready operation=<operation-id>`), and removes nothing. The Ready preview expires after 900 s, so the second rollout needs a fresh `--dry-run` and then an apply within 15 minutes. A following apply without the matching token refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. Immediately after a Ready preview the orchestrator sets `$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'` and runs `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase retire-temp --retirement-proof <operation-id>`. Unset, `1`, `true`, `enabled`, or another operation's token does not enable deletion. Reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Stop and report only on `RecycleUnpublishedWork` or `RecycleWorktreeDirty` (protected work on the temp volume). A missing registry (`RecycleGitAuditUnknown reason=registry-missing`) is also stop-and-report: only the operator writes that file, so neither a retry nor a Debug task can fix it. Any other refusal (a census `RecycleTaskCensusUnknown`, any other `RecycleGitAuditUnknown`, an expired preview) gets one fresh preview and apply, then a Debug task; it is never a question for the operator. Other refusals stop the rollout until then. A preview that is not followed by the enabled apply leaves the temp volumes; the next `deploy-temp` refuses `TempVolumesRetained` while any of them exists. |
 
 The apply shell and the proof directory are the same ssh account, `mc` (`ssh mc@server2 bash -s`). The coordinator creates `/home/mc/antiphon-c590/c1008-proof-<operation>-<started>-<nonce>` mode 755 as that account, copies the proof files with scp, and `chmod 644`. Custody accepts a proof file only when it is a regular file, has one link, is not group- or world-writable, and is owned by the applying uid. It accepts a directory, the proof directory and each ancestor, only when that directory is owned by the applying uid or by root. A group- or world-writable directory is refused, except a sticky root-owned ancestor strictly above `SERVER2_ROOT`. A symlink is refused. A uid that is neither the applying uid nor root is refused. A root-owned file is refused unless the applier itself is root, which production is not: production apply is `mc`, not root and not container uid 1654. An app-owned directory is accepted only when the applying uid is that same owner. Running the apply as root does not make an app-owned proof directory acceptable.
 
@@ -225,7 +225,7 @@ Seed; record it and stop. A failed hold POST after retirement clear is safe only
 because the earlier census established absence; preserve the failure receipt.
 
 A full donor container belongs to ordinary Seed's maintenance flow. Deploy-temp
-refuses an existing donor with `TempContainersRemain` and refuses `-SavedDonor` with
+refuses an existing donor with `TempContainersRemain` and refuses `--saved-donor` with
 `TempSavedDonorRequiresMaintenance`; run the documented ordinary Seed first under
 its drained-consumer gates. Do not drain the standing runner just to satisfy Seed
 during a beside-old rolling rollout.
@@ -264,7 +264,7 @@ CARD-0824 S2 (origin branch deletion after a confirmed land, off by default) is 
 
 Every mutating rolling phase freshly checks outer-host jq and persists its
 `host-jq-<phase>.json` receipt **before** status, POST, cache seed, deploy, stop or
-removal. This includes same-SHA retries, `-DryRun`, `-ResumeRecycle` and each entry
+removal. This includes same-SHA retries, `--dry-run`, `--resume-recycle` and each entry
 of `all`; none installs jq implicitly. Follow the explicit check/provision sequence
 above before starting, and stop on any prerequisite refusal. Runner-image jq is
 separate. Direct host recycling retains its final `RecycleToolsMissing` refusal
@@ -278,7 +278,7 @@ bound to the target refuses `RecycleBoundTasks <id> status=<status> runner=<runn
 The independent `landPending=true` closure refuses `RecycleLandInFlight <id>` only for a row
 bound to the runner being recycled (`runnerId` equal to the target, the same predicate as
 `RecycleBoundTasks`), even for an old Succeeded task, and only after a bounded wait: the
-wrapper re-reads the census every 30 s for `-LandWaitMinutes` (default 30; 0 refuses on the
+wrapper re-reads the census every 30 s for `--land-wait-minutes` (default 30; 0 refuses on the
 first read) and the host for `C1008_LAND_WAIT_SECONDS` (default 1800) every
 `C1008_LAND_POLL_SECONDS` (default 30), printing `RECYCLE_LAND_WAIT runner=<id> id=<task> polls=<n>`
 and `C1008_LAND_WAIT runner=<id> reason=<refusal> polls=<n>` while it waits. An expired wait
@@ -289,7 +289,7 @@ read, counted and recorded in the receipt but is not part of the compared snapsh
 closure snapshot holds bound rows only, so a land requested for an off-runner task during
 the audits cannot end `cause=Unstable` (CARD-1353). The open closure snapshot is scoped the
 same way for both runners, `server2-temp` (CARD-1693) and the standing `server2` in
-`redeploy-old`, `-RecycleVolumes` and `check-census` (CARD-1697): it holds only rows bound to the
+`redeploy-old`, `--recycle-volumes` and `check-census` (CARD-1697): it holds only rows bound to the
 recycled runner and their land proofs, with no per-scope id lists, so off-runner work that starts,
 finishes, changes runner, scope or land proof, or appears under a nested scope between the passes
 cannot end `cause=Unstable`. Every row is still read, shape-checked, count-reconciled and
@@ -342,7 +342,7 @@ take precedence. Drift never enters the separate bound-land wait or permits a pa
 That refusal stops removal from starting. Once the journal records `ownedRemoved` or a
 phase of `containersRemoved`, `removing`, `volumesRemoved`, `recreating` or `verified`,
 the same drift is still retried, and the final attempt keeps the walked rows. Binding
-and land guards still refuse before that acceptance. A wrapper `-ResumeRecycle` does
+and land guards still refuse before that acceptance. A wrapper `--resume-recycle` does
 not treat exhausted Drift as fatal; the host census applies the journal rule. Malformed
 counts and every pre-removal Drift refusal stay immediate refusals.
 
@@ -392,14 +392,14 @@ requires `tempPrivateVolumes=0` together with `externalVolumes=3` and
 Main volume recycling is **scripted only**. Default `redeploy-old` runs `deploy-parent`
 and keeps `antiphon-runner_work`, `antiphon-runner_runner-tmp` and `antiphon-runner_dind-data`.
 It prints `C1008_RECYCLE skipped=redeploy-old reason=not-requested` and does not stop the
-runner for a recycle. Deletion of those three volumes requires `-RecycleVolumes` plus
+runner for a recycle. Deletion of those three volumes requires `--recycle-volumes` plus
 `ANTIPHON_VOLUME_RETIREMENT_APPLY=enabled-<operation-id>`. Without that token the host
 refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview
-consume. `-DryRun` only previews. Do not stop or remove main's container or recycle its
+consume. `--dry-run` only previews. Do not stop or remove main's container or recycle its
 volumes by hand. A manually stopped main without this operation's journal reports `runnerSessions=null` while
 still advertising the old SHA: `Assert-ZeroCounters` makes `redeploy-old` refuse
 with `RunnerCounterUnknown server2 runnerSessions` before `deploy-parent` runs.
-A matching `-ResumeRecycle <operation-id>` delegates proof of this script's own
+A matching `--resume-recycle <operation-id>` delegates proof of this script's own
 stop/removal to the saved host journal; a generic offline main remains refused.
 Never use blanket `down -v` on main. Its only documented manual disk reclaim is
 the in-container cleanup below, with the runner kept **running**.
@@ -410,9 +410,9 @@ the in-container cleanup below, with the runner kept **running**.
 | `antiphon-runner-temp_runner-tmp` | Temp `/tmp` | Remove on temp retirement | Image `/tmp` copies in on first mount (CARD-0827). At image 8892b7b75 that copy does not include `/tmp/antiphon-pty-hosts`; the runner creates the directory on first session launch |
 | `antiphon-runner-temp_dind-data` | Temp nested Docker data | Remove on temp retirement | Nested images and containers must be rebuilt |
 | `antiphon-runner-temp_runner-state` | Temp identity/store and volume-backed provider state | Remove on temp retirement | New store; next deployment uses explicit retirement clear and lease admission (CARD-0953) |
-| `antiphon-runner_work` | Main task worktrees and mirrors | Keep. Delete only with `-RecycleVolumes` and `enabled-<operation-id>` | Empty workspace; recover unpublished work first |
-| `antiphon-runner_runner-tmp` | Main `/tmp` | Keep. Delete only with `-RecycleVolumes` and `enabled-<operation-id>` | Image `/tmp` copies in on first mount; at image 8892b7b75 that copy does not include `/tmp/antiphon-pty-hosts` (the runner creates it on first session launch). Never substitute a name-pattern sweep |
-| `antiphon-runner_dind-data` | Main nested Docker data | Keep. Delete only with `-RecycleVolumes` and `enabled-<operation-id>` | Nested images and containers must be rebuilt |
+| `antiphon-runner_work` | Main task worktrees and mirrors | Keep. Delete only with `--recycle-volumes` and `enabled-<operation-id>` | Empty workspace; recover unpublished work first |
+| `antiphon-runner_runner-tmp` | Main `/tmp` | Keep. Delete only with `--recycle-volumes` and `enabled-<operation-id>` | Image `/tmp` copies in on first mount; at image 8892b7b75 that copy does not include `/tmp/antiphon-pty-hosts` (the runner creates it on first session launch). Never substitute a name-pattern sweep |
+| `antiphon-runner_dind-data` | Main nested Docker data | Keep. Delete only with `--recycle-volumes` and `enabled-<operation-id>` | Nested images and containers must be rebuilt |
 | `antiphon-runner_runner-state` | Main runner identity/store and volume-backed provider state | Preserve; opt-in deferred to CARD-1010 | A different store hits `StoreMismatch`; retire, explicitly clear retirement, allow connection detachment and lease expiry, then re-register under CARD-0953 |
 | `antiphon-runner-cache-nuget-packages` | Shared NuGet packages | Preserve; opt-in deferred to CARD-1010 | CARD-0912 cold Seed required; minutes to an hour, best effort |
 | `antiphon-runner-cache-nuget-scratch` | Shared NuGet lock scratch | Preserve; opt-in deferred to CARD-1010 | Recreate through the cache maintenance/Seed procedure |
@@ -522,14 +522,14 @@ A no-index checkout is accepted only with no content outside its top-level .git,
 
 The receipt records `repositories` and `partial` on success. On refusal `auditFailure` names the check, exit status and redacted repository path relative to the work volume; a first refusal also initializes `audit`. A saved successful `audit` is never overwritten by failure diagnostics, so unchanged publication proof can resume after connectivity recovers. The audit lines carry only local Git facts (one line per repository entry and per retained tip of each common directory), so ignored content and a moving origin leave the before/after comparison equal. An ordinary land never moves the task's source branch (schema 3 pushes the rebased target only), so a land finishing between the two audits leaves them equal as well; the one land shape that can refuse is an adoption land, which rewinds origin's task branch to the reviewed SHA so that commits past it on a runner mirror become unpublished work and the audit refuses `RecycleUnpublishedWork` (CARD-1353). `GithubTokenAbsent` stays a warning: this audit does not read the token. The token is used only for secondary receive-pack probes.
 
-Preview each destructive phase with `-DryRun`; `all` is not a preview phase.
+Preview each destructive phase with `--dry-run`; `all` is not a preview phase.
 Temp retirement uses the protected host `audit-current.json` descriptor (schema 1,
 audit protocol 2, policy 1). Deployment publishes its installed image digest after
 a successful image build. Retirement resolves that current reference once per phase
 and passes its digest to the helper. Missing, linked, writable, duplicate-key,
 unsupported or unreadable configuration, or an unavailable current image, refuses
 `RecycleGitAuditUnknown`. Install reviewed current tools; recovering an old build
-is not a recovery step. The creating `-Sha` is optional retirement provenance.
+is not a recovery step. The creating `--sha` is optional retirement provenance.
 Other rolling phases still require their deployment SHA.
 
 The bridge stages c590-remote, c1008-retirement, c1008-content-audit and
@@ -595,16 +595,16 @@ retirement does not require a warm marker or 20 GiB free.
 After any stop, removal, seed/up or receipt-copy failure, keep main drained and temp
 accepting. Use the recorded operation ID with the same full source SHA and phase:
 
-`pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase redeploy-old -ResumeRecycle <operation-id>`
+`scripts/antiphon deploy-server2 --rolling --sha <sha> --phase redeploy-old --resume-recycle <operation-id>`
 
-An in-flight `-ResumeRecycle` with the same `enabled-<operation-id>` token still deletes.
+An in-flight `--resume-recycle` with the same `enabled-<operation-id>` token still deletes.
 The token does not expire. Resume rechecks source, options, project, Compose, retirement/store, publication
 audit and original/recreated generations. It never deletes a replacement
 generation. Same-SHA retries refuse an unfinished journal until explicitly resumed.
 Recovery never commits, publishes, resets or salvages suspicious work.
 
 For temp retirement, a SIGKILL, OOM or reboot during Apply can resume the same
-operation only with explicit `-ResumeRecycle`, its already-consumed receipt,
+operation only with explicit `--resume-recycle`, its already-consumed receipt,
 an Apply lifecycle, a dead owner (PID and start ticks), and joined helpers.
 The original volume incarnations, publication proof and live guards are checked
 again. An unfinished Preview or unconsumed Ready receipt cannot authorize Resume.
@@ -661,18 +661,21 @@ git archive --format=tar --output=$archive $toolingSha
 if ($LASTEXITCODE -ne 0) { throw 'Tooling export failed' }
 tar -xf $archive -C $toolingRoot
 if ($LASTEXITCODE -ne 0) { throw 'Tooling extraction failed' }
-& pwsh -NoProfile -File (Join-Path $toolingRoot 'scripts\deploy-server2.ps1') -Rolling -Sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 -Phase retire-temp -DryRun -ProjectId d4ea7ae9-e769-474b-95b9-aa25fbc1303f
+& (Join-Path $toolingRoot 'scripts\antiphon.cmd') deploy-server2 --rolling --sha a71c45ab4d5703d480f4eee4c4e30adab45bc4f9 --phase retire-temp --dry-run --project-id d4ea7ae9-e769-474b-95b9-aa25fbc1303f
 if ($LASTEXITCODE -ne 0) { throw 'Preview refused; preserve evidence and retain volumes' }
 ```
 
-Pass `-ProjectId` explicitly (the Antiphon project id above). The export has no Git
+The export's first `scripts\antiphon.cmd` call builds and publishes the CLI inside the export (it needs the .NET SDK;
+the command replaced `scripts/deploy-server2.ps1` in unit 65); later calls reuse that build.
+
+Pass `--project-id` explicitly (the Antiphon project id above). The export has no Git
 origin and is not the project's registered path, so URL and path matching both miss and
 the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without it.
 `Get-RecycleProjectId` matches the project record's canonical `gitRepositoryUrl`
 (`https://github.com/michal-ciechan/antiphon`) and its registered `localRepositoryPath`
 against this checkout. The exported tree's path is neither of those, so both matches
 miss and the wrapper refuses `RecycleProjectUnresolved cause=NoMatch` without
-`-ProjectId`. Use a short export root such as `C:\rt\<8 hex>` as above. A full-SHA
+`--project-id`. Use a short export root such as `C:\rt\<8 hex>` as above. A full-SHA
 export nested beneath the checkout made the desktop proof directory reach 264
 characters, past the Windows 260-character limit; the 2026-11-16 preview `c1008d39`
 refused `proof-stale` at the final live `ls-remote`. The short root leaves room for
@@ -739,7 +742,7 @@ with source-bound verification in
 [the CARD-1956 investigation](https://github.com/michal-ciechan/Antiphon/blob/a0b34d1a0856bc39e29563c169e171f0c0b305d5/docs/investigations/2026-11-16-card-1956-resume-after-sigkill.md).
 
 Resume of an `Applying` temp operation requires explicit `C1008_RESUME=1` (the
-wrapper's `-ResumeRecycle <operation-id>`), an already-consumed same-operation
+wrapper's `--resume-recycle <operation-id>`), an already-consumed same-operation
 receipt bound to the project and Docker daemon, an **Apply** lifecycle, a dead owner
 proved by PID/startTicks, complete lifecycle evidence and joined helpers. Schema-2
 lifecycles name Preview or Apply; an active legacy schema-1 Apply also needs its
@@ -773,7 +776,7 @@ Do not edit the receipt or lifecycle to make it resumable or clearable.
 Gate 9 has a one-time host prerequisite that no script installs: the trust registry
 `/home/mc/antiphon-server2/retirement-origins.json`. Every repository in the temp `work`
 volume names its origin as a private origin, so every non-empty temp retirement reads the
-registry before it asks the desktop for proof. Without it, every `retire-temp -DryRun` refuses
+registry before it asks the desktop for proof. Without it, every `retire-temp --dry-run` refuses
 `RecycleGitAuditUnknown reason=registry-missing`. Whether an origin is trusted is the
 operator's decision. No agent creates or edits this file.
 
@@ -796,10 +799,10 @@ operator's decision. No agent creates or edits this file.
   needs that form listed as well.
 
 To find the project id, run the read-only census. Use the `RECYCLE_PROJECT id=<guid>` line
-it prints. If you pass `-ProjectId` to the rollout, use that id instead.
+it prints. If you pass `--project-id` to the rollout, use that id instead.
 
 ```powershell
-pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census
+scripts/antiphon deploy-server2 --rolling --sha <sha> --phase check-census
 ```
 
 Then, on server2 as `mc`, write the registry once. List each origin only after reviewing it:
@@ -895,10 +898,10 @@ Container cleanup never supplies a volume deletion capability. The current Ready
 receipt, fresh content/publication proof and exact incarnation/live guards remain
 mandatory before `docker volume rm -- <name>`.
 
-`retire-temp -DryRun` previews exact container IDs and four volume targets.
+`retire-temp --dry-run` previews exact container IDs and four volume targets.
 With exited containers present, volume proof is pending confirmed absence and the
 offline audit is pending; no audit helper, removal or routing change occurs.
-An absent project uses the existing C1008 preview. `-ResumeRecycle` uses only its
+An absent project uses the existing C1008 preview. `--resume-recycle` uses only its
 original journal and strict absence proof; it never starts new container cleanup
 or removes a replacement generation. A failed container stage has not started
 recycling: retry normal `retire-temp`, preserving exact partial removal receipts.
@@ -1047,8 +1050,8 @@ not take that refusal. Accepting temp remains the live rollback.
 
 For the server2 runner, set the non-secret stack env key
 `PhoneHome__WorkspaceSlots__Enabled=true` in `secrets/stack.env` under the server2
-deployment root before `-Phase redeploy-old`. To canary independently, set it in
-`secrets/stack.temp.env` before `-Phase deploy-temp`; create that file if absent.
+deployment root before `--phase redeploy-old`. To canary independently, set it in
+`secrets/stack.temp.env` before `--phase deploy-temp`; create that file if absent.
 The named phases preserve each file's own value when rewriting it. A missing file or key
 means `false`. A saved assignment must be exactly `PhoneHome__WorkspaceSlots__Enabled=true`
 or `PhoneHome__WorkspaceSlots__Enabled=false`, with LF line endings, at most once.
@@ -1366,7 +1369,7 @@ Windows API. It does not mean the base compose file turns the service on.
 | Id | Shape | Contract |
 |---|---|---|
 | A | server2 runs the phone-home runner only. The desktop runs AppHost (server, built client, Windows session runner, fake gateway, storybook), Postgres, and Redpanda. The public origin `https://antiphon.desktop.codeperf.net` fronts that desktop server. | Supported production today. |
-| A2 | Host-daemon Postgres on server2 (CARD-1406). The desktop server keeps running and changes its connection string. AppHost, autostart, and `deploy-server2.ps1` stay. | The November 18 handoff reports the database switch at 17:37 UTC. CARD-1401 is in Review per card history rev 15 and CARD-1406 is in Review per card history rev 31. P-2 stays open pending the executed window and writer receipts, CARD-1408 monitor exit 0, and 24 hours with no rollback. The post-move backup receipts also remain open. |
+| A2 | Host-daemon Postgres on server2 (CARD-1406). The desktop server keeps running and changes its connection string. AppHost, autostart, and the rolling deploy (then `deploy-server2.ps1`, now `scripts/antiphon deploy-server2`) stay. | The November 18 handoff reports the database switch at 17:37 UTC. CARD-1401 is in Review per card history rev 15 and CARD-1406 is in Review per card history rev 31. P-2 stays open pending the executed window and writer receipts, CARD-1408 monitor exit 0, and 24 hours with no rollback. The post-move backup receipts also remain open. |
 | B | server2 host daemon runs the server, Postgres, and the phone-home runner. The desktop remains a browser client and the Windows session runner (Herdr, Windows-platform tasks, rollback AppHost). The image's embedded client is `Dockerfile:67-70` (`wwwroot/index.html`). Aspire is not the production supervisor after cutover. | Accepted target. Not authorization to cut over. The ordered cards below are the only path. |
 | C | Two live control planes, with failover. | Unsupported. No card. |
 
@@ -1408,7 +1411,7 @@ In topology B the server image does not contain the agent executables, so produc
 
 The sidecar sets `CLAUDE_CONFIG_DIR=/state/claude`, the directory `server-state-init` creates at `/runner-state/claude`. The runner seeds Claude trust for the launch working directory in that file just before it spawns. The operator logs Claude in once on the sidecar with `docker exec -it -u 1654:1654 -e HOME=/home/app -e CLAUDE_CONFIG_DIR=/state/claude <sidecar> claude auth login`. That command carries no token. Always-on agents run in their own clone `/work/agents/<name>`. In the window, `PATCH /api/agents/{id}` sets `workingDirectory` to that path, `sessionBackend` to `PtyHost`, and clears `herdrWorkspaceLabel` and `herdrTabLabel`. The server writes orchestrator instructions at `/work/.antiphon/orchestrator-instructions.md` on the shared work volume. The launch environment still sets `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS` to that path and `ANTIPHON_ORCHESTRATOR_INSTRUCTIONS_URL` to the instructions URL, which remains the fallback when the file cannot be read. CARD-1695 remains the phone-home always-on path; this compose does not change it. Operator steps are in the CARD-1778 plan, [re-home agents to the sidecar](superpowers/plans/2026-11-08-card-1778-rehome-agents-to-sidecar.md).
 
-`deploy-server2.ps1:1` says "Run from the desktop after Review, never on server2." Its default API
+The rolling deploy (then `deploy-server2.ps1:1`; since unit 65 `scripts/antiphon deploy-server2`) says "Run from the desktop after Review, never on server2." Its default API then
 is `http://localhost:17202` (`deploy-server2.ps1:44`). Rolling phases call that API and SSH to the
 host. They assume the desktop process owns runner state.
 
@@ -1466,7 +1469,7 @@ owner card stay as named there.
 | SourceLanding custody | Not supported on the live contract | The Linux backend exists (`VerificationCustody.cs:29`, probe at `LinuxCgroupCustodyProbe.cs:24-38`) and stays unadvertised unless delegated root, cgroup v1, the custody root, `NoNewPrivs=0`, and both sudo helpers succeed. On 2026-10-13 the server2 runner reported `verificationCustodyBackend=null` (readiness report). That observation was not repeated. The decision records CARD-0604 in Review. CARD-0634 (Backlog) still records the native containment and egress gap. | CARD-0634, after CARD-0604. Ordinary sessions do not need it. |
 | Orchestrator deny hook | Supported | Windows placement keeps `powershell -NoProfile -Command` (Windows PowerShell 5.1, `DelegationWorktreeService.DenyHookSettingsJson`). Linux placement (`ObservedPlatform` `linux`, or `RequiredPlatform.Linux` when nothing was observed) writes the same script as `pwsh -NoProfile -Command`. The Linux runner image installs `pwsh`, not `powershell`. | CARD-1225. |
 | Delivery ceilings | Supported on Linux | Fake-agent oracle `card-1224-unixpty`: markers survived. Single write 86400 bytes, brief inline 43200 bytes, reply inline 14400 chars. A cached `UnixPty` phone-home report selects that arm. Any other report stays on the inbox triple. | CARD-1224. |
-| Windows-only deployment pieces | Supported only on the desktop control plane | AppHost exe paths (`Antiphon.AppHost/Program.cs:34` and `:47`). Scheduled Tasks via `scripts\antiphon.cmd install-autostart` (`docs/bootstrap.md:251-259`). `deploy-server2.ps1` default API and "run from the desktop" (`:1`, `:44`). | CARD-1744 retargets the API when the control plane moves. CARD-1745 replaces the AppHost SHA gate. The Windows runner and Scheduled Tasks stay for the desktop rollback path and for Windows-platform work. |
+| Windows-only deployment pieces | Supported only on the desktop control plane | AppHost exe paths (`Antiphon.AppHost/Program.cs:34` and `:47`). Scheduled Tasks via `scripts\antiphon.cmd install-autostart` (`docs/bootstrap.md:251-259`). `deploy-server2.ps1` (since unit 65 `scripts/antiphon deploy-server2`) default API and "run from the desktop" (`:1`, `:44`). | CARD-1744 retargets the API when the control plane moves. CARD-1745 replaces the AppHost SHA gate. The Windows runner and Scheduled Tasks stay for the desktop rollback path and for Windows-platform work. |
 
 CARD-1226 is a Windows CI assertion fix. It is not a deployment feature.
 
@@ -1552,14 +1555,14 @@ is an explicit setting whose default is `InMemory` because CARD-1768 is on this 
 A-1/A-2 are not. Nothing in this card starts the project or touches the production database. This slice
 adds no cache.
 
-### What `deploy-server2.ps1` deploys
+### What `scripts/antiphon deploy-server2` deploys
 
-`scripts/deploy-server2.ps1` deploys the phone-home runner from a checkout that is not the host
+`scripts/antiphon deploy-server2` (the rolling deploy; `scripts/deploy-server2.ps1` until unit 65) deploys the phone-home runner from a checkout that is not the host
 being mutated. It does not deploy the server or Postgres. `ANTIPHON_API` is required. An unset or
 whitespace value exits 2 and names this document before any operator-token read or docker call.
 There is no `localhost:17202` default. The CARD-1221 transcription above records the previous
 default at `deploy-server2.ps1:44`. The named phases and their stop gates stay as they are.
-`-Phase all` is unchanged. Census, drain, and retire keep their stop gates. A control-plane
+`--phase all` is unchanged. Census, drain, and retire keep their stop gates. A control-plane
 cutover is not a rolling runner phase. Do not drain the only accepting runner in order to move
 the server.
 
@@ -1567,7 +1570,7 @@ After the control plane moves, the operator token is the 32-byte hex value the L
 creates at `Operator:TokenPath` on first start. The production path is `/state/operator-token`.
 The operator owns the copy and places it, without display, in the desktop file
 `%LOCALAPPDATA%\Antiphon\operator-token` or the path named by `ANTIPHON_OPERATOR_TOKEN_FILE`.
-`deploy-server2.ps1` reads that file on every phase except `check-census` and never prints the
+`scripts/antiphon deploy-server2` reads that file on every phase except `check-census` and never prints the
 value.
 
 Host jq, volume recycle, and temp retirement are runner-host operations. They are unchanged by
@@ -1582,7 +1585,7 @@ where Postgres sits.
 | Claude OAuth token, Codex home, GitHub token dir, git identity | Host files, read-only mounts (`docker-compose.server2-runner.yml:133-145`). The persistent runner paragraph below, and `docs/agent-credentials.md`. | Unchanged by the control-plane move. They belong to the runner. |
 | Agent TUI data-protection key ring | Empty `AgentTui:KeyRingPath` resolves to `%LOCALAPPDATA%\Antiphon\DataProtection-Keys` on Windows and to the Unix data root on Linux (`AgentTuiSettings.cs:40-54`). Root compose sets `/state/keyring` (`docker-compose.yml:38`). | CARD-1744 copies or re-protects the ring before the Linux server serves. A new empty ring cannot read existing protected secrets. |
 | AppHost user-secrets (`aspire-antiphon-apphost`) | Desktop only. Connection string and optional broker override. | Not inside the Linux image. The staging and production server compose take env or mounted files. |
-| Operator token | 32-byte hex owner-only token created by the Linux server at `Operator:TokenPath` (production `/state/operator-token`) on first start. The operator copies it, without display, to `%LOCALAPPDATA%\Antiphon\operator-token` or `ANTIPHON_OPERATOR_TOKEN_FILE`. | `deploy-server2.ps1` reads that desktop file for every phase except `check-census` and never prints the value. The operator owns the copy. |
+| Operator token | 32-byte hex owner-only token created by the Linux server at `Operator:TokenPath` (production `/state/operator-token`) on first start. The operator copies it, without display, to `%LOCALAPPDATA%\Antiphon\operator-token` or `ANTIPHON_OPERATOR_TOKEN_FILE`. | `scripts/antiphon deploy-server2` reads that desktop file for every phase except `check-census` and never prints the value. The operator owns the copy. |
 
 The database size, snapshot (CARD-1405, the `postgres-snapshot` command behind `scripts/postgres-snapshot.ps1`), cutover script
 (CARD-1407, Done, `scripts/cutover-postgres-server2.ps1`), and monitor (CARD-1408, Done) stay
@@ -1988,8 +1991,8 @@ both runners was retired by S1 (CARD-1985). The temp override sets
 `SessionRunner__HostStats__HistoryEnabled: "false"`, so `server2-temp` opens no spool and never
 gets a cursor row.
 
-**Runner hold (activation plan section 7.0).** Before `-Phase deploy-temp`, `-Phase redeploy-old` or `-Phase all`
-with `-Sha X`, run in the desktop main checkout (Git Bash):
+**Runner hold (activation plan section 7.0).** Before `--phase deploy-temp`, `--phase redeploy-old` or `--phase all`
+with `--sha X`, run in the desktop main checkout (Git Bash):
 
 ```
 git fetch origin
@@ -2217,7 +2220,7 @@ Services are `staging-state-init`, `staging-server`, and `staging-postgres`, so 
 
 `scripts/antiphon deploy-server2-staging-server` defaults to `--what-if` and does not call docker in that mode. `--execute` runs only when this process is on the server2 host daemon. Unit 64 of the remaining-ps1 plan made both server2 server deploys commands (`deploy-server2-staging-server`, `deploy-server2-server`): they replaced the PowerShell scripts of the same names with the same steps, refusals, lines and exit codes, and the server2 host needs the .NET SDK for `scripts/antiphon` where the scripts needed `pwsh`. Neither mode prints the password. The new cluster password is not the committed dev password. Exit codes: 0 plan or ok, 2 refusal, 3 ambiguous-mode. Acceptance, when an operator does run it, is `http://127.0.0.1:17420/health` and `http://127.0.0.1:17420/api/version`.
 
-Hangfire is on. Zombie census is off. Schedules, the check interpreter, diagnose, and the output distiller are on, with working directories `/state/check-interpreter`, `/state/diagnose`, and `/state/output-distiller` on this project's state volume `antiphon-server2-staging_server-state`. The agent TUI key ring is `/state/keyring` on that same volume. A fresh empty ring cannot read secrets protected by the desktop ring. Production does not copy that ring; certificate custody is in [Production server on the server2 host (CARD-1744)](#production-server-on-the-server2-host-card-1744). Agent executables here are Linux paths; with the session runner off, specialists do not launch until cutover. Worktree residue is on and `Execute` is false (report only, the desktop default); the only worktree root is `/work/worktrees` on this project's work volume `antiphon-server2-staging_work`. Legacy release is off. Runner worktree retention is off, so this worker does not send removals to the phone-home runner. Channel bridge and digest are off. This project has no session runner and does not set a phone-home origin. `deploy-server2.ps1` does not deploy it. AppHost and the public vhost stay on the desktop.
+Hangfire is on. Zombie census is off. Schedules, the check interpreter, diagnose, and the output distiller are on, with working directories `/state/check-interpreter`, `/state/diagnose`, and `/state/output-distiller` on this project's state volume `antiphon-server2-staging_server-state`. The agent TUI key ring is `/state/keyring` on that same volume. A fresh empty ring cannot read secrets protected by the desktop ring. Production does not copy that ring; certificate custody is in [Production server on the server2 host (CARD-1744)](#production-server-on-the-server2-host-card-1744). Agent executables here are Linux paths; with the session runner off, specialists do not launch until cutover. Worktree residue is on and `Execute` is false (report only, the desktop default); the only worktree root is `/work/worktrees` on this project's work volume `antiphon-server2-staging_work`. Legacy release is off. Runner worktree retention is off, so this worker does not send removals to the phone-home runner. Channel bridge and digest are off. This project has no session runner and does not set a phone-home origin. `scripts/antiphon deploy-server2` does not deploy it. AppHost and the public vhost stay on the desktop.
 
 Nothing in this card starts the project. Rollback is to remove the compose project. Desktop production is untouched. This slice adds no cache.
 

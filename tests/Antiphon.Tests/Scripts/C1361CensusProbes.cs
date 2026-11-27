@@ -452,9 +452,12 @@ internal static class C1361CensusProbes
                 """{"phase":"containersRemoved","ownedRemoved":true}""");
         if (removed && !host)
             File.WriteAllText(Path.Combine(scratch.Root, "resume"), "1");
-        var body = host ? HostProgram(scratch.Root, wait && !removed) : WrapperProgram(scratch.Root, false, wait);
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
-        run.Exit.ShouldBe(0, "fixture: " + run.Output);
+        if (host)
+        {
+            var run = await Run("bash", HostProgram(scratch.Root, wait && !removed), scratch.Root);
+            run.Exit.ShouldBe(0, "fixture: " + run.Output);
+        }
+        else WrapperRun(scratch.Root, false, wait);
         var result = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "result.json")))!;
         var receipt = host ? JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "census-probe-server2.json")))!["tasks"] : null;
         return (result["error"]!.GetValue<string>(), result["code"]!.GetValue<int>(),
@@ -465,8 +468,8 @@ internal static class C1361CensusProbes
     {
         using var scratch = new Scratch();
         File.WriteAllText(Path.Combine(scratch.Root, "requests.json"), vector.Requests.ToJsonString());
-        var body = host ? HostProgram(scratch.Root, vector.Wait) : WrapperProgram(scratch.Root, vector.Report, vector.Wait);
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        var run = host ? await Run("bash", HostProgram(scratch.Root, vector.Wait), scratch.Root) : (Exit: 0, Output: "");
+        if (!host) WrapperRun(scratch.Root, vector.Report, vector.Wait);
         run.Exit.ShouldBe(0, vector.Name + " fixture: " + run.Output);
         var result = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "result.json")))!;
         var error = result["error"]!.GetValue<string>();
@@ -527,35 +530,41 @@ internal static class C1361CensusProbes
         Console.WriteLine($"CASE {(host ? "host" : "wrapper")}/{vector.Name} PASS sleeps={vector.Sleeps}");
     }
 
-    private static string WrapperProgram(string root, bool report, bool wait) => $$"""
-        $ErrorActionPreference='Stop'
-        $root='{{root}}'
-        $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-        foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) { Invoke-Expression $f.Extent.Text }
-        $script:requests=Get-Content -Raw "$root/requests.json" | ConvertFrom-Json
-        $script:positions=@{}; $script:reads=[Collections.Generic.List[string]]::new(); $script:sleeps=0
-        $script:recycleReceipt=@{}; $script:recycleReceiptTasks=@{}
-        function Write-RecycleReceipt {}
-        function Start-Sleep { param($Seconds,$Milliseconds) $script:sleeps++; if ($Seconds -ne 30) { throw 'retry must sleep 30 seconds' } }
-        function Invoke-RecycleRead { param($Path)
-            $script:reads.Add($Path)
-            $values=$script:requests.$Path
-            if ($null -eq $values) { throw "fixture missing $Path" }
-            $index=[int]$script:positions[$Path]; $script:positions[$Path]=$index+1
-            return ($values[[Math]::Min($index,$values.Count-1)] | ConvertTo-Json -Depth 30 -Compress | ConvertFrom-Json)
-        }
-        $errorText=''; $snapshot=$null; $code=0
-        $ResumeRecycle=$null
-        if (Test-Path -LiteralPath "$root/resume") { $ResumeRecycle='c100800000000000000000000000000000001' }
-        $LandWaitMinutes=30
-        try { $value={{(wait ? "Wait-RecycleTaskCensus" : "Assert-RecycleTaskCensus")}} -RunnerId server2 -ProjectId '{{Project}}' {{(report ? "-Report" : "")}}; $snapshot=$script:recycleReceipt.snapshot }
-        catch { $errorText=$_.Exception.Message; $code=2 }
-        $returned=$null; $reportResult=$null
-        if ($code -eq 0 -and '{{report}}' -eq 'False' -and $null -ne $value) { $returned=$value|ConvertFrom-Json }
-        if ($code -eq 0 -and '{{report}}' -eq 'True') { $reportResult=$value }
-        @{error=$errorText;code=$code;snapshot=$snapshot;returned=$returned;report=$reportResult;tasks=$script:recycleReceiptTasks;reads=@($script:reads);sleeps=$script:sleeps} | ConvertTo-Json -Depth 40 | Set-Content "$root/result.json"
-        """;
-
+    // Unit 65: the deploy-server2 command's census on a world whose reads answer from requests.json (each path's responses in
+    // turn, the last repeating), in process: the same result fields the extracted-function probe wrote.
+    private static void WrapperRun(string root, bool report, bool wait)
+    {
+        var requests = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "requests.json")))!.AsObject();
+        var positions = new Dictionary<string, int>(StringComparer.Ordinal);
+        var reads = new JsonArray();
+        var sleeps = 0;
+        using var world = new Server2RollingWorld(new JsonObject(), root) { Timing = new Antiphon.Nightly.Server2RollingTiming() };
+        world.ReadOverride = path =>
+        {
+            reads.Add(path);
+            if (requests[path] is not JsonArray values) throw new InvalidOperationException("fixture missing " + path);
+            var index = positions.GetValueOrDefault(path);
+            positions[path] = index + 1;
+            return new Antiphon.Nightly.Server2RollingHttpAnswer(200, values[Math.Min(index, values.Count - 1)]!.ToJsonString());
+        };
+        var result = world.Probe(new Antiphon.Nightly.Server2RollingCensusProbe
+        {
+            RunnerId = "server2", ProjectId = Project, Phase = "probe", EvidenceRoot = root, Report = report, Wait = wait,
+            Resume = File.Exists(Path.Combine(root, "resume")), LandWaitMinutes = 30,
+        }, delay =>
+        {
+            sleeps++;
+            if (delay != TimeSpan.FromSeconds(30)) throw new InvalidOperationException("retry must sleep 30 seconds");
+        });
+        JsonNode? Parse(string? text) => text == null ? null : JsonNode.Parse(text);
+        File.WriteAllText(Path.Combine(root, "result.json"), new JsonObject
+        {
+            ["error"] = result.Error, ["code"] = result.Code, ["snapshot"] = Parse(result.Snapshot),
+            ["returned"] = result.Code == 0 && !report ? Parse(result.Returned) : null,
+            ["report"] = result.Code == 0 && report && result.Report != null ? Parse(Antiphon.Nightly.RollingPs.Json(result.Report)) : null,
+            ["tasks"] = Parse(result.Tasks), ["reads"] = reads, ["sleeps"] = sleeps,
+        }.ToJsonString());
+    }
     private static string HostProgram(string root, bool wait)
     {
         var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
@@ -627,24 +636,18 @@ internal static class C1361CensusProbes
             Add(variant, a, b, d, false);
         }
         File.WriteAllText(Path.Combine(scratch.Root, "boundary.json"), data.ToJsonString());
-        string body;
         if (!host)
         {
-            body = $$"""
-                $ErrorActionPreference='Stop'
-                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-                foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) { Invoke-Expression $f.Extent.Text }
-                $calls=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Test-RecycleOpenStatusMove'},$true))
-                if ($calls.Count -ne 2) { throw 'both real status-qualification call sites required' }
-                $cases=Get-Content -Raw '{{scratch.Root}}/boundary.json' | ConvertFrom-Json
-                foreach ($c in $cases) {
-                    $before=$c|ConvertTo-Json -Depth 30 -Compress
-                    $actual=Test-RecycleOpenStatusMove -Before $c.before -After $c.after -Detail $c.detail -RunnerId server2
-                    if ($actual -ne $c.expected) { throw "boundary/$($c.name): expected=$($c.expected) actual=$actual" }
-                    if (($c|ConvertTo-Json -Depth 30 -Compress) -cne $before) { throw 'input changed' }
-                }
-                'BOUNDARIES_DONE'
-                """;
+            // Unit 65: the command's one shared predicate (both status-qualification sites call it), on the cases as read.
+            foreach (var c in data)
+            {
+                var parsed = Antiphon.Nightly.RollingPs.Parse(c!.ToJsonString());
+                var before = Antiphon.Nightly.RollingPs.Json(parsed, 30);
+                object? P(string name) => Antiphon.Nightly.RollingPs.Prop(parsed, name);
+                var actual = Antiphon.Nightly.Server2RollingDeploy.TestRecycleOpenStatusMove(P("before"), P("after"), P("detail"), "server2");
+                actual.ShouldBe(c["expected"]!.GetValue<bool>(), "boundary/" + c["name"]);
+                Antiphon.Nightly.RollingPs.Json(parsed, 30).ShouldBe(before, "input changed");
+            }
         }
         else
         {
@@ -652,11 +655,11 @@ internal static class C1361CensusProbes
             var matches = Regex.Matches(source, @"(?s)# C1361 predicate begin\n(.*?)# C1361 predicate end");
             matches.Count.ShouldBe(2, "both real qualification call sites");
             matches[0].Groups[1].Value.ShouldBe(matches[1].Groups[1].Value);
-            body = "jq -e '" + matches[0].Groups[1].Value +
+            var body = "jq -e '" + matches[0].Groups[1].Value +
                 " all(.[]; . as $c | (open_status_move($c.before;$c.after;$c.detail;\"server2\"))==$c.expected)' '" + scratch.Root + "/boundary.json' || exit 1\necho BOUNDARIES_DONE\n";
+            var run = await Run("bash", body, scratch.Root);
+            run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("BOUNDARIES_DONE");
         }
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
-        run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("BOUNDARIES_DONE");
         Console.WriteLine($"BOUNDARY {(host ? "host" : "wrapper")}/{passes}: {data.Count} cases PASS");
         if (passes) await ReconciliationBoundaries(host, data);
         if (passes) await LandProjection(host);
@@ -737,25 +740,18 @@ internal static class C1361CensusProbes
             Add(variant, prior, current, false);
         }
         var input = cases.ToJsonString(); File.WriteAllText(Path.Combine(scratch.Root, "maps.json"), input);
-        string body;
         if (!host)
         {
-            body = $$"""
-                $ErrorActionPreference='Stop'
-                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-                foreach ($name in @('Test-RecycleJsonEqual','Test-RecycleOpenStatusMove','Sync-RecycleOpenStatuses')) {
-                    $functions=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true))
-                    if ($functions.Count -ne 1) { throw "extraction count: $name" }; Invoke-Expression $functions[0].Extent.Text
-                }
-                foreach ($c in (Get-Content -Raw '{{scratch.Root}}/maps.json'|ConvertFrom-Json)) {
-                    $liveBefore=$c.current|ConvertTo-Json -Depth 30 -Compress
-                    $copy=$c.prior|ConvertTo-Json -Depth 30 -Compress|ConvertFrom-Json
-                    $null=Sync-RecycleOpenStatuses -Prior $copy -Live $c.current -RunnerId server2
-                    if (-not (Test-RecycleJsonEqual $copy $c.expected)) { throw "reconciliation/$($c.name) changed ineligible facts" }
-                    if (($c.current|ConvertTo-Json -Depth 30 -Compress) -cne $liveBefore) { throw 'live input changed' }
-                }
-                'RECONCILIATION_DONE'
-                """;
+            // Unit 65: the command's Sync-RecycleOpenStatuses and Test-RecycleJsonEqual on the maps as read.
+            foreach (var c in Antiphon.Nightly.RollingPs.Items(Antiphon.Nightly.RollingPs.Parse(File.ReadAllText(Path.Combine(scratch.Root, "maps.json")))))
+            {
+                object? P(string name) => Antiphon.Nightly.RollingPs.Prop(c, name);
+                var liveBefore = Antiphon.Nightly.RollingPs.Json(P("current"), 30);
+                var copy = Antiphon.Nightly.RollingPs.Copy(P("prior"), 30);
+                Antiphon.Nightly.Server2RollingDeploy.SyncRecycleOpenStatuses(copy, P("current"), "server2");
+                Antiphon.Nightly.Server2RollingDeploy.TestRecycleJsonEqual(copy, P("expected")).ShouldBeTrue("reconciliation/" + Antiphon.Nightly.RollingPs.Str(P("name")) + " changed ineligible facts");
+                Antiphon.Nightly.RollingPs.Json(P("current"), 30).ShouldBe(liveBefore, "live input changed");
+            }
         }
         else
         {
@@ -763,12 +759,12 @@ internal static class C1361CensusProbes
             var predicate = Regex.Matches(source, @"(?s)# C1361 predicate begin\n(.*?)# C1361 predicate end");
             var block = Regex.Matches(source, @"(?s)# C1361 reconciliation begin\n(.*?)# C1361 reconciliation end");
             predicate.Count.ShouldBe(2); block.Count.ShouldBe(1);
-            body = "jq -e '" + predicate[1].Groups[1].Value +
+            var body = "jq -e '" + predicate[1].Groups[1].Value +
                 " all(.[]; . as $case | .current as $current | \"server2\" as $runner | .prior | (" + block[0].Groups[1].Value +
                 ")==$case.expected)' '" + scratch.Root + "/maps.json' || exit 1\necho RECONCILIATION_DONE\n";
+            var run = await Run("bash", body, scratch.Root);
+            run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("RECONCILIATION_DONE");
         }
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
-        run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("RECONCILIATION_DONE");
         File.ReadAllText(Path.Combine(scratch.Root, "maps.json")).ShouldBe(input, "input JSON bytes unchanged");
         Console.WriteLine($"RECONCILIATION {(host ? "host" : "wrapper")}: {cases.Count} cases PASS");
     }
@@ -796,23 +792,15 @@ internal static class C1361CensusProbes
         }
         else
         {
-            body = $$"""
-                $ErrorActionPreference='Stop'
-                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-                $blocks=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.ForEachStatementAst] -and $n.Extent.Text.StartsWith('foreach ($key in @($rows.Keys | Sort-Object))')},$true))
-                if ($blocks.Count -ne 1) { throw 'real land projection count' }
-                $rows=@{}; $source=Get-Content -Raw '{{scratch.Root}}/rows.json'|ConvertFrom-Json
-                foreach ($p in $source.PSObject.Properties) { $rows[$p.Name]=$p.Value|ConvertTo-Json -Compress }
-                $kind='land'; $RunnerId='server2'; $taskSnapshot=[ordered]@{}
-                Invoke-Expression $blocks[0].Extent.Text
-                @{tasks=$taskSnapshot}|ConvertTo-Json -Depth 20|Set-Content '{{scratch.Root}}/projection.json'
-                # CARD-1697: the open closure is bound-only for the standing runner as well.
-                $kind='open'; $RunnerId='server2'; $taskSnapshot=[ordered]@{}
-                Invoke-Expression $blocks[0].Extent.Text
-                @{tasks=$taskSnapshot}|ConvertTo-Json -Depth 20|Set-Content '{{scratch.Root}}/open-projection.json'
-                """;
+            // Unit 65: the command's one projection (BoundProjection) serves the land and the open closure (CARD-1697).
+            var source = (Antiphon.Nightly.PlainObject)Antiphon.Nightly.RollingPs.Parse(File.ReadAllText(Path.Combine(scratch.Root, "rows.json")));
+            var projectionRows = source.Entries.ToDictionary(p => p.Key, p => Antiphon.Nightly.RollingPs.Json(p.Value));
+            foreach (var file in new[] { "projection.json", "open-projection.json" })
+                File.WriteAllText(Path.Combine(scratch.Root, file), Antiphon.Nightly.RollingPs.Json(
+                    Antiphon.Nightly.RollingPs.Object(("tasks", Antiphon.Nightly.Server2RollingDeploy.BoundProjection(projectionRows, "server2"))), 20));
+            body = "";
         }
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        var run = host ? await Run("bash", body, scratch.Root) : (Exit: 0, Output: "");
         run.Exit.ShouldBe(0, run.Output);
         var actual = JsonNode.Parse(File.ReadAllText(Path.Combine(scratch.Root, "projection.json")))!["tasks"]!.AsObject();
         actual.Count.ShouldBe(1, "bound-only land projection");
@@ -877,25 +865,13 @@ internal static class C1361CensusProbes
         }
         else
         {
-            body = $$"""
-                $ErrorActionPreference='Stop'
-                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-                $blocks=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if (($envelope.excluded.$key -isnot [int]')},$true))
-                if ($blocks.Count -ne 1) { throw 'actual total validation block count' }
-                $key='total'; $path='fixture'; $script:recycleReceipt=$null
-                $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Stop-RecycleMalformed'},$true)
-                Invoke-Expression $fn.Extent.Text
-                foreach ($v in @($null,-1,1.5,'1',$true,@{},@(),0,1,2)) {
-                    $envelope=[pscustomobject]@{excluded=[pscustomobject]@{total=$v} }
-                    $errorText=''; try { Invoke-Expression $blocks[0].Extent.Text } catch { $errorText=$_.Exception.Message }
-                    $valid=($v -is [int] -and $v -ge 0)
-                    if ($valid -and $errorText) { throw "valid total refused: $errorText" }
-                    if (-not $valid -and $errorText -cnotlike 'RecycleTaskCensusUnknown cause=Malformed field=excluded.total *') { throw "invalid total accepted: $v" }
-                }
-                'TOTAL_BOUNDARY_DONE'
-                """;
+            // Unit 65: the command's excluded.total admission (ValidCount), on the values as the census reads them.
+            foreach (var (v, valid) in new (object?, bool)[] { (null, false), (-1L, false), (1.5, false), ("1", false), (true, false),
+                         (new Antiphon.Nightly.PlainObject(), false), (Array.Empty<object>(), false), (0L, true), (1L, true), (2L, true) })
+                Antiphon.Nightly.Server2RollingDeploy.ValidCount(v).ShouldBe(valid, "total " + (v ?? "null"));
+            body = "echo TOTAL_BOUNDARY_DONE";
         }
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        var run = host ? await Run("bash", body, scratch.Root) : (Exit: 0, Output: "TOTAL_BOUNDARY_DONE");
         run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("TOTAL_BOUNDARY_DONE");
         Console.WriteLine($"TOTAL_BOUNDARY {(host ? "host" : "wrapper")} PASS");
     }
@@ -947,24 +923,22 @@ internal static class C1361CensusProbes
         }
         else
         {
-            body = $$"""
-                $ErrorActionPreference='Stop'
-                $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/scripts/deploy-server2.ps1',[ref]$null,[ref]$null)
-                $blocks=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if ($null -ne $detail.landRequest) {')},$true))
-                if ($blocks.Count -ne 1) { throw 'real pending-detail guard count' }
-                $detail='{"landRequest":{"state":"Running","terminalEventId":null} }'|ConvertFrom-Json
-                $id='{{Id}}'; $Report=$false
-                foreach ($bound in @($true,$false)) {
-                    $pendingLands=[Collections.Generic.HashSet[string]]::new(); $boundLands=[Collections.Generic.HashSet[string]]::new()
-                    $errorText=''; try { Invoke-Expression $blocks[0].Extent.Text } catch { $errorText=$_.Exception.Message }
-                    if ($bound -and $errorText -cne 'RecycleLandInFlight {{Id}}') { throw "bound pending detail: $errorText" }
-                    if (-not $bound -and $errorText) { throw "off-runner pending detail: $errorText" }
-                    if ($pendingLands.Count -ne 1 -or $boundLands.Count -ne [int]$bound) { throw 'pending counters' }
-                }
-                'PENDING_DETAIL_DONE'
-                """;
+            // Unit 65: the command's detail land admission (AdmitDetailLand) on the same detail.
+            var detail = Antiphon.Nightly.RollingPs.Parse("{\"landRequest\":{\"state\":\"Running\",\"terminalEventId\":null} }");
+            foreach (var bound in new[] { true, false })
+            {
+                var pendingLands = new HashSet<string>(); var boundLands = new HashSet<string>();
+                var errorText = "";
+                try { Antiphon.Nightly.Server2RollingDeploy.AdmitDetailLand(Antiphon.Nightly.RollingPs.Prop(detail, "landRequest"), Id, bound, false, pendingLands, boundLands); }
+                catch (Antiphon.Nightly.Server2RollingRefusal e) { errorText = e.Message; }
+                if (bound) errorText.ShouldBe("RecycleLandInFlight " + Id, "bound pending detail");
+                else errorText.ShouldBe("", "off-runner pending detail");
+                pendingLands.Count.ShouldBe(1, "pending counters");
+                boundLands.Count.ShouldBe(bound ? 1 : 0, "pending counters");
+            }
+            body = "echo PENDING_DETAIL_DONE";
         }
-        var run = await Run(host ? "bash" : "pwsh", body, scratch.Root);
+        var run = host ? await Run("bash", body, scratch.Root) : (Exit: 0, Output: "PENDING_DETAIL_DONE");
         run.Exit.ShouldBe(0, run.Output); run.Output.ShouldContain("PENDING_DETAIL_DONE");
         Console.WriteLine($"PENDING_DETAIL_BOUNDARY {(host ? "host" : "wrapper")} bound/off-runner PASS");
     }
@@ -1009,9 +983,8 @@ internal static class C1361CensusProbes
                 body.Replace(root, "'\"$census_root\"'", StringComparison.Ordinal);
             return LinuxShellResult(input);
         }
-        var file = Path.Combine(root, program == "pwsh" ? "probe.ps1" : "probe.sh"); File.WriteAllText(file, body);
+        var file = Path.Combine(root, "probe.sh"); File.WriteAllText(file, body);
         var psi = new ProcessStartInfo(program) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        if (program == "pwsh") { psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-File"); }
         psi.ArgumentList.Add(file);
         using var process = Process.Start(psi)!;
         var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();

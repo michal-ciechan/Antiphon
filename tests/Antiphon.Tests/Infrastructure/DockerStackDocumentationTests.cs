@@ -28,11 +28,11 @@ public sealed class DockerStackDocumentationTests
     public void Recycle_census_preflight_is_documented()
     {
         var text = Read("docs/docker-stack.md");
-        var preflight = text.IndexOf("-Phase check-census", StringComparison.Ordinal);
+        var preflight = text.IndexOf("--phase check-census", StringComparison.Ordinal);
         preflight.ShouldBeGreaterThanOrEqualTo(0);
-        preflight.ShouldBeLessThan(text.IndexOf("-Phase check-host-jq", StringComparison.Ordinal));
+        preflight.ShouldBeLessThan(text.IndexOf("--phase check-host-jq", StringComparison.Ordinal));
         foreach (var pin in new[] { "RECYCLE_PROJECT", "RECYCLE_CENSUS", "RecycleProjectUnresolved",
-                     "landPending", "Queued/Dispatched/Working/Blocked", "cause=NoMatch", "-ProjectId", "cause=Http status=400",
+                     "landPending", "Queued/Dispatched/Working/Blocked", "cause=NoMatch", "--project-id", "cause=Http status=400",
                      "four attempts", "backoffs of 2s, 5s and 10s", "Drift and Unstable", "PartialRefused",
                      "Main keeps the v1 collector: three attempts" })
             text.ShouldContain(pin);
@@ -62,7 +62,7 @@ public sealed class DockerStackDocumentationTests
     public void Lands_proceed_during_rollout_is_documented()
     {
         var text = Read("docs/docker-stack.md");
-        foreach (var pin in new[] { "boundLandPending", "bound to the runner being recycled", "-LandWaitMinutes",
+        foreach (var pin in new[] { "boundLandPending", "bound to the runner being recycled", "--land-wait-minutes",
                      "C1008_LAND_WAIT_SECONDS", "C1008_LAND_POLL_SECONDS", "RECYCLE_LAND_WAIT", "C1008_LAND_WAIT", "CARD-1353" })
             text.ShouldContain(pin, Case.Sensitive, "c1353-docs: " + pin);
         var census = text.IndexOf("The wrapper and host census each walk two server-filtered closures", StringComparison.Ordinal);
@@ -98,8 +98,8 @@ public sealed class DockerStackDocumentationTests
             "never starts new container cleanup", "Docker prune, other volumes, markers and donor archives remain human-gated",
             "Assert-TempRetirementClearable", "before `/drain/clear`", "TempVolumesRetained", "tempPrivateVolumes=0",
             "-Close -OperationId", "journal transition, not a delete",
-            "Apply is off by default", "-Phase retire-temp -DryRun", "apply-gate-off", "exit 2",
-            "ANTIPHON_VOLUME_RETIREMENT_APPLY", "enabled-<operation-id>", "-RetirementProof <operation-id>" })
+            "Apply is off by default", "--phase retire-temp --dry-run", "apply-gate-off", "exit 2",
+            "ANTIPHON_VOLUME_RETIREMENT_APPLY", "enabled-<operation-id>", "--retirement-proof <operation-id>" })
             text.ShouldContain(expected, Case.Sensitive, "c994-runbook: " + expected);
         text.ShouldNotContain("Current retire-temp guard caveat", Case.Sensitive, "c994-runbook: obsolete null guard caveat");
         text.ShouldNotContain("Until CARD-0994/CARD-1008", Case.Sensitive, "c994-runbook: obsolete implementation caveat");
@@ -240,7 +240,7 @@ public sealed class DockerStackDocumentationTests
         var section = end < 0 ? text[start..] : text[start..end];
         section.ShouldContain("jq -ncS --arg p '<project-id>' '{schema:1,projects:{($p):{origins:[\"https://github.com/michal-ciechan/Antiphon.git\"]}}}' > /home/mc/antiphon-server2/retirement-origins.json",
             Case.Sensitive, "c1689-docs: the one-time operator command");
-        foreach (var pin in new[] { "umask 077", "-Phase check-census", "RECYCLE_PROJECT id=<guid>", "with and without the `.git` suffix",
+        foreach (var pin in new[] { "umask 077", "--phase check-census", "RECYCLE_PROJECT id=<guid>", "with and without the `.git` suffix",
                      "No agent creates or edits this file.", "`remote-output.txt`" })
             section.ShouldContain(pin, Case.Sensitive, "c1689-docs: " + pin);
         var script = DockerStackDocuments.Read("scripts/c1008-retirement.sh").Replace("\r\n", "\n");
@@ -601,7 +601,7 @@ public sealed class DockerStackDocumentationTests
                      "`SessionRunner__HostStats__HistoryEnabled: \"false\"`",
                      "bash scripts/c1893-runner-hold.sh <40-hex rollout sha>",
                      "Run `git fetch origin` in that checkout first; the script itself does not fetch.",
-                     "`-Phase deploy-temp`, `-Phase redeploy-old` or `-Phase all`",
+                     "`--phase deploy-temp`, `--phase redeploy-old` or `--phase all`",
                      "`HOLD` means do not run the phase",
                      "`NOT-AFFECTED`",
                  })

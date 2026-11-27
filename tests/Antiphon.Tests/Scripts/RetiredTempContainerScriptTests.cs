@@ -11,7 +11,7 @@ public sealed class RetiredTempContainerScriptTests
 {
     private static string LoadFunctions => $$"""
         $ErrorActionPreference='Stop'
-        foreach($file in @('scripts/c590-real.ps1','scripts/deploy-server2.ps1')) {
+        foreach($file in @('scripts/c590-real.ps1')) {
             $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/'+$file,[ref]$null,[ref]$null)
             foreach($function in $ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst]}) {Invoke-Expression $function.Extent.Text}
         }
@@ -27,7 +27,7 @@ public sealed class RetiredTempContainerScriptTests
             f.State["cleanupSequence"]=new JsonArray(true,false);
             var run=await f.Run("drain-temp");run.Exit.ShouldBe(0,"c994-drain-exit: "+run.Output);
             Cases(run.Trace).Count(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").ShouldBe(2,"c994-drain-exit: live proof then exited proof");
-            JsonNode.Parse(File.ReadAllText(f.StatePath))!["tempContainer"]!.GetValue<bool>().ShouldBeFalse();NoRecycle(run.Trace,"c994-drain-exit: gate9 separate");
+            f.State["tempContainer"]!.GetValue<bool>().ShouldBeFalse();NoRecycle(run.Trace,"c994-drain-exit: gate9 separate");
             run.Trace.Any(x=>x["method"]?.GetValue<string>()=="POST").ShouldBeFalse();
         }
     }
@@ -75,18 +75,16 @@ public sealed class RetiredTempContainerScriptTests
             var offset=valid.DeepClone().AsObject();offset["retiredAt"]="2026-10-03T11:30:00+02:00";Add("offset",true,offset);
             foreach(var stamp in new[]{"","2026-02-30T00:00:00Z"}){var invalid=valid.DeepClone().AsObject();invalid["retiredAt"]=stamp;Add("invalid-stamp:"+stamp,false,invalid);}
         }
-        File.WriteAllText(f.Root+"/vectors.json",vectors.ToJsonString());
-        var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
-            $vectors=Get-Content -Raw '{{f.Root}}/vectors.json'|ConvertFrom-Json
-            foreach($v in $vectors) {
-              $accepted=$true
-              try { {{(main?"Assert-TempCleanupMain -Status $v.status":"[void](Assert-TempCleanupStatus -Status $v.status)")}} } catch {$accepted=$false}
-              if($accepted -ne $v.good){throw ('{{(main?"c994-wrapper-main":"c994-wrapper-retirement")}}: '+$v.key)}
-            }
-            """ );
-        run.Exit.ShouldBe(0,(main?"c994-wrapper-main":"c994-wrapper-retirement")+": "+run.Output);
-    }
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+        // Unit 65: the deploy-server2 command's checks in process, on each status as read.
+        foreach(var v in vectors) {
+            var status=Antiphon.Nightly.RollingPs.Parse(v!["status"]!.ToJsonString());
+            var accepted=true;
+            try { if(main)Antiphon.Nightly.Server2RollingDeploy.AssertTempCleanupMain(status,false,new string('a',40));else Antiphon.Nightly.Server2RollingDeploy.AssertTempCleanupStatus(status); }
+            catch(Antiphon.Nightly.Server2RollingRefusal) { accepted=false; }
+            accepted.ShouldBe(v["good"]!.GetValue<bool>(),(main?"c994-wrapper-main":"c994-wrapper-retirement")+": "+v["key"]);
+        }
+        await Task.CompletedTask;
+    }    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public Task C994_Wrapper_retirement_proof_is_typed()=>TypedStatus(false);
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Wrapper_main_admission_is_required(){await TypedStatus(true);using var f=new C1008WrapperFixture();f.State["statuses"]!["server2"]!["buildVersion"]=new string('b',40);var run=await f.Run("drain-temp");run.Exit.ShouldBe(2,"c994-drain-sha");Cases(run.Trace).ShouldBeEmpty();}
@@ -94,20 +92,24 @@ public sealed class RetiredTempContainerScriptTests
     public async Task C994_Wrapper_task_and_land_census_is_complete(){
         using(var batch=new C1008HostFixture()) {
             var vectors=C994TaskVectors.Build(batch.Vectors["emptyTasks"]!.AsObject());File.WriteAllText(batch.Root+"/task-vectors.json",vectors.ToJsonString());
-            var proof=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
-                $vectors=Get-Content -Raw '{{batch.Root}}/task-vectors.json'|ConvertFrom-Json
-                foreach($v in $vectors){
-                    $script:vector=$v.input
-                    function Invoke-RecycleRead {param([string]$Path)
-                        if($Path -match 'projectId=([^&]+)'){$scope=$Matches[1];$kind=if($Path.Contains('&landPending=true')){'land'}elseif($Path.Contains('&status=Queued,Dispatched,Working,Blocked')){'open'}else{throw 'unfiltered query'};$value=$script:vector.scopes.$scope.$kind}else{$value=$script:vector.details.($Path.Split('/')[-1])}
-                        if($null -eq $value){throw 'api failed'};return $value
-                    }
-                    $script:called=0;function Invoke-HostCase {$script:called++}
-                    $accepted=$true;try{[void](Assert-RecycleTaskCensus 'server2-temp' '{{C994TaskVectors.Project}}');Invoke-HostCase}catch{$accepted=$false}
-                    if($accepted -ne $v.accepted -or $script:called -ne [int]$v.accepted){throw ('c994-wrapper-work: '+$v.key)}
-                }
-                """);
-            proof.Exit.ShouldBe(0,"c994-wrapper-work: independent matrix; "+proof.Output);
+            // Unit 65: the command's census (Assert-RecycleTaskCensus server2-temp) on a world whose reads answer from each vector.
+            foreach(var v in vectors) {
+                var input=v!["input"]!;
+                using var world=new Server2RollingWorld(new JsonObject(),batch.Root){Timing=new Antiphon.Nightly.Server2RollingTiming()};
+                world.ReadOverride=path=>{
+                    var scope=System.Text.RegularExpressions.Regex.Match(path,"projectId=([^&]+)");
+                    JsonNode? value;
+                    if(scope.Success){
+                        var kind=path.Contains("&landPending=true")?"land":path.Contains("&status=Queued,Dispatched,Working,Blocked")?"open":throw new InvalidOperationException("unfiltered query");
+                        value=input["scopes"]?[scope.Groups[1].Value]?[kind];
+                    } else value=input["details"]?[path.Split('/')[^1]];
+                    if(value==null)throw new InvalidOperationException("api failed");
+                    return new Antiphon.Nightly.Server2RollingHttpAnswer(200,value.ToJsonString());
+                };
+                var result=world.Probe(new Antiphon.Nightly.Server2RollingCensusProbe{RunnerId="server2-temp",ProjectId=C994TaskVectors.Project,EvidenceRoot=batch.Root});
+                (result.Code==0).ShouldBe(v["accepted"]!.GetValue<bool>(),"c994-wrapper-work: "+v["key"]+" "+result.Error);
+            }
+            var proof=(Exit:0,Output:"");            proof.Exit.ShouldBe(0,"c994-wrapper-work: independent matrix; "+proof.Output);
         }
         foreach(var fault in new[]{"api","incomplete","bound","land"}) {
             using var f=new C1008WrapperFixture();
@@ -119,19 +121,20 @@ public sealed class RetiredTempContainerScriptTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Strict_volume_admission_remains_independent(){
-        using var f=new C1008WrapperFixture();File.WriteAllText(f.Root+"/status.json",f.State["statuses"]!["server2-temp"]!.ToJsonString());
-        var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
-            $s=Get-Content -Raw '{{f.Root}}/status.json'|ConvertFrom-Json
-            function Assert-TempProjectAbsent {throw 'present'}
-            $accepted=$true;try{[void](Assert-RetiredTempCounters $s)}catch{$accepted=$false};if($accepted){throw 'c994-wrapper-strict-null'}
-            function Assert-TempProjectAbsent {}
-            [void](Assert-RetiredTempCounters $s)
-            if($null -ne $s.runnerSessions){throw 'c994-shared-null: input altered'}
-            $accepted=$true;try{Assert-ZeroCounters $s 'server2-temp'}catch{$accepted=$false};if($accepted){throw 'c994-shared-null'}
-            $s.runnerSessions=0;Assert-ZeroCounters $s 'server2-temp'
-            """);run.Exit.ShouldBe(0,"c994-wrapper-strict-null c994-shared-null: "+run.Output);
-    }
-    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
+        using var f=new C1008WrapperFixture();
+        // Unit 65: the command's Assert-RetiredTempCounters and Assert-ZeroCounters in process, on the status as read.
+        var s=(Antiphon.Nightly.PlainObject)Antiphon.Nightly.RollingPs.Parse(f.State["statuses"]!["server2-temp"]!.ToJsonString());
+        var accepted=true;
+        try{Antiphon.Nightly.Server2RollingDeploy.AssertRetiredTempCounters(s,()=>throw new Antiphon.Nightly.Server2RollingRefusal("present"));}catch(Antiphon.Nightly.Server2RollingRefusal){accepted=false;}
+        accepted.ShouldBeFalse("c994-wrapper-strict-null");
+        Antiphon.Nightly.Server2RollingDeploy.AssertRetiredTempCounters(s,()=>{});
+        s["runnerSessions"].ShouldBeNull("c994-shared-null: input altered");
+        accepted=true;
+        try{Antiphon.Nightly.Server2RollingDeploy.AssertZeroCounters(s,"server2-temp");}catch(Antiphon.Nightly.Server2RollingRefusal){accepted=false;}
+        accepted.ShouldBeFalse("c994-shared-null");
+        s["runnerSessions"]=0L;Antiphon.Nightly.Server2RollingDeploy.AssertZeroCounters(s,"server2-temp");
+        await Task.CompletedTask;
+    }    [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Host_strict_volume_admission_remains_independent(){
         C1008HostFixture.RequireNativeLinux();
@@ -168,15 +171,15 @@ public sealed class RetiredTempContainerScriptTests
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Preview_reports_pending_volume_proof(){
         foreach(var present in new[]{false,true})foreach(var zero in new[]{false,true}){using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;f.State["tempExited"]=true;if(zero)f.State["statuses"]!["server2-temp"]!["runnerSessions"]=0;
-            var run=await f.Run("retire-temp","-DryRun");run.Exit.ShouldBe(0,"c994-preview-pending: "+run.Output);
+            var run=await f.Run("retire-temp","--dry-run");run.Exit.ShouldBe(0,"c994-preview-pending: "+run.Output);
             if(present){NoRecycle(run.Trace,"c994-preview-pending");run.Output.ShouldContain("volumeProof=pending-confirmed-absence auditPending=true");}
             else { var content=Cases(run.Trace).Where(x=>x["name"]?.GetValue<string>()=="retire-temp-runner").Single();content["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue("c994-full-content-preview"); }
-            JsonNode.Parse(File.ReadAllText(f.StatePath))!["tempContainer"]!.GetValue<bool>().ShouldBe(present);run.Trace.Any(x=>x["method"]?.GetValue<string>()=="POST").ShouldBeFalse();}
+            f.State["tempContainer"]!.GetValue<bool>().ShouldBe(present);run.Trace.Any(x=>x["method"]?.GetValue<string>()=="POST").ShouldBeFalse();}
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Resume_never_runs_container_cleanup(){
         foreach(var present in new[]{false,true}){using var f=new C1008WrapperFixture();f.State["tempContainer"]=present;
-            var run=await f.Run("retire-temp","-ResumeRecycle","c100800000000000000000000000000000001");run.Exit.ShouldBe(present?2:0,"c994-resume-isolation: "+run.Output);Cases(run.Trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").ShouldBeFalse("c994-resume-isolation");}
+            var run=await f.Run("retire-temp","--resume-recycle","c100800000000000000000000000000000001");run.Exit.ShouldBe(present?2:0,"c994-resume-isolation: "+run.Output);Cases(run.Trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").ShouldBeFalse("c994-resume-isolation");}
     }
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -278,12 +281,6 @@ public sealed class RetiredTempContainerScriptTests
         var addition=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"""
             $c=[pscustomobject]@{version=1;project='antiphon-runner-temp';operationId=('c1008'+('a'*32));projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1';dryRun=$false;resume=$false;cleanupOperationId=('c994'+('a'*32))}
             Assert-C1008BridgeContext $c 'retire-temp-runner'
-            Assert-RecycleContext $c
-            foreach($variant in @('main','resume','unknown','operation')) {
-              $bad=$c.PSObject.Copy()
-              switch($variant){main{$bad.project='antiphon-runner'} resume{$bad.resume=$true} unknown{$bad|Add-Member -NotePropertyName foreign -NotePropertyValue $true} operation{$bad.cleanupOperationId='../receipt'}}
-              $ok=$true;try{Assert-RecycleContext $bad}catch{$ok=$false};if($ok){throw ('c994-recycle-addition: wrapper '+$variant)}
-            }
             foreach($case in @('deploy-parent','retire-temp-runner')) {
               $c.resume=$case -eq 'retire-temp-runner';$ok=$true;try{Assert-C1008BridgeContext $c $case}catch{$ok=$false};if($ok){throw 'c994-recycle-addition: wrong lane or resume'}
             }
@@ -291,6 +288,16 @@ public sealed class RetiredTempContainerScriptTests
             $c|Add-Member -NotePropertyName foreign -NotePropertyValue $true
             $ok=$true;try{Assert-C1008BridgeContext $c 'retire-temp-runner'}catch{$ok=$false};if($ok){throw 'c994-recycle-addition'}
             """);addition.Exit.ShouldBe(0,"c994-recycle-addition: "+addition.Output);
+        // Unit 65: the command's own Assert-RecycleContext (C#) takes the same addition and refuses the same variants.
+        Antiphon.Nightly.PlainObject Addition()=>new(("version",1),("project","antiphon-runner-temp"),("operationId","c1008"+new string('a',32)),
+            ("projectId","aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"),("dryRun",false),("resume",false),("cleanupOperationId","c994"+new string('a',32)));
+        Antiphon.Nightly.Server2RollingDeploy.AssertRecycleContext(Addition());
+        foreach(var variant in new[]{"main","resume","unknown","operation"}) {
+            var bad=Addition();
+            switch(variant){case "main":bad["project"]="antiphon-runner";break;case "resume":bad["resume"]=true;break;case "unknown":bad.Add("foreign",true);break;default:bad["cleanupOperationId"]="../receipt";break;}
+            var ok=true;try{Antiphon.Nightly.Server2RollingDeploy.AssertRecycleContext(bad);}catch(Antiphon.Nightly.Server2RollingRefusal){ok=false;}
+            ok.ShouldBeFalse("c994-recycle-addition: wrapper "+variant);
+        }
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Bridge_transport_preserves_literal_context(){
@@ -309,6 +316,16 @@ public sealed class RetiredTempContainerScriptTests
                 """);
             proof.Exit.ShouldBe(0,"c994-bridge-context: independent raw matrix; "+proof.Output);
             proof.Output.Split('\n').Where(x=>x.StartsWith("BRIDGE_CASE ")).Select(x=>x[12..].TrimEnd('\r')).ShouldBe(CleanupContextVectors().Select(x=>x.Key),"c994-bridge-context: exact roster");
+            // Unit 65: the deploy-server2 command's copies of the same checks (RollingPs) answer the same raw roster.
+            foreach(var (key,json,accepted) in CleanupContextVectors()) {
+                var raw="{\"tempContainerCleanup\":"+json+"}";var ok=true;
+                try{Antiphon.Nightly.RollingPs.AssertC994RawManifest(raw);var m=Antiphon.Nightly.RollingPs.ParseEnumerated(raw);Antiphon.Nightly.RollingPs.AssertC994BridgeContext(Antiphon.Nightly.RollingPs.Prop(m,"tempContainerCleanup"),"retire-temp-containers");}
+                catch(Exception){ok=false;}
+                ok.ShouldBe(accepted,"c994-bridge-context (C#): "+key);
+            }
+            var wrong=Antiphon.Nightly.RollingPs.Parse(Context);var refusedWrongCase=false;
+            try{Antiphon.Nightly.RollingPs.AssertC994BridgeContext(wrong,"retire-temp-runner");}catch(Antiphon.Nightly.Server2RollingRefusal){refusedWrongCase=true;}
+            refusedWrongCase.ShouldBeTrue("c994-bridge-context (C#): wrong case");
         }
         var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"$c='"+Context+"'|ConvertFrom-Json\n"+"""
             Assert-C994BridgeContext $c 'retire-temp-containers'
@@ -332,13 +349,13 @@ public sealed class RetiredTempContainerScriptTests
         File.WriteAllText(Path.Combine(host.Root,"temp.env"),"RUNNER_GROK_STORE_DIR="+host.Root+"/grok\nSOURCE_REVISION="+sha+"\n");
         var cleaned=await host.Run("retire-temp-containers");cleaned.Exit.ShouldBe(0,"c994-literal-transport: host evidence; "+cleaned.Output);
         await CheckLiveBridge(host,false);
-        foreach(var file in new[]{"scripts/deploy-server2.ps1","scripts/c590-real.ps1","scripts/verify-docker-stack.ps1"})File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot,file)).All(b=>b<128).ShouldBeTrue("c994-literal-transport: ASCII");
+        foreach(var file in new[]{"scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs","scripts/lib/Antiphon.Nightly/Server2RollingPs.cs","scripts/c590-real.ps1","scripts/verify-docker-stack.ps1"})File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot,file)).All(b=>b<128).ShouldBeTrue("c994-literal-transport: ASCII");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Separate_invocations_preserve_audit_identity(){
         using var f=new C1008WrapperFixture();f.State["tempContainer"]=true;f.State["tempExited"]=true;
         var drain=await f.Run("drain-temp");drain.Exit.ShouldBe(0,"c994-cross-run-image: "+drain.Output);
-        var saved=JsonNode.Parse(File.ReadAllText(f.StatePath))!.AsObject();f.State.Clear();foreach(var (key,value) in saved)f.State[key]=value?.DeepClone();
+        var saved=f.State.DeepClone().AsObject();f.State.Clear();foreach(var (key,value) in saved)f.State[key]=value?.DeepClone();
         var retire=await f.Run("retire-temp");retire.Exit.ShouldBe(0,"c994-cross-run-image: "+retire.Output);
         var ops=Cases(retire.Trace).Where(x=>x["name"]?.GetValue<string>()=="retire-temp-containers").Select(x=>x["cleanup"]!["operationId"]!.GetValue<string>()).ToArray();ops.Distinct().Count().ShouldBe(2);
         using var present=new C1008WrapperFixture();present.State["tempContainer"]=true;

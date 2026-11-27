@@ -4,7 +4,7 @@
 //   antiphon-scripts verify-docker-stack --case <name> --manifest <path>
 //
 // scripts/verify-docker-stack.ps1 stays at its path with its parameters (-Case, -Manifest, -RefreshClaudeToken): the owner-gated
-// scripts deploy-server2.ps1, c590-real.ps1, c1609-manual.ps1 and verify-card0849-caches.ps1 start it by path. It keeps its head
+// deploy-server2 command (Server2RollingOs.HostCase, unit 65) and scripts c590-real.ps1, c1609-manual.ps1 and verify-card0849-caches.ps1 start it by path. It keeps its head
 // unchanged: the manifest checks and context guards of scripts/c590-real.ps1 (C994, C1008) and, without ANTIPHON_C590_STUB, the
 // live server2 bridge (Invoke-C590LiveCase) for every case on c590-real.ps1's roster, which always ends the script. Whatever
 // reaches past that head (stub mode, or a case the bridge does not route) is handed to this command.

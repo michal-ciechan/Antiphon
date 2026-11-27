@@ -108,15 +108,19 @@ public sealed class RollingVolumeRecycleScriptTests
         const string id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1";
         const string other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2";
         const string url = "https://github.com/michal-ciechan/Antiphon.git";
-        var root = DelegateScriptRunner.RepoRoot;
-        var normalizedPath = Path.Combine(root, "scripts", "..") + Path.DirectorySeparatorChar;
-        if (OperatingSystem.IsWindows()) normalizedPath = normalizedPath.Replace('\\', '/').ToUpperInvariant();
-        foreach (var (git, path, resolvedBy) in new[] {
-                     ("", normalizedPath, "path"), (url, "", "url"), (url, root, "both"),
+        // Unit 65: the command's checkout is each fixture's own directory, so the path vectors name it.
+        static string Normalized(string root)
+        {
+            var normalizedPath = Path.Combine(root, "scripts", "..") + Path.DirectorySeparatorChar;
+            return OperatingSystem.IsWindows() ? normalizedPath.Replace('\\', '/').ToUpperInvariant() : normalizedPath;
+        }
+        foreach (var (git, pathKind, resolvedBy) in new[] {
+                     ("", "normalized", "path"), (url, "", "url"), (url, "root", "both"),
                      (" https://GITHUB.COM/michal-ciechan/Antiphon ", "", "url"),
                      ("git@github.com:michal-ciechan/Antiphon.git", "", "url") })
         {
             using var f = new C1008WrapperFixture();
+            var path = pathKind == "normalized" ? Normalized(f.Root) : pathKind == "root" ? f.Root : "";
             f.State["projects"] = new JsonArray(C1087Project(id, git, path));
             var run = await f.Run("retire-temp");
             run.Exit.ShouldBe(0, resolvedBy + "; " + run.Output);
@@ -129,6 +133,7 @@ public sealed class RollingVolumeRecycleScriptTests
                      "missing-gitRepositoryUrl", "bad-path", "explicit", "not-found", "explicit-archived", "invalid-id", "upper-id", "empty-id" })
         {
             using var f = new C1008WrapperFixture();
+            var root = f.Root;
             var project = C1087Project(id, url, "");
             f.State["projects"] = new JsonArray(project);
             var args = Array.Empty<string>();
@@ -146,10 +151,10 @@ public sealed class RollingVolumeRecycleScriptTests
                 case "missing-gitRepositoryUrl": project.Remove("gitRepositoryUrl"); expected = "cause=Malformed field=gitRepositoryUrl"; break;
                 case "bad-path": project["localRepositoryPath"] = "bad\0path"; expected = "cause=Malformed field=localRepositoryPath"; break;
                 case "invalid-id": case "upper-id": case "empty-id":
-                    args = ["-ProjectId", vector == "empty-id" ? "" : vector == "upper-id" ? id.ToUpperInvariant() : "SENTINEL_BAD_ID"];
+                    args = ["--project-id", vector == "empty-id" ? "" : vector == "upper-id" ? id.ToUpperInvariant() : "SENTINEL_BAD_ID"];
                     expected = "cause=InvalidId"; break;
                 default:
-                    args = ["-ProjectId", id];
+                    args = ["--project-id", id];
                     project["gitRepositoryUrl"] = "";
                     if (vector == "explicit-archived") project["archivedAt"] = "2026-10-03T09:00:00Z";
                     f.State["projectDetail"] = vector == "not-found" ? new JsonObject() : new JsonObject { [id] = project.DeepClone() };
@@ -570,7 +575,7 @@ public sealed class RollingVolumeRecycleScriptTests
             queries[landPath] = arm == "clears" ? new JsonArray(pending, f.State["tasks"]!.DeepClone()) : pending;
             if (arm == "clears") f.Environment["C727_TEST_LAND_WAIT_MS"] = "60000";
             else if (arm == "expires") f.Environment["C727_TEST_LAND_WAIT_MS"] = "1";
-            var run = arm == "zero" ? await f.Run("redeploy-old", "-LandWaitMinutes", "0") : await f.Run("redeploy-old");
+            var run = arm == "zero" ? await f.Run("redeploy-old", "--land-wait-minutes", "0") : await f.Run("redeploy-old");
             var landReads = run.Trace.Count(t => t["path"]?.GetValue<string>() == landPath);
             var waitLines = Regex.Matches(run.Output, "(?m)^RECYCLE_LAND_WAIT runner=server2 id=" + id + " polls=\\d+\r?$").Count;
             var receipt = C1087Receipt(run.Trace, "census-redeploy-old-server2.json");
@@ -638,7 +643,7 @@ public sealed class RollingVolumeRecycleScriptTests
             partial.State["wrongDeploySha"] = fail == "wrong-sha";
             partial.State["failVerify"] = fail == "cache" ? "server2" : "";
             var recovered = fail == "no-resume" ? await partial.Run("redeploy-old") :
-                await partial.Run("redeploy-old", "-ResumeRecycle", "c100800000000000000000000000000000001");
+                await partial.Run("redeploy-old", "--resume-recycle", "c100800000000000000000000000000000001");
             if (fail.Length == 0) recovered.Exit.ShouldBe(0, "recycle-wrapper-resume: request reaches the host's saved proof; " + recovered.Output);
             else
             {
@@ -670,10 +675,10 @@ public sealed class RollingVolumeRecycleScriptTests
     {
         using (var good = new C1008WrapperFixture())
         {
-            var run = await good.Run("retire-temp", "-DryRun");
+            var run = await good.Run("retire-temp", "--dry-run");
             run.Exit.ShouldBe(0, "recycle-manifest-strict: supported typed preview transport; " + run.Output);
         }
-        foreach (var option in new[] { "-RecycleRunnerState", "-RecycleCaches" })
+        foreach (var option in new[] { "--recycle-runner-state", "--recycle-caches" })
         {
             using var f = new C1008WrapperFixture(); var run = await f.Run("retire-temp", option);
             run.Trace.ShouldBeEmpty("recycle-manifest-strict: moved opt-ins rejected by parameter binding");
@@ -681,15 +686,36 @@ public sealed class RollingVolumeRecycleScriptTests
         }
         foreach (var id in new[] { "../file", "C1008" + new string('a', 32), "c1008a;echo", "" })
         {
-            using var f = new C1008WrapperFixture(); var run = await f.Run("retire-temp", "-ResumeRecycle", id);
+            using var f = new C1008WrapperFixture(); var run = await f.Run("retire-temp", "--resume-recycle", id);
             run.Trace.ShouldBeEmpty("recycle-manifest-strict: operation ID has no path authority");
             run.Exit.ShouldNotBe(0);
         }
-        // Invoke both real validators with raw JSON before any switch binding.
+        // Invoke both real validators with raw JSON before any switch binding: the command's (unit 65: C#, the context read as
+        // ConvertFrom-Json read it) here, the bridge's (scripts/c590-real.ps1, W10) below.
+        foreach (var vector in new[] { "false", "true", "string", "null", "number", "omitted", "unknown", "volumes", "project", "operation" })
+        {
+            var context = (Antiphon.Nightly.PlainObject)Antiphon.Nightly.RollingPs.Parse("{\"version\":1,\"project\":\"antiphon-runner-temp\",\"operationId\":\"c100800000000000000000000000000000001\",\"dryRun\":false,\"resume\":false,\"projectId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\"}");
+            switch (vector)
+            {
+                case "true": context["dryRun"] = true; break;
+                case "string": context["dryRun"] = "false"; break;
+                case "null": context["dryRun"] = null; break;
+                case "number": context["dryRun"] = 0; break;
+                case "omitted": context.Remove("dryRun"); break;
+                case "unknown": context.Add("recycleCaches", false); break;
+                case "volumes": context.Add("volumes", new object[] { "antiphon-runner_runner-state" }); break;
+                case "project": context["project"] = "unsupported"; break;
+                case "operation": context["operationId"] = "../receipt"; break;
+            }
+            var accepted = true;
+            try { Antiphon.Nightly.Server2RollingDeploy.AssertRecycleContext(context); }
+            catch (Antiphon.Nightly.Server2RollingRefusal) { accepted = false; }
+            accepted.ShouldBe(vector is "false" or "true", "recycle-manifest-strict: Assert-RecycleContext " + vector);
+        }
         var raw = await C1008Process("pwsh", "-NoProfile", "-Command", $$"""
             $ErrorActionPreference='Stop'
             $repo='{{DelegateScriptRunner.RepoRoot.Replace("'", "''", StringComparison.Ordinal)}}'
-            foreach ($pair in @(@('deploy-server2.ps1','Assert-RecycleContext'),@('c590-real.ps1','Assert-C1008BridgeContext'))) {
+            foreach ($pair in @(,@('c590-real.ps1','Assert-C1008BridgeContext'))) {
                 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repo ('scripts/'+$pair[0])),[ref]$null,[ref]$null)
                 $name=$pair[1]
                 $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
@@ -716,44 +742,13 @@ public sealed class RollingVolumeRecycleScriptTests
             }
             """);
         raw.Exit.ShouldBe(0, "recycle-manifest-strict: independent raw validators; " + raw.Output);
-        foreach (var validator in new[] { "Assert-RecycleContext", "Assert-C1008BridgeContext" })
         foreach (var vector in new[] { "false", "true", "string", "null", "number", "omitted", "unknown", "volumes", "project", "operation" })
-            raw.Output.ShouldContain(validator + "/" + vector + " checked");
+            raw.Output.ShouldContain("Assert-C1008BridgeContext/" + vector + " checked");
     }
 
-    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1008_Legacy_rolling_and_jq_rosters_remain_present(CancellationToken cancellationToken) =>
-        LegacyRollingAndJqRoster("present", cancellationToken);
-
-    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1008_Legacy_rolling_and_jq_rosters_remain_absent(CancellationToken cancellationToken) =>
-        LegacyRollingAndJqRoster("absent", cancellationToken);
-
-    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1008_Legacy_rolling_and_jq_rosters_remain_missing_shell(CancellationToken cancellationToken) =>
-        LegacyRollingAndJqRoster("missing-shell", cancellationToken);
-
-    [Test, Timeout(400_000), ParallelLimiter<ProcessSpawnLimit>]
-    public Task C1008_Legacy_rolling_and_jq_rosters_remain_failing_shell(CancellationToken cancellationToken) =>
-        LegacyRollingAndJqRoster("failing-shell", cancellationToken);
-
-    private async Task LegacyRollingAndJqRoster(string mode, CancellationToken cancellationToken)
-    {
-        // Each mode runs the complete 62/66-invocation roster. Keep its assertions and
-        // serial process limiter, with a deadline per mode rather than for all 252 children.
-        var arguments = new List<string> { "-NoProfile", "-File",
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), "-Case", mode };
-        if (mode == "present")
-        {
-            arguments.Add("-RequireJq");
-            arguments.ShouldContain("-RequireJq", customMessage: "c983-consumer-requires-jq");
-        }
-        var run = await C1008Process("pwsh", cancellationToken, arguments.ToArray());
-        Console.WriteLine(run.Output);
-        run.Output.ShouldContain($"C973_JQ case={mode} assertions=31 failures=0", Case.Sensitive, "rolling-regressions-preserved: " + run.Output);
-        if (mode == "present") run.Output.ShouldNotContain("C973_JQ_SKIPPED");
-        run.Exit.ShouldBe(0);
-    }
+    // Unit 65: the legacy rolling and jq rosters (scripts/test-deploy-server2.ps1 through test-deploy-server2-jq.ps1, four jq-probe
+    // shells) are Server2RollingDriverTests (T-1 to T-24, T-20 behind the same jq probe) and Server2RollingDeployTests (every
+    // invocation's captured exit, lines, trace and evidence), in process.
 
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test]
@@ -770,7 +765,9 @@ public sealed class RollingVolumeRecycleScriptTests
     [Test]
     public void C1008_Transport_scripts_are_ascii()
     {
-        foreach (var script in new[] { "deploy-server2.ps1", "c590-real.ps1", "c590-remote.sh", "verify-docker-stack.ps1" })
+        foreach (var script in new[] { "lib/Antiphon.Nightly/Server2RollingDeploy.cs", "lib/Antiphon.Nightly/Server2RollingCensus.cs",
+                     "lib/Antiphon.Nightly/Server2RollingPs.cs", "lib/Antiphon.Nightly/Server2RollingOs.cs", "c590-real.ps1", "c590-remote.sh",
+                     "verify-docker-stack.ps1" })
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script)).All(x => x < 128)
                 .ShouldBeTrue("recycle-doc-contract: ASCII transport " + script);
     }
@@ -2758,7 +2755,7 @@ public sealed class RollingVolumeRecycleScriptTests
         run.Exit.ShouldBe(0);
         run.Trace.Any(x => x["method"]?.GetValue<string>() == "POST").ShouldBeFalse(
             "retire-absent-null-accepted: retirement must remain stamped");
-        JsonNode.Parse(File.ReadAllText(fixture.StatePath))!["statuses"]!["server2-temp"]!["retiredAt"]!
+        fixture.State["statuses"]!["server2-temp"]!["retiredAt"]!
             .GetValue<string>().ShouldBe("2026-10-03T09:30:00Z");
         // deploy-server2 retire-temp runs Preview, then Apply, under one operation id.
         var requests = run.Trace.Where(x => x["kind"]?.GetValue<string>() == "case" &&
@@ -3167,11 +3164,16 @@ public sealed class RollingVolumeRecycleScriptTests
     }
 }
 
+// Unit 65: the deploy-server2 command in process on Server2RollingWorld (the C# port of c727-fake-http.ps1 and c727-fake-verify.ps1),
+// on the CARD-1008 state shape. It replaced the pwsh child of scripts/deploy-server2.ps1 with the C727_TEST_* environment; the
+// drivers' timings stay (Timing: 100 ms waits, 5 ms polls, a 100 ms bound-land wait), Environment's C727_TEST_WAIT_MS,
+// C727_TEST_POLL_MS and C727_TEST_LAND_WAIT_MS keys set them, and the trace accumulates across runs as the trace file did.
 internal sealed class C1008WrapperFixture : IDisposable
 {
-    internal string Root { get; } = Directory.CreateTempSubdirectory("c1008-wrapper-").FullName;
-    internal string StatePath => Path.Combine(Root, "state.json");
+    private readonly Server2RollingWorld _world;
+    internal string Root => _world.Root;
     internal string TracePath => Path.Combine(Root, "trace.jsonl");
+    internal Server2RollingWorld World => _world;
     internal string ReadTraceText()
     {
         if (!File.Exists(TracePath)) return "";
@@ -3179,8 +3181,8 @@ internal sealed class C1008WrapperFixture : IDisposable
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
-    internal JsonObject State { get; }
-    // Extra child environment (CARD-1353: C727_TEST_LAND_WAIT_MS). Merged into Run's process after the defaults.
+    internal JsonObject State { get => _world.State; set => _world.State = value; }
+    // The timing keys a driver set in the child environment (CARD-1353: C727_TEST_LAND_WAIT_MS); any other key is the host's.
     internal Dictionary<string, string> Environment { get; } = new();
 
     internal C1008WrapperFixture()
@@ -3188,7 +3190,7 @@ internal sealed class C1008WrapperFixture : IDisposable
         using var setupPhase = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed");
         var vectors = JsonNode.Parse(File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,
             "scripts/fixtures/c1008-recycle-cases.json")))!;
-        State = new JsonObject
+        _world = new Server2RollingWorld(new JsonObject
         {
             ["scenario"] = "c1008", ["sha"] = vectors["sourceSha"]!.DeepClone(), ["oldDeployed"] = false,
             ["tempContainer"] = false, ["clockMs"] = 0,
@@ -3198,8 +3200,11 @@ internal sealed class C1008WrapperFixture : IDisposable
                 ["server2-temp"] = vectors["tempRetiredAbsent"]!.DeepClone()
             },
             ["tasks"] = vectors["emptyTasks"]!.DeepClone()
-        };
-        File.WriteAllText(Path.Combine(Root, "operator-token"), "C1008_TEST_TOKEN_SENTINEL");
+        }, Directory.CreateTempSubdirectory("c1008-wrapper-").FullName);
+        _world.TracePath = TracePath;
+        File.WriteAllText(_world.TokenPath, "C1008_TEST_TOKEN_SENTINEL");
+        _world.Variables["ANTIPHON_TASK_TOKEN"] = "";
+        _world.Variables["ANTIPHON_API"] = "http://127.0.0.1:1";
     }
 
     internal void MainDrained()
@@ -3209,50 +3214,26 @@ internal sealed class C1008WrapperFixture : IDisposable
         State["statuses"]!["server2-temp"] = vectors["tempAccepting"]!.DeepClone();
     }
 
-    internal async Task<(int Exit, string Output, JsonObject[] Trace)> Run(string phase, params string[] extra)
+    /// <summary>Empties the trace (the PowerShell fixtures deleted the trace file before a run).</summary>
+    internal void ClearTrace() => _world.ClearTrace();
+
+    internal Task<(int Exit, string Output, JsonObject[] Trace)> Run(string phase, params string[] extra)
     {
-        File.WriteAllText(StatePath, State.ToJsonString());
-        var psi = new ProcessStartInfo("pwsh")
+        int? Ms(string key) => Environment.TryGetValue(key, out var value) ? int.Parse(value) : null;
+        _world.Timing = new Antiphon.Nightly.Server2RollingTiming
         {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-            WorkingDirectory = DelegateScriptRunner.RepoRoot
+            WaitMs = Ms("C727_TEST_WAIT_MS") ?? 100, PollMs = Ms("C727_TEST_POLL_MS") ?? 5,
+            LandWaitMs = Ms("C727_TEST_LAND_WAIT_MS") ?? 100, StubbedReads = true,
         };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"), "-Rolling", "-Sha",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "-Phase", phase }.Concat(extra)) psi.ArgumentList.Add(arg);
-        psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Path.Combine(Root, "operator-token");
-        psi.Environment["ANTIPHON_TASK_TOKEN"] = "";
-        psi.Environment["ANTIPHON_API"] = "http://127.0.0.1:1";
-        psi.Environment["C727_TEST_HTTP_STUB"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c727-fake-http.ps1");
-        psi.Environment["C727_TEST_VERIFY_STUB"] = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/fixtures/c727-fake-verify.ps1");
-        psi.Environment["C727_TEST_STATE"] = StatePath;
-        psi.Environment["C727_TEST_TRACE"] = TracePath;
-        psi.Environment["C727_TEST_WAIT_MS"] = "100";
-        psi.Environment["C727_TEST_POLL_MS"] = "5";
-        // CARD-1353: a land bound to the recycled runner is waited for (default 30 min). The fixture
-        // bounds that wait so a bound-land vector still refuses inside the 30 s run deadline.
-        psi.Environment["C727_TEST_LAND_WAIT_MS"] = "100";
-        foreach (var (key, value) in Environment) psi.Environment[key] = value;
-        using var processPhase = TestTiming.BeginProcess("pwsh", psi.ArgumentList.Count, "cli");
-        using var proc = Process.Start(psi) ?? throw new InvalidOperationException("fixture child did not start");
-        var stdout = proc.StandardOutput.ReadToEndAsync();
-        var stderr = proc.StandardError.ReadToEndAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await proc.WaitForExitAsync(deadline.Token); }
-        catch
+        foreach (var (key, value) in Environment)
+            if (!key.StartsWith("C727_TEST_", StringComparison.Ordinal)) _world.Variables[key] = value;
+        var arguments = new[] { "--rolling", "--sha", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--phase", phase }.Concat(extra).ToArray();
+        return Task.Run(() =>
         {
-            try
-            {
-                var traceBytes = File.Exists(TracePath) ? new FileInfo(TracePath).Length : 0;
-                Console.Error.WriteLine($"C1008_FIXTURE_CHILD_LIMIT kind=wrapper canceled={deadline.IsCancellationRequested} childExited={proc.HasExited} stdoutDone={stdout.IsCompleted} stderrDone={stderr.IsCompleted} traceBytes={traceBytes}");
-            }
-            catch { /* Diagnostics must not replace the original failure. */ }
-            if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); }
-            throw;
-        }
-        var output = await stdout + await stderr;
-        var trace = File.Exists(TracePath) ? File.ReadAllLines(TracePath).Select(x => JsonNode.Parse(x)!.AsObject()).ToArray() : [];
-        return (proc.ExitCode, output, trace);
+            using var runPhase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "deploy-server2");
+            var run = _world.Run(arguments);
+            return (run.Exit, run.Output, run.Trace);
+        });
     }
 
     public void Dispose()

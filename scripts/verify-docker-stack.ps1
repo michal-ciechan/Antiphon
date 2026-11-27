@@ -36,8 +36,8 @@ if (-not $env:ANTIPHON_C590_STUB) {
 # Unit 47 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md (W8 slice B): everything past the live bridge above
 # (stub mode, or a case c590-real.ps1 does not route to server2) is the antiphon-scripts verify-docker-stack command
 # (scripts/lib/Antiphon.Nightly/DockerStackVerify.cs): the same literal checkpoints and guards, c590-result.json, DIAGNOSIS= line
-# and exit codes. This file stays because deploy-server2.ps1, c590-real.ps1, c1609-manual.ps1 and verify-card0849-caches.ps1
-# start it by path; the head above is unchanged. Exit 9: the CLI could not be built or started (one stderr line).
+# and exit codes. This file stays because the deploy-server2 command (unit 65), c590-real.ps1, c1609-manual.ps1 and
+# verify-card0849-caches.ps1 start it by path; the head above is unchanged. Exit 9: the CLI could not be built or started (one stderr line).
 $ErrorActionPreference = 'Continue'
 . (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
 exit (Invoke-AntiphonCli -Command 'verify-docker-stack' -Arguments @('--case', $Case, '--manifest', $Manifest))

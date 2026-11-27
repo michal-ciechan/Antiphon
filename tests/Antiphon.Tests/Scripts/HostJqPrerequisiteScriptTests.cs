@@ -832,8 +832,15 @@ public sealed class HostJqPrerequisiteScriptTests
     public async Task C1025_Real_transport_emits_no_pipeline_output()
     {
         NativeLinuxGate.Require(NativeLinuxReason);
-        var rows = await VolumeRetirementFixture.RunOutputWitness("HostJq");
-        rows.ShouldBe(new[] { "OUTPUT hostjq count=0 types= streamed=True receipt=True" }, string.Join("\n", rows));
+        // Unit 65: the deploy-server2 command on the real transport (the fixture's fake ssh): the check prints its banner only,
+        // streams the reviewed helper and writes its receipt (the witness's "count=0 types= streamed=True receipt=True").
+        using var f = new HostJqFixture(); f.Existing(); await f.InitializeRepo();
+        var run = await f.Wrapper("check-host-jq");
+        run.Exit.ShouldBe(0, run.Output);
+        run.Stdout.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries).ShouldHaveSingleItem().ShouldStartWith("Host jq qualified: ");
+        run.Stderr.ShouldBeEmpty();
+        File.ReadAllText(f.Root + "/stdin").ShouldBe(File.ReadAllText(f.HelperPath).Replace("\r\n", "\n"), "streamed=True");
+        f.Receipts.ShouldHaveSingleItem("receipt=True");
     }
 
     [Test, ParallelLimiter<ScriptModelSpawnLimit>]
@@ -1109,7 +1116,7 @@ internal sealed class C1025RolloutFixture : IDisposable
         OperatingSystem.IsLinux().ShouldBeTrue("C1025 prerequisite: native Linux");
         _phase = shape.Split(':')[0];
         var variant = shape.Split(':').ElementAtOrDefault(1) ?? "";
-        _options = variant == "preview" ? ["-DryRun"] : variant == "resume" ? ["-ResumeRecycle", "c100800000000000000000000000000000001"] : [];
+        _options = variant == "preview" ? ["--dry-run"] : variant == "resume" ? ["--resume-recycle", "c100800000000000000000000000000000001"] : [];
         if (_phase == "all" || (shape == "deploy-temp"))
         {
             State.Clear();
@@ -1141,8 +1148,8 @@ internal sealed class C1025RolloutFixture : IDisposable
     }
     internal async Task<(int Exit, string Output, JsonObject[] Trace)> Run()
     {
-        if (File.Exists(_wrapper.TracePath)) File.Delete(_wrapper.TracePath);
-        Started = DateTime.UtcNow;
+        _wrapper.ClearTrace();
+        Started = _wrapper.World.Clock.GetUtcNow().UtcDateTime;
         return await _wrapper.Run(_phase, _options);
     }
     internal void AssertChecks(JsonObject[] trace, int count)
@@ -1166,7 +1173,7 @@ internal sealed class C1025RolloutFixture : IDisposable
         p["phase"]!.GetValue<string>().ShouldBe(check["phase"]!.GetValue<string>(), "receipt-phase");
         p["mode"]!.GetValue<string>().ShouldBe("check", "receipt-mode"); p["sshExit"]!.GetValue<int>().ShouldBe(0);
         var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
-        (observed >= start && observed <= end).ShouldBeTrue("receipt-time");
+        (observed >= Started && observed <= _wrapper.World.Clock.GetUtcNow().UtcDateTime).ShouldBeTrue("receipt-time: the fixture clock (unit 65)");
         p["lookupPath"]!.GetValue<string>().ShouldBe("/usr/local/bin/jq"); p["path"]!.GetValue<string>().ShouldBe("/usr/local/bin/jq");
         p["version"]!.GetValue<string>().ShouldBe("jq-1.7.1"); p["digest"]!.GetValue<string>().ShouldBe(HostJqFixture.Pin);
         p["uid"]!.GetValue<int>().ShouldBe(0); p["gid"]!.GetValue<int>().ShouldBe(0); p["permissions"]!.GetValue<string>().ShouldBe("755");
@@ -1183,8 +1190,7 @@ internal sealed class HostJqFixture : IDisposable
 {
     internal const string Pin = "5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5";
     internal const string Url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64";
-    // Every script the private deploy-server2.ps1 copy dot-sources (CARD-1659 guard: HostJqFixtureClosureTests).
-    internal static string[] CarriedScripts { get; } = ScriptDotSourceClosure.Of("scripts/deploy-server2.ps1").Skip(1).ToArray();
+
     internal static string[] ProvisionTools => ["curl", "sha256sum", "install", "mktemp", "flock", "ln", "stat", "readlink", "rm", "uname", "test"];
     internal string Root { get; } = Path.Combine(Path.GetTempPath(), "c1025-" + Guid.NewGuid().ToString("N"));
     internal string Tools => Root + "/tools";
@@ -1212,7 +1218,6 @@ internal sealed class HostJqFixture : IDisposable
     internal string[] RefusalReceipts => Observations.Where(x => x.EndsWith("-refused.json", StringComparison.Ordinal)).ToArray();
     private string[] Observations => Directory.Exists(WrapperRoot + "/.antiphon/rolling-server2") ? Directory.GetFiles(WrapperRoot + "/.antiphon/rolling-server2", "host-jq-*.json", SearchOption.AllDirectories) : [];
     private readonly string _jq;
-    private readonly string _pwsh;
     private readonly string _git;
     private string _latestInvocation = "";
     private int _identityUid;
@@ -1221,7 +1226,7 @@ internal sealed class HostJqFixture : IDisposable
     internal HostJqFixture()
     {
         OperatingSystem.IsLinux().ShouldBeTrue("C1025 prerequisite: native Linux");
-        _jq = Locate("jq"); _pwsh = Locate("pwsh"); _git = Locate("git");
+        _jq = Locate("jq"); _git = Locate("git");
         foreach (var tool in new[] { "bash", "node", "curl", "sha256sum", "flock", "install", "mktemp", "ln", "stat", "readlink", "rm", "uname", "cmp", "cat", "sleep" }) Locate(tool);
         WrapperRoot = Root;
         foreach (var dir in new[] { Tools, Parent, Lock, Temp, ForeignDirectory, Root + "/scripts/lib" }) Directory.CreateDirectory(dir);
@@ -1232,9 +1237,7 @@ internal sealed class HostJqFixture : IDisposable
         helper = ReplaceOnce(helper, "LOCK_ROOT=/var/lock/antiphon-host-jq", "LOCK_ROOT=" + Lock);
         helper = ReplaceOnce(helper, "CONTAINER_MARKER=/.dockerenv", "CONTAINER_MARKER=" + Root + "/dockerenv");
         File.WriteAllText(HelperPath, helper);
-        File.WriteAllText(Root + "/scripts/fake-http.ps1", "param($Method,$RunnerId,$Suffix,$BodyJson,$Path)\n[IO.File]::AppendAllText($env:HJ_ROOT+'/trace', 'HTTP '+$Method+[Environment]::NewLine)\n'__503__'\nexit 0\n");
-        File.WriteAllText(Root + "/scripts/fake-verify.ps1", "param($Case,$Manifest)\n[IO.File]::AppendAllText($env:HJ_ROOT+'/trace', 'case '+$Case+[Environment]::NewLine)\nexit 2\n");
-        foreach (var tool in ProvisionTools.Concat(new[] { "bash", "git", "pwsh" })) File.CreateSymbolicLink(Tools + "/" + tool, Locate(tool));
+        foreach (var tool in ProvisionTools.Concat(new[] { "bash", "git" })) File.CreateSymbolicLink(Tools + "/" + tool, Locate(tool));
         FixtureExecutable.Write(Payload, JqScript("healthy"));
         WriteTool("docker", "[ \"$fault\" != no-daemon ] || exit 1\n[ \"$fault\" != sibling ] || { echo sibling; exit 0; }\necho fixture-host");
         WriteTool("hostname", "[ \"$fault\" != hostname ] || exit 1\necho fixture-host");
@@ -1286,31 +1289,63 @@ internal sealed class HostJqFixture : IDisposable
         var path = Tools + "/" + tool; File.Delete(path);
         FixtureExecutable.Write(path, "#!/usr/bin/bash\nfault=$(/usr/bin/cat \"$HJ_ROOT/fault\" 2>/dev/null)\n" + body + "\n");
     }
+    // Unit 65: the private checkout holds the helper only; the command's installed-path assertion follows the helper's private
+    // destination (Server2RollingSeams.HostJqDestination) and the short deadline is Server2RollingOs.HostJqDeadlineMs.
+    private bool _shortDeadline;
+
     internal async Task InitializeRepo(bool shortDeadline = false)
     {
-        var source = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
-        // The wrapper's fixed installed-path assertion follows the helper's private destination.
-        source = ReplaceOnce(source, "$hostJqDestination = '/usr/local/bin/jq'", "$hostJqDestination = '" + Destination + "'");
-        if (shortDeadline) source = ReplaceOnce(source, "{ 30000 } else { 180000 }", "{ 100 } else { 100 }");
-        File.WriteAllText(Root + "/scripts/deploy-server2.ps1", source);
-        foreach (var script in CarriedScripts)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(Root + "/" + script)!);
-            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, script), Root + "/" + script);
-        }
+        _shortDeadline = shortDeadline;
         File.WriteAllText(Root + "/.gitignore", ".antiphon/\n/tools/\n/home/\n/foreign/\n/destination/\n/lock/\n/temporary/\n/control/\n/payload\n/fault\n/dockerenv\n/trace\n/stdin\n/ssh-pid\n/proof\n/token\n/*-ready\n/*-release\n");
         (await Git("init", "-q")).Exit.ShouldBe(0);
         (await Git("config", "user.name", "fixture")).Exit.ShouldBe(0); (await Git("config", "user.email", "fixture@example.invalid")).Exit.ShouldBe(0);
         (await Git("add", ".")).Exit.ShouldBe(0); (await Git("commit", "-qm", "private baseline")).Exit.ShouldBe(0);
         RequestSha = (await Git("rev-parse", "HEAD")).Stdout.Trim(); ClearTrace();
     }
-    internal async Task<HostJqRun> Wrapper(string phase)
+    // Unit 65: the deploy-server2 command in process, its children (ssh and git, found on the fixture's PATH) on the real transport
+    // with the fixture's environment, every other boundary answered as the private fake-http.ps1 (HTTP, 503) and fake-verify.ps1
+    // (a case, exit 2) answered: each appends its line to the trace.
+    internal Task<HostJqRun> Wrapper(string phase)
     {
         _executingPhase = phase;
         if (SyntheticProof is not null) File.WriteAllText(Root + "/proof", SyntheticProof);
         File.WriteAllText(Root + "/token", "operator-C1025-secret");
         if (Transport == "start") { File.Delete(Tools + "/ssh"); File.WriteAllText(Tools + "/ssh", "not executable"); }
-        return await Run(_pwsh, "-NoProfile", "-File", WrapperRoot + "/scripts/deploy-server2.ps1", "-Rolling", "-Sha", RequestSha, "-Phase", phase);
+        _latestInvocation = Guid.NewGuid().ToString("N");
+        var environment = ChildEnvironment(_latestInvocation);
+        return Task.Run(() =>
+        {
+            var output = new StringWriter(); var error = new StringWriter();
+            var transport = new Antiphon.Nightly.Server2RollingOs(WrapperRoot, environment) { HostJqDeadlineMs = _shortDeadline ? 100 : null };
+            var host = new Antiphon.Nightly.NightlyHost
+            {
+                Clock = Clock, Git = (_, _) => throw new InvalidOperationException("git runs on the world"),
+                Launcher = new Antiphon.Tests.Scripts.Nightly.RecordingLauncher(_ => throw new InvalidOperationException("nothing on the launcher")),
+                Processes = new Antiphon.Nightly.NightlyProcessTable(), Probe = new Antiphon.Nightly.NightlyHostProbe(),
+                Out = output, Error = error, Trace = TextWriter.Null,
+                Variables = name => environment.TryGetValue(name, out var value) ? value : null, Sleep = wait => Clock.Advance(wait),
+            };
+            var exit = Antiphon.Nightly.Server2RollingDeploy.Run(
+                Antiphon.Nightly.Server2RollingOptions.Parse(["--rolling", "--sha", RequestSha, "--phase", phase], WrapperRoot), host,
+                new System.IO.Abstractions.FileSystem(), new Antiphon.Nightly.Server2RollingSeams { World = new FakeBoundaries(this, transport), HostJqDestination = Destination });
+            return new HostJqRun(exit, output.ToString(), error.ToString());
+        });
+    }
+
+    internal Microsoft.Extensions.Time.Testing.FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 11, 26, 3, 0, 0, TimeSpan.Zero));
+
+    private sealed class FakeBoundaries(HostJqFixture fixture, Antiphon.Nightly.IServer2RollingWorld transport) : Antiphon.Nightly.IServer2RollingWorld
+    {
+        private void Line(string text) => File.AppendAllText(fixture.Root + "/trace", text + Environment.NewLine);
+        public Antiphon.Nightly.Server2RollingChild HostJq(Antiphon.Nightly.Server2RollingCall call) => transport.HostJq(call);
+        public Antiphon.Nightly.Server2RollingChild Git(string repo, IReadOnlyList<string> arguments) => transport.Git(repo, arguments);
+        public Antiphon.Nightly.IServer2RollingLock EnterRolloutLock() { Line("case rollout-lock"); throw new Antiphon.Nightly.Server2RollingRefusal("RecycleRolloutBusy"); }
+        public Antiphon.Nightly.Server2RollingHttpAnswer RunnerHttp(string method, string url, IReadOnlyDictionary<string, string> headers, string body) { Line("HTTP " + method); return new(503, ""); }
+        public Antiphon.Nightly.Server2RollingHttpAnswer ReadHttp(string path, string url, IReadOnlyDictionary<string, string> headers) { Line("HTTP GET"); return new(503, ""); }
+        public Antiphon.Nightly.Server2RollingChild RecycleDiscover(Antiphon.Nightly.Server2RollingCall call) { Line("case recycle-discover"); return new(2, "", ""); }
+        public Antiphon.Nightly.Server2RollingChild TempRetirementRead(Antiphon.Nightly.Server2RollingCall call) { Line("case " + (call.Operation.Length > 0 ? "retirement-proof-read" : "temp-retirement-clearable")); return new(2, "", ""); }
+        public Antiphon.Nightly.Server2RollingChild TempProjectCensus(Antiphon.Nightly.Server2RollingCall call) { Line("case temp-project-absent"); return new(2, "", ""); }
+        public int HostCase(string hostCase, string manifestPath, TextWriter output, TextWriter error) { Line("case " + hostCase); return 2; }
     }
     internal void AssertReceipt(string phase, string mode, DateTime start, DateTime end, bool installed)
     {
@@ -1321,7 +1356,7 @@ internal sealed class HostJqFixture : IDisposable
         p["selectedPhase"]!.GetValue<string>().ShouldBe(phase, "receipt-phase"); p["phase"]!.GetValue<string>().ShouldBe(phase, "receipt-phase");
         p["mode"]!.GetValue<string>().ShouldBe(mode, "receipt-mode");
         var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
-        (observed >= start && observed <= end).ShouldBeTrue("receipt-time");
+        observed.ShouldBe(Clock.GetUtcNow().UtcDateTime, "receipt-time: the fixture clock (unit 65)");
         p["sshExit"]!.GetValue<int>().ShouldBe(0); p["path"]!.GetValue<string>().ShouldBe(Destination);
         p["lookupPath"]!.GetValue<string>().ShouldBe(Destination, "found-path-recorded");
         p["trueExit"]!.GetValue<int>().ShouldBe(0); p["falseExit"]!.GetValue<int>().ShouldBe(1);
@@ -1348,7 +1383,7 @@ internal sealed class HostJqFixture : IDisposable
         p["mode"]!.GetValue<string>().ShouldBe(mode, "refusal-mode");
         p["lane"]!.GetValue<string>().ShouldBe("host"); p["sshExit"]!.GetValue<int>().ShouldBe(2);
         var observed = DateTime.Parse(p["observedAtUtc"]!.GetValue<string>()).ToUniversalTime();
-        (observed >= start && observed <= end).ShouldBeTrue("refusal-time");
+        observed.ShouldBe(Clock.GetUtcNow().UtcDateTime, "refusal-time: the fixture clock (unit 65)");
     }
 
     internal void RawHash() => File.WriteAllText(Control + "/raw-hash", "");
@@ -1569,23 +1604,26 @@ internal sealed class HostJqFixture : IDisposable
         return await pending;
     }
 
+    // The children's environment (and the command's variables): the fixture PATH, its HJ_* controls and the two tokens.
+    private Dictionary<string, string?> ChildEnvironment(string invocation)
+    {
+        var api = System.Environment.GetEnvironmentVariable("ANTIPHON_API");
+        return new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["HJ_INVOCATION"] = invocation,
+            ["PATH"] = PathPrefix + Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent),
+            ["TMPDIR"] = Temp, ["HJ_ROOT"] = Root, ["HJ_DEST"] = Destination, ["HJ_DEST_PARENT"] = Parent, ["HJ_LOCK"] = Lock, ["HJ_WRAPPER"] = WrapperRoot,
+            ["HJ_PHASE"] = _executingPhase, ["HJ_TRANSPORT"] = Transport, ["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token",
+            ["ANTIPHON_TASK_TOKEN"] = "task-C1025-secret", ["ANTIPHON_API"] = string.IsNullOrWhiteSpace(api) ? "http://127.0.0.1:9" : api,
+        };
+    }
+
     internal Process Start(string executable, params string[] args)
     {
         var psi = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
         _latestInvocation = Guid.NewGuid().ToString("N");
-        psi.Environment["HJ_INVOCATION"] = _latestInvocation;
         foreach (var arg in args) psi.ArgumentList.Add(arg);
-        psi.Environment["PATH"] = PathPrefix + Tools + (!IncludeDestination || (File.Exists(Root + "/fault") && File.ReadAllText(Root + "/fault") == "path-absent") ? "" : ":" + Parent);
-        psi.Environment["TMPDIR"] = Temp; psi.Environment["HJ_ROOT"] = Root; psi.Environment["HJ_DEST"] = Destination;
-        psi.Environment["HJ_DEST_PARENT"] = Parent; psi.Environment["HJ_LOCK"] = Lock; psi.Environment["HJ_WRAPPER"] = WrapperRoot;
-        psi.Environment["HJ_PHASE"] = _executingPhase;
-        psi.Environment["HJ_TRANSPORT"] = Transport; psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = Root + "/token";
-        psi.Environment["ANTIPHON_TASK_TOKEN"] = "task-C1025-secret";
-        if (!psi.Environment.TryGetValue("ANTIPHON_API", out var api) || string.IsNullOrWhiteSpace(api))
-            psi.Environment["ANTIPHON_API"] = "http://127.0.0.1:9";
-        psi.Environment.Remove("C727_TEST_STATE");
-        psi.Environment["C727_TEST_VERIFY_STUB"] = Root + "/scripts/fake-verify.ps1";
-        psi.Environment["C727_TEST_HTTP_STUB"] = Root + "/scripts/fake-http.ps1";
+        foreach (var (key, value) in ChildEnvironment(_latestInvocation)) psi.Environment[key] = value;
         return Process.Start(psi)!;
     }
     internal async Task<HostJqRun> Run(string executable, params string[] args)

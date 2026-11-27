@@ -22,8 +22,8 @@ An orchestrator MAY restart or upgrade the AppHost, restart session runners, and
 server2 rollouts without asking a human. This includes pulling the canonical checkout with
 `git pull --rebase`, running `scripts/antiphon restart-apphost`, restarting the desktop runner even
 while detached PtyHosts are active (they are re-adopted), the cold first Seed, and the
-`deploy-server2.ps1 -Rolling` phases `deploy-temp`, `drain-old`, `redeploy-old`, `drain-temp`, and
-`retire-temp`: its `-DryRun` preview and then, at once, the enabled apply with that preview's
+`scripts/antiphon deploy-server2 --rolling` phases `deploy-temp`, `drain-old`, `redeploy-old`, `drain-temp`, and
+`retire-temp`: its `--dry-run` preview and then, at once, the enabled apply with that preview's
 `enabled-<operation-id>` token. Retire temp automatically at the end of every rollout, never asking
 (operator, 2026-11-03); stop and report only on `RecycleUnpublishedWork` or `RecycleWorktreeDirty`,
 or on a missing registry (`RecycleGitAuditUnknown reason=registry-missing`): only the operator writes
@@ -31,7 +31,7 @@ or on a missing registry (`RecycleGitAuditUnknown reason=registry-missing`): onl
 to a fresh preview and apply once, then a Debug task. Restart the standing server2 runner only
 through those rolling phases. Follow the
 [AppHost restart](apphost-runbook.md) and [staged server2 rollout](docker-stack.md#staged-server2-rolling-rollout-card-0934) runbooks.
-During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `-WaitIdleMinutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle. Canonical statement: [Continuous dispatch during the rollout](docker-stack.md#continuous-dispatch-during-rollout).
+During a staged server2 rolling rollout, keep dispatching new work to `server2-temp` until the standing `server2` is fully ready (`redeploy-old` exit 0 and smoke/Both passed); the moment it is ready send new work to `server2` and start `drain-temp` (which waits for temp's running tasks, `--wait-idle-minutes 240`); there must always be a server2 (standing or temp) accepting work, and the orchestrator never pauses dispatch or drops below its in-flight target (6) because of a rollout. Tasks on `server2-temp` do not block `drain-temp`, it waits for them to settle. Canonical statement: [Continuous dispatch during the rollout](docker-stack.md#continuous-dispatch-during-rollout).
 For a desktop runner restart, use `scripts/antiphon restart-session-runner`;
 use `--hard` only for a planned supervisor refresh under the AppHost runbook.
 `--kill-sessions` kills detached sessions and is human-only, never part of this autonomy grant.

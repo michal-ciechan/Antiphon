@@ -368,13 +368,9 @@ function gitGraph(f,variant,project=f.main) {
 async function c994Wrapper(f,phase) {
   const cleanupScript=await host(f,phase+'-cleanup-template','C',{hostCase:'retire-temp-containers',prepareOnly:true});
   const recycleScript=await host(f,phase+'-recycle-template','C',{prepareOnly:true});
-  const dir=f.root+'/wrapper/scripts';fs.mkdirSync(dir+'/lib',{recursive:true});
-  for(const name of ['deploy-server2.ps1','c590-real.ps1','c1008-host-proof.ps1','c1609-host-proof.ps1','c1609-read-packet.ps1','c590-remote.sh','c1008-retirement.sh']) {
-    const original=fs.readFileSync('scripts/'+name,'utf8');
-    const transformed=original.replaceAll('antiphon-runner-temp',f.temp).replaceAll('antiphon-runner',f.main);
-    fs.writeFileSync(dir+'/'+name,transformed);
-  }
-  fs.copyFileSync('scripts/lib/runner-operator-token.ps1',dir+'/lib/runner-operator-token.ps1');
+  // Unit 65: the rolling deploy is the deploy-server2 command (scripts/antiphon deploy-server2); it keeps the script's C727_TEST_*
+  // fixture seams. It names the production projects; the bridge below maps this fixture's temp project back in the cleanup
+  // receipt it copies (the deleted script copy was text-transformed instead).
   fs.writeFileSync(f.root+'/operator-token','inert-fixture-operator');
   // The wrapper's offline prerequisite seam requires both a verifier and owned state.
   const wrapperState=f.root+'/wrapper-state.json';fs.writeFileSync(wrapperState,'{}');
@@ -415,8 +411,10 @@ if($Case -eq 'retire-temp-containers'){
  $payload=$payload.Replace('antiphon-runner-temp','${f.temp}').Replace('antiphon-runner-cache-','${f.prefix}cache-').Replace('antiphon-runner','${f.main}')
  $packet=$packet.Replace($encoded[0].Value,[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)))
  $packet=$packet.Replace('/home/mc/antiphon-server2','${f.root}/server').Replace('C1008_PROJECT=antiphon-runner-temp','C1008_PROJECT=${f.temp}')
- & bash -c $packet
+ # The command checks the production temp volume names; this fixture's volumes are named for its own temp project.
+ $census=@(& bash -c $packet)
  $code=$LASTEXITCODE
+ foreach($line in $census){[Console]::Out.WriteLine(([string]$line).Replace('"${f.temp}_','"antiphon-runner-temp_'))}
 }elseif($Case -eq 'deploy-temp-runner'){
  & docker compose -p '${f.temp}' -f '${f.root}/${f.temp}.json' up -d
  $code=$LASTEXITCODE
@@ -425,12 +423,18 @@ if($Case -eq 'retire-temp-containers'){
 }elseif($Case -in @('runner-cache-seed','verify-runner-caches')){exit 0}else{exit 2}
 $dest=Join-Path $m.evidenceRoot $Case;New-Item -ItemType Directory -Force $dest|Out-Null
 if(Test-Path -LiteralPath ('${f.root}/evidence/'+$Case)){Copy-Item -LiteralPath ('${f.root}/evidence/'+$Case) -Destination $m.evidenceRoot -Recurse -Force}
+$receipt=Join-Path $dest 'temp-containers.json'
+if($Case -eq 'retire-temp-containers' -and (Test-Path -LiteralPath $receipt)){
+ $text=[IO.File]::ReadAllText($receipt) -replace ('"project"(\s*):(\s*)"'+[regex]::Escape('${f.temp}')+'"'),'"project"$1:$2"antiphon-runner-temp"'
+ [IO.File]::WriteAllText($receipt,$text)
+ Set-Content -NoNewline -LiteralPath (Join-Path $dest 'temp-containers.sha256') -Value (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash
+}
 exit $code
 `);
   const env={...process.env,ANTIPHON_API:originUrl,ANTIPHON_TASK_TOKEN:'',ANTIPHON_OPERATOR_TOKEN_FILE:f.root+'/operator-token',
     C727_TEST_VERIFY_STUB:bridge,C727_TEST_STATE:wrapperState,C727_TEST_POLL_MS:'5'};
   delete env.C727_TEST_HTTP_STUB;delete env.C727_TEST_WAIT_MS;
-  const result=await boundedChild('pwsh',['-NoProfile','-File',dir+'/deploy-server2.ps1','-Rolling','-Sha',source,'-Phase',phase,'-WaitIdleMinutes','1'],{env},90000);
+  const result=await boundedChild(process.cwd()+'/scripts/antiphon',['deploy-server2','--rolling','--sha',source,'--phase',phase,'--wait-idle-minutes','1'],{env},90000);
   fs.writeFileSync(f.root+'/wrapper-'+phase+'.log',result.stdout+result.stderr);
   if(result.code!==0)throw Error('WrapperFailed:'+phase+':'+result.stdout+result.stderr);
   return result;

@@ -2790,14 +2790,23 @@ public sealed class RemoteScriptContractTests
         ssh.Contains("WaitForExit", StringComparison.Ordinal).ShouldBeFalse("Invoke-C590Ssh has no wall deadline");
         ssh.Contains("timeout ", StringComparison.Ordinal).ShouldBeFalse();
 
-        var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
-        var armAt = rolling.IndexOf("'redeploy-old' {", StringComparison.Ordinal);
-        var armEnd = rolling.IndexOf("'drain-temp' {", armAt, StringComparison.Ordinal);
+        // Unit 65: the deploy-server2 command's redeploy-old phase starts deploy-parent on a verifier child it waits for without a
+        // deadline (Server2RollingOs.HostCase).
+        var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "Server2RollingDeploy.cs"));
+        var armAt = rolling.IndexOf("private void RedeployOld()", StringComparison.Ordinal);
+        var armEnd = rolling.IndexOf("private void DrainTemp()", armAt, StringComparison.Ordinal);
         armAt.ShouldBeGreaterThanOrEqualTo(0);
         armEnd.ShouldBeGreaterThan(armAt);
         var arm = rolling[armAt..armEnd];
-        arm.Contains("Invoke-HostCase -Case 'deploy-parent'", StringComparison.Ordinal).ShouldBeTrue();
+        arm.Contains("InvokeHostCase(\"deploy-parent\"", StringComparison.Ordinal).ShouldBeTrue();
         arm.Contains("WaitForExit", StringComparison.Ordinal).ShouldBeFalse("redeploy-old does not time-box deploy-parent");
+        var os = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "Server2RollingOs.cs"));
+        var caseAt = os.IndexOf("public int HostCase(", StringComparison.Ordinal);
+        var caseEnd = os.IndexOf("public Server2RollingChild Git(", caseAt, StringComparison.Ordinal);
+        caseAt.ShouldBeGreaterThanOrEqualTo(0);
+        var hostCase = os[caseAt..caseEnd];
+        hostCase.Contains("process.WaitForExit();", StringComparison.Ordinal).ShouldBeTrue();
+        System.Text.RegularExpressions.Regex.IsMatch(hostCase, @"WaitForExit\(\s*[^)\s]").ShouldBeFalse("the verifier child has no wall deadline");
 
         var doc = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "docker-stack.md"));
         doc.Contains("the whole audit has a 3-hour (10800 s) budget by default (`C1008_AUDIT_TIMEOUT_SECONDS`", StringComparison.Ordinal)
@@ -4453,17 +4462,6 @@ public sealed class RemoteScriptContractTests
     }
 
     [Test]
-    public void C946_Rolling_harness_cleans_only_its_owned_success_root()
-    {
-        var script = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "test-deploy-server2.ps1"));
-        script.ShouldContain("[switch]$KeepTemp");
-        script.ShouldContain("finally {");
-        script.ShouldContain("Remove-Item -LiteralPath $ownedRoot");
-        script.ShouldContain("^c849-rolling-[0-9a-f]{32}$");
-        script.ShouldContain("C849_TEMP kept=");
-    }
-
-    [Test]
     [Arguments("loop")]
     [Arguments("observe")]
     [Arguments("receipt")]
@@ -4503,36 +4501,6 @@ public sealed class RemoteScriptContractTests
             Remote().ShouldBe(original, "tracked source unchanged");
         }
         finally { File.WriteAllBytes(path, bytes); directory.Delete(true); }
-    }
-
-    [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public void C946_Green_harness_removes_root_and_failed_keep_run_retains_evidence()
-    {
-        RequireLinuxPwsh();
-        var output = LinuxShell("""
-            set -u
-            root="$(mktemp -d /tmp/c946-cleanup-XXXXXXXX)"
-            printf 'C946_ROOT=%s\n' "$root"
-            trap '[[ "$root" == /tmp/c946-cleanup-???????? && -d "$root" ]] && rm -rf -- "$root"' EXIT
-            pwsh -NoProfile -File "$repo/scripts/test-deploy-server2.ps1" -Only retired-start > "$root/green" 2>&1
-            printf 'GREEN_EXIT=%s\n' "$?"
-            cat "$root/green"
-            removed="$(sed -n 's/^C849_TEMP removed=//p' "$root/green" | tr -d '\r')"
-            if [[ "$removed" == "$repo/.antiphon/"c849-rolling-* && ! -e "$removed" ]]; then echo GREEN_ROOT_REMOVED; fi
-            pwsh -NoProfile -File "$repo/scripts/test-deploy-server2.ps1" -Only cleanup-failure -KeepTemp > "$root/fail" 2>&1
-            printf 'FAILED_KEEP_EXIT=%s\n' "$?"
-            kept="$(sed -n 's/^C849_TEMP kept=//p' "$root/fail" | tr -d '\r')"
-            if [[ "$kept" == "$repo/.antiphon/"c849-rolling-* && -d "$kept" ]]; then
-                echo FAILED_KEEP_ROOT_RETAINED
-                # Only the root created and printed by this invocation is removed.
-                rm -rf -- "$kept"
-            fi
-            """, "repo");
-        output.ShouldContain("GREEN_EXIT=0");
-        output.ShouldContain("GREEN_ROOT_REMOVED");
-        output.ShouldContain("FAILED_KEEP_EXIT=1");
-        output.ShouldContain("FAILED_KEEP_ROOT_RETAINED");
     }
 
     [Test]
@@ -4682,288 +4650,6 @@ public sealed class RemoteScriptContractTests
                 output.ShouldContain("C980_REPO_ROOT_CONVERSION_FAILED", customMessage: label);
                 output.ShouldNotContain("C980_EXIT=0", customMessage: label);
             }
-        }
-    }
-
-    private const string C983Diagnosis = "C983_JQ_REQUIRED jq-unavailable: -RequireJq requires jq in the marker-reader shell; T-20 cannot be skipped.";
-
-    [Test]
-    [Arguments("harness", "absent")]
-    [Arguments("harness", "missing-shell")]
-    [Arguments("harness", "failing-shell")]
-    [Arguments("driver", "absent")]
-    [Arguments("driver", "missing-shell")]
-    [Arguments("driver", "failing-shell")]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C983_Required_jq_refuses_unavailable_probe_before_any_group(string entry, string mode)
-    {
-        using var fixture = new C983Fixture();
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts",
-            entry == "harness" ? "test-deploy-server2.ps1" : "test-deploy-server2-jq.ps1");
-        var selectors = entry == "harness" && mode == "absent"
-            ? new string?[] { "host-saved", null, "retired-start", "cleared-offline-start", "host-race",
-                "host-absence", "host-recovery", "cleanup-failure", "all" }
-            : new string?[] { null };
-        foreach (var only in selectors)
-        foreach (var keep in new[] { false, true })
-        foreach (var external in entry == "harness" ? new[] { false, true } : new[] { false })
-        {
-            var args = new List<string> { "-NoProfile", "-File", script, "-RequireJq" };
-            if (keep) args.Add("-KeepTemp");
-            if (only is not null) args.AddRange(["-Only", only]);
-            var env = new Dictionary<string, string>();
-            string? externalRoot = null;
-            if (entry == "driver") args.AddRange(["-Case", mode]);
-            else
-            {
-                if (mode == "absent") env["C973_TEST_JQ_PROBE"] = "missing";
-                else env["C973_JQ_PROBE_SHELL"] = mode == "failing-shell"
-                    ? fixture.Git : Path.Combine(fixture.Root, "nonexistent-shell");
-                if (external)
-                {
-                    externalRoot = Directory.CreateDirectory(Path.Combine(fixture.Root, "external-" + Guid.NewGuid().ToString("N"))).FullName;
-                    File.WriteAllText(Path.Combine(externalRoot, "sentinel"), "caller-owned");
-                    env["C973_TEST_ROOT"] = externalRoot;
-                }
-            }
-            var run = await fixture.Run(args, env);
-            var evidence = externalRoot ?? fixture.TrackEvidence(run.Output, entry, DelegateScriptRunner.RepoRoot);
-            C983AssertRequiredFailure(run, evidence);
-            if (externalRoot is not null)
-                File.ReadAllText(Path.Combine(externalRoot, "sentinel")).ShouldBe("caller-owned", "c983-failure-retained");
-        }
-
-        if (entry == "harness" && mode == "missing-shell")
-        {
-            var empty = Directory.CreateDirectory(Path.Combine(fixture.Root, "empty-path")).FullName;
-            var wrapper = Path.Combine(fixture.Root, "sealed-path.ps1");
-            File.WriteAllText(wrapper, """
-                param([string]$Harness, [string]$EmptyPath)
-                $ErrorActionPreference = 'Stop'
-                if (@(Get-ChildItem -LiteralPath $EmptyPath -Force).Count -ne 0) { throw 'sealed PATH directory is not empty' }
-                $env:PATH = [IO.Path]::GetFullPath($EmptyPath)
-                if ($env:PATH -cne $EmptyPath) { throw 'sealed PATH differs' }
-                Remove-Item Env:C973_TEST_JQ_PROBE, Env:C973_JQ_PROBE_SHELL, Env:C973_TEST_ROOT -ErrorAction SilentlyContinue
-                Write-Output 'C983_SEALED_PATH verified'
-                & $Harness -RequireJq
-                exit $LASTEXITCODE
-                """);
-            var run = await fixture.Run(["-NoProfile", "-File", wrapper, "-Harness", script, "-EmptyPath", empty]);
-            var evidence = fixture.TrackEvidence(run.Output, "harness", DelegateScriptRunner.RepoRoot);
-            run.Output.ShouldContain("C983_SEALED_PATH verified");
-            C983AssertRequiredFailure(run, evidence);
-            Directory.EnumerateFileSystemEntries(empty).ShouldBeEmpty();
-        }
-    }
-
-    private static void C983AssertRequiredFailure((int Exit, string Output) run, string evidence)
-    {
-        C983Lines(run.Output).Count(line => line == C983Diagnosis).ShouldBe(1, "c983-required-diagnosis: " + run.Output);
-        run.Exit.ShouldBe(1, "c983-required-exit");
-        C983Lines(run.Output).Where(line => line.StartsWith("C973_JQ_PROBE ", StringComparison.Ordinal))
-            .ShouldBe(new[] { "C973_JQ_PROBE available=False" }, "c983-single-false-probe");
-        run.Output.ShouldNotContain("PASS T-", customMessage: "c983-before-group");
-        if (Directory.Exists(evidence))
-            Directory.EnumerateFiles(evidence, "*", SearchOption.AllDirectories)
-                .Where(path => Path.GetFileName(path) is "state.json" or "trace.jsonl")
-                .ShouldBeEmpty("c983-before-group");
-        run.Output.ShouldNotContain("C973_SKIPPED", customMessage: "c983-no-skip");
-        run.Output.ShouldNotContain("C973_JQ_SKIPPED", customMessage: "c983-no-skip");
-        C983Lines(run.Output).Count(line => line == "C849_ROLLING groups=0 invocations=0 assertions=0 failures=1")
-            .ShouldBe(1, "c983-zero-failure-roster");
-        run.Output.ShouldNotContain("V-32", customMessage: "c983-zero-failure-roster");
-        C983Lines(run.Output).Any(line => (line.StartsWith("C849_ROLLING ", StringComparison.Ordinal) ||
-            line.StartsWith("C973_JQ ", StringComparison.Ordinal)) && line.Contains("failures=0", StringComparison.Ordinal))
-            .ShouldBeFalse("c983-zero-failure-roster");
-        Directory.Exists(evidence).ShouldBeTrue("c983-failure-retained");
-    }
-
-    [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C983_Required_jq_driver_rejects_successful_false_probe()
-    {
-        using var fixture = new C983Fixture();
-        var scripts = Directory.CreateDirectory(Path.Combine(fixture.Root, "scripts")).FullName;
-        var driver = Path.Combine(scripts, "test-deploy-server2-jq.ps1");
-        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/test-deploy-server2-jq.ps1"), driver);
-        File.WriteAllText(Path.Combine(scripts, "test-deploy-server2.ps1"), """
-            param([switch]$RequireJq)
-            $ErrorActionPreference = 'Stop'
-            @{ required = [bool]$RequireJq; argv = @($args); root = $env:C973_TEST_ROOT } |
-                ConvertTo-Json -Compress | Add-Content -LiteralPath $env:C983_OBSERVATION
-            $present = $env:C983_PROBE -ne 'false'
-            $probes = if ($env:C983_PROBE -eq 'zero') { 0 } elseif ($env:C983_PROBE -eq 'two') { 2 } else { 1 }
-            for ($i = 0; $i -lt $probes; $i++) { Write-Output "C973_JQ_PROBE available=$present" }
-            for ($i = 0; $i -lt 62; $i++) {
-                $dir = New-Item -ItemType Directory -Path (Join-Path $env:C973_TEST_ROOT "ordinary-$i")
-                '{"scenario":"ordinary"}' | Set-Content (Join-Path $dir 'state.json')
-            }
-            foreach ($n in (@(1..19) + @(21..24))) { Write-Output "PASS T-$n fixture" }
-            if ($present) {
-                for ($i = 0; $i -lt 4; $i++) {
-                    $dir = New-Item -ItemType Directory -Path (Join-Path $env:C973_TEST_ROOT "cold-$i")
-                    '{"scenario":"cold-marker","markerPath":"fixture"}' | Set-Content (Join-Path $dir 'state.json')
-                }
-                Write-Output 'PASS T-20 fixture'
-                Write-Output 'C849_ROLLING groups=24 invocations=66 assertions=227 failures=0'
-            } else {
-                Write-Output 'C973_SKIPPED jq-missing: T-20 marker-reader groups need jq (CARD-0927)'
-                Write-Output 'C849_ROLLING groups=23 invocations=62 assertions=218 failures=0'
-            }
-            exit ([int]$env:C983_EXIT)
-            """);
-        var vectors = new (string Switch, string Probe, int Exit, string Label)[]
-        {
-            ("-RequireJq", "false", 0, "required-false"),
-            ("", "false", 0, "optional-false"),
-            ("-RequireJq:$false", "false", 0, "optional-false"),
-            ("-RequireJq", "true", 0, "available"),
-            ("", "true", 0, "available"),
-            ("-RequireJq", "true", 7, "exit"),
-            ("-RequireJq", "zero", 0, "cardinality"),
-            ("-RequireJq", "two", 0, "cardinality"),
-            ("", "false", 7, "exit")
-        };
-        foreach (var vector in vectors)
-        foreach (var keep in new[] { false, true })
-        {
-            var observation = Path.Combine(fixture.Root, "argv-" + Guid.NewGuid().ToString("N") + ".jsonl");
-            File.WriteAllText(observation, "");
-            var args = new List<string> { "-NoProfile", "-File", driver, "-Case", "present" };
-            if (vector.Switch.Length > 0) args.Add(vector.Switch);
-            if (keep) args.Add("-KeepTemp");
-            var run = await fixture.Run(args, new Dictionary<string, string>
-            {
-                ["C983_OBSERVATION"] = observation, ["C983_PROBE"] = vector.Probe, ["C983_EXIT"] = vector.Exit.ToString()
-            });
-            var observed = File.ReadAllLines(observation);
-            observed.Length.ShouldBe(1, "c983-forwarded");
-            using var argv = JsonDocument.Parse(observed.Single());
-            argv.RootElement.GetProperty("required").GetBoolean().ShouldBe(vector.Switch == "-RequireJq", "c983-forwarded");
-            argv.RootElement.GetProperty("argv").GetArrayLength().ShouldBe(0, "c983-forwarded");
-            var evidence = argv.RootElement.GetProperty("root").GetString()!;
-            fixture.ValidateEvidence(evidence, "driver", fixture.Root);
-            if (vector.Label == "required-false")
-            {
-                C983Lines(run.Output).Count(line => line == C983Diagnosis).ShouldBe(1, "c983-driver-diagnosis: " + run.Output);
-                run.Exit.ShouldBe(1, "c983-driver-exit");
-                run.Output.ShouldNotContain("C973_JQ_SKIPPED", customMessage: "c983-driver-no-fallback");
-                run.Output.ShouldNotContain("assertions=31 failures=0", customMessage: "c983-driver-no-fallback");
-            }
-            else if (vector.Label is "exit" or "cardinality")
-            {
-                var label = vector.Label == "exit" ? "c983-child-exit-guard" : "c983-probe-cardinality";
-                run.Output.ShouldContain(vector.Label == "exit" ? "harness exit=7" : "one jq probe", customMessage: label);
-                run.Exit.ShouldBe(1, label);
-                run.Output.ShouldNotContain(C983Diagnosis, customMessage: label);
-                run.Output.ShouldNotContain("C973_JQ_SKIPPED", customMessage: label);
-                run.Output.ShouldNotContain("assertions=31 failures=0", customMessage: label);
-            }
-            else
-            {
-                var label = vector.Label == "optional-false" ? "c983-optional-driver" : "c983-available-driver";
-                run.Exit.ShouldBe(0, label + ": " + run.Output);
-                run.Output.ShouldContain("C973_JQ case=present assertions=31 failures=0", customMessage: label);
-                run.Output.ShouldContain(vector.Probe == "false"
-                    ? "C849_ROLLING groups=23 invocations=62 assertions=218 failures=0"
-                    : "C849_ROLLING groups=24 invocations=66 assertions=227 failures=0", customMessage: label);
-                if (vector.Probe == "false") run.Output.ShouldContain("C973_JQ_SKIPPED", customMessage: label);
-                else run.Output.ShouldNotContain("C973_SKIPPED", customMessage: label);
-                if (vector.Probe != "false") run.Output.ShouldNotContain("C973_JQ_SKIPPED", customMessage: label);
-                Directory.Exists(evidence).ShouldBe(keep, "c983-driver-success-cleanup");
-                if (keep) run.Output.ShouldContain("C973_TEMP kept=" + evidence, customMessage: "c983-driver-success-cleanup");
-                else run.Output.ShouldContain("evidence=removed", customMessage: "c983-driver-success-cleanup");
-            }
-            if (run.Exit != 0 || keep)
-            {
-                Directory.Exists(evidence).ShouldBeTrue("c983-driver-retained");
-                File.Exists(Path.Combine(evidence, "harness.log")).ShouldBeTrue("c983-driver-retained");
-            }
-        }
-    }
-
-    private static string[] C983Lines(string output) => output.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-
-    private sealed class C983Fixture : IDisposable
-    {
-        private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("c983-" + Guid.NewGuid().ToString("N") + "-");
-        private readonly List<string> _invocations = [];
-        private readonly string _pwsh = ResolveApplication("pwsh");
-        public string Git { get; } = ResolveApplication("git");
-        public string Root => _directory.FullName;
-
-        private static string ResolveApplication(string name)
-        {
-            foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
-            {
-                if (string.IsNullOrWhiteSpace(dir)) continue;
-                var path = Path.GetFullPath(Path.Combine(dir, name + (OperatingSystem.IsWindows() ? ".exe" : "")));
-                if (File.Exists(path)) return path;
-            }
-            throw new InvalidOperationException("C983 requires native " + name);
-        }
-
-        public async Task<(int Exit, string Output)> Run(IEnumerable<string> args, Dictionary<string, string>? environment = null)
-        {
-            var psi = new ProcessStartInfo(_pwsh)
-            {
-                WorkingDirectory = Root, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            foreach (var arg in args) psi.ArgumentList.Add(arg);
-            foreach (var key in new[] { "C973_TEST_ROOT", "C973_TEST_JQ_PROBE", "C973_JQ_PROBE_SHELL",
-                         "C983_OBSERVATION", "C983_PROBE", "C983_EXIT" }) psi.Environment.Remove(key);
-            if (environment is not null)
-                foreach (var pair in environment) psi.Environment[pair.Key] = pair.Value;
-            using var process = Process.Start(psi)!;
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            try { await process.WaitForExitAsync(deadline.Token); }
-            catch
-            {
-                if (!process.HasExited) { process.Kill(true); await process.WaitForExitAsync(); }
-                await Task.WhenAll(stdout, stderr);
-                throw;
-            }
-            return (process.ExitCode, await stdout + await stderr);
-        }
-
-        public string TrackEvidence(string output, string entry, string repo)
-        {
-            var pattern = entry == "harness" ? @"(?m)^C849_TEMP (?:kept|removed)=(.+)\r?$"
-                : @"(?m)^C973_JQ case=\S+ assertions=\d+ failures=\d+ evidence=(.+)\r?$";
-            var match = Regex.Match(output, pattern);
-            // A missing path is left for the outcome assertion, never turned into deletion authority.
-            if (!match.Success || match.Groups[1].Value.TrimEnd('\r') == "removed") return Path.Combine(Root, "missing-evidence");
-            var path = match.Groups[1].Value.TrimEnd('\r');
-            ValidateEvidence(path, entry, repo);
-            _invocations.Add(path);
-            return path;
-        }
-
-        public void ValidateEvidence(string path, string entry, string repo)
-        {
-            var full = Path.GetFullPath(path);
-            Path.GetDirectoryName(full).ShouldBe(Path.GetFullPath(Path.Combine(repo, ".antiphon")), "c983-owned-parent");
-            Regex.IsMatch(Path.GetFileName(full), entry == "harness" ? "^c849-rolling-[0-9a-f]{32}$" : "^c973-jq-[0-9a-f]{32}$")
-                .ShouldBeTrue("c983-owned-guid");
-            if (Directory.Exists(full))
-            {
-                (File.GetAttributes(full) & FileAttributes.ReparsePoint).ShouldBe((FileAttributes)0, "c983-owned-no-reparse");
-                Directory.EnumerateFileSystemEntries(full, "*", SearchOption.AllDirectories)
-                    .Any(child => (File.GetAttributes(child) & FileAttributes.ReparsePoint) != 0).ShouldBeFalse("c983-owned-no-reparse");
-            }
-        }
-
-        public void Dispose()
-        {
-            foreach (var path in _invocations)
-            {
-                ValidateEvidence(path, Path.GetFileName(path).StartsWith("c849-", StringComparison.Ordinal) ? "harness" : "driver",
-                    DelegateScriptRunner.RepoRoot);
-                if (Directory.Exists(path)) Directory.Delete(path, true);
-            }
-            _directory.Delete(true);
         }
     }
 
@@ -6663,39 +6349,28 @@ public sealed class RemoteScriptContractTests
             """);
         ready.ShouldContain("seed-result=true:");
         ready.ShouldNotContain("unsafe-docker");
-        var wrapper = LinuxShell("""
-            root="$(mktemp -d)"
-            trap 'rm -rf "$root"' EXIT
-            export ANTIPHON_OPERATOR_TOKEN_FILE="$root/operator-token"
-            printf 'synthetic-test-token' > "$ANTIPHON_OPERATOR_TOKEN_FILE"
-            export ANTIPHON_API="${ANTIPHON_API:-http://127.0.0.1:9}"
-            export C727_TEST_HTTP_STUB="$repo/scripts/fixtures/c727-fake-http.ps1"
-            export C727_TEST_VERIFY_STUB="$repo/scripts/fixtures/c727-fake-verify.ps1"
-            export C727_TEST_WAIT_MS=100 C727_TEST_POLL_MS=5
-            export C727_TEST_STATE="$root/state.json" C727_TEST_TRACE="$root/trace.jsonl"
-            sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-            for container in false true; do
-                printf '{"scenario":"retired","sha":"%s","tempDeployed":false,"oldDeployed":false,"oldDraining":false,"tempDraining":true,"tempRedirectTo":"server2","tempRetireWhenIdle":true,"tempRetiredAt":"2026-09-27T10:00:00Z","tempContainer":%s,"tempOffline":true,"faultRunner":"","faultField":"","faultKind":"","faultValue":null,"failVerify":""}\n' "$sha" "$container" > "$C727_TEST_STATE"
-                : > "$C727_TEST_TRACE"
-                pwsh -NoProfile -File "$repo/scripts/deploy-server2.ps1" -Rolling -Sha "$sha" -Phase deploy-temp > "$root/out" 2>&1
-                code=$?
-                printf 'retired-container=%s exit=%s cases=%s\n' "$container" "$code" "$(sed -n 's/.*"kind":"case","name":"\([^"]*\)".*/\1/p' "$C727_TEST_TRACE" | paste -sd, -)"
-                if [ "$container" = false ]; then
-                    awk '
-                        /"name":"temp-retirement-clearable"/ { seen = NR }
-                        /"name":"runner-cache-seed"/ && !printed {
-                            if (seen && seen < NR) print "preflight-before-seed=yes"
-                            else print "preflight-before-seed=no"
-                            printed = 1
-                        }
-                    ' "$C727_TEST_TRACE"
-                fi
-            done
-            """, "repo");
-        wrapper.ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
-        wrapper.ShouldContain("preflight-before-seed=yes");
-        wrapper.ShouldContain("retired-container=true exit=2 cases=\n");
-        wrapper.ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
+        // Unit 65: the deploy-server2 command in process on the driver's retired state, with and without a leftover temp container.
+        var wrapper = new System.Text.StringBuilder();
+        foreach (var container in new[] { false, true })
+        {
+            using var world = new Server2RollingWorld(Server2RollingWorld.DriverState("retired", "deploy-temp", new System.Text.Json.Nodes.JsonObject
+            {
+                ["tempDraining"] = true, ["tempRetiredAt"] = "2026-09-27T10:00:00Z", ["tempContainer"] = container, ["tempOffline"] = true,
+            }));
+            var run = world.Run("--rolling", "--sha", Server2RollingWorld.Sha, "--phase", "deploy-temp");
+            wrapper.Append("retired-container=" + container.ToString().ToLowerInvariant() + " exit=" + run.Exit + " cases="
+                + string.Join(",", run.Cases.Select(c => c["name"]!.GetValue<string>())) + "\n");
+            if (!container)
+            {
+                var census = Array.FindIndex(run.Trace, t => t["name"]?.GetValue<string>() == "temp-retirement-clearable");
+                var seedAt = Array.FindIndex(run.Trace, t => t["name"]?.GetValue<string>() == "runner-cache-seed");
+                wrapper.Append("preflight-before-seed=" + (census >= 0 && census < seedAt ? "yes" : "no") + "\n");
+            }
+        }
+        wrapper.ToString().ShouldContain("retired-container=false exit=0 cases=runner-cache-seed,deploy-temp-runner,verify-runner-caches");
+        wrapper.ToString().ShouldContain("preflight-before-seed=yes");
+        wrapper.ToString().ShouldContain("retired-container=true exit=2 cases=\n");
+        wrapper.ToString().ShouldNotContain("retired-container=true exit=2 cases=runner-cache-seed");
         var noContainer = C849ExtractedShell(CacheStatusHarness() + "\n" + Block(Remote(), "c849_no_temp_containers") + "\n" + seed + "\n" + """
             SERVER2_ROOT="$root/server2"; mkdir -p "$SERVER2_ROOT/cache"
             CASE_DIR="$root/case"; mkdir -p "$CASE_DIR"
@@ -8560,7 +8235,7 @@ public sealed class RemoteScriptContractTests
         seed.Contains("CacheDonorNotIdleDrained").ShouldBeTrue("full-gate-refused-donor");
         Order(seed, "c849_status_zero server2-temp ||", "docker stop \"$donor\"").ShouldBeTrue("full-gate-refused-donor-before-stop");
         seed.Contains("CacheDonorConsumerBusy").ShouldBeTrue("full-gate-refused-donor-process");
-        var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "deploy-server2.ps1"));
+        var rolling = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "Server2RollingDeploy.cs"));
         rolling.Contains("OldRunnerStillBusy").ShouldBeTrue("redeploy-old still checks zero");
     }
 

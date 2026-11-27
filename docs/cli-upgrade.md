@@ -197,8 +197,8 @@ and never refuse, so an unobserved CLI can still receive the new slug and reject
 `FailureCode` stays null. The message names the model, the floor and the observed version.
 
 Server2, from `C:\src\Antiphon` on the desktop, `$env:ANTIPHON_API` set, one phase per invocation,
-`-Sha` the full 40-hex rc tip whose Dockerfile carries the new pin. Never `-Phase all` (the
-default), never `-RecycleVolumes`. The gate table with every stop condition is
+`--sha` the full 40-hex rc tip whose Dockerfile carries the new pin. Never `--phase all` (the
+default), never `--recycle-volumes`. The gate table with every stop condition is
 [docker-stack.md](docker-stack.md#staged-server2-rolling-rollout-card-0934); the worked
 command-by-command example is the post-cut activation runbook
 (`docs/investigations/2026-11-20-post-cut-activation-runbook.md`, commit
@@ -206,12 +206,12 @@ command-by-command example is the post-cut activation runbook
 
 1. Status: `scripts\antiphon.cmd runner-drain status --runner-id server2` (and
    `server2-temp`), `scripts\antiphon.cmd runner-slots list --runner-id server2`.
-2. `pwsh -NoProfile -File scripts/deploy-server2.ps1 -Rolling -Sha <sha> -Phase check-census`
-3. `… -Phase check-host-jq` (on `HostJqMissing` only: `-Phase provision-host-jq`, as the runbook says).
+2. `scripts\antiphon.cmd deploy-server2 --rolling --sha <sha> --phase check-census`
+3. `… --phase check-host-jq` (on `HostJqMissing` only: `--phase provision-host-jq`, as the runbook says).
 4. Cache prep: `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha <sha>`,
    then `-Case Inventory -Sha <sha>`.
 5. Record `ssh mc@server2 'docker inspect -f "{{.Id}} {{.State.StartedAt}}" antiphon-runner-session-runner-1'`,
-   run `… -Phase deploy-temp`, re-run the inspect: id and start time unchanged.
+   run `… --phase deploy-temp`, re-run the inspect: id and start time unchanged.
 6. Smoke temp as uid 1654, never root:
 
    ```powershell
@@ -219,15 +219,15 @@ command-by-command example is the post-cut activation runbook
    ```
 
    Require `codex-cli <new>`. Then a sanctioned Plan canary `--runner server2-temp --no-commit`.
-7. `… -Phase drain-old -WaitIdleMinutes 240`. `OldRunnerStillBusy` at 240 minutes is a report, not
+7. `… --phase drain-old --wait-idle-minutes 240`. `OldRunnerStillBusy` at 240 minutes is a report, not
    permission; the four-hour cap allows releasing the remaining **server2** seats only
    (`scripts\antiphon.cmd runner-slots release`, see the gate table).
-8. `… -Phase redeploy-old` only when server2 `sessions`, `runnerSessions`, `queuedTasks` are zero.
+8. `… --phase redeploy-old` only when server2 `sessions`, `runnerSessions`, `queuedTasks` are zero.
 9. Smoke server2 the same way (project `antiphon-runner`), a Plan canary `--runner server2 --no-commit`,
    then `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`.
-10. `… -Phase drain-temp -WaitIdleMinutes 240`.
-11. `… -Phase retire-temp -DryRun`, then immediately the enabled apply with that preview's token
-    (`$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'`, `-RetirementProof
+10. `… --phase drain-temp --wait-idle-minutes 240`.
+11. `… --phase retire-temp --dry-run`, then immediately the enabled apply with that preview's token
+    (`$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'`, `--retirement-proof
     <operation-id>`, unset the variable after). Verify with `-Case Retired`.
 
 Keep dispatching through the whole rollout: one of server2 and server2-temp is always accepting

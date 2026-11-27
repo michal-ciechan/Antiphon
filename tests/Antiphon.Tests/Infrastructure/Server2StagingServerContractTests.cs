@@ -155,7 +155,8 @@ public sealed class Server2StagingServerContractTests
         var runner = DockerStackDocuments.Service(
             DockerStackDocuments.Read("docker-compose.server2-runner.yml"), "session-runner");
         DockerStackDocuments.Env(runner, "SessionRunner__Herdr__Enabled").ShouldBe("false");
-        var deploy = DockerStackDocuments.Read("scripts/deploy-server2.ps1");
+        // Unit 65: the rolling runner deploy is the deploy-server2 command.
+        var deploy = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs") + DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/Server2RollingOs.cs");
         deploy.ShouldNotContain("server2-staging");
         deploy.ShouldNotContain("antiphon-server2-staging");
         var root = DockerStackDocuments.Service(DockerStackDocuments.Read("docker-compose.yml"), "antiphon");

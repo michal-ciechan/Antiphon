@@ -209,7 +209,6 @@
     },
     {
       "paths": [
-        "scripts/deploy-server2.ps1",
         "docker-compose.dev.yml",
         "docker-compose.yml"
       ],
@@ -3584,7 +3583,7 @@
       "id": "bundle-client"
     }
   ],
-  "catalogHash": "84b95f18d4186c6680e6b0f3860b9519131f4a0f4424d40571f6288461d26b61",
+  "catalogHash": "fce3d9e570c2f0cee7c30f90b18d1206d37f56fdc0cc0e22ff347f1b81d41826",
   "prerequisites": [
     {
       "reason": "Stage owned native test children from the candidate build.",

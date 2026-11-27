@@ -23,7 +23,7 @@ public sealed class VolumeRetirementWrapperTests
     public async Task Retire_temp_uses_current_proof_protocol()
     {
         using var dry = new C1008WrapperFixture();
-        var preview = await dry.Run("retire-temp", "-DryRun");
+        var preview = await dry.Run("retire-temp", "--dry-run");
         preview.Exit.ShouldBe(0, "c1609-w1: dry-run is the preview entry; " + preview.Output);
         preview.Output.ShouldNotContain("TempStackMissing");
         var previewCalls = preview.Trace.Where(row => row["kind"]?.GetValue<string>() == "case" &&
@@ -49,11 +49,7 @@ public sealed class VolumeRetirementWrapperTests
         deniedCalls[0]["recycle"]!["dryRun"]!.GetValue<bool>().ShouldBeTrue();
 
         using var prior = new C1008WrapperFixture();
-        var wrapperSource = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
-        // At the old entry use its existing normal action: the intended red is
-        // regenerating Preview instead of consuming the explicitly named proof.
-        var priorArgs = wrapperSource.Contains("[string]$RetirementProof", StringComparison.Ordinal)
-            ? new[] { "-RetirementProof", Operation } : Array.Empty<string>();
+        var priorArgs = new[] { "--retirement-proof", Operation };
         var consumed = await prior.Run("retire-temp", priorArgs);
         consumed.Exit.ShouldBe(0, consumed.Output);
         var priorCalls = consumed.Trace.Where(row => row["kind"]?.GetValue<string>() == "case" &&
@@ -64,7 +60,7 @@ public sealed class VolumeRetirementWrapperTests
         priorCalls[0]["recycle"]!["expectedProofDigest"]!.GetValue<string>().ShouldBe(new string('a',64));
         using var missingPrior = new C1008WrapperFixture();
         missingPrior.State["retirementProofError"] = true;
-        var refusedPrior = await missingPrior.Run("retire-temp", "-RetirementProof", Operation);
+        var refusedPrior = await missingPrior.Run("retire-temp", "--retirement-proof", Operation);
         refusedPrior.Exit.ShouldBe(2,refusedPrior.Output);
         refusedPrior.Trace.Any(row=>row["kind"]?.GetValue<string>()=="case").ShouldBeFalse(
             "W1 unknown prior proof cannot start cleanup, Preview or Apply");
@@ -175,6 +171,23 @@ public sealed class VolumeRetirementWrapperTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    // Unit 65: deploy-temp reads the temp container census, then the retirement census, before the retired placeholder's clear (the
+    // script's source order, now the command's trace on a retired start).
+    private static async Task AssertCensusBeforeClear()
+    {
+        using var f = new C1008WrapperFixture();
+        f.State["allowClear"] = true;
+        var run = await f.Run("deploy-temp");
+        run.Exit.ShouldBe(0, run.Output);
+        int At(Func<System.Text.Json.Nodes.JsonObject, bool> match) => Array.FindIndex(run.Trace, row => match(row));
+        var absent = At(row => row["kind"]?.GetValue<string>() == "census" && row["name"]?.GetValue<string>() == "temp-project-absent");
+        var census = At(row => row["kind"]?.GetValue<string>() == "census" && row["name"]?.GetValue<string>() == "temp-retirement-clearable");
+        var clear = At(row => row["method"]?.GetValue<string>() == "POST" && row["suffix"]?.GetValue<string>() == "/drain/clear");
+        absent.ShouldBeGreaterThanOrEqualTo(0);
+        census.ShouldBeGreaterThan(absent);
+        clear.ShouldBeGreaterThan(census);
+    }
+
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Bridge_validates_and_preserves_receipt_fields()
@@ -183,13 +196,7 @@ public sealed class VolumeRetirementWrapperTests
         var script = await File.ReadAllTextAsync(scriptPath);
         script.Contains('\r').ShouldBeFalse("c1609-w3: close script is LF");
         Encoding.UTF8.GetBytes(script).Any(b => b > 127).ShouldBeFalse("c1609-w3: close script is ASCII");
-        var deploy = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
-        var call = deploy.IndexOf("\n                Assert-TempRetirementClearable\n", StringComparison.Ordinal);
-        var absent = deploy.LastIndexOf("Assert-TempProjectAbsent", call, StringComparison.Ordinal);
-        var clear = deploy.IndexOf("/drain/clear", call, StringComparison.Ordinal);
-        absent.ShouldBeGreaterThanOrEqualTo(0);
-        call.ShouldBeGreaterThan(absent);
-        clear.ShouldBeGreaterThan(call);
+        await AssertCensusBeforeClear();
         var root = Directory.CreateTempSubdirectory("c1609-w3-").FullName;
         try
         {
@@ -223,7 +230,7 @@ public sealed class VolumeRetirementWrapperTests
             .ShouldBeFalse("c1609-w4: container cleanup no longer refuses on historical image equality");
 
         using var preview = new C1008WrapperFixture();
-        var dry = await preview.Run("retire-temp", "-DryRun");
+        var dry = await preview.Run("retire-temp", "--dry-run");
         dry.Exit.ShouldBe(0, "c1609-w4: retire-temp does not require the old stack; " + dry.Output);
         dry.Output.ShouldNotContain("TempStackMissing");
         dry.Output.ShouldNotContain("C994_IMAGE_UNPINNED");
@@ -235,10 +242,12 @@ public sealed class VolumeRetirementWrapperTests
     {
         var remote = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         remote.ShouldContain("c1008_refuse RecycleGenerationMismatch");
-        var unbound = await Pwsh("-NoProfile", "-NonInteractive", "-File",
-            Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"), "-Rolling", "-Phase", "redeploy-old");
-        unbound.Exit.ShouldNotBe(0, unbound.Output);
-        unbound.Output.ShouldContain("Sha");
+        using (var world = new Server2RollingWorld())
+        {
+            var unbound = world.Run("--rolling", "--phase", "redeploy-old");
+            unbound.Exit.ShouldNotBe(0, unbound.Output);
+            unbound.Output.ShouldContain("Sha");
+        }
 
         using var same = new C1008WrapperFixture();
         same.State["statuses"]!["server2"] = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(
@@ -321,10 +330,7 @@ public sealed class VolumeRetirementWrapperTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Retained_volumes_block_deploy_and_completion()
     {
-        var deploy = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/deploy-server2.ps1"));
-        var call = deploy.IndexOf("\n                Assert-TempRetirementClearable\n", StringComparison.Ordinal);
-        deploy.LastIndexOf("Assert-TempProjectAbsent", call, StringComparison.Ordinal).ShouldBeGreaterThanOrEqualTo(0);
-        deploy.IndexOf("/drain/clear", call, StringComparison.Ordinal).ShouldBeGreaterThan(call);
+        await AssertCensusBeforeClear();
         var remote = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh"));
         var body = Extract(remote, "case_deploy_temp_runner");
         var guard = body.IndexOf("c849_no_temp_containers", StringComparison.Ordinal);
@@ -451,7 +457,7 @@ public sealed class VolumeRetirementWrapperTests
         run.Trace.Any(row => row["kind"]?.GetValue<string>() == "case" &&
             (row["name"]?.GetValue<string>() == "runner-cache-seed" ||
              row["name"]?.GetValue<string>() == "deploy-temp-runner")).ShouldBeFalse(label);
-        JsonNode.Parse(await File.ReadAllTextAsync(fixture.StatePath))!["statuses"]!["server2-temp"]!["retiredAt"]!
+        fixture.State["statuses"]!["server2-temp"]!["retiredAt"]!
             .GetValue<string>().ShouldBe(before, label);
     }
 

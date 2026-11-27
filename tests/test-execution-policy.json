@@ -1656,13 +1656,6 @@
         },
         {
           "suite": "antiphon",
-          "class": "DeployServer2ApiDefaultTests",
-          "platform": "windows",
-          "reason": "Linux-only by construction: the witness puts a #!/bin/sh docker and ssh on PATH and chmod's them. The case remains required on Linux.",
-          "owner": "CARD-1777"
-        },
-        {
-          "suite": "antiphon",
           "class": "RunnerLinuxCompilerPolicyTests",
           "platform": "windows",
           "reason": "Linux-only by construction: deployment grammar and Compose rendering use bash and POSIX fixture paths; the native PTY inheritance witness requires Linux. No daemon is contacted.",
@@ -2133,7 +2126,7 @@
     }
   ],
   "selectionCatalog": {
-    "hash": "84b95f18d4186c6680e6b0f3860b9519131f4a0f4424d40571f6288461d26b61",
+    "hash": "fce3d9e570c2f0cee7c30f90b18d1206d37f56fdc0cc0e22ff347f1b81d41826",
     "path": "tests/test-selection-policy.json"
   }
 }

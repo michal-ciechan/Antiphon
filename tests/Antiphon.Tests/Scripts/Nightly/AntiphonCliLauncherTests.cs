@@ -1177,7 +1177,7 @@ public sealed class AntiphonCliLauncherTests
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
     }
 
-    // ---- unit 47: scripts/verify-docker-stack.ps1, which the owner-gated deploy-server2.ps1, c590-real.ps1, c1609-manual.ps1 and
+    // ---- unit 47: scripts/verify-docker-stack.ps1, which the deploy-server2 command (unit 65), c590-real.ps1, c1609-manual.ps1 and
     // verify-card0849-caches.ps1 start by path (pwsh -File). Its head stays: the manifest checks, the c590-real.ps1 context guards
     // and the live server2 bridge; everything past it is the verify-docker-stack command. No test here runs a routed case without
     // the stub (that is the bridge: RetireTempRunnerTimestampTests drives it with fake ssh and scp) ----

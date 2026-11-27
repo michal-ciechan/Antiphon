@@ -372,24 +372,22 @@ A split plan carries a `### Checkpoints` table with the columns of the sample ch
 
 ### Offline rolling harness jq receipts (CARD-0983)
 
-On a jq-expected host, run `scripts/test-deploy-server2.ps1 -RequireJq` or
-`scripts/test-deploy-server2-jq.ps1 -Case present -RequireJq` through the build-slot
-wrapper. For example:
+The offline rolling roster of the deleted `scripts/test-deploy-server2.ps1` and the
+T-20 group of `scripts/test-deploy-server2-jq.ps1` are `Server2RollingDriverTests`
+since unit 65; they run the `deploy-server2` command in process. On a jq-expected
+host, set `ANTIPHON_REQUIRE_JQ=1` (the drivers' `-RequireJq`) and run the class
+through the build-slot wrapper. For example:
 
 ```powershell
-pwsh -NoProfile -File scripts/build-slot.ps1 -Label rolling-required-jq -- pwsh -NoProfile -File scripts/test-deploy-server2-jq.ps1 -Case present -RequireJq
+$env:ANTIPHON_REQUIRE_JQ = '1'
+pwsh -NoProfile -File scripts/build-slot.ps1 -Label rolling-required-jq -- tests\Antiphon.Tests\bin\Debug\net9.0\Antiphon.Tests.exe --treenode-filter "/*/*/Server2RollingDriverTests/*" --no-progress --no-ansi
 ```
 
 The marker-reader shell needs jq: native bash on Linux, the default WSL bash on
-Windows. Native Windows jq does not qualify WSL. The regression lane also needs
-pwsh in that shell. `-RequireJq` rejects an unavailable probe with
-`C983_JQ_REQUIRED`, exit 1, before any rolling group, including `-Only` selections.
-An available required run includes T-20 and reports 24 groups / 66 invocations /
-227 assertions. Without the switch jq remains optional: unavailable probes keep
-the named skip and 23 / 62 / 218 roster. Successful jq-driver runs retain 31
-assertions. The absent, missing-shell and failing-shell driver cases remain
-optional unless explicitly required. The C1008 Unit consumer requires jq in its
-present invocation; a missing prerequisite is a failure of that proof.
+Windows. Native Windows jq does not qualify WSL. With `ANTIPHON_REQUIRE_JQ=1` an
+unavailable probe fails T-20 with `C983_JQ_REQUIRED`. Without it jq remains
+optional: an unavailable probe keeps the named `C973_SKIPPED` skip and the other
+groups still run.
 
 The sixteen named C1008 host contracts in `RemoteScriptContractTests` and
 `RollingVolumeRecycleScriptTests` explicitly require native Linux (CARD-1050).
@@ -1169,7 +1167,7 @@ server2, registering with the **production** desktop server over
 A host Postgres service (`docker-compose.server2-postgres.yml`, project `antiphon-server2-postgres`)
 exists beside the runner and is not yet the control plane. There is no Antiphon server process on
 server2. CARD-1742 adds `docker-compose.server2-staging-server.yml` (project `antiphon-server2-staging`)
-as files only; test runs do not start it, and `deploy-server2.ps1` does not deploy it.
+as files only; test runs do not start it, and `scripts/antiphon deploy-server2` does not deploy it.
 The throwaway stack a session needs is still the nested child it creates itself.
 The CARD-0490 `grok-linux` canary keeps working unchanged against its own isolated server through
 the `verify-phone-home-grok` command; that harness's settings block now carries `AllowDelegatedTasks=false`,
