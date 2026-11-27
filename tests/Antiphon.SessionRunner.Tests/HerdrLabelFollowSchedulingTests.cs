@@ -30,7 +30,7 @@ public class HerdrLabelFollowSchedulingTests
         finally
         {
             gate.Release(); if (baseline is not null) await baseline;
-            await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.TabLabel == "Later");
+            await HerdrLabelFollowFixture.WaitAsync(() => f.TryReadSaved()?.TabLabel == "Later");
             await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
         }
         f.GetterCount.ShouldBe(4); // One baseline batch and one timer batch, despite all three callers.
@@ -126,7 +126,7 @@ public class HerdrLabelFollowSchedulingTests
         var task = f.FollowAsync();
         try
         {
-            await HerdrLabelFollowFixture.WaitAsync(() => arm == "lease" ? f.Saved.LabelFollow!.Sequence == 1 : f.GetterCount == 1);
+            await HerdrLabelFollowFixture.WaitAsync(() => arm == "lease" ? f.TryReadSaved()?.LabelFollow!.Sequence == 1 : f.GetterCount == 1);
             f.Clock.Advance(TimeSpan.FromSeconds(10)); await task.WaitAsync(TimeSpan.FromSeconds(2));
             f.Saved.LabelFollow!.Observation!.ResultCode.ShouldBe("timeout"); f.Saved.TabLabel.ShouldBe("Old");
         }
@@ -210,8 +210,9 @@ public class HerdrLabelFollowSchedulingTests
             await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
             f.Saved.TabLabel.ShouldBe("New"); f.Tab.Label = "Later";
             f.Clock.Advance(TimeSpan.FromHours(1));
-            await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.TabLabel == "Later");
-            var follow = f.Saved.LabelFollow.ShouldNotBeNull();
+            HerdrPaneSidecar? saved = null;
+            await HerdrLabelFollowFixture.WaitAsync(() => (saved = f.TryReadSaved())?.TabLabel == "Later");
+            var follow = saved.ShouldNotBeNull().LabelFollow.ShouldNotBeNull();
             follow.Sequence.ShouldBe(2);
             follow.Observation.ShouldNotBeNull().ResultCode.ShouldBe("validated");
             f.GetterCount.ShouldBe(4);

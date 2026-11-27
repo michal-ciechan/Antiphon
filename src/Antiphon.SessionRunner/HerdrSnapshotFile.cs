@@ -15,15 +15,29 @@ internal static class HerdrSnapshotFile
     }
 
     // Synchronous metadata transactions only: never hold this thread-affine lease across await.
-    internal static IDisposable Acquire(string destination)
+    internal static IDisposable Acquire(string destination) =>
+        TryAcquire(destination, Timeout.Infinite)!;
+
+    internal static IDisposable? TryAcquire(string destination, int millisecondsTimeout)
     {
         var path = Path.GetFullPath(destination);
         if (OperatingSystem.IsWindows()) path = path.ToUpperInvariant();
         var name = "Antiphon-HerdrSnapshot-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)));
         var mutex = new Mutex(false, name);
-        try { mutex.WaitOne(); }
-        catch (AbandonedMutexException) { /* The previous owner exited; this caller owns the mutex. */ }
-        return new Lease(mutex);
+        var acquired = false;
+        try
+        {
+            acquired = mutex.WaitOne(millisecondsTimeout);
+        }
+        catch (AbandonedMutexException)
+        {
+            acquired = true; // The previous owner exited; this caller owns the mutex.
+        }
+        finally
+        {
+            if (!acquired) mutex.Dispose();
+        }
+        return acquired ? new Lease(mutex) : null;
     }
 
     private sealed class Lease(Mutex mutex) : IDisposable

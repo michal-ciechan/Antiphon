@@ -7,6 +7,8 @@ namespace Antiphon.SessionRunner.Tests;
 
 internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 {
+    private const int SnapshotMutexWaitMs = 50;
+
     public FakeHerdrServer Fake { get; } = new();
     public HerdrClient Client { get; }
     public SessionRunnerSettings Settings { get; }
@@ -30,7 +32,8 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     {
         // The timer can replace the snapshot while a test polls it. Read under the writer's path lock.
         var path = Path;
-        using var lease = HerdrSnapshotFile.Acquire(path);
+        using var lease = HerdrSnapshotFile.TryAcquire(path, SnapshotMutexWaitMs);
+        if (lease is null) return null;
         return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
     }
 
@@ -48,7 +51,12 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public static async Task WaitAsync(Func<bool> condition)
     {
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        while (!condition()) await Task.Delay(5, limit.Token);
+        while (true)
+        {
+            limit.Token.ThrowIfCancellationRequested();
+            if (condition()) return;
+            await Task.Delay(5, limit.Token);
+        }
     }
 
     public HerdrLabelFollowFixture(string? tabPin = "Old", string? workspacePin = "Old workspace",
