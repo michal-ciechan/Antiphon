@@ -20,6 +20,8 @@ it('delivers one operator toast per incident across partial publication, replay 
   const mount = () => renderHook(() => useAlertToasts(ref))
   const view = mount()
   act(() => callbacks.get('AlertRaised')!(first))
+  act(() => callbacks.get('AlertRaised')!(first))
+  expect(notifications.show).toHaveBeenCalledTimes(1)
   act(() => callbacks.get('AgentChanged')!({ operatorAlert: first }))
   view.unmount()
   const resumed = mount()
