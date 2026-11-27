@@ -106,10 +106,10 @@ authorize repeating expensive work or crediting missing verification.
    and source Plan/Review bundle pointers; this is a human review obligation, not a new guard.
 
 9. **R9 - Act on routine speedups.** Routine reversible actions such as stopping an owned stuck
-   run through its supported stop command (and joining cleanup), dispatching Debug for a batch
+   test run outside qualification through its supported stop command (and joining cleanup), dispatching Debug for a batch
    over 30 minutes or rerunning a preflight MUST NOT wait for operator permission. The orchestrator
-   MAY stop an abandoned or uncreditable qualification after preserving evidence and proving
-   process ownership. This does not authorize killing another session or bypassing custody.
+   preserves evidence and proves process ownership for a proposed qualification stop, which
+   requires operator authorization under the [standing operating rules](orchestration-loop.md#standing-operating-rules).
    Destructive/one-way actions, secret handling and publish/promote/tag actions still require
    their existing explicit authorization; task-branch commit/push authorization remains valid.
    Rationale: remove routine delays while preserving ownership and publication boundaries.

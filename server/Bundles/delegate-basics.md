@@ -21,6 +21,8 @@ work itself.
 
 - Commit and push all assigned work before reporting blocked. Push unless this task is SourceLanding, ReadOnly, or CommitOnSettle Never. A parked session may be released and resumed from that pushed branch. Parking will not autosave (CARD-1083).
 
+- If a decision exceeds your authority, end Blocked with reason: and asks: recommending an action for caller Reply. Carry the recommendation in your stage handoff. Never end with an open question.
+
 {{GIT-COMMON}}
 
 - Generated evidence stays gitignored: TRX, JSON receipts, logs, archives and checkpoint outputs

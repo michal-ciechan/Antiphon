@@ -10,11 +10,11 @@ subjectTaskId: <reviewed source task's full GUID: owner unless brief names --fro
 reviewedSourceSha: <full SHA actually reviewed>
 reviewedSourceClean: ?
 ordinaryScopeCompleted: <Full|Interim|None>
-reviewRound: <1|2|3>
+reviewRound: <round number>
 reviewedRange: <a>..<tip>
 Full only when the whole required selection ran. The caller lands that owner with --expected-source-sha from this evidence.
 Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.
-next: land for clean Final; review (Final) for clean Interim; code when there are defects (name them in `handoff:`); decide for a blocking human choice.
+next: land for clean Final; review (Final) for clean Interim; code for defects (name them in `handoff:`); decide at the round cap.
 MIGRATION: run downgrade selector; report its count. +impacted rows
 scripts/antiphon evidence-diff --base <candidate base>
 For changed input waits: what releases the waiting session, after how long? Parking disabled means no automatic release deadline (CARD-1083).

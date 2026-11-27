@@ -314,7 +314,7 @@ automatically — see "What the delegate is told" below; don't type them into `-
 - **Always pass `--title`.** It is a 2–5 word label (max 80) for check headers, completion notes, and the board — not a second Goal.
 - **Write `--goal` as an outcome, not a procedure.** The delegate decides how.
 - **Operator standing operating rules apply to every dispatch** (a failed launch gets a Debug task; never Reply to a complete report Blocked only by runner sync, Reply only for a missing report and ask for the full report; verify the card title before binding): [standing operating rules](../../../docs/orchestration-loop.md#standing-operating-rules) (CARD-1469).
-- **A Review brief names its round** (at most three per subject): the round number, the previous reviewed SHA, the exact range (`<previous reviewed SHA>..<tip>`; round 1 the full candidate range) and the stringency (full; diff with round-1 defect closure; blockers only), and asks for `reviewRound:` and `reviewedRange:` lines in the review evidence block. After round 3 with a blocker, surface it to the operator instead of dispatching a fix: [Review rounds](../../../docs/orchestration-loop.md#review-rounds) (CARD-1635).
+- **A Review brief names its round** (three ordinary rounds per subject): the round number, the previous reviewed SHA, the exact range (`<previous reviewed SHA>..<tip>`; round 1 the full candidate range) and the stringency (full; diff with round-1 defect closure; blockers only), and asks for `reviewRound:` and `reviewedRange:` lines in the review evidence block. After round 3, give the orchestrator the blocker's recommended disposition under [Review rounds](../../../docs/orchestration-loop.md#review-rounds) (CARD-1635).
 - **Put the state of today in `--goal`, not the standing rules.** Known-red tests, what already
   landed, what is out of scope, which ports are taken — that is what only you know. The harness
   rules it already has.
@@ -333,9 +333,9 @@ automatically — see "What the delegate is told" below; don't type them into `-
   > the response's `stop_reason`, so a bare `TurnEnd` arrived up to 1.2 s before the report and
   > settlement fired on it. See `docs/superpowers/specs/2026-08-14-card-0046-settlement-final-message.md`
   > and CARD-0046. The guidance above is still worth scoping, but it was never the bug.
-- **A delegate that asks a question comes back blocked.** The `[task … blocked]` note carries
-  `reason:` / `asks:` / `authority:` / `next:`. If `authority:` names something, `continue` is
-  the one action; otherwise answer it — don't take the work back:
+- **A delegate that needs a caller decision reports Blocked with a recommendation.** The
+  `[task … blocked]` note carries `reason:` / `asks:` / `authority:` / `next:`. Use `continue`
+  for standing authority or decide and `reply` under the standing operating rules:
   ```sh
   scripts/antiphon delegate continue <taskId>
   scripts/antiphon delegate reply <taskId> "yes, accept negatives"

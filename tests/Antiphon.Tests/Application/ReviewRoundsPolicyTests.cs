@@ -6,7 +6,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 /// <summary>
-/// CARD-1647, the three CARD-1635 follow-ups. Review rounds are capped at three per subject
+/// CARD-1647, the three CARD-1635 follow-ups. The ordinary loop is capped at three rounds per subject
 /// (docs/orchestration-loop.md#review-rounds): the guard flags a fourth at creation, the
 /// stage-review evidence block carries the round and range, and the owner text is pinned.
 /// </summary>
@@ -23,6 +23,7 @@ public sealed class ReviewRoundsPolicyTests
         fourth.ShouldContain(ReviewRoundGuard.Code);
         fourth.ShouldContain("round 4");
         fourth.ShouldContain("next: decide");
+        fourth.ShouldContain("your recommendation to the orchestrator");
 
         ReviewRoundGuard.Evaluate("CARD-0001", "round: 3 of 3; stringency: blockers only", ["aaaaaaaa", "bbbbbbbb", "cccccccc"])
             .ShouldBeNull("a declared round 3 is inside the limit");
@@ -175,16 +176,20 @@ public sealed class ReviewRoundsPolicyTests
             "**Round 2 reviews only the diff `<round-1 reviewed SHA>..<new tip>`**",
             "It adds no new attack classes",
             "reports blockers only.**",
-            "There is no round 4",
+            "The orchestrator records its choice and reason and proceeds.",
+            "commission one bounded diff-only Review of the repair",
+            "land with a linked follow-up card",
             "lows and advisories become cards and never hold the land",
             "A fix brief states the invariant the fix protects",
             "Every fix has a red-first witness",
         })
             section.ShouldContain(rule, Case.Sensitive, $"review-rounds keeps: {rule}");
 
-        Collapse(Read("AGENTS.md")).ShouldContain("Review rounds: at most three per subject; round 1 full, rounds 2 and 3 only the diff from the previous reviewed SHA (round 3 blockers only)");
+        var agents = Collapse(Read("AGENTS.md"));
+        agents.ShouldContain("Review rounds: at most three per subject in the ordinary loop.");
+        agents.ShouldContain("Round 1 is full, rounds 2 and 3 cover only the diff from the previous reviewed SHA (round 3 blockers only).");
         var orchestrator = Collapse(Read(".claude", "skills", "antiphon-orchestrator", "SKILL.md"));
-        orchestrator.ShouldContain("no round 4");
+        orchestrator.ShouldContain("record the orchestrator's disposition at the cap");
         orchestrator.ShouldContain("lows become cards");
         orchestrator.ShouldContain("fix briefs state the invariant; every fix has a red-first witness");
     }
