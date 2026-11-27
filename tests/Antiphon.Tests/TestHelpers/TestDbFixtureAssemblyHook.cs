@@ -1,3 +1,4 @@
+using Antiphon.Tests.Application;
 using TUnit.Core;
 
 namespace Antiphon.Tests.TestHelpers;
@@ -19,11 +20,27 @@ internal static class TestDbFixtureAssemblyHook
             return;
         }
 
-        await TestDbFixture.InitializeAsync(context, () =>
+        // Preparing the worker model only needs local assemblies. Start it alongside
+        // fixture warmup, and let the crash test await it before launching a child.
+        var retirementModel = context.AllTests.Any(test =>
+            test.Metadata.TestDetails.ClassType == typeof(WorktreeResidueRecoveryTests)
+            && test.Metadata.TestDetails.MethodName == nameof(WorktreeResidueRecoveryTests.C459_WorkerDeathAtEveryRetirementHandoff))
+            ? WorktreeRetirementCrashWorker.PrepareCompiledModelAsync()
+            : null;
+        try
         {
-            using var timing = TestTiming.BeginFixturePhase("harness-runtime", TestPhaseKind.FixtureSetup, "harness-model");
-            BridgeQueueHarness.WarmModel();
-        });
+            await TestDbFixture.InitializeAsync(context, () =>
+            {
+                using var timing = TestTiming.BeginFixturePhase("harness-runtime", TestPhaseKind.FixtureSetup, "harness-model");
+                BridgeQueueHarness.WarmModel();
+            });
+        }
+        catch
+        {
+            if (retirementModel is not null)
+                await ((Task)retirementModel).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            throw;
+        }
     }
 
     // Run ae84478d g80: an After(Class) clone drop overtaken by this teardown. A class teardown
@@ -36,7 +53,12 @@ internal static class TestDbFixtureAssemblyHook
 
     private static async Task DisposeResourcesAsync()
     {
-        try { await RefOnlyDispatchFixture.DisposeSharedAsync(); }
+        try
+        {
+            await WorktreeRetirementCrashWorker.JoinModelPreparationAsync()
+                .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await RefOnlyDispatchFixture.DisposeSharedAsync();
+        }
         finally { await TestDbFixture.DisposeAsync(); }
     }
 

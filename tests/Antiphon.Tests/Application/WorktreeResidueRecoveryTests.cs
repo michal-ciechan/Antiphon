@@ -277,10 +277,10 @@ public sealed class WorktreeResidueRecoveryTests
     [Arguments("run-projection")]
     public async Task C459_WorkerDeathAtEveryRetirementHandoff(string cut)
     {
-        var useCompiledModel = await WorktreeRetirementCrashWorker.PrepareCompiledModelAsync();
         await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
         var ready = Path.Combine(h.Host.Fixture.Root, "worker-ready.json");
         AssertRetirementAdmission(h, cut, ready);
+        var useCompiledModel = await WorktreeRetirementCrashWorker.PrepareCompiledModelAsync();
         await using var worker = StartRetirementWorker(h, cut, ready, useCompiledModel);
         try
         {
