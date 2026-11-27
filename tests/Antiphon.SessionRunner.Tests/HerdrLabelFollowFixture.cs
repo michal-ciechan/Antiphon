@@ -15,7 +15,7 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public HerdrClient Client { get; }
     public SessionRunnerSettings Settings { get; }
     public HerdrSettings HerdrSettings { get; }
-    public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 9, 16, 0, 0, 0, TimeSpan.Zero));
+    public LabelSweepClock Clock { get; } = new();
     public HerdrPlacementCoordinator Coordinator { get; private set; } = new();
     public FakeHerdrServer.WorkspaceState Workspace { get; }
     public FakeHerdrServer.TabState Tab { get; }
@@ -80,7 +80,14 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 
     public static Task WaitAsync(Func<bool> condition) => WaitAsync(_ => condition());
 
-    public Task WaitForLabelPumpAsync() => WaitForSubscriptionAsync();
+    public Task WaitForLabelPumpAsync()
+    {
+        var subscribed = WaitForSubscriptionAsync();
+        if (OperatingSystem.IsWindows()) return subscribed;
+
+        // The stream and timer start independently. Register the timer before jumping an hour.
+        return Task.WhenAll(subscribed, Clock.SweepTimerRegistered.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
 
     public async Task WaitForSubscriptionAsync(TimeProvider? timeProvider = null)
     {
@@ -189,6 +196,20 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         if (!root.StartsWith(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "antiphon-c462-"), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Unsafe fixture cleanup");
         if (Directory.Exists(root)) Directory.Delete(root, true);
+    }
+
+    internal sealed class LabelSweepClock() : FakeTimeProvider(new DateTimeOffset(2026, 9, 16, 0, 0, 0, TimeSpan.Zero))
+    {
+        private readonly TaskCompletionSource _sweepTimerRegistered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task SweepTimerRegistered => _sweepTimerRegistered.Task;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            if (period == TimeSpan.FromMinutes(1))
+                _sweepTimerRegistered.TrySetResult();
+            return timer;
+        }
     }
 
     internal sealed class DenyProcesses : IProcessLivenessProbe
