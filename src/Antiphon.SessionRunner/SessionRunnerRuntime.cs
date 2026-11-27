@@ -2978,7 +2978,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 if (!_composerMayHoldWrittenInput && body.Length > 0
                     && request.Input == PtyInputEncoding.WrapIfMultiline(body)
                     && !body.Any(c => char.IsControl(c) && c != '\n')
-                    && ClaudeScreen.ComposerContentIsEmpty(draft))
+                    && draft.Length == 0)
                     return null;
                 return ConditionalInputOutcomes.ComposerMismatch;
             }

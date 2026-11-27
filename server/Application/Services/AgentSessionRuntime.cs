@@ -2391,6 +2391,8 @@ public sealed partial class AgentSessionRuntime
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
         if (session.AgentKind != AgentKind.ClaudeCode)
         {
+            if (expectedComposer is not null || requireOwnedComposer)
+                throw new ProviderDialogInputRefusedException(ConditionalInputOutcomes.GenerationMismatch);
             await SendInteractiveInputAsync(sessionId, input, ct, trackManualTurn);
             return;
         }
@@ -2472,7 +2474,11 @@ public sealed partial class AgentSessionRuntime
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        if (await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.AgentKind).SingleAsync(ct) == AgentKind.ClaudeCode)
+        var kind = await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.AgentKind).SingleAsync(ct);
+        if (kind != AgentKind.ClaudeCode
+            && (request.ExpectedComposerDigest is not null || request.RequireOwnedComposer))
+            return new(sessionId, ConditionalInputOutcomes.GenerationMismatch);
+        if (kind == AgentKind.ClaudeCode)
         {
             var observation = await ObserveDialogAsync(sessionId, ct);
             if (observation is null || observation.OutputSequence != request.ExpectedLastSequence)

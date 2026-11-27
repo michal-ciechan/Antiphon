@@ -23,6 +23,10 @@ public static class ConditionalInputOutcomes
     public const string ComposerMismatch = "composer-mismatch";
 }
 
+/// <summary>
+/// A null composer digest requests the dialog fence alone. An empty digest requires an
+/// empty composer. A SHA-256 digest requires its exact draft before submitting Enter.
+/// </summary>
 public sealed record RunnerConditionalInputRequest(
     DateTime ExpectedAcceptedStartedAt,
     long ExpectedLastSequence,

@@ -4688,6 +4688,7 @@ public sealed partial class SessionMessageQueueService
         var reEnterAfter = TimeSpan.FromSeconds(Math.Max(0, _verification.ReEnterIntervalSeconds));
         var lastEnter = UtcNow();
         var entersSent = 1; // the caller's submitting Enter
+        var reEnterRefused = false;
         var sawSequenceAdvance = false;
         var sawPositiveSubmit = false;
         var workingLatched = false;
@@ -4862,7 +4863,7 @@ public sealed partial class SessionMessageQueueService
             // cannot help transcript confirmation (and would break the measured empty-composer
             // contract only if something else stood in the composer). Observable path keeps today's
             // schedule unconditionally (stale-body recovery needs the re-press even after a redraw).
-            var mayReEnter = !channelDelivery && !guardRecoveryEnter && entersSent < _verification.SubmitAttempts
+            var mayReEnter = !channelDelivery && !reEnterRefused && entersSent < _verification.SubmitAttempts
                 && UtcNow() - lastEnter >= reEnterAfter
                 && (observable || !sawPositiveSubmit);
             if (mayReEnter)
@@ -4903,8 +4904,18 @@ public sealed partial class SessionMessageQueueService
                         sessionId, entersSent + 1, _verification.SubmitAttempts);
                     // CARD-0693: never the attempt's first write (the caller's Enter went first), so
                     // an unreachable runner propagates rather than refunding the attempt.
-                    await _runtime.SendInputAsync(sessionId, "\r", ct);
-                    entersSent++;
+                    try
+                    {
+                        await _runtime.SendInputAsync(sessionId, "\r", ct,
+                            expectedComposer: guardRecoveryEnter ? PtyInputEncoding.NormalizeBody(body) : null);
+                        entersSent++;
+                    }
+                    catch (ProviderDialogInputRefusedException) when (guardRecoveryEnter)
+                    {
+                        // Continue receipt polling after the definitive refusal. The draft may
+                        // already have submitted, or its composer may now belong to another writer.
+                        reEnterRefused = true;
+                    }
                     lastEnter = UtcNow();
                 }
             }
