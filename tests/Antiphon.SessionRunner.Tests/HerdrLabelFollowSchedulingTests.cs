@@ -267,6 +267,27 @@ public class HerdrLabelFollowSchedulingTests
     }
 
     [Test]
+    public async Task Subscription_recorded_before_deadline_survives_a_delayed_waiter()
+    {
+        await using var f = new HerdrLabelFollowFixture();
+        await f.StartAsync();
+        await using var runtime = await f.AdoptRuntimeAsync();
+        using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock);
+        var readinessClock = new FakeTimeProvider();
+        var readiness = f.WaitForSubscriptionAsync(readinessClock);
+        await pump.StartAsync(CancellationToken.None);
+
+        async Task AdvanceAfterRegistrationAsync()
+        {
+            try { await f.Fake.FirstSubscriptionRecorded.WaitAsync(TimeSpan.FromSeconds(2)); }
+            finally { readinessClock.Advance(TimeSpan.FromSeconds(2)); }
+        }
+
+        try { await Task.WhenAll(readiness, AdvanceAfterRegistrationAsync()); }
+        finally { await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2)); }
+    }
+
+    [Test]
     public async Task Idle_healthy_stream_checks_without_turns_or_gets()
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await using var runtime = await f.AdoptRuntimeAsync();

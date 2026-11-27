@@ -77,6 +77,9 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 
     public static Task WaitAsync(Func<bool> condition) => WaitAsync(_ => condition());
 
+    public Task WaitForSubscriptionAsync(TimeProvider? timeProvider = null) =>
+        WaitAsync(_ => Fake.SubscriptionRecords.Count == 1, timeProvider);
+
     public static async Task WaitAsync(Func<TimeSpan, bool> condition, TimeProvider? timeProvider = null)
     {
         timeProvider ??= TimeProvider.System;
