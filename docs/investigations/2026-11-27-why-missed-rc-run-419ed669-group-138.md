@@ -88,7 +88,7 @@ phase journal and Git Trace2 counts. It recorded zero fixture Git launches in al
 | GraphAndTrustBindingsRefuse | 7 | 2.457 | 5 | 90 | 89–128 | 7 |
 | TrustedProjectBindingsRefuse | 12 | 2.585 | 6 | 90 | 136–271 | 14 |
 
-The four Windows rows split from the two timed-out methods use the provisional 90 s ceiling
+The five Windows rows from the two timed-out methods use the provisional 90 s ceiling
 approved for this repair. `GlobalContractChangesRefuse` retains its 30 s Windows ceiling.
 The two censored Windows durations establish lower bounds for the former methods. A Windows
 multiplier requires measured native completions. Case failures and cooperative deadline failures
