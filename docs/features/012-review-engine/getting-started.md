@@ -322,9 +322,10 @@ below a confidence threshold.
 | `litellm-passthrough` | `{BaseUrl}/typesafe/v1/systemone` (`BaseUrl` is required) |
 
 Jev sends named questions. For a `choice` question, `criteria` maps option names to descriptions or
-JSON `null`. For a `score` question, `criteria` lists level labels from lowest to highest. The client
-reads the named answers and records the model the proxy reports, both token counts and the cost.
-An HTTP 400 stops the decision chain and surfaces the proxy's validation message. See
+JSON `null`. For a `score` question, `criteria` lists level descriptions from lowest to highest, using
+the label for any level without a description. The client maps score indices to the original labels
+and records the model the proxy reports, both token counts and the cost. An HTTP 400 stops the
+decision chain and surfaces a bounded, redacted validation diagnostic. See
 [review engine design 7.3–7.4](design.md#73-jev-dialects).
 
 ```json

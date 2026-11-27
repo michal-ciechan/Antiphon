@@ -879,13 +879,15 @@ one of these `type` values.
 - `noul`: `instructions`
 - `choice`: `instructions` and a `criteria` object mapping option values to descriptions. Use JSON
   `null` for an option whose name is enough.
-- `score`: `instructions` and a `criteria` array of level labels, lowest first.
+- A `score` question sends `instructions` and a `criteria` array of level descriptions, lowest
+  first. Each entry is a string. A level with no description uses its label.
 
 The response keys `answers` by question name. Choice answers carry `choice`, `confidence` and
 `probabilities`. A `noul` answer carries the probability of yes in `noul`. A numeric `score` selects
 the zero-based level in the request. For a fractional score, the adapter uses the nearest level and
-rounds ties up. It translates score probability keys that name level indices to level labels. The
-resolved `model` and `usage.input_tokens` and `usage.output_tokens` feed the call record. See
+rounds ties up. It maps the selected index and score probability keys to the caller's original
+level labels. The call record includes the resolved `model`, `usage.input_tokens` and
+`usage.output_tokens`. See
 [GH-58](https://github.com/michal-ciechan/Antiphon/issues/58) and the
 [System One OpenAPI](https://docs.typesafe.ai/api/system-one.md).
 
@@ -898,8 +900,10 @@ resolved `model` and `usage.input_tokens` and `usage.output_tokens` feed the cal
 
 - **Cost basis.** Every dialect's cost is an **actual** cost, as the table gives it, and is recorded
   as such in `llm_call` (D-20).
-- **Proxy errors.** The client bounds the proxy's error message and redacts credentials before
-  surfacing it. A 400 is `Rejected`, so it stops the chain (7.4).
+- **Provider errors.** The client extracts messages from the proxy error envelope or TypeSafe
+  `detail`. For validation errors with locations, it includes the field paths. It redacts
+  credentials before limiting the diagnostic to 300 characters. A 400 stops the chain as
+  `Rejected` (7.4).
 - **Auth.** Every dialect sends `Authorization: Bearer <key>`. Enterprise uses the existing proxy
   virtual key, which is the same key used for its OpenAI-compatible endpoints, with no separate Jev
   key. Keys go through Antiphon credential custody (`docs/agent-credentials.md`).
@@ -1724,7 +1728,7 @@ be A/B'd in shadow on live PRs.
 |---|---|---|
 | OQ-1 | Which LiteLLM version the enterprise proxy runs, and whether it configures `/v1/systemone` (alias `jev-latest`, as the example shows) or the `/typesafe` pass-through. | **Resolved 2026-11-21 (D-29).** `{proxy}/v1/systemone` on the latest LiteLLM, with a request shape identical to TypeSafe's. The adapter keeps the pass-through dialect. |
 | OQ-2 | Exact answer field names. | The sanitised GH-58 fixture covers `choice`, `noul` and numeric `score`. See 7.3. |
-| OQ-3 | How to send descriptions for choices and levels. | System One uses `criteria`. The adapter sends choice descriptions in the map and score labels in rubric order. See 7.3. |
+| OQ-3 | How to send descriptions for choices and levels. | System One uses `criteria`. The adapter sends choice descriptions in the map and score descriptions in rubric order, using the label for an undescribed level. See 7.3. |
 | OQ-4 | Webhook reachability at home and in the enterprise. | **Resolved 2026-11-21 (D-30).** Enterprise takes every webhook event. Home polls at a configurable interval, with a manual Refresh (8.5). |
 | OQ-5 | Whether enterprise runs its own Antiphon instance (data residency) or a tenant of a shared one. | **Partly resolved 2026-11-21 (D-31).** Enterprise runs its own instance on Kubernetes (16.2). Still open: one instance per team, or one for several teams. |
 | OQ-6 | Promotion thresholds N and M. | **Resolved 2026-11-21 (D-32).** 2 repos → team layer; 2 teams → company layer (language and framework facets later). The context-note part moved to OQ-15. |

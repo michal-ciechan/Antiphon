@@ -107,7 +107,10 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
             }
             else if (question.Kind == DecisionQuestionKind.Score)
             {
-                item["criteria"] = new JsonArray(question.Options.Select(o => (JsonNode?)JsonValue.Create(o.Value)).ToArray());
+                var criteria = new JsonArray();
+                foreach (var level in question.Options)
+                    criteria.Add(string.IsNullOrWhiteSpace(level.Description) ? level.Value : level.Description);
+                item["criteria"] = criteria;
             }
             questions[question.Name] = item;
         }
@@ -149,24 +152,82 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
     /// <summary>Expose a bounded, redacted error message from LiteLLM, TypeSafe or a plain-text proxy.</summary>
     private static string ErrorText(string body, string apiKey)
     {
-        var message = body;
+        const string noMessage = "The provider returned no error message.";
+        var redactor = new DiagnosticsRedactor(includePaths: true);
+        string Redact(string text) => redactor.Redact(text.Replace(apiKey, "***", StringComparison.Ordinal));
+
         try
         {
-            var parsed = JsonNode.Parse(body);
-            message = parsed switch
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return BoundErrorText(Redact(ErrorString(root) ?? noMessage));
+
+            var error = ErrorProperty(root, "error");
+            var detail = ErrorProperty(root, "detail");
+            var message = ErrorString(ErrorProperty(error, "message")) ?? ErrorString(error) ?? ErrorString(detail);
+            if (message is not null)
+                return BoundErrorText(Redact(message));
+
+            var diagnostic = new StringBuilder(MaxErrorTextLength);
+            foreach (var validationMessage in ValidationMessages(detail))
             {
-                JsonObject root => (root["error"] is JsonObject error ? StringValue(error["message"]) : StringValue(root["error"]))
-                    ?? StringValue(root["detail"]) ?? "The provider returned no error message.",
-                _ => StringValue(parsed) ?? "The provider returned no error message.",
-            };
+                if (diagnostic.Length > 0)
+                    diagnostic.Append("; ");
+                diagnostic.Append(Redact(validationMessage));
+                if (diagnostic.Length >= MaxErrorTextLength)
+                    break;
+            }
+            return diagnostic.Length == 0 ? noMessage : BoundErrorText(diagnostic.ToString());
         }
         catch (JsonException)
         {
+            return BoundErrorText(Redact(body));
+        }
+    }
+
+    private static IEnumerable<string> ValidationMessages(JsonElement detail)
+    {
+        if (detail.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in detail.EnumerateArray())
+                foreach (var message in ValidationMessages(entry))
+                    yield return message;
+            yield break;
         }
 
-        var redacted = new DiagnosticsRedactor(includePaths: true).Redact(message.Replace(apiKey, "***", StringComparison.Ordinal));
-        return redacted.Length <= MaxErrorTextLength ? redacted : redacted[..MaxErrorTextLength];
+        if (detail.ValueKind != JsonValueKind.Object)
+            yield break;
+
+        var text = ErrorString(ErrorProperty(detail, "msg")) ?? ErrorString(ErrorProperty(detail, "message"));
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var location = ErrorProperty(detail, "loc");
+            var path = location.ValueKind == JsonValueKind.Array
+                ? string.Join('.', location.EnumerateArray()
+                    .Where(segment => segment.ValueKind is JsonValueKind.String or JsonValueKind.Number)
+                    .Select(segment => ErrorString(segment) ?? segment.GetRawText()))
+                : ErrorString(location);
+            yield return string.IsNullOrEmpty(path) ? text : $"{path}: {text}";
+        }
+
+        foreach (var property in detail.EnumerateObject())
+        {
+            // TypeSafe may include rejected values and extra context alongside a validation message.
+            if (property.Name is "input" or "ctx" or "loc")
+                continue;
+            foreach (var message in ValidationMessages(property.Value))
+                yield return message;
+        }
     }
+
+    private static JsonElement ErrorProperty(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
+
+    private static string? ErrorString(JsonElement element) =>
+        element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+
+    private static string BoundErrorText(string text) => text.Length <= MaxErrorTextLength ? text : text[..MaxErrorTextLength];
 
     private static DecisionUsage ParseUsage(JsonObject? usage)
     {
