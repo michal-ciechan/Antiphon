@@ -7,15 +7,12 @@
 // that keeps the length cannot be missed. A nightly run scans the same tree several times (each in-process
 // invocation of nightly-tests.ps1, and the source-gap, reason-gap and class-map walks of each); only the first
 // read of each file pays for the I/O.
-//
-// ExpectedSkipSourceGaps keeps the PowerShell comparisons: @{} keys are OrdinalIgnoreCase (the first spelling
-// inserted is the one searched for), string .LastIndexOf('.') is the current culture, and the two patterns are
-// case-sensitive [regex]::IsMatch patterns.
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
-using System.Text.RegularExpressions;
+using System.Linq;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Antiphon.Nightly
 {
@@ -62,97 +59,56 @@ namespace Antiphon.Nightly
             lock (Gate) Texts.Clear();
         }
 
-        private sealed class ClassBucket
-        {
-            public string Name;
-            public Regex Declaration;
-            public bool SeenClass;
-            public readonly Dictionary<string, bool> Methods = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-            public readonly List<string> MethodOrder = new List<string>();
-            public readonly Dictionary<string, Regex> MethodPatterns = new Dictionary<string, Regex>(StringComparer.Ordinal);
-        }
-
-        private static bool Split(string test, out string className, out string method)
-        {
-            className = null;
-            method = null;
-            var methodDot = test.LastIndexOf(".", StringComparison.CurrentCulture);
-            if (methodDot < 1) return false;
-            method = test.Substring(methodDot + 1);
-            var head = test.Substring(0, methodDot);
-            var classDot = head.LastIndexOf(".", StringComparison.CurrentCulture);
-            className = classDot < 0 ? head : head.Substring(classDot + 1);
-            return true;
-        }
-
         /// <summary>
-        /// Get-NightlyExpectedSkipSourceGaps for the already platform-filtered roster tests: each test whose class
-        /// is not declared in tests/**/*.cs, or whose method name is never followed by '(' in a file declaring it.
+        /// Roster identities with no matching qualified [Test] method in the test source tree.
         /// </summary>
         public static string[] ExpectedSkipSourceGaps(string testsRoot, string[] tests)
         {
-            if (tests == null || tests.Length == 0) return new string[0];
-            var byClass = new Dictionary<string, ClassBucket>(StringComparer.OrdinalIgnoreCase);
-            var classOrder = new List<ClassBucket>();
-            foreach (var raw in tests)
+            if (tests == null || tests.Length == 0) return Array.Empty<string>();
+            var identities = tests.Select(test => test ?? "").ToArray();
+            if (!Directory.Exists(testsRoot)) return identities;
+            var missing = new HashSet<string>(identities, StringComparer.Ordinal);
+            var classNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var identity in missing)
             {
-                var test = raw ?? string.Empty;
-                if (!Split(test, out var className, out var method)) continue;
-                if (!byClass.TryGetValue(className, out var bucket))
-                {
-                    bucket = new ClassBucket
-                    {
-                        Name = className,
-                        Declaration = new Regex(@"\bclass\s+" + Regex.Escape(className) + @"\b"),
-                    };
-                    byClass[className] = bucket;
-                    classOrder.Add(bucket);
-                }
-                if (!bucket.Methods.ContainsKey(method))
-                {
-                    bucket.MethodOrder.Add(method);
-                    bucket.MethodPatterns[method] = new Regex(@"\b" + Regex.Escape(method) + @"\s*\(");
-                }
-                bucket.Methods[method] = false;
+                var methodDot = identity.LastIndexOf('.');
+                if (methodDot <= 0) continue;
+                var classDot = identity.LastIndexOf('.', methodDot - 1);
+                classNames.Add(identity.Substring(classDot + 1, methodDot - classDot - 1));
             }
-            if (Directory.Exists(testsRoot))
+            var pending = new Stack<string>();
+            pending.Push(testsRoot);
+            while (pending.Count > 0 && missing.Count > 0)
             {
-                var pending = new Stack<string>();
-                pending.Push(testsRoot);
-                while (pending.Count > 0)
+                var dir = pending.Pop();
+                var name = Path.GetFileName(dir);
+                if (string.Equals(name, "bin", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "obj", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("bin-", StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (var sub in Directory.EnumerateDirectories(dir)) pending.Push(sub);
+                foreach (var file in Directory.EnumerateFiles(dir, "*.cs"))
                 {
-                    var dir = pending.Pop();
-                    var name = Path.GetFileName(dir);
-                    if (string.Equals(name, "bin", StringComparison.OrdinalIgnoreCase) || string.Equals(name, "obj", StringComparison.OrdinalIgnoreCase)
-                        || name.StartsWith("bin-", StringComparison.Ordinal)) continue;
-                    foreach (var sub in Directory.EnumerateDirectories(dir)) pending.Push(sub);
-                    foreach (var file in Directory.EnumerateFiles(dir, "*.cs"))
+                    var text = ReadText(file);
+                    if (!classNames.Any(candidate => text.Contains(candidate, StringComparison.Ordinal))) continue;
+                    foreach (var type in CSharpSyntaxTree.ParseText(text).GetRoot().DescendantNodes().OfType<TypeDeclarationSyntax>())
                     {
-                        var text = ReadText(file);
-                        foreach (var bucket in classOrder)
+                        if (!classNames.Contains(type.Identifier.ValueText)) continue;
+                        var containers = type.AncestorsAndSelf().Reverse().Select(node => node switch
                         {
-                            // Both patterns hold the name literally (case-sensitive): a file without it cannot match.
-                            if (text.IndexOf(bucket.Name, StringComparison.Ordinal) < 0) continue;
-                            if (!bucket.Declaration.IsMatch(text)) continue;
-                            bucket.SeenClass = true;
-                            foreach (var method in bucket.MethodOrder)
-                            {
-                                if (bucket.Methods[method]) continue;
-                                if (bucket.MethodPatterns[method].IsMatch(text)) bucket.Methods[method] = true;
-                            }
+                            BaseNamespaceDeclarationSyntax ns => string.Concat(ns.Name.DescendantTokens().Select(token => token.ValueText)),
+                            TypeDeclarationSyntax declaringType => declaringType.Identifier.ValueText,
+                            _ => null,
+                        }).Where(part => part != null);
+                        var qualifiedClass = string.Join(".", containers);
+                        foreach (var method in type.Members.OfType<MethodDeclarationSyntax>())
+                        {
+                            if (method.AttributeLists.SelectMany(list => list.Attributes)
+                                .Any(attribute => attribute.Name.GetLastToken().ValueText is "Test" or "TestAttribute"))
+                                missing.Remove(qualifiedClass + "." + method.Identifier.ValueText);
                         }
                     }
                 }
             }
-            var gaps = new List<string>();
-            foreach (var raw in tests)
-            {
-                var test = raw ?? string.Empty;
-                if (!Split(test, out var className, out var method)) { gaps.Add(test); continue; }
-                if (!byClass.TryGetValue(className, out var bucket) || !bucket.SeenClass
-                    || !bucket.Methods.TryGetValue(method, out var found) || !found) gaps.Add(test);
-            }
-            return gaps.ToArray();
+            return identities.Where(missing.Contains).ToArray();
         }
     }
 }

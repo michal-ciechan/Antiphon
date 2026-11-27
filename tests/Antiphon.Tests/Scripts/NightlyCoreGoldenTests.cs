@@ -1000,12 +1000,12 @@ public sealed class NightlyCoreGoldenTests
             foreach (var d in new[] { "A", "A/bin", "A/obj", "B/bin-x", "B/Deep", "C" }) Directory.CreateDirectory(Path.Combine(tests, d));
             var files = new (string Path, string Text)[]
             {
-                ("A/One.cs", "namespace N { public sealed class Alpha { public void Run() { } void Helper () { } } }"),
-                ("A/bin/Hidden.cs", "class Hidden { void Run() { } }"),
-                ("A/obj/Gen.cs", "class Generated { void Run() { } }"),
-                ("B/bin-x/Skip.cs", "class Skipped { void Run() { } }"),
-                ("B/Deep/Two.cs", "partial class Beta { async Task Go(){} } class AlphaBeta { void Other() { } }"),
-                ("C/Three.cs", "// class Gamma mentioned only\nclass gamma { void Run() { } }"),
+                ("A/One.cs", "namespace N { public sealed class Alpha { [Test] public void Run() { } [Test] public void Helper() { } } }"),
+                ("A/bin/Hidden.cs", "namespace N; class Hidden { [Test] void Run() { } }"),
+                ("A/obj/Gen.cs", "namespace N; class Generated { [Test] void Run() { } }"),
+                ("B/bin-x/Skip.cs", "namespace N; class Skipped { [Test] void Run() { } }"),
+                ("B/Deep/Two.cs", "partial class Beta { [Test] async Task Go(){} } namespace N { class AlphaBeta { [Test] void Other() { } } }"),
+                ("C/Three.cs", "// class Gamma mentioned only\nnamespace N; class gamma { [Test] void Run() { } }"),
             };
             foreach (var (relative, content) in files) File.WriteAllText(Path.Combine(tests, relative), content);
             var entries = new[] { "N.Alpha.Run", "N.Alpha.Helper", "N.Alpha.Missing", "N.ALPHA.run", "N.Hidden.Run", "N.Generated.Run", "N.Skipped.Run", "X.Beta.Go",
@@ -1018,10 +1018,10 @@ public sealed class NightlyCoreGoldenTests
             text.ShouldNotContain("\"N.Alpha.Run\"");
             // A same-length rewrite of a settled (cached) file must be seen by the next scan.
             var cached = Path.Combine(tests, "C/Cache.cs");
-            File.WriteAllText(cached, "class Cached { void Alpha() { } }");
+            File.WriteAllText(cached, "namespace N; class Cached { [Test] void Alpha() { } }");
             File.SetLastWriteTimeUtc(cached, DateTime.UtcNow.AddHours(-1));
             NightlyTestSources.ExpectedSkipSourceGaps(tests, ["N.Cached.Alpha"]).Length.ShouldBe(0, "settled");
-            File.WriteAllText(cached, "class Cached { void Omega() { } }");
+            File.WriteAllText(cached, "namespace N; class Cached { [Test] void Omega() { } }");
             NightlyTestSources.ExpectedSkipSourceGaps(tests, ["N.Cached.Alpha"]).Length.ShouldBe(1, "rewritten");
             NightlyTestSources.ReadText(cached).ShouldContain("Omega");
             // Assembly digest cache: a same-length rewrite of a settled (cached) file is rehashed, and a file still inside

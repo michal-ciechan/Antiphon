@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
+using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Scripts.Nightly.NightlyPlanCases;
 
@@ -24,6 +25,13 @@ public sealed partial class ReleaseGatePlatformTests
     [Test]
     public void LinuxOnlyWindowsExclusionPolicy()
     {
+        var skipRoster = NightlyChunkVerdict.SkipRoster(Path.Combine(Repo, "tests", "expected-platform-skips.json"));
+        foreach (var platform in new[] { "linux", "windows" })
+        {
+            var gaps = NightlyExpectedSkips.SourceGaps(Repo, platform, skipRoster, null);
+            gaps.ShouldBeEmpty($"Stale expected-platform skip entries for {platform}: {string.Join(", ", gaps)}");
+        }
+
         var rows = new NightlyCaseRows();
         string[] decisionClasses = ["ClaudeDialogWatchdogCanaryTests", "CheckpointOwnedOutputTests", "CheckpointLargeStampTests", "CheckpointShapeConflictTests",
             "CheckpointTrackedBaselineTests", "CheckpointOutputConfinementTests", "RunnerWorkspaceBindingTests"];
