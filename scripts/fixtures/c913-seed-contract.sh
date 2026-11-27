@@ -7,6 +7,8 @@ trap 'rm -rf -- "$root"' EXIT
 export C913_ROOT="$root"
 remote="$repo/scripts/c590-remote.sh"
 awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" > "$root/functions"
+# Unit 68: the host-published CLI the helpers mount read-only (c849_cli resolves nothing when this is set).
+C849_CLI_DIR="$root/cli"
 source "$root/functions"
 source <(awk '/^c849_fixture_inventory_fault\(\) \(/ { active=1 } active { print } active && /^\)$/ { active=0 }' "$remote")
 SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; CHECKOUT="$repo"; ROOT="$repo"
@@ -29,8 +31,7 @@ for command in dotnet npm curl pwsh docker; do
     printf '#!/bin/sh\nprintf "DENIED %%s\\n" "$0" >> "$C913_ROOT/denied"\nexit 93\n' > "$root/bin/$command"
     chmod 755 "$root/bin/$command"
 done
-# Preserve the actual interpreter for the admitted saved-import child; every other invocation is denied.
-pwsh_path=$(command -v pwsh)
+# Every invocation is denied; unit 68 made the admitted saved-import child the host CLI's command (the stand-in below).
 export PATH="$root/bin:$PATH"
 # Canonical design witnesses annotate the existing predicate that failed.
 # This changes diagnostics only; no predicate or refusal is bypassed.
@@ -227,6 +228,8 @@ docker() {
           *'.State.Running'*) if [ "$FAULT" = retired-running ] && [ "${@: -1}" = "$donor_id" ]; then echo true; else echo false; fi ;;
           *'com.docker.compose.project'*) echo "$TEMP_PROJECT" ;;
           *'com.docker.compose.service'*) echo session-runner ;;
+          # Unit 68: a runner has no CLI mount, so c849_cli_enter copies the host build into its /tmp.
+          *'"/opt/antiphon-cli"'*) printf '\n' ;;
           *'.Mounts'*) echo '[]' ;;
           *) return 94 ;;
         esac ;;
@@ -238,6 +241,7 @@ docker() {
         if [ "${@: -1}" = "$donor_id" ]; then rm -f "$root/donor-project"; fi
         return 0 ;;
       cp:*)
+        if [ "$2" = "$C849_CLI_DIR/." ] && [[ "$3" == *:/tmp/c849-cli-"$RUN" ]]; then printf 'cli-copy\n' >> "$root/trace"; return 0; fi
         if [[ "$2" == *'/packages/.' ]]; then source=packages; else source=npm; fi
         [ "$FAULT" != "copy-$source" ] || return 1
         if [ "$3" = - ]; then tar -C "$root/donor/$source" -cf - .; else cp -a "$root/donor/$source/." "$3/"; fi
@@ -248,6 +252,7 @@ docker() {
           if [ "$FAULT" = writer ]; then printf '1654 dotnet\n'; else printf '0 init\n'; fi
         elif [[ "$*" == *'ps -eo uid,args'* ]]; then [ "$FAULT" != process-error ] || return 1; if [ "$FAULT" = writer ]; then echo 1; else echo 0; fi
         elif [[ "$*" == *'rev-parse HEAD'* ]]; then echo "$SHA"
+        elif [[ "$*" == *" rm -rf -- /tmp/c849-cli-$RUN" ]] || [[ "$*" == *" chmod -R a+rX,go-w -- /tmp/c849-cli-$RUN" ]]; then [[ "$*" == 'exec -u 0:0 '* ]] || return 94
         elif [[ "$*" == *'curl '* ]]; then [ "$FAULT" != broker-error ] || return 1; if [ "$FAULT" = broker-busy ]; then printf '{"occupied":1,"leases":[{}]}'; else printf '{"occupied":0,"leases":[]}'; fi
         elif [[ "$*" == *'/bin/sh -s'* ]]; then
           cat >/dev/null
@@ -275,8 +280,16 @@ docker() {
           echo helper; return
         fi
         if [ "$entrypoint" = npm ]; then [ "$FAULT" != npm-verify ] || return 1; barrier after-npm-verify; return; fi
-        if [ "$entrypoint" = pwsh ]; then
-          "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$C590_SAVED_DONOR" -Stage "$stage" || return $?; barrier after-saved-copy; return
+        if [ "$entrypoint" = dotnet ]; then
+          # Unit 68: the saved import is the host-published CLI's c849-import-saved-donor, read-only at /opt/antiphon-cli (in process
+          # in C849SavedDonorImportTests, every refusal and the mode masking captured from the deleted script). This boundary checks
+          # the call and copies the donor's two roots as the command does for a packages/ npm/ donor.
+          [ "${*: -7}" = 'exec /opt/antiphon-cli/Antiphon.Scripts.dll c849-import-saved-donor --source /saved --stage /stage' ] || return 97
+          [[ " ${mappings[*]} " == *" /opt/antiphon-cli|$C849_CLI_DIR "* ]] || return 97
+          if [ -d "$C590_SAVED_DONOR" ]; then cp -a "$C590_SAVED_DONOR/." "$stage/" || return 2
+          else tar --no-overwrite-dir -xf "$C590_SAVED_DONOR" -C "$stage" || return 2; fi
+          find "$stage" -type f -perm /7000 -exec chmod ug-s,o-t {} +
+          barrier after-saved-copy; return
         fi
         if [ "$entrypoint" = sha256sum ]; then code="sha256sum ${!#}"; fi
         if [ -z "$code" ]; then code=$(cat); if [ "${@: -2:1}" = -- ]; then script_args=("bash" "${@: -1}"); fi; fi
@@ -665,14 +678,8 @@ case "$mode" in
       esac
       run c849_validate_seed_tree "$root/stage"; refuse "$fault-refused" "$diagnosis"
     done
-    ordinary "$root/mode-source"
-    chmod 6751 "$root/mode-source/packages/c913.tools/2.0.0/tool"
-    tar -cf "$root/mode.tar" -C "$root/mode-source" .
-    mkdir -p "$root/mode-stage/packages" "$root/mode-stage/npm"
-    run "$pwsh_path" -NoProfile -File "$repo/scripts/c849-import-saved-donor.ps1" -Source "$root/mode.tar" -Stage "$root/mode-stage"
-    accept unsafe-mode-imported
-    [ "$(stat -c %a "$root/mode-stage/packages/c913.tools/2.0.0/tool")" = 751 ] || fail unsafe-mode-masked
-    pass unsafe-mode-masked
+    # Unit 68: unsafe-mode-imported and unsafe-mode-masked ran scripts/c849-import-saved-donor.ps1 in pwsh on a 6751 tool; the
+    # command masks to 0777 (C849SavedDonorImportTests: the tar-basic, tar-dir-modes-not-applied and dir-basic captures).
     ;;
  seed)
     ordinary "$root/donor"

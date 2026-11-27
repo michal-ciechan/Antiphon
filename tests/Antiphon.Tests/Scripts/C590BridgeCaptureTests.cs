@@ -164,6 +164,10 @@ public sealed class C590BridgeCaptureTests
         foreach (var call in run["calls"]!.AsArray())
         {
             var record = call!.AsObject().DeepClone().AsObject();
+            // Unit 68: the bridge stopped copying scripts/c849-import-saved-donor.ps1 for runner-cache-seed (c590-remote.sh runs
+            // the c849-import-saved-donor command from server2's host-published CLI); the script's scp of it is the one call dropped.
+            if (script && record["name"]?.GetValue<string>() == "scp" && record["args"] is JsonArray copied
+                && copied.Any(a => a!.GetValue<string>().EndsWith("c849-import-saved-donor.ps1", StringComparison.Ordinal))) continue;
             if (record["upload"] is JsonValue upload && UploadDigest.IsMatch(upload.GetValue<string>())) record["upload"] = "<SHA256>";
             if (record.ContainsKey("stdinHex"))
             {

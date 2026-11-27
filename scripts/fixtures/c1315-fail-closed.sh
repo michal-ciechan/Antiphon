@@ -12,6 +12,8 @@ awk '/^(c849_[a-z_]+|case_verify_runner_caches_retired)\(\) \{/ { active=1 } act
 source "$root/functions"
 
 RUN=c849aaaaaaaaaaaaaaaa0
+# Unit 68: the host-published CLI the helpers mount read-only (c849_cli resolves nothing when this is set).
+C849_CLI_DIR="$root/cli"
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 HOST_PROJECT=antiphon-runner
 TEMP_PROJECT=antiphon-runner-temp

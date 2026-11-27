@@ -1420,6 +1420,17 @@ pass through untouched. Exit 9 with one stderr line (`antiphon-cli: ...`) means 
   has been untouched for 7 days. `CheckpointToolCommandTests`.
 - **The land validator** (unit 59, N2): the server starts the CLI's `checkpoints validate` directly, with no PowerShell
   (`CheckpointValidatorCommand`; see "Source qualification" under the checkpoint manifest).
+- **server2 containers** (unit 68): `scripts/c590-remote.sh` runs Antiphon code inside the containers of its C849 steps from
+  this cache on the server2 host. It calls `$CHECKOUT/scripts/antiphon` once with umask 022 (so uid 1654 can read the build;
+  an unreadable one is refused, not changed), reads `current`, mounts `bin-launcher/antiphon-scripts/<identity>/` read-only at
+  `/opt/antiphon-cli` in every helper it starts, and runs `dotnet exec /opt/antiphon-cli/Antiphon.Scripts.dll <command>` from
+  sh without `ANTIPHON_CLI_CHECK`, so nothing is checked, built or restored inside a container (the C849 cases measure those
+  containers' NuGet caches). A running runner, which cannot take a mount, gets a root-owned copy in its `/tmp` for the step,
+  removed after it. The image's .NET 9 runtime runs the framework-dependent `net9.0` build. The steps: the C849 smoke, the
+  refill, the fixture restore race and the warm control, each `build-slot --label <label> -- <command>` (they had run
+  `pwsh -File scripts/build-slot.ps1` with only that file mounted, which could not load `lib/antiphon-cli.ps1`), and the
+  saved-donor import, `c849-import-saved-donor --source /saved --stage /stage` (`scripts/c849-import-saved-donor.ps1` under
+  pwsh until unit 68).
 - **The PowerShell entry** (unit 63, N1): from PowerShell `scripts/antiphon` resolves to `scripts\antiphon.exe` ahead of
   `scripts\antiphon.cmd` (`PATHEXT`), and PowerShell hands a native program its arguments as it hands them to `dotnet`: a
   `|` in a TUnit or VSTest filter, an empty argument, inner quotes and cmd.exe's metacharacters reach the CLI unchanged,
@@ -1562,7 +1573,7 @@ is never a publication receipt.
 
 ## Host-independent cache disk readings (CARD-0997)
 
-`RemoteScriptContractTests` reaches `c849_budget_gate` and `c849-import-saved-donor.ps1` with fake free-space readings. The shell gate's `df` is a fixture-local function that accepts only `df -Pk <DockerRootDir>` and never calls the host `df`. The importer's optional `-GetAvailableFreeBytes` scriptblock defaults to `DriveInfo.AvailableFreeSpace` for the stage path it is given; `Check-Space` still compares that reading with 20 GiB plus the validated package and npm byte totals. `c849_saved_copy` and every other operational caller omit the parameter, so they keep the real disk admission. These Unit tests do not lower either threshold and do not skip when the host disk is low.
+`RemoteScriptContractTests` reaches `c849_budget_gate` with fake free-space readings, and `C849SavedDonorImportTests` reaches the `c849-import-saved-donor` command (`C849SavedDonorImport`, `scripts/c849-import-saved-donor.ps1` until unit 68) the same way. The shell gate's `df` is a fixture-local function that accepts only `df -Pk <DockerRootDir>` and never calls the host `df`. The command's `AvailableFreeBytes` seam defaults to `DriveInfo.AvailableFreeSpace` for the stage path it is given; its space gate still compares that reading with 20 GiB plus the validated package and npm byte totals. `c849_saved_copy` passes no reading, so it keeps the real disk admission. These Unit tests do not lower either threshold and do not skip when the host disk is low.
 
 ## Combined class filters (CARD-0403)
 

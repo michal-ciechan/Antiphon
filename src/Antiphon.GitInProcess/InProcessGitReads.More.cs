@@ -77,9 +77,10 @@ internal static partial class InProcessGitReads
     };
 
     /// <summary>
-    /// <c>cat-file -e &lt;full id&gt;</c> and <c>cat-file -e &lt;full id&gt;^{commit}</c> for an object that is present
-    /// (and, with the peel, is or peels to a commit): exit 0, no output. Anything else (an absent object, which a
-    /// partial clone may lazily fetch; one that does not peel; an abbreviated id or a ref name) is git's.
+    /// <c>cat-file -e &lt;full id&gt;</c> and <c>cat-file -e &lt;full id&gt;^{commit}</c>: exit 0, no output, for an
+    /// object that is present (and, with the peel, is or peels to a commit). An absent object, or one that does not
+    /// peel to a commit, is git's exit code (1 without the peel, 128 with it) unless the repository may be a partial
+    /// clone, where git would lazily fetch it. An abbreviated id or a ref name is git's.
     /// </summary>
     private static LandingGitResult? CatFileExists(Repository repo, IReadOnlyList<string> a)
     {
@@ -89,10 +90,33 @@ internal static partial class InProcessGitReads
         if (!GitText.IsOid(id)) return null;
         // Read as an object id only (PlainId: a ref of that hex name is git's, which warns), and without the peel only
         // the object database's index is asked, as git reads only the header: no whole blob is inflated.
-        if (!peel) return PlainId(repo, id) is { } oid && repo.ObjectDatabase.Contains(oid) ? Ok("") : null;
-        var peeled = ById(repo, id);
+        if (PlainId(repo, id) is not { } oid) return null;
+        if (!peel)
+            return repo.ObjectDatabase.Contains(oid) ? Ok("") : MayBePartialClone(repo) ? null : Exit(1);
+        GitObject? peeled = repo.Lookup(oid);
         while (peeled is TagAnnotation tag) peeled = tag.Target;
-        return peeled is LibGit2Sharp.Commit ? Ok("") : null;
+        if (peeled is LibGit2Sharp.Commit) return Ok("");
+        return peeled is null && MayBePartialClone(repo) ? null : Exit(128);
+    }
+
+    /// <summary>A repository whose config names a promisor remote or a partial-clone filter fetches missing objects
+    /// on demand; an object's absence there is git's to decide. Read from the common config file's text; a config that
+    /// includes another file or turns on per-worktree config (where such a key could also live) is treated as one.</summary>
+    private static bool MayBePartialClone(Repository repo)
+    {
+        if (CommonDirectory(repo.Info.Path) is not { } common) return true;
+        var config = Path.Combine(common, "config");
+        if (!File.Exists(config)) return false;
+        string text;
+        // Shared for delete/replace: git commits config.lock by renaming it over config, which a reader without
+        // FileShare.Delete would make fail on Windows.
+        using (var stream = new FileStream(config, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (var reader = new StreamReader(stream))
+            text = reader.ReadToEnd();
+        return text.Contains("promisor", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("partialclone", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("include", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("worktreeconfig", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

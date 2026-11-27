@@ -50,8 +50,11 @@ public sealed class Server2RollingDeployTests
     {
         Server2RollingStubOs.Wanted(_ => null).ShouldBeFalse();
         Server2RollingStubOs.Wanted(n => n == "C727_TEST_STATE" ? "state.json" : null).ShouldBeFalse("state alone is no stub");
-        Server2RollingStubOs.Wanted(n => n == "C727_TEST_HTTP_STUB" ? "http.ps1" : null).ShouldBeTrue();
-        Server2RollingStubOs.Wanted(n => n == "C727_TEST_VERIFY_STUB" ? "verify.ps1" : null).ShouldBeTrue();
+        Server2RollingStubOs.Wanted(n => n == "C727_TEST_HTTP_STUB" ? Server2RollingStubOs.FakeHttp : null).ShouldBeTrue();
+        Server2RollingStubOs.Wanted(n => n == "C727_TEST_VERIFY_STUB" ? "verify.mjs" : null).ShouldBeTrue();
+        // Unit 68: the HTTP fake is the one in process; a path (the deleted c727-fake-http.ps1) is a usage error.
+        Should.Throw<NightlyUsageException>(() => new Server2RollingStubOs(n => n == "C727_TEST_HTTP_STUB" ? "c727-fake-http.ps1" : null,
+            new Server2RollingOs(Path.GetTempPath())));
         var root = Directory.CreateTempSubdirectory("u65-stub-");
         try
         {
@@ -59,7 +62,7 @@ public sealed class Server2RollingDeployTests
             File.WriteAllText(state, "{\"scenario\":\"c1008\",\"clockMs\":1000}");
             var variables = new Dictionary<string, string>
             {
-                ["C727_TEST_VERIFY_STUB"] = "verify.ps1", ["C727_TEST_STATE"] = state, ["C727_TEST_WAIT_MS"] = "100", ["C727_TEST_POLL_MS"] = "5",
+                ["C727_TEST_VERIFY_STUB"] = "verify.mjs", ["C727_TEST_STATE"] = state, ["C727_TEST_WAIT_MS"] = "100", ["C727_TEST_POLL_MS"] = "5",
                 ["C727_TEST_LAND_WAIT_MS"] = "7",
             };
             var stub = new Server2RollingStubOs(n => variables.GetValueOrDefault(n)!, new Server2RollingOs(root.FullName));
@@ -75,7 +78,7 @@ public sealed class Server2RollingDeployTests
             File.ReadAllText(state).ShouldBe("{\"scenario\":\"c1008\"}");
             // Without C727_TEST_STATE there is no fixture clock; with the HTTP stub the reads are stubbed.
             variables.Remove("C727_TEST_STATE");
-            variables["C727_TEST_HTTP_STUB"] = "http.ps1";
+            variables["C727_TEST_HTTP_STUB"] = Server2RollingStubOs.FakeHttp;
             var reads = new Server2RollingStubOs(n => variables.GetValueOrDefault(n)!, new Server2RollingOs(root.FullName));
             reads.C994Now().ShouldBeNull();
             reads.Timing.StubbedReads.ShouldBeTrue();

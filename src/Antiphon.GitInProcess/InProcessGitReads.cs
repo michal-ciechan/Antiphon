@@ -49,7 +49,7 @@ internal static partial class InProcessGitReads
         // check-ref-format of a land ref we built ourselves needs no repository: every name of
         // this shape is valid under git-check-ref-format(1). Any other name is git's.
         if (arguments.Count == 2 && arguments[0] == "check-ref-format")
-            return LandRefName.IsMatch(arguments[1]) ? Ok("") : null;
+            return LandRefName.IsMatch(arguments[1]) || ProgressRefName.IsMatch(arguments[1]) ? Ok("") : null;
         // ls-remote of a local-path remote opens the remote, not this repository.
         if (arguments[0] == "ls-remote") return LsRemote(arguments);
         if (!Handled(arguments)) return null;
@@ -126,7 +126,9 @@ internal static partial class InProcessGitReads
     /// For runners that hand git's stderr to their callers as well (<c>WorktreeManager</c>,
     /// <c>GitWorkspaceService</c>): git's exit code and output only where git writes
     /// nothing to stderr, that is a success, or the silent exit 1 of <c>merge-base --is-ancestor</c>,
-    /// <c>symbolic-ref -q</c> (or <c>--quiet</c>), <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>. Null runs git.
+    /// <c>symbolic-ref -q</c> (or <c>--quiet</c>), <c>show-ref --verify --quiet</c> and <c>rev-parse --verify --quiet</c>,
+    /// plus <c>cat-file -e</c> of an absent object (1, or 128 with <c>^{commit}</c>), whose callers read only the exit
+    /// code and never git's stderr line. Null runs git.
     /// <c>remote get-url [--push] [--all] &lt;name&gt;</c> only with <paramref name="childEnvironment"/>, the git child's whole environment:
     /// its answer reads config, so it is judged against what that child would read (<see cref="TryAnswerRemoteUrl"/>).
     /// </summary>
@@ -150,9 +152,21 @@ internal static partial class InProcessGitReads
         if (answer is null) return null;
         var silent = answer.ExitCode == 0
             || answer.ExitCode == 1 && arguments is ["merge-base", "--is-ancestor", _, _] or ["symbolic-ref", "-q" or "--quiet", _]
-                or ["show-ref", "--verify", "--quiet", _] or ["rev-parse", "--verify", "--quiet", _];
+                or ["show-ref", "--verify", "--quiet", _] or ["rev-parse", "--verify", "--quiet", _]
+            // An absent object (exit 1, or 128 with the peel): every caller reads only the exit code, never git's
+            // "Not a valid object name" line.
+            || answer.ExitCode is 1 or 128 && arguments is ["cat-file", "-e", _];
         return silent ? (answer.ExitCode, answer.Output) : null;
     }
+
+    /// <summary>
+    /// The task-progress refs: refs/antiphon/progress/&lt;task&gt;/&lt;name&gt;, the name a lowercase word followed by
+    /// hyphenated lowercase-alphanumeric parts (settlement-sync, observe-&lt;hex&gt;). Valid under git-check-ref-format(1)
+    /// for the same reasons as <see cref="LandRefName"/>. Only the format check reads it; no write is made in process.
+    /// </summary>
+    internal static readonly System.Text.RegularExpressions.Regex ProgressRefName = new(
+        "^refs/antiphon/progress/[0-9a-f]{32}/[a-z]+(?:-[0-9a-z]+)*$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The land's own refs: refs/antiphon/land/&lt;task&gt;/&lt;operation&gt; plus up to two segments, each a

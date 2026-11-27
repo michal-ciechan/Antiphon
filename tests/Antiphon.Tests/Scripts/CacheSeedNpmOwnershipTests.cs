@@ -51,7 +51,7 @@ public sealed class CacheSeedNpmOwnershipTests
         var source = File.ReadAllText(Path.Combine(repo, "scripts", "c590-remote.sh"))
             .Replace("\r\n", "\n");
         var functions = new[] { "c849_seed", "c849_seed_failure", "c849_payload_fs",
-            "c849_fixture_helper_acquire", "c849_fixture_helper_exec" };
+            "c849_fixture_helper_acquire", "c849_fixture_helper_exec", "c849_cli" };
         var script = string.Join('\n', functions.Select(name => Extract(source, name))) +
             "\nfault='" + fault + "'\n" + File.ReadAllText(Path.Combine(repo, "tests",
                 "Antiphon.Tests", "Scripts", "Fixtures", "cache-seed-npm-ownership.sh"));

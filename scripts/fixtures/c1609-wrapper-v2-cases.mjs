@@ -64,38 +64,43 @@ fs.writeFileSync(root+'/server/retirement-origins.json',cp.execFileSync('jq',['-
 fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(-c protocol.file.allow=always)\nfor arg in "$@"; do\n if [ "$arg" = '+q(origin)+' ]; then args+=('+q(bare)+'); else args+=("$arg"); fi\ndone\nprintf "%s\\n" "$*" >> '+q(root+'/wrapper-host-git-trace')+'\nexec '+q(gitExe)+' "${args[@]}"\n',{mode:0o755});
 fs.writeFileSync(root+'/helper-auth-128','1\n');
 
-const adapter=root+'/wrapper-verifier.ps1';
-fs.writeFileSync(adapter,`
-param([string]$Case,[string]$Manifest)
-$ErrorActionPreference='Stop'
-if($Case -in @('retire-temp-runner','retire-temp-containers')) {
-  $r=Get-Content -Raw -LiteralPath $Manifest|ConvertFrom-Json
-  $path=[IO.Path]::GetFullPath([string]$r.evidenceRoot)
-  if($path -cnotmatch '/[.]antiphon/rolling-server2/c727[0-9a-f]{12}$'){throw 'unowned wrapper evidence'}
-  $registry=Join-Path $env:C1609_MANUAL_FIXTURE 'wrapper-evidence-roots.json'
-  $roots=@();if(Test-Path -LiteralPath $registry){$roots=@(Get-Content -Raw -LiteralPath $registry|ConvertFrom-Json)}
-  if($roots -cnotcontains $path){$roots+=@($path)}
-  [IO.File]::WriteAllText($registry,(ConvertTo-Json -InputObject @($roots) -Compress))
-  @{kind='real-case';name=$Case;recycle=$r.recycle}|ConvertTo-Json -Compress -Depth 20|Add-Content -LiteralPath $env:C727_TEST_TRACE
-  & '${repo}/scripts/antiphon' verify-docker-stack --case $Case --manifest $Manifest
-  exit $LASTEXITCODE
+// Unit 68: the deploy-server2 command's verifier seam starts this adapter directly (--case <case> [--manifest <path>]; it was
+// wrapper-verifier.ps1 under pwsh). The two retirement cases run the real verifier, the proof read the Close transport, and every
+// other case the verifier fake (the c727-fake-verify verb: scripts/fixtures/c727-fake-verify.ps1 in process). Not run on server2.
+const adapter=root+'/wrapper-verifier.mjs';
+fs.writeFileSync(adapter,`#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+import cp from 'node:child_process';
+const argv=process.argv.slice(2);
+const flag=name=>{const i=argv.indexOf(name);return i>=0?argv[i+1]:undefined;};
+const kase=flag('--case'),manifest=flag('--manifest');
+const repo=${JSON.stringify(repo)};
+const run=args=>{const r=cp.spawnSync(repo+'/scripts/antiphon',args,{stdio:'inherit'});if(r.error)throw r.error;process.exit(r.status??1);};
+if(kase==='retire-temp-runner'||kase==='retire-temp-containers'){
+  const r=JSON.parse(fs.readFileSync(manifest,'utf8'));
+  const full=path.resolve(String(r.evidenceRoot??''));
+  if(!/\\/[.]antiphon\\/rolling-server2\\/c727[0-9a-f]{12}$/.test(full))throw Error('unowned wrapper evidence');
+  const registry=path.join(process.env.C1609_MANUAL_FIXTURE,'wrapper-evidence-roots.json');
+  let roots=[];if(fs.existsSync(registry))roots=[].concat(JSON.parse(fs.readFileSync(registry,'utf8')));
+  if(!roots.includes(full))roots.push(full);
+  fs.writeFileSync(registry,JSON.stringify(roots));
+  fs.appendFileSync(process.env.C727_TEST_TRACE,JSON.stringify({kind:'real-case',name:kase,recycle:r.recycle})+'\\n');
+  run(['verify-docker-stack','--case',kase,'--manifest',manifest]);
 }
-if($Case -eq 'retirement-proof-read') {
-  # Unit 67: the c1609-read-packet command builds the proof read and sends it through the Close transport (Invoke-Server2Bash), where
-  # this dot-sourced scripts/retire-runner-volumes.ps1 and scripts/c1609-read-packet.ps1. Not run on server2.
-  $r=Get-Content -Raw -LiteralPath $Manifest|ConvertFrom-Json
-  & '${repo}/scripts/antiphon' c1609-read-packet --operation ([string]$r.operationId) --send
-  exit $LASTEXITCODE
+if(kase==='retirement-proof-read'){
+  // Unit 67: the c1609-read-packet command builds the proof read and sends it through the Close transport.
+  const r=JSON.parse(fs.readFileSync(manifest,'utf8'));
+  run(['c1609-read-packet','--operation',String(r.operationId??''),'--send']);
 }
-& '${repo}/scripts/fixtures/c727-fake-verify.ps1' -Case $Case -Manifest $Manifest
-exit $LASTEXITCODE
-`);
+run(['c727-fake-verify','--case',kase,...(manifest===undefined?[]:['--manifest',manifest])]);
+`,{mode:0o755});
 const vectors=JSON.parse(fs.readFileSync(repo+'/scripts/fixtures/c1008-recycle-cases.json'));
 fs.writeFileSync(root+'/wrapper-state.json',JSON.stringify({scenario:'c1008',sha:'a'.repeat(40),oldDeployed:false,tempContainer:false,clockMs:0,
  statuses:JSON.parse(fs.readFileSync(root+'/statuses.json')),tasks:vectors.emptyTasks}));
 const env={...process.env,PATH:bin+':'+process.env.PATH,C1609_MANUAL_FIXTURE:root,C1008_FIXTURE_ROOT:root,
  ANTIPHON_OPERATOR_TOKEN_FILE:token,ANTIPHON_TASK_TOKEN:'',ANTIPHON_API:'http://127.0.0.1:1',
- C727_TEST_HTTP_STUB:repo+'/scripts/fixtures/c727-fake-http.ps1',C727_TEST_VERIFY_STUB:adapter,
+ C727_TEST_HTTP_STUB:'c727-fake-http',C727_TEST_VERIFY_STUB:adapter,
  C727_TEST_STATE:root+'/wrapper-state.json',C727_TEST_TRACE:root+'/wrapper-trace.jsonl',C727_TEST_WAIT_MS:'100',C727_TEST_POLL_MS:'5',C727_TEST_LAND_WAIT_MS:'100'};
 const calls=[];
 function run(extra=[]){

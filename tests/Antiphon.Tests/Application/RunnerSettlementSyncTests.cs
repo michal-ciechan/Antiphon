@@ -1310,11 +1310,18 @@ public sealed class RunnerSettlementSyncTests
         {
             await EnsureRunnerAsync();
             File.WriteAllText(Path.Combine(Runner, file), content);
-            await RunAsync(Runner, "add", file);
-            await RunAsync(Runner, "commit", "-m", "runner " + file);
-            await RunAsync(Runner, "push", "origin", "HEAD:refs/heads/" + Branch);
-            return await RunAsync(Runner, "rev-parse", "HEAD");
+            // Setup, not the code under test: libgit2 stages, commits and pushes (to a local bare origin with no hooks)
+            // instead of five git processes plus receive-pack.
+            using var repo = new LibGit2Sharp.Repository(Runner);
+            LibGit2Sharp.Commands.Stage(repo, file);
+            var commit = repo.Commit("runner " + file, RunnerIdentity, RunnerIdentity, new LibGit2Sharp.CommitOptions());
+            repo.Network.Push(repo.Network.Remotes["origin"], "HEAD:refs/heads/" + Branch,
+                new LibGit2Sharp.PushOptions { OnPushStatusError = e => throw new InvalidOperationException("runner push refused: " + e.Message) });
+            return commit.Sha;
         }
+
+        private static LibGit2Sharp.Signature RunnerIdentity =>
+            new("CARD-0657 test", "c657@example.invalid", DateTimeOffset.Now);
 
         /// <summary>Another task's branch on the same origin, descending from B.</summary>
         public async Task<string> PublishForeignBranchAsync(string branch, string file)
@@ -1390,6 +1397,10 @@ public sealed class RunnerSettlementSyncTests
 
         private static async Task<LandingGitResult> ExecAsync(string directory, IReadOnlyList<string> arguments)
         {
+            // A read the land answers in process (rev-parse, for-each-ref, cat-file -e, ...) is answered the same way
+            // here: libgit2 instead of a git process, falling back to git for any shape it does not answer.
+            if (Antiphon.GitInProcess.InProcessGitReads.TryAnswer(directory, arguments) is { } answered)
+                return answered;
             var start = new System.Diagnostics.ProcessStartInfo("git")
             {
                 WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
@@ -1491,8 +1502,16 @@ public sealed class RunnerSettlementSyncTests
         public async Task EnsureRunnerAsync()
         {
             if (_runnerCloned) return;
-            await RunAsync(Root, "clone", "-b", Branch, Origin, Runner);
-            await ConfigureAsync(Runner);
+            // libgit2 clones the local bare origin and writes the identity: one in-process step instead of four git
+            // processes plus upload-pack.
+            LibGit2Sharp.Repository.Clone(Origin, Runner, new LibGit2Sharp.CloneOptions { BranchName = Branch });
+            using (var repo = new LibGit2Sharp.Repository(Runner))
+            {
+                repo.Config.Set("user.email", "c657@example.invalid", LibGit2Sharp.ConfigurationLevel.Local);
+                repo.Config.Set("user.name", "CARD-0657 test", LibGit2Sharp.ConfigurationLevel.Local);
+                repo.Config.Set("commit.gpgsign", false, LibGit2Sharp.ConfigurationLevel.Local);
+            }
+            await System.Threading.Tasks.Task.CompletedTask;
             _runnerCloned = true;
         }
 

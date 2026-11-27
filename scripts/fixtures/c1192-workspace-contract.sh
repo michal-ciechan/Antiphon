@@ -340,6 +340,8 @@ c1192_apply_mutation "$root/functions"
 # shellcheck disable=SC1091
 source "$root/functions"
 c1192_shield_probe_sigint
+# Unit 68: the host-published CLI the helpers mount read-only (c849_cli resolves nothing when this is set).
+C849_CLI_DIR="$root/cli"
 # m6: the INT handler returns before release and before exit 130.
 if [ "${C1192_MUTATION:-}" = m6 ]; then
     c849_fixture_on_signal() {

@@ -6,7 +6,8 @@
 // RetireRunnerVolumes, C1609ReadPacket) on the production host, the real file system and RetireRunnerVolumesOs; the stack verifier
 // runs in this process with the live server2 bridge (C590BridgeOs, C1609BoundedProcesses), as the verify-docker-stack command
 // does. This file passes in the checkout the CLI was built in (the scripts' repository). Nothing starts these by path, so none
-// keeps a launcher. ASCII only.
+// keeps a launcher. Unit 68 (W10 part 3) added c849-import-saved-donor (scripts/c849-import-saved-donor.ps1, C849SavedDonorImport),
+// which scripts/c590-remote.sh runs inside the runner image from the host-published CLI. ASCII only.
 using System;
 using System.IO.Abstractions;
 using System.Linq;
@@ -19,8 +20,9 @@ namespace Antiphon.Scripts
         internal const string VerifyCaches = "verify-card0849-caches";
         internal const string RetireVolumes = "retire-runner-volumes";
         internal const string ReadPacket = "c1609-read-packet";
+        internal const string ImportSavedDonor = "c849-import-saved-donor";
 
-        internal const string Usage = C849CacheFrontDoorOptions.Usage + " | " + RetireRunnerVolumesOptions.Usage + " | " + C1609ReadPacketOptions.Usage;
+        internal const string Usage = C849CacheFrontDoorOptions.Usage + " | " + RetireRunnerVolumesOptions.Usage + " | " + C1609ReadPacketOptions.Usage + " | " + C849SavedDonorImportOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
@@ -59,6 +61,15 @@ namespace Antiphon.Scripts
             var options = C1609ReadPacketOptions.Parse(args.Skip(1).ToArray(), Checkout);
             var (host, files, world) = Production();
             return C1609ReadPacket.Run(options, host, files, world);
+        }
+
+        // CARD-0849 (unit 68): exit 0 imported (nothing printed), 2 one Cache* diagnosis on stdout, or usage. Runs inside the runner
+        // image from the read-only /opt/antiphon-cli mount (c590-remote.sh's c849_saved_copy): the real disk, the stage's DriveInfo,
+        // /usr/bin/stat and the Unix file modes; no checkout and no host seams are needed there.
+        internal static int RunImportSavedDonor(string[] args)
+        {
+            var options = C849SavedDonorImportOptions.Parse(args.Skip(1).ToArray());
+            return C849SavedDonorImport.Run(options, new C849SavedDonorImportSeams { Files = new FileSystem() }, Console.Out);
         }
     }
 }

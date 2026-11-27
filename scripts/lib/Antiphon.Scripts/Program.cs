@@ -315,10 +315,12 @@ namespace Antiphon.Scripts
             // The W10 retirement and cache-check entries (unit 67). verify-card0849-caches: exit 0 accepted, 1 refused (one stderr
             // line). retire-runner-volumes: 0 closed or the manual phase done, 2 refused (one TempRetirementCloseRefused or
             // TempRetirementManualRefused line), 1 a thrown error. c1609-read-packet: 0 printed, 1 a refused packet, 2 a refused send.
+            // c849-import-saved-donor (unit 68, inside the runner image): 0 imported, 2 one Cache* diagnosis on stdout.
             // Usage is 2 for each.
             [RetirementCommands.VerifyCaches] = RetirementCommands.RunVerifyCaches,
             [RetirementCommands.RetireVolumes] = RetirementCommands.RunRetireVolumes,
             [RetirementCommands.ReadPacket] = RetirementCommands.RunReadPacket,
+            [RetirementCommands.ImportSavedDonor] = RetirementCommands.RunImportSavedDonor,
             // The desktop deploy answers every input itself (unit 49). deploy-local: exit 0 DEPLOY VERDICT: ok, 1 failed (a step's
             // failure, the restart and the verification included), 3 refused (a linked or unverifiable worktree; nothing touched).
             // Usage is 2.
@@ -342,6 +344,8 @@ namespace Antiphon.Scripts
             // deploy stopped: <reason>", or the ANTIPHON_API or operator-token line), 1 a refusal of the arguments, the SHA or the saved
             // donor before the main block. Usage is 2.
             [DeployCommands.DeployServer2Name] = DeployCommands.RunDeployServer2,
+            // The W10 node harness adapters' verifier fake (unit 68, a test verb): one case's output and exit (1 a thrown case). Usage 2.
+            [DeployCommands.FakeVerifyName] = DeployCommands.RunFakeVerify,
             // The CARD-1776 repository mirrors answer every input themselves (unit 52): exit 0 the plan (the default, --what-if) or the
             // mirrors written, 2 refused (one SERVER2-MIRRORS line; credential-absent before any git), 3 ambiguous-mode, 1 an I/O failure.
             // Usage is 2.
