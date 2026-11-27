@@ -40,6 +40,8 @@ public sealed class ReviewDecisionSettings
             Providers["grok-low-seat"] = new ReviewDecisionProvider { Dialect = SeatDialect, Model = "grok-low" };
         }
 
+        Validate();
+
         if (Chains.Count == 0)
         {
             Chains["decisions-default"] =
@@ -49,6 +51,29 @@ public sealed class ReviewDecisionSettings
                 new() { Provider = "haiku-seat", Transport = "Seat" },
                 new() { Provider = "grok-low-seat", Transport = "Seat" },
             ];
+        }
+    }
+
+    /// <summary>
+    /// <c>OneShot</c> is the <c>claude -p</c> transport. Any other dialect named on that transport
+    /// would be skipped or misrouted, so startup fails instead.
+    /// </summary>
+    public void Validate()
+    {
+        foreach (var (chain, entries) in Chains)
+        {
+            for (var index = 0; index < entries.Count; index++)
+            {
+                var entry = entries[index];
+                if (!entry.Transport.Equals("OneShot", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!Providers.TryGetValue(entry.Provider, out var provider))
+                    throw new InvalidOperationException(
+                        $"{SectionName}:Chains:{chain}:{index} transport OneShot names provider '{entry.Provider}', which is not configured.");
+                if (!provider.Dialect.Equals(ClaudeCliDialect, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        $"{SectionName}:Chains:{chain}:{index} transport OneShot requires dialect '{ClaudeCliDialect}', but provider '{entry.Provider}' is '{provider.Dialect}'. A proxy decision uses dialect '{JevDialects.LiteLlmSystemOne}' and transport Http.");
+            }
         }
     }
 

@@ -88,6 +88,40 @@ public class ClaudeCliTransportTests
     }
 
     [Test]
+    public async Task A_cli_that_cannot_start_rejects_the_chain_and_names_the_cause()
+    {
+        var cli = new FakeClaudeCli(_ => throw new ClaudeCliException("claude could not be started in scratch: not logged in. Run /login."));
+        var settings = Options.Create(new ReviewDecisionSettings
+        {
+            Providers = { ["haiku-cli"] = new ReviewDecisionProvider { Dialect = "claude-cli", Model = "haiku", TimeoutSeconds = 120 } },
+            Chains = { ["decisions-default"] = [new ReviewDecisionChainEntry { Provider = "haiku-cli", Transport = "OneShot" }] },
+        });
+        var chain = new DecisionChain([new ClaudeCliDecisionModel(cli, settings)], settings, TimeProvider.System, NullLogger<DecisionChain>.Instance);
+
+        var failure = await Should.ThrowAsync<DecisionChainException>(() => chain.DecideAsync("decisions-default", Decision, CancellationToken.None));
+
+        failure.Message.ShouldContain("rejected the request");
+        failure.Message.ShouldContain("not logged in");
+        failure.Calls.ShouldHaveSingleItem().Outcome.ShouldBe("rejected");
+        failure.Calls[0].Detail.ShouldContain("could not be started");
+    }
+
+    [Test]
+    public void OneShot_on_a_non_cli_dialect_fails_configuration()
+    {
+        var settings = new ReviewDecisionSettings
+        {
+            Providers = { ["proxy"] = new ReviewDecisionProvider { Dialect = JevDialects.LiteLlmSystemOne, Model = "jev-latest" } },
+            Chains = { ["decisions-default"] = [new ReviewDecisionChainEntry { Provider = "proxy", Transport = "OneShot" }] },
+        };
+
+        var error = Should.Throw<InvalidOperationException>(settings.Validate);
+        error.Message.ShouldContain("OneShot");
+        error.Message.ShouldContain(JevDialects.LiteLlmSystemOne);
+        error.Message.ShouldContain("Http");
+    }
+
+    [Test]
     public async Task A_fenced_answer_is_read_and_a_missing_or_invalid_answer_is_refused_for_that_question_only()
     {
         var cli = new FakeClaudeCli(_ => Task.FromResult(Answer("""

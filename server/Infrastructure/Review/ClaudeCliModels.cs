@@ -34,7 +34,7 @@ public sealed class ClaudeCliCompletionModel(IClaudeCli cli, IOptions<ReviewComp
         }
         catch (ClaudeCliException ex)
         {
-            throw new CompletionProviderException(ex.TimedOut ? DecisionFailureKind.Timeout : DecisionFailureKind.Unavailable, ex.Message);
+            throw new CompletionProviderException(ClaudeCliDecisionModel.Classify(ex), ex.Message);
         }
 
         return new CompletionResult(result.Text, new DecisionUsage(result.InputTokens, result.OutputTokens), result.CostUsd, "api-equivalent",
@@ -61,6 +61,28 @@ public sealed class ClaudeCliDecisionModel(IClaudeCli cli, IOptions<ReviewDecisi
 {
     public bool Serves(string dialect) => dialect.Equals(ReviewDecisionSettings.ClaudeCliDialect, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// A timeout falls back. A CLI that cannot start, is not signed in, or rejects the request does not:
+    /// that is our setup, and falling back would hide it (design 7.4). Other non-zero exits stay unavailable.
+    /// </summary>
+    public static DecisionFailureKind Classify(ClaudeCliException ex)
+    {
+        if (ex.TimedOut)
+            return DecisionFailureKind.Timeout;
+        var text = ex.Message;
+        if (text.Contains("could not be started", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("not logged in", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("not signed in", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("/login", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("authentication", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("unauthorized", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("API Error: 401", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("API Error: 403", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Invalid API key", StringComparison.OrdinalIgnoreCase))
+            return DecisionFailureKind.Rejected;
+        return DecisionFailureKind.Unavailable;
+    }
+
     public async Task<DecisionResult> DecideAsync(DecisionRequest request, DecisionOptions options, CancellationToken ct)
     {
         if (!settings.Value.Providers.TryGetValue(options.ProviderId, out var provider))
@@ -77,7 +99,7 @@ public sealed class ClaudeCliDecisionModel(IClaudeCli cli, IOptions<ReviewDecisi
         }
         catch (ClaudeCliException ex)
         {
-            throw new DecisionProviderException(ex.TimedOut ? DecisionFailureKind.Timeout : DecisionFailureKind.Unavailable, ex.Message);
+            throw new DecisionProviderException(Classify(ex), ex.Message);
         }
 
         var servedBy = new DecisionServedBy(options.ProviderId, ClaudeCliScratch.Transport, result.Model);

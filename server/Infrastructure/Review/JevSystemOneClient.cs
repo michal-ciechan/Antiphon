@@ -86,18 +86,16 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
     }
 
     /// <summary>
-    /// The request body (design 7.3). Option descriptions are folded into <c>instructions</c> as
-    /// <c>value: description</c> lines until OQ-3 settles whether Jev takes description fields (ABF-4).
+    /// The request body for <c>POST /v1/systemone</c> (LiteLLM 1.110 / TypeSafe). A choice's
+    /// <c>criteria</c> is a map of option value to description (null when the value is enough).
+    /// A score's <c>criteria</c> is the level labels, lowest first. The OpenAI
+    /// <c>choices</c>/<c>levels</c> shape is rejected with 400 before Jev is called.
     /// </summary>
     public static JsonObject BuildBody(DecisionRequest request, string model)
     {
         var questions = new JsonObject();
         foreach (var question in request.Questions)
         {
-            var instructions = question.Instructions;
-            var described = question.Options.Where(o => !string.IsNullOrWhiteSpace(o.Description)).ToList();
-            if (described.Count > 0)
-                instructions += "\n" + string.Join("\n", described.Select(o => $"{o.Value}: {o.Description}"));
             var item = new JsonObject
             {
                 ["type"] = question.Kind switch
@@ -106,12 +104,20 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
                     DecisionQuestionKind.Choice => "choice",
                     _ => "score",
                 },
-                ["instructions"] = instructions,
+                ["instructions"] = question.Instructions,
             };
             if (question.Kind == DecisionQuestionKind.Choice)
-                item["choices"] = new JsonArray(question.Options.Select(o => (JsonNode)new JsonObject { ["value"] = o.Value }).ToArray());
+            {
+                var criteria = new JsonObject();
+                foreach (var option in question.Options)
+                    criteria[option.Value] = string.IsNullOrWhiteSpace(option.Description) ? null : option.Description;
+                item["criteria"] = criteria;
+            }
             else if (question.Kind == DecisionQuestionKind.Score)
-                item["levels"] = new JsonArray(question.Options.Select(o => (JsonNode)new JsonObject { ["label"] = o.Value }).ToArray());
+            {
+                item["criteria"] = new JsonArray(question.Options.Select(o => (JsonNode)o.Value).ToArray());
+            }
+
             questions[question.Name] = item;
         }
 
@@ -212,7 +218,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
             double? yes = node switch
             {
                 JsonValue v when v.TryGetValue<double>(out var p) => p,
-                JsonObject o when Number(o["probability"] ?? o["p_yes"] ?? o["value"] ?? o["answer"]) is { } p => p,
+                JsonObject o when Number(o["noul"] ?? o["probability"] ?? o["p_yes"] ?? o["value"] ?? o["answer"]) is { } p => p,
                 _ => probabilities.TryGetValue("yes", out var py) ? py : probabilities.TryGetValue("true", out var pt) ? pt : null,
             };
             if (yes is not { } pYes || pYes is < 0 or > 1)
@@ -230,9 +236,12 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         var valueText = node switch
         {
             JsonValue v => v.ToString(),
-            JsonObject o => Text(o["value"] ?? o["answer"] ?? o["label"]),
+            JsonObject o => Text(o["choice"] ?? o["score"] ?? o["value"] ?? o["answer"] ?? o["label"]),
             _ => null,
         };
+        if (valueText is not null && question.Kind == DecisionQuestionKind.Score && int.TryParse(valueText, out var scoreIndex)
+            && scoreIndex >= 0 && scoreIndex < question.Options.Count)
+            valueText = question.Options[scoreIndex].Value;
         if (valueText is null && probabilities.Count > 0)
             valueText = probabilities.MaxBy(p => p.Value).Key;
         if (valueText is null || question.Options.All(o => o.Value != valueText))

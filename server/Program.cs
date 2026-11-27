@@ -213,6 +213,8 @@ try
                 if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
                     provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
             }
+
+            s.Validate();
         });
     builder.Services.AddOptions<ReviewCodeHostSettings>()
         .Bind(builder.Configuration.GetSection(ReviewCodeHostSettings.SectionName))

@@ -19,7 +19,8 @@ public sealed record DecisionCall(
     long OutputTokens,
     decimal CostUsd,
     string CostBasis,
-    TimeSpan Latency);
+    TimeSpan Latency,
+    string? Detail = null);
 
 /// <summary>The merged answers of a chain, one per question, and every call it made.</summary>
 public sealed record DecisionChainResult(IReadOnlyDictionary<string, DecisionAnswer> Answers, IReadOnlyList<DecisionCall> Calls)
@@ -110,7 +111,7 @@ public sealed class DecisionChain(
         if (accepted.Count == 0 && fallback.Count == 0)
         {
             throw new DecisionChainException(
-                $"Decision chain '{chain}' has no usable entry: {string.Join(", ", calls.Select(c => $"{c.Provider}={c.Outcome}"))}.",
+                $"Decision chain '{chain}' has no usable entry: {string.Join(", ", calls.Select(Describe))}.",
                 calls);
         }
 
@@ -163,13 +164,14 @@ public sealed class DecisionChain(
             {
                 var outcome = Outcome(ex.Kind);
                 calls.Add(new DecisionCall(chain, index, entry.Provider, entry.Transport, null, outcome, asked, 0, 0, 0m, "actual",
-                    Stopwatch.GetElapsedTime(started)));
+                    Stopwatch.GetElapsedTime(started), Trim(ex.Message)));
                 if (ex.Kind == DecisionFailureKind.Rejected)
                 {
                     logger.LogError("Decision chain {Chain} entry {Entry} ({Provider}) rejected the request: {Status} {Message}",
                         chain, index, entry.Provider, ex.StatusCode, ex.Message);
+                    var status = ex.StatusCode is int code ? $" ({code})" : "";
                     throw new DecisionChainException(
-                        $"Provider '{entry.Provider}' rejected the request ({ex.StatusCode}): {ex.Message}", calls, ex.Kind);
+                        $"Provider '{entry.Provider}' rejected the request{status}: {ex.Message}", calls, ex.Kind);
                 }
 
                 if (ex.Kind == DecisionFailureKind.RateLimited && attempt == 0 && !provider.ProxyManagedRetry)
@@ -191,6 +193,17 @@ public sealed class DecisionChain(
 
     private static DecisionCall Skipped(string chain, int index, ReviewDecisionChainEntry entry, IReadOnlyList<string> asked, string outcome) =>
         new(chain, index, entry.Provider, entry.Transport, null, outcome, asked, 0, 0, 0m, "actual", TimeSpan.Zero);
+
+    private static string Describe(DecisionCall call) =>
+        string.IsNullOrWhiteSpace(call.Detail) ? $"{call.Provider}={call.Outcome}" : $"{call.Provider}={call.Outcome} ({call.Detail})";
+
+    private static string Trim(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+        var flat = text.ReplaceLineEndings(" ").Trim();
+        return flat.Length <= 240 ? flat : flat[..240];
+    }
 
     private static string Outcome(DecisionFailureKind kind) => kind switch
     {

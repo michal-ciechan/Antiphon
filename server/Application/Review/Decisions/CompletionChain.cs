@@ -69,15 +69,18 @@ public sealed class CompletionChain(
             catch (CompletionProviderException ex)
             {
                 calls.Add(new DecisionCall(chain, index, entry.Provider, entry.Transport, null, ex.Kind.ToString(), asked, 0, 0, 0m, "actual",
-                    Stopwatch.GetElapsedTime(started)));
+                    Stopwatch.GetElapsedTime(started), ex.Message));
                 if (ex.Kind == DecisionFailureKind.Rejected)
-                    throw new DecisionChainException($"Provider '{entry.Provider}' rejected the completion ({ex.StatusCode}): {ex.Message}", calls, ex.Kind);
+                {
+                    var status = ex.StatusCode is int code ? $" ({code})" : "";
+                    throw new DecisionChainException($"Provider '{entry.Provider}' rejected the completion{status}: {ex.Message}", calls, ex.Kind);
+                }
                 logger.LogWarning("Completion chain {Chain} entry {Entry} ({Provider}) skipped: {Kind} {Message}",
                     chain, index, entry.Provider, ex.Kind, ex.Message);
             }
         }
 
         throw new DecisionChainException(
-            $"Completion chain '{chain}' has no usable entry: {string.Join(", ", calls.Select(c => $"{c.Provider}={c.Outcome}"))}.", calls);
+            $"Completion chain '{chain}' has no usable entry: {string.Join(", ", calls.Select(c => string.IsNullOrWhiteSpace(c.Detail) ? $"{c.Provider}={c.Outcome}" : $"{c.Provider}={c.Outcome} ({c.Detail})"))}.", calls);
     }
 }

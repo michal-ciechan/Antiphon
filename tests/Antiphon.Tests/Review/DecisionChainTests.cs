@@ -28,9 +28,9 @@ public class DecisionChainTests
     private const string GoodAnswers = """
         { "model": "typesafe/jev-1.13.0",
           "answers": {
-            "persistent_data": { "probability": 0.12 },
-            "change_kind": { "value": "bugfix", "probabilities": { "feature": 0.1, "bugfix": 0.9 } },
-            "reach": { "value": "A few", "probabilities": { "One place": 0.2, "A few": 0.7, "System-wide": 0.1 } } },
+            "persistent_data": { "type": "noul", "noul": 0.12 },
+            "change_kind": { "type": "choice", "choice": "bugfix", "confidence": 0.9, "probabilities": { "feature": 0.1, "bugfix": 0.9 } },
+            "reach": { "type": "score", "score": 1, "confidence": 0.7, "probabilities": { "One place": 0.2, "A few": 0.7, "System-wide": 0.1 } } },
           "usage": { "input_tokens": 2000000, "output_tokens": 30 } }
         """;
 
@@ -50,9 +50,9 @@ public class DecisionChainTests
         body["model"]!.GetValue<string>().ShouldBe("jev-latest");
         body["state"]!.GetValue<string>().ShouldStartWith("PR #812");
         body["questions"]!["persistent_data"]!["type"]!.GetValue<string>().ShouldBe("noul");
-        body["questions"]!["change_kind"]!["choices"]!.ToJsonString().ShouldBe("""[{"value":"feature"},{"value":"bugfix"}]""");
-        body["questions"]!["change_kind"]!["instructions"]!.GetValue<string>().ShouldEndWith("bugfix: Fixes a defect");
-        body["questions"]!["reach"]!["levels"]![2]!["label"]!.GetValue<string>().ShouldBe("System-wide");
+        body["questions"]!["change_kind"]!["criteria"]!.ToJsonString().ShouldBe("""{"feature":null,"bugfix":"Fixes a defect"}""");
+        body["questions"]!["change_kind"]!["instructions"]!.GetValue<string>().ShouldBe("What kind of change is this?");
+        body["questions"]!["reach"]!["criteria"]!.ToJsonString().ShouldBe("""["One place","A few","System-wide"]""");
 
         result.ServedBy.ResolvedModel.ShouldBe("typesafe/jev-1.13.0");
         result.CostUsd.ShouldBe(0.0123m);
