@@ -28,8 +28,8 @@ public sealed partial class ReleaseGatePlatformTests
         var skipRoster = NightlyChunkVerdict.SkipRoster(Path.Combine(Repo, "tests", "expected-platform-skips.json"));
         foreach (var platform in new[] { "linux", "windows" })
         {
-            var gaps = NightlyExpectedSkips.SourceGaps(Repo, platform, skipRoster, null);
-            gaps.ShouldBeEmpty($"Stale expected-platform skip entries for {platform}: {string.Join(", ", gaps)}");
+            var staleEntries = NightlyExpectedSkips.SourceGaps(Repo, platform, skipRoster, null);
+            staleEntries.ShouldBeEmpty($"Stale expected-platform skip entries for {platform}: {string.Join(", ", staleEntries)}");
         }
 
         var rows = new NightlyCaseRows();
