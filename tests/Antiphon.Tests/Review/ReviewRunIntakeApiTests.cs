@@ -576,7 +576,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
                 Goal: $"Review the pinned change for run {runId:D}.\nCheck the close boundary.",
                 Title: "Buffered review brief", Role: AgentTaskRole.Review, AgentKind: AgentKind.ClaudeCode,
                 Workspace: WorkspaceMode.ReadOnly, WorkingDirectory: directory, AgentId: agentId,
-                CommitOnSettle: "Never", ReplyTo: AgentTaskReplyTo.None),
+                CommitOnSettle: "Never"),
                 null, directory, new ReviewerTaskLink(runId, reviewer.Id, 1, TimeSpan.FromMinutes(90)), ct);
 
             await using var dispatch = server.Provider.CreateAsyncScope();
@@ -603,7 +603,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         }
 
         if (close)
-            await CloseBufferedRunAsync(client, runId, ct);
+            await CloseCurrentAsync(client, runId, ct);
 
         // A new queue service and runtime attach to the same recipient generation and existing draft.
         await using var restarted = await BridgeQueueHarness.CreateAsync(options with
@@ -649,12 +649,107 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         public IAgentProtocolAdapter Create(AgentKind kind) => recipient;
     }
 
-    private static async Task CloseBufferedRunAsync(HttpClient client, Guid id, CancellationToken ct)
+    private static async Task CloseCurrentAsync(HttpClient client, Guid id, CancellationToken ct)
     {
         var current = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{id}", ct);
         using var close = await client.PostAsJsonAsync($"/api/review-runs/{id}/close",
             new { concurrencyToken = current.GetProperty("concurrencyToken").GetUInt32(), reason = "maintainer closed" }, ct);
         close.StatusCode.ShouldBe(HttpStatusCode.OK, await close.Content.ReadAsStringAsync(ct));
+    }
+
+    [Test]
+    public async Task Polling_refuses_a_run_reply_when_close_wins_before_GitHub_send(CancellationToken ct)
+    {
+        const int number = 209670;
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        await SetRunStatusAsync(runId, ReviewRunStatus.Failed, ct);
+        factory.Host.Comment(number, "209670", "maintainer", "OWNER", "/antiphon recheck");
+        await using var scope = factory.Services.CreateAsyncScope();
+        var github = scope.ServiceProvider.GetRequiredService<GitHubCodeHost>();
+        factory.Host.ConversationReply = async (target, body, token) =>
+        {
+            body.ShouldStartWith("Round 1 queued");
+            await CloseCurrentAsync(client, runId, token);
+            return await github.PostConversationCommentAsync(target, body, token);
+        };
+        try
+        {
+            var pass = await PollRepoAsync(Repo, ct, number);
+            pass.CommandsHandled.ShouldBe(1, pass.Error);
+            factory.MergeHandler.ConversationWrites.ShouldBe(0, "the queued-round reply reached the persisted close fence");
+        }
+        finally
+        {
+            factory.Host.ConversationReply = null;
+        }
+    }
+
+    [Test]
+    public async Task An_admitted_review_keeps_its_receipt_when_close_commits_before_the_step_returns(CancellationToken ct)
+    {
+        const int number = 209671;
+        using var client = OpenPullRequest(number);
+        var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var runId = Id(created);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var db = services.GetRequiredService<AppDbContext>();
+        var run = await db.ReviewRuns.Include(r => r.Subject).Include(r => r.Iterations).Include(r => r.Nodes)
+            .AsSplitQuery().SingleAsync(r => r.Id == runId, ct);
+        var workflow = services.GetRequiredService<ReviewWorkflowService>().Default;
+        var collate = workflow.Nodes.Single(n => n.Run == "CollateFindings");
+        var publish = workflow.Nodes.Single(n => n.Run == "Publish");
+        var walk = new ReviewWalk(services, db, run, run.Iterations.Single(), workflow, TimeProvider.System);
+        var collated = walk.NewExecution(collate.Id, collate.Kind);
+        collated.Status = ReviewNodeStatus.Succeeded;
+        collated.OutputJson = ReviewWalk.ToJson(new CollateOutput(
+            [new FindingCandidate("C1", "correctness", "none", ReviewSeverity.Blocker, 0.99,
+                "src/Widget.cs", 10, null, true, "return result;", "Result can be null", "Handle the empty case.", null, [], null)],
+            [], []));
+        var execution = walk.NewExecution(publish.Id, publish.Kind);
+        execution.Status = ReviewNodeStatus.Running;
+        await db.SaveChangesAsync(ct);
+
+        // The fake has accepted and recorded the review at this boundary, before it returns its receipt.
+        factory.Host.AfterReviewPosted = token => CloseCurrentAsync(client, runId, token);
+        try
+        {
+            await ReviewReviewSteps.PublishAsync(walk, publish, execution, ct);
+        }
+        finally
+        {
+            factory.Host.AfterReviewPosted = null;
+        }
+
+        factory.Host.Pr(number).Read(p => p.Reviews.Count).ShouldBe(1);
+        var saved = await db.ReviewFindings.AsNoTracking().SingleOrDefaultAsync(f => f.RunId == runId, ct);
+        saved.ShouldNotBeNull("the admitted review is visible on GitHub and must remain linked locally");
+        saved.Posted.ShouldBeTrue();
+        saved.ExternalCommentId.ShouldBe("c1");
+        var node = await db.ReviewNodeExecutions.AsNoTracking().SingleAsync(n => n.Id == execution.Id, ct);
+        node.Status.ShouldBe(ReviewNodeStatus.Skipped);
+        ReviewWalk.Output<PublishOutput>(node).ShouldNotBeNull().ReviewId.ShouldBe("r1");
+        (await db.ReviewRuns.AsNoTracking().SingleAsync(r => r.Id == runId, ct)).Status.ShouldBe(ReviewRunStatus.Closed);
+    }
+
+    private async Task SetRunStatusAsync(Guid id, ReviewRunStatus status, CancellationToken ct)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.ReviewRuns.Where(r => r.Id == id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, status), ct)).ShouldBe(1);
+    }
+
+    private async Task<ReviewPollingRepoPassDto> PollRepoAsync(string repo, CancellationToken ct, params int[] numbers)
+    {
+        var state = new ReviewPollingState();
+        var poller = new ReviewPoller(factory.Services.GetRequiredService<IServiceScopeFactory>(), state,
+            Options.Create(new ReviewPollingSettings { Repos = [new ReviewPollingRepo { Repo = repo }] }),
+            TimeProvider.System, NullLogger<ReviewPoller>.Instance);
+        factory.Host.IncludedPollPullRequests = numbers.ToHashSet();
+        try { return (await poller.PollOnceAsync("test", ct)).Repos.ShouldHaveSingleItem(); }
+        finally { factory.Host.IncludedPollPullRequests = null; }
     }
 
     private HttpClient OpenPullRequest(int number)
@@ -719,12 +814,18 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     {
         private int _writes;
         public int Writes => Volatile.Read(ref _writes);
+        public int ConversationWrites { get; private set; }
         public TaskCompletionSource FirstAttempt { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/repos/acme/widgets")
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"id":1234}""") });
+            if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/repos/acme/widgets/issues/209670/comments")
+            {
+                ConversationWrites++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created) { Content = new StringContent("""{"id":1}""") });
+            }
             request.Method.ShouldBe(HttpMethod.Put);
             request.RequestUri!.AbsolutePath.ShouldBe("/repos/acme/widgets/pulls/209663/merge");
             if (Interlocked.Increment(ref _writes) == 1)

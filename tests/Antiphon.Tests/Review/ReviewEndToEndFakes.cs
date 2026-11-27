@@ -15,6 +15,10 @@ public sealed class ScriptedCodeHost : ICodeHost
     private readonly ConcurrentDictionary<int, ScriptedPr> _prs = new();
     private readonly List<CodeHostConversationComment> _comments = [];
 
+    internal Func<CancellationToken, Task>? AfterReviewPosted { get; set; }
+    internal Func<CodeHostTarget, string, CancellationToken, Task<CodeHostThreadReply>>? ConversationReply { get; set; }
+    internal IReadOnlySet<int>? IncludedPollPullRequests { get; set; }
+
     public bool Serves(ReviewHost kind) => kind == ReviewHost.GitHub;
 
     public CodeHostCapabilities Capabilities { get; } = new(
@@ -94,9 +98,10 @@ public sealed class ScriptedCodeHost : ICodeHost
     public Task<string?> ReadFileAsync(CodeHostTarget target, string sha, string path, CancellationToken ct) =>
         throw new CodeHostException(CodeHostFailureKind.Unsupported, "The scripted host reads no files.");
 
-    public Task<CodeHostPostedReview> PostReviewAsync(CodeHostTarget target, CodeHostReview review, CancellationToken ct)
+    public async Task<CodeHostPostedReview> PostReviewAsync(CodeHostTarget target, CodeHostReview review, CancellationToken ct)
     {
         var pr = Of(target);
+        CodeHostPostedReview receipt;
         lock (pr)
         {
             pr.Reviews.Add(review);
@@ -105,8 +110,11 @@ public sealed class ScriptedCodeHost : ICodeHost
                 var n = Interlocked.Increment(ref pr.CommentCounter);
                 return new CodeHostPostedComment(c.Path, c.Line, $"c{n}", $"t{n}", $"https://github.example/acme/widgets/pull/{pr.Number}#discussion_r{n}");
             }).ToList();
-            return Task.FromResult(new CodeHostPostedReview($"r{pr.Reviews.Count}", $"https://github.example/acme/widgets/pull/{pr.Number}#review-{pr.Reviews.Count}", posted));
+            receipt = new CodeHostPostedReview($"r{pr.Reviews.Count}", $"https://github.example/acme/widgets/pull/{pr.Number}#review-{pr.Reviews.Count}", posted);
         }
+        if (AfterReviewPosted is { } after)
+            await after(ct);
+        return receipt;
     }
 
     public Task<CodeHostThreadReply> ReplyToThreadAsync(CodeHostTarget target, string commentId, string body, CancellationToken ct)
@@ -177,6 +185,7 @@ public sealed class ScriptedCodeHost : ICodeHost
 
     public Task<IReadOnlyList<CodeHostOpenPullRequest>> ListOpenPullRequestsAsync(CodeHostTarget target, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<CodeHostOpenPullRequest>>(_prs.Values
+            .Where(pr => IncludedPollPullRequests is null || IncludedPollPullRequests.Contains(pr.Number))
             .Select(pr => pr.Read(p => p.State == CodeHostPullRequestState.Open
                 ? new CodeHostOpenPullRequest(p.Number, p.Title, p.Author, p.IsDraft, "main", p.HeadSha, p.Labels.ToList(), DateTime.UtcNow)
                 : null))
@@ -190,12 +199,14 @@ public sealed class ScriptedCodeHost : ICodeHost
         lock (_comments)
         {
             CommentListings.Add(since);
-            return Task.FromResult<IReadOnlyList<CodeHostConversationComment>>(_comments.Where(c => c.CreatedAt >= since).OrderBy(c => c.CreatedAt).ToList());
+            return Task.FromResult<IReadOnlyList<CodeHostConversationComment>>(_comments.Where(c => c.CreatedAt >= since
+                && (IncludedPollPullRequests is null || IncludedPollPullRequests.Contains(c.PrNumber))).OrderBy(c => c.CreatedAt).ToList());
         }
     }
 
     public Task<CodeHostThreadReply> PostConversationCommentAsync(CodeHostTarget target, string body, CancellationToken ct)
     {
+        if (ConversationReply is { } reply) return reply(target, body, ct);
         var pr = Of(target);
         lock (pr)
         {
