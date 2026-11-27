@@ -80,7 +80,7 @@ public sealed class EfInboxReceiptStoreTests
             "duplicate key value violates unique constraint",
             "ERROR",
             "ERROR",
-            PostgresErrorCodes.UniqueViolation)).ShouldBeTrue();
+            PostgresErrorCodes.UniqueViolation, constraintName: "PK_Inbox")).ShouldBeFalse();
     }
 
     [Test]
@@ -174,7 +174,7 @@ public sealed class EfInboxReceiptStoreTests
             "duplicate key value violates unique constraint \"IX_Inbox_Channel_ChannelMessageId\"",
             "ERROR",
             "ERROR",
-            PostgresErrorCodes.UniqueViolation);
+            PostgresErrorCodes.UniqueViolation, constraintName: InboxUniqueConstraint.ChannelMessageIndex);
         return new DbUpdateException("An error occurred while saving the entity changes.", postgres);
     }
 

@@ -329,6 +329,29 @@ public class ClaudeDialogInputGuardTests
         }
     }
 
+    [Test]
+    public async Task AdoptedClaudeRequiresOwnedCompletedTurnAndEmptyComposer()
+    {
+        await using var f = new Fixture(adopted: true);
+        var tailer = new Tailer(f.Id);
+        f.Session.AttachTailerForTest(tailer);
+        (await f.SendAsync("early")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        tailer.Observation = new(TerminalTranscriptReadStatus.Success, TerminalTranscriptVerdict.Idle,
+            "owned", "file-revision", 200, 3, 3, 1);
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ existing draft"));
+        (await f.SendAsync("draft")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        f.Session.RenderDialogScreenForTest(Clear);
+        await f.RequestAsync("settle");
+        f.Clock.Now += TimeSpan.FromSeconds(1);
+        (await f.SendAsync("verified")).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Session.RenderDialogScreenForTest(Modal);
+        (await f.SendAsync("blocked")).Outcome.ShouldBe(ConditionalInputOutcomes.ModalBlocked);
+        f.Session.DetachTailerForTest();
+        f.Session.RenderDialogScreenForTest(Clear);
+        (await f.SendAsync("binding lost")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        f.Child.Inputs.ShouldBe(["verified"]);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));
@@ -370,11 +393,13 @@ public class ClaudeDialogInputGuardTests
 
     private sealed class Tailer(Guid id) : ITranscriptTailer
     {
+        public TerminalTranscriptObservation Observation { get; set; } =
+            new(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown);
         public Action? BeforeObservation { get; init; }
         public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
         {
             BeforeObservation?.Invoke();
-            return Task.FromResult(new TerminalTranscriptObservation(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown));
+            return Task.FromResult(Observation);
         }
         private RunnerTranscriptDto _snapshot = new(id, [], 0);
         public string? BoundTranscriptPath => "/owned/conversation.jsonl";

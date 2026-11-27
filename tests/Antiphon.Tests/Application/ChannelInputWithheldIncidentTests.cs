@@ -39,6 +39,50 @@ public sealed partial class ChannelInputWithheldIncidentTests
 
     [Test]
     [Timeout(120_000)]
+    public async Task AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, TimeProvider.System);
+        await using var db = Db(schema.ConnectionString);
+        await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AlwaysOn, false), ct);
+        await h.InsertStoreVisibleTurnAsync("prior prompt", "prior answer");
+        var chat = await h.BindChannelAsync();
+        h.Adapter.DialogAdopted = true;
+        h.Adapter.OnSubmitted = body => h.InsertStoreVisibleTurnAsync(body, "fixture answer");
+        using var bridge = Bridge(h);
+        var inbound = Message(chat, "fixture-1904", "fixture caption") with
+        {
+            Attachments = [new Attachment { Kind = AttachmentKind.Image, ChannelRef = "test-photo",
+                Name = "fixture.jpg", Content = [0xff, 0xd8, 0xff, 0xd9] }],
+        };
+        await bridge.HandleInboundAsync(inbound, ct);
+        var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId, ct);
+        row.LastWithholdReason.ShouldBe(DialogDeliveryAdmission.AdoptedSession);
+        row.DeliveryAttempts.ShouldBe(0);
+        h.Adapter.SentInput.ShouldBeEmpty();
+        h.Adapter.AdoptedHistoryVerified = true;
+        await db.SessionQueuedMessages.Where(m => m.Id == row.Id).ExecuteUpdateAsync(s => s
+            .SetProperty(m => m.FirstWithheldAt, h.Now.AddMinutes(-20))
+            .SetProperty(m => m.LastWithheldAt, h.Now.AddMinutes(-20)), ct);
+        await h.Queue.FlushStrandedQueuesAsync(ct);
+        await h.Queue.FlushStrandedQueuesAsync(ct);
+        var submitted = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        submitted.ShouldContain("fixture caption");
+        submitted.ShouldContain("[photo attached: ");
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == submitted, ct)).ShouldBe(1);
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+        await h.DrainOutboundAsync();
+        await h.Dispatcher.OnTurnEndAsync(h.SessionId, ct);
+        await h.DrainOutboundAsync();
+        var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
+        reply.ConversationId.ShouldBe(chat);
+        reply.Text.ShouldBe("fixture answer");
+        (await db.SessionQueuedMessages.SingleAsync(m => m.Id == row.Id, ct)).DeliveryAttempts.ShouldBe(1);
+    }
+
+    [Test]
+    [Timeout(120_000)]
     public async Task C1591_AgedWithheldChannelRowRaisesOneIncident(CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -544,7 +588,10 @@ public sealed partial class ChannelInputWithheldIncidentTests
         await notifier.SweepAsync(ct);
         (await pageDb.AgentIncidents.CountAsync(i => i.AgentId == h.AgentId
             && i.FailureReason == "ChannelInputWithheld" && i.HumanNotifiedAt != null)).ShouldBe(1);
-        h.Messaging.SentReplies.Count.ShouldBe(1);
+        h.Messaging.SentReplies.ShouldBeEmpty("an operational page must never be sent to the family chat");
+        h.EventBus.PublishedEvents.ShouldContain(e => e.EventName == "AgentChanged"
+            && JsonSerializer.Serialize(e.Payload, (JsonSerializerOptions?)null).Contains(incident.Id.ToString()));
+        incident.Message.ShouldContain("/send-now");
     }
 
     [Test]
