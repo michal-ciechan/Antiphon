@@ -439,8 +439,21 @@ public sealed class CheckpointImportTests : CheckpointTestBase
         restMethods.ShouldAllBe(name => name.StartsWith("C1008_", StringComparison.Ordinal));
         var selected = censusMethods.Concat(restMethods).Order(StringComparer.Ordinal).ToArray();
         var declared = DeclaredWrapperCensusMethods();
-        declared.Length.ShouldBe(23);
-        selected.ShouldBe(declared);
+        declared.Length.ShouldBe(18);
+        // The CARD-1087 plan is historical and still names the 23 methods its rows ran. Five of them were retired
+        // with the PowerShell they ran (docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md): unit 65 moved
+        // the four legacy-roster rows to Server2RollingDriverTests with deploy-server2.ps1, and unit 66 removed the
+        // c1008-host-proof.ps1 v1 writer case. Every live method is still selected, and nothing else is missing.
+        string[] retired =
+        [
+            "C1008_Host_proof_file_omits_credentials",
+            "C1008_Legacy_rolling_and_jq_rosters_remain_absent",
+            "C1008_Legacy_rolling_and_jq_rosters_remain_failing_shell",
+            "C1008_Legacy_rolling_and_jq_rosters_remain_missing_shell",
+            "C1008_Legacy_rolling_and_jq_rosters_remain_present",
+        ];
+        declared.Intersect(retired, StringComparer.Ordinal).ShouldBeEmpty();
+        selected.ShouldBe(declared.Concat(retired).Order(StringComparer.Ordinal).ToArray());
         censusMethods.Intersect(restMethods, StringComparer.Ordinal).ShouldBeEmpty();
 
         const string rows = "--rows CP-3,CP-3b,CP-4,CP-5,CP-5b,CP-6,CP-7";
