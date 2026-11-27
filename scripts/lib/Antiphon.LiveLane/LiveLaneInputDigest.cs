@@ -88,9 +88,12 @@ namespace Antiphon.LiveLane
         /// then to 4798d5a0 when NightlyCore.cs's provenance comment stopped naming the deleted nightly-core.ps1 loader. Unit 64
         /// (live-lane re-keys owner-approved) moved it from 4798d5a0 to c63422c3: tests/test-execution-policy.json lost the three
         /// Linux-only rows of LinuxServerRestartGateTests, Server2ProductionServerContractTests and C1744G1DesktopWinComposeTests,
-        /// whose witnesses now run their commands in process, and its policy hash was resealed.
+        /// whose witnesses now run their commands in process, and its policy hash was resealed. Unit 65 moved it from 906e5c35
+        /// to 214ae333: tests/test-execution-policy.json lost the Windows row of DeployServer2ApiDefaultTests (it runs the
+        /// deploy-server2 command in process now) and tests/test-selection-policy.json's P-DOCKER set lost the deleted
+        /// scripts/deploy-server2.ps1; both hashes were resealed.
         /// </summary>
-        public const string Pinned = "906e5c35d672bf911db8e07f22e3eb86cf6b787e21f839c8a7144740998351c8";
+        public const string Pinned = "214ae3337f7dbedfe894ddb8bc9afeff1bfda3d53b008a8ba980b21ef0c8b657";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";
