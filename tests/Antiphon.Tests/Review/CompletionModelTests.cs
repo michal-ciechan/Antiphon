@@ -50,6 +50,8 @@ public class CompletionModelTests
         sent.Uri.ShouldBe("https://llm.example/v1/chat/completions");
         sent.Headers["Authorization"].ShouldBe("Bearer sk-jev");
         using var body = JsonDocument.Parse(sent.Body);
+        body.RootElement.EnumerateObject().Select(p => p.Name).Order(StringComparer.Ordinal)
+            .ShouldBe(["messages", "model"]);
         body.RootElement.GetProperty("model").GetString().ShouldBe("luna");
         var messages = body.RootElement.GetProperty("messages");
         messages[0].GetProperty("role").GetString().ShouldBe("system");
@@ -58,7 +60,6 @@ public class CompletionModelTests
         user.ShouldContain("## findings\n````\nC1 [Major]", Case.Sensitive, "a fence longer than the input's own backtick run");
         user.ShouldContain("## diff (the change)");
         user.ShouldContain("decision-response/1.0 document");
-        body.RootElement.TryGetProperty("max_tokens", out _).ShouldBeFalse();
 
         result.Text.ShouldBe(Answer);
         result.Usage.ShouldBe(new DecisionUsage(1200, 80));

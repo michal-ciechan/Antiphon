@@ -34,25 +34,161 @@ public class DecisionChainTests
           "usage": { "input_tokens": 2000000, "output_tokens": 30 } }
         """;
 
+    private static readonly DecisionRequest SystemOneRequest = new("Documentation and a defect fix.",
+    [
+        new DecisionQuestion("change_kind", DecisionQuestionKind.Choice, "What kind of change is this?",
+            [new("docs"), new("bug", "a defect fix")]),
+        DecisionQuestion.Noul("material", "Does this change stored data?"),
+        Request.Questions[2],
+    ]);
+
+    // Sanitised LiteLLM response from GitHub issue #58.
+    private const string SystemOneAnswers = """
+        {
+          "model": "typesafe/jev",
+          "answers": {
+            "change_kind": { "type": "choice", "choice": "docs", "confidence": 1.0,
+                             "probabilities": { "docs": 1.0, "bug": 0.0 } },
+            "material": { "type": "noul", "noul": 0.07 },
+            "reach": { "type": "score", "score": 1, "confidence": 0.7 }
+          },
+          "usage": { "input_tokens": 347, "output_tokens": 56 }
+        }
+        """;
+
     [Test]
-    public async Task Jev_client_sends_the_system_one_body_and_parses_answers_usage_and_cost()
+    public async Task System_one_posts_the_golden_request_for_named_choice_noul_and_score_questions()
+    {
+        const string expected = """
+            {
+              "model": "jev-latest",
+              "state": "Documentation and a defect fix.",
+              "questions": {
+                "change_kind": { "type": "choice", "instructions": "What kind of change is this?",
+                                 "criteria": { "docs": null, "bug": "a defect fix" } },
+                "material": { "type": "noul", "instructions": "Does this change stored data?" },
+                "reach": { "type": "score", "instructions": "How many components does this affect?",
+                           "criteria": ["One place", "A few", "System-wide"] }
+              }
+            }
+            """;
+        var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, """{ "answers": {} }"""));
+        var settings = Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example/"));
+        using var http = new HttpClient(handler);
+        var client = new JevSystemOneClient(http, settings);
+
+        await client.DecideAsync(SystemOneRequest, new DecisionOptions("jev"), CancellationToken.None);
+
+        var sent = handler.Requests.ShouldHaveSingleItem();
+        sent.Uri.ShouldBe("https://proxy.example/v1/systemone");
+        sent.Authorization.ShouldBe("Bearer key-jev");
+        JsonNode.DeepEquals(JsonNode.Parse(sent.Body), JsonNode.Parse(expected))
+            .ShouldBeTrue($"System One request body was {sent.Body}");
+    }
+
+    [Test]
+    public async Task System_one_reads_the_live_answers_and_records_model_tokens_and_cost()
+    {
+        using var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, SystemOneAnswers, cost: "0.0123"));
+        var settings = Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example"));
+
+        var result = await Chain(handler, settings).DecideAsync("test", SystemOneRequest, CancellationToken.None);
+
+        var choice = result.Answers["change_kind"];
+        choice.Value.ShouldBe("docs");
+        choice.Confidence.ShouldBe(1.0);
+        choice.Probabilities!["docs"].ShouldBe(1.0);
+        choice.Probabilities["bug"].ShouldBe(0.0);
+        choice.ServedBy.ShouldBe(new DecisionServedBy("jev", "Http", "typesafe/jev"));
+        result.Answers["material"].Value.ShouldBe("no");
+        result.Answers["material"].Probabilities!["yes"].ShouldBe(0.07, 1e-9);
+        result.Answers["reach"].Value.ShouldBe("A few");
+        result.Answers["reach"].Confidence.ShouldBe(0.7);
+        var call = result.Calls.ShouldHaveSingleItem();
+        call.ResolvedModel.ShouldBe("typesafe/jev");
+        call.InputTokens.ShouldBe(347);
+        call.OutputTokens.ShouldBe(56);
+        call.CostUsd.ShouldBe(0.0123m);
+        call.CostBasis.ShouldBe("actual");
+    }
+
+    [Test]
+    public async Task System_one_tolerates_unknown_fields_and_maps_fractional_scores_to_levels()
+    {
+        var response = JsonNode.Parse(SystemOneAnswers)!.AsObject();
+        response["meta"] = new JsonObject { ["trace"] = 123 };
+        response["answers"]!["extra_question"] = new JsonArray();
+        var choice = response["answers"]!["change_kind"]!.AsObject();
+        choice["extra_answer_field"] = true;
+        choice.Remove("probabilities");
+        choice["confidence"] = 0.6;
+        var reach = response["answers"]!["reach"]!;
+        reach["score"] = 1.7;
+        reach["legend"] = JsonNode.Parse("""{ "0": "One place", "1": "A few", "2": "System-wide" }""");
+        reach["probabilities"] = JsonNode.Parse("""{ "0": 0.1, "1": 0.1, "2": 0.8 }""");
+        using var http = new HttpClient(new FakeHandler(_ => Json(HttpStatusCode.OK, response.ToJsonString())));
+        var client = new JevSystemOneClient(http, Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example")));
+
+        var result = await client.DecideAsync(SystemOneRequest, new DecisionOptions("jev"), CancellationToken.None);
+
+        result.Answers.Count.ShouldBe(3);
+        result.Answers["change_kind"].Value.ShouldBe("docs");
+        result.Answers["change_kind"].Confidence.ShouldBe(0.6);
+        var score = result.Answers["reach"];
+        score.Value.ShouldBe("System-wide");
+        score.Probabilities!["System-wide"].ShouldBe(0.8);
+    }
+
+    [Test]
+    [Arguments("change_kind", """{ "type": "choice", "choice": {}, "probabilities": { "docs": 1.0 } }""")]
+    [Arguments("change_kind", """{ "type": "choice", "choice": "other" }""")]
+    [Arguments("change_kind", """{ "type": "choice", "choice": "docs", "confidence": {} }""")]
+    [Arguments("reach", """{ "type": "score", "score": 3 }""")]
+    public async Task System_one_classifies_malformed_answers_as_schema_failures(string name, string answer)
+    {
+        var response = JsonNode.Parse(SystemOneAnswers)!;
+        response["answers"]![name] = JsonNode.Parse(answer);
+        using var http = new HttpClient(new FakeHandler(_ => Json(HttpStatusCode.OK, response.ToJsonString())));
+        var client = new JevSystemOneClient(http, Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example")));
+        var request = SystemOneRequest with { Questions = [SystemOneRequest.Questions.Single(q => q.Name == name)] };
+
+        var failure = await Should.ThrowAsync<DecisionProviderException>(() =>
+            client.DecideAsync(request, new DecisionOptions("jev"), CancellationToken.None));
+
+        failure.Kind.ShouldBe(DecisionFailureKind.SchemaFailure);
+        failure.Message.ShouldContain($"'{name}'");
+    }
+
+    [Test]
+    public async Task A_system_one_400_rejects_without_fallback_and_keeps_a_bounded_redacted_message()
+    {
+        const string message = "Invalid Decisions request: questions.change_kind.choice.criteria Field required";
+        var settings = Settings(("primary", JevDialects.LiteLlmSystemOne, "https://primary.example"),
+            ("secondary", JevDialects.TypeSafeNative, "https://secondary.example"));
+        var key = settings.Value.Providers["primary"].ApiKey!;
+        var envelope = new JsonObject { ["error"] = new JsonObject { ["message"] = $"{message} ({key}) {new string('x', 400)}" } };
+        using var handler = new FakeHandler(_ => Json(HttpStatusCode.BadRequest, envelope.ToJsonString()));
+
+        var failure = await Should.ThrowAsync<DecisionChainException>(() =>
+            Chain(handler, settings).DecideAsync("test", SystemOneRequest, CancellationToken.None));
+
+        failure.Kind.ShouldBe(DecisionFailureKind.Rejected);
+        const string prefix = "Provider 'primary' rejected the request (400): HTTP 400: ";
+        failure.Message.ShouldStartWith(prefix + message);
+        failure.Message.ShouldNotContain(key);
+        failure.Message.Length.ShouldBeLessThanOrEqualTo(prefix.Length + 300);
+        failure.Calls.ShouldHaveSingleItem().Outcome.ShouldBe("rejected");
+        handler.Requests.ShouldHaveSingleItem().Uri.ShouldBe("https://primary.example/v1/systemone");
+    }
+
+    [Test]
+    public async Task Jev_client_reads_legacy_answers_and_prices_usage_without_a_cost_header()
     {
         var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, GoodAnswers, cost: "0.0123"));
         var settings = Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example/"));
         var client = new JevSystemOneClient(new HttpClient(handler), settings);
 
         var result = await client.DecideAsync(Request, new DecisionOptions("jev", "jev-latest"), CancellationToken.None);
-
-        var sent = handler.Requests.ShouldHaveSingleItem();
-        sent.Uri.ShouldBe("https://proxy.example/v1/systemone");
-        sent.Authorization.ShouldBe("Bearer key-jev");
-        var body = JsonNode.Parse(sent.Body)!;
-        body["model"]!.GetValue<string>().ShouldBe("jev-latest");
-        body["state"]!.GetValue<string>().ShouldStartWith("PR #812");
-        body["questions"]!["persistent_data"]!["type"]!.GetValue<string>().ShouldBe("noul");
-        body["questions"]!["change_kind"]!["choices"]!.ToJsonString().ShouldBe("""[{"value":"feature"},{"value":"bugfix"}]""");
-        body["questions"]!["change_kind"]!["instructions"]!.GetValue<string>().ShouldEndWith("bugfix: Fixes a defect");
-        body["questions"]!["reach"]!["levels"]![2]!["label"]!.GetValue<string>().ShouldBe("System-wide");
 
         result.ServedBy.ResolvedModel.ShouldBe("typesafe/jev-1.13.0");
         result.CostUsd.ShouldBe(0.0123m);
