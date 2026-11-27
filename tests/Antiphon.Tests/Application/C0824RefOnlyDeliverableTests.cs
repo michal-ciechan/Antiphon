@@ -141,8 +141,12 @@ public sealed class C0824RefOnlyDeliverableTests
             await using var f = await RefOnlyDeliverableFixture.CreateAsync(AgentTaskRole.Code, refOnly, initial);
             var w = f.World;
             await w.Git.EnsureRunnerAsync();
-            await w.Git.RunAsync(w.Git.Runner, "mv", "docs/old.md", "docs/renamed 雪.md");
-            await w.Git.RunAsync(w.Git.Runner, "rm", "docs/delete.md");
+            // git mv + git rm on the runner clone, staged with libgit2 (setup; the commit follows in CommitAsync).
+            using (var runner = new LibGit2Sharp.Repository(w.Git.Runner))
+            {
+                LibGit2Sharp.Commands.Move(runner, "docs/old.md", "docs/renamed 雪.md");
+                LibGit2Sharp.Commands.Remove(runner, "docs/delete.md");
+            }
             var files = new Dictionary<string, byte[]> { ["docs/new.md"] = Encoding.UTF8.GetBytes("new doc at S") };
             if (variant != "docs") files["worker.cs"] = Encoding.UTF8.GetBytes("// code at S");
             var source = await f.CommitAsync(files);
