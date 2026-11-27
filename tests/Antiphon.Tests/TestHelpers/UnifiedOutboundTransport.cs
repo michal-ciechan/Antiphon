@@ -69,6 +69,8 @@ internal sealed class UnifiedOutboundTransport : IAsyncDisposable
     {
         var start = new ProcessStartInfo("dotnet")
             { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // These one-shot probe children reach a cut or finish a few cycles before exiting.
+        start.Environment["DOTNET_JitMinOpts"] = "1";
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe", "Antiphon.ChannelOutbound.Probe.dll"));
         return start;
     }
