@@ -1690,6 +1690,16 @@ public sealed partial class SessionMessageQueueService
                     "This remote-control maintenance request cannot be forced through SendNow.");
             }
 
+            if (message is { Origin: QueuedMessageOrigin.Channel, DeliveryAttempts: > 0,
+                LastDeliveryStartedAt: not null, DeliveryVerdict: null })
+            {
+                var reconciliation = await ReconcileUnknownInputLockedAsync(db, sessionId, ct);
+                var queue = await GetQueueAsync(sessionId, ct);
+                if (reconciliation is FlushResult.LateConfirmed or FlushResult.Failed)
+                    await PublishQueueChangedAsync(queue, ct);
+                return queue;
+            }
+
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
             if (!await CanWriteResumeInputAsync(db, sessionId, ct))
                 return await GetQueueAsync(sessionId, ct);
@@ -1787,7 +1797,7 @@ public sealed partial class SessionMessageQueueService
             {
                 if (!await TryCommitTaskInputFallbackAsync(db, sessionId, message, ct))
                 {
-                    await RevertRunAsync(db, [message]);
+                    await RevertRunAsync(db, [message], refundUnwrittenAttempt: message.Origin == QueuedMessageOrigin.Channel);
                     await RecordTransportFailureAsync(sessionId, new RunnerSpillWriteException(), ct);
                 }
                 throw new ConflictException(
@@ -3113,13 +3123,16 @@ public sealed partial class SessionMessageQueueService
         }
         catch (Exception ex)
         {
-            // Definitive refusals and other non-transport errors retain the existing retry
-            // path. Ambiguous transport outcomes above retain the in-flight attempt instead.
-            _logger.LogWarning(
-                ex,
-                "Delivery to session {SessionId} threw before the terminal accepted it; reverting {Count} message(s) to Pending",
-                sessionId, run.Count);
-            await RevertRunAsync(db, run);
+            if (head.Origin == QueuedMessageOrigin.Channel)
+            {
+                _logger.LogWarning(ex, "Channel input on session {SessionId} threw without a delivery verdict", sessionId);
+            }
+            else
+            {
+                _logger.LogWarning(ex, "Delivery to session {SessionId} threw; reverting {Count} message(s) to Pending",
+                    sessionId, run.Count);
+                await RevertRunAsync(db, run);
+            }
             await RecordTransportFailureAsync(sessionId, ex, ct);
             return FlushResult.Failed;
         }
@@ -3147,8 +3160,8 @@ public sealed partial class SessionMessageQueueService
             {
                 // The runner proved that the first pointer write never reached the terminal.
                 // Retaining its attempt would make pointer recovery hold an empty composer forever.
-                await RevertRunAsync(db, run, refundUnwrittenPointer: run.Count == 1
-                    && run[0].DeliveryAttempts == 1 && IsCodexPointer(rulesSession.AgentKind, run[0]));
+                await RevertRunAsync(db, run, refundUnwrittenAttempt: head.Origin == QueuedMessageOrigin.Channel
+                    || (run.Count == 1 && run[0].DeliveryAttempts == 1 && IsCodexPointer(rulesSession.AgentKind, run[0])));
                 await RecordTransportFailureAsync(sessionId, new RunnerSpillWriteException(), ct);
             }
             return FlushResult.Failed;
@@ -3604,13 +3617,13 @@ public sealed partial class SessionMessageQueueService
     }
 
     private static async Task RevertRunAsync(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run,
-        bool refundUnwrittenPointer = false)
+        bool refundUnwrittenAttempt = false)
     {
         foreach (var m in run)
         {
             m.Status = QueuedMessageStatus.Pending;
             m.SentAt = null;
-            if (refundUnwrittenPointer)
+            if (refundUnwrittenAttempt)
             {
                 BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, m);
                 m.DeliveryAttempts--;
@@ -3631,8 +3644,10 @@ public sealed partial class SessionMessageQueueService
     // A channel attempt can have submitted before the server durably observed the verdict.
     // An empty composer, passage of time or even a new process cannot rule that out.
     private static IQueryable<SessionQueuedMessage> UnresolvedInputAttempts(AppDbContext db) =>
-        db.SessionQueuedMessages.Where(m => m.Status == QueuedMessageStatus.Sent
-            && m.DeliveryVerdict == null && m.DeliveryAttempts > 0
+        db.SessionQueuedMessages.Where(m => m.DeliveryVerdict == null && m.DeliveryAttempts > 0
+            // Older recovery could commit Pending while keeping the ambiguous attempt and its floor.
+            && (m.Status == QueuedMessageStatus.Sent || (m.Origin == QueuedMessageOrigin.Channel
+                && m.Status == QueuedMessageStatus.Pending && m.LastDeliveryStartedAt != null))
             && m.MaintenanceKind == RemoteControlMaintenanceKind.None
             && db.AgentSessions.Any(s => s.Id == m.AgentSessionId && s.Status == SessionStatus.Running
                 && (m.Origin == QueuedMessageOrigin.Channel
@@ -3644,6 +3659,18 @@ public sealed partial class SessionMessageQueueService
         var unknown = await UnresolvedInputAttempts(db).Where(m => m.AgentSessionId == sessionId)
             .OrderBy(m => m.Sequence).ToListAsync(ct);
         if (unknown.Count == 0) return null;
+
+        // Restore the canonical hold before catch-up, which may confirm or park a truncated attempt.
+        var legacyPending = unknown.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+        if (legacyPending.Count > 0)
+        {
+            foreach (var message in legacyPending)
+            {
+                message.Status = QueuedMessageStatus.Sent;
+                message.SentAt = message.LastDeliveryStartedAt;
+            }
+            await db.SaveChangesAsync(ct);
+        }
 
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
         var late = await LateConfirmAttemptedMessagesAsync(db, sessionId, unknown, ct);
