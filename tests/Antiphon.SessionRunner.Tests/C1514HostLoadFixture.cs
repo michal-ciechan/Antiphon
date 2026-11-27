@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using System.Collections.Concurrent;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.AspNetCore.Builder;
@@ -50,15 +51,25 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
         builder.Services.AddHostStats(builder.Configuration, startSampler: false);
         builder.Services.AddSingleton<IHostMemoryProbe>(new BuildSlotBrokerTests.FakeMemory { AvailableBytes = 64L * 1024 * 1024 * 1024 });
         builder.Services.AddSingleton<IHostLoadHistorySource>(_history);
-        var app = builder.Build(); app.MapHostStatsRoutes(); app.MapBuildSlotRoutes();
+        WebApplication app;
+        using (TestTrace.Span("C1514HostLoadFixture build"))
+            app = builder.Build();
+        app.MapHostStatsRoutes(); app.MapBuildSlotRoutes();
         app.MapGet("/authority/{id}", async (string id, HttpContext context) => await _authorities[id](context));
-        await app.StartAsync();
+        using (TestTrace.Span("C1514HostLoadFixture start"))
+            await app.StartAsync();
         Settings = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<HostStatsSettings>>().Value;
         return app;
     }
     public async ValueTask DisposeAsync()
     {
-        if (_app.IsValueCreated) { var app = await _app.Value; await app.StopAsync(); await app.DisposeAsync(); }
+        if (_app.IsValueCreated)
+        {
+            var app = await _app.Value;
+            using var span = TestTrace.Span("C1514HostLoadFixture dispose");
+            await app.StopAsync();
+            await app.DisposeAsync();
+        }
         if (Directory.Exists(Root)) Directory.Delete(Root, true);
     }
     private sealed class SwitchingHistory : IHostLoadHistorySource

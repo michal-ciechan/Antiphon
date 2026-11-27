@@ -24,6 +24,7 @@ namespace Antiphon.Tests.TestHelpers;
 public static partial class TestTrace
 {
     public const string SourceName = "Antiphon.Tests";
+    public const string DirectoryVariable = "ANTIPHON_TEST_TRACE_DIR";
     public const string FileVariable = "ANTIPHON_TEST_TRACE_FILE";
 
     /// <summary>With <c>ANTIPHON_TEST_TRACE_STACKS=1</c>, each SQL span (Npgsql) carries
@@ -97,13 +98,21 @@ public static partial class TestTrace
     internal static void InstallAtLoad()
     {
         EnsureFileExporter();
-        InstallOtlp();
+        if (_sink is not null)
+            InstallOtlp();
     }
 
     /// <summary>Implemented in TestTraceOtlp.cs where the OTLP exporter package is referenced; erased elsewhere.</summary>
     static partial void InstallOtlp();
 
     static partial void FlushOtlp();
+
+    static partial void DisposeOtlp();
+
+    internal static string? TracePath(string? directory, string? legacyPath, Func<string> processFileName) =>
+        !string.IsNullOrWhiteSpace(directory)
+            ? Path.Combine(directory, processFileName())
+            : string.IsNullOrWhiteSpace(legacyPath) ? null : legacyPath;
 
     /// <summary>
     /// Installs the JSONL exporter once when <see cref="FileVariable"/> names a file. Unset or blank
@@ -113,32 +122,43 @@ public static partial class TestTrace
     {
         if (Volatile.Read(ref _listener) is not null)
             return;
-        var path = Environment.GetEnvironmentVariable(FileVariable);
-        if (string.IsNullOrWhiteSpace(path))
-            return;
+        var directory = Environment.GetEnvironmentVariable(DirectoryVariable);
+        var legacyPath = Environment.GetEnvironmentVariable(FileVariable);
+        var started = default(DateTime);
         lock (Gate)
         {
             if (_listener is not null)
                 return;
             try
             {
+                var path = TracePath(directory, legacyPath, () =>
+                {
+                    using var process = Process.GetCurrentProcess();
+                    started = process.StartTime.ToUniversalTime();
+                    return $"test-trace-{process.Id}-{started.Ticks}.jsonl";
+                });
+                if (path is null)
+                    return;
                 _sink = new FileSink(Path.GetFullPath(path));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
-                Console.Error.WriteLine($"[TestTrace] {FileVariable} could not be opened ({ex.GetType().Name}); tracing to file is off.");
+                Console.Error.WriteLine($"[TestTrace] Trace file could not be opened ({ex.GetType().Name}).");
                 _listener = new ActivityListener { ShouldListenTo = _ => false };
                 return;
             }
             var sink = _sink;
             var listener = new ActivityListener
             {
-                ShouldListenTo = _ => true,
+                ShouldListenTo = source => string.IsNullOrWhiteSpace(directory)
+                    || source.Name is SourceName or "TUnit" or "TUnit.Lifecycle",
                 Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
                 SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
                 ActivityStopped = sink.Write,
                 ActivityStarted = a =>
                 {
+                    if (a.Source.Name is "TUnit" or "TUnit.Lifecycle")
+                        sink.ObserveFrameworkStart(a.StartTimeUtc);
                     if (!SqlStacks || a.Source.Name != "Npgsql") return;
                     var frames = new StackTrace(1, false).GetFrames()
                         .Select(f => f.GetMethod())
@@ -150,7 +170,18 @@ public static partial class TestTrace
                 },
             };
             ActivitySource.AddActivityListener(listener);
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => sink.Flush();
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                var exited = DateTime.UtcNow;
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    sink.RecordProcessSpan("process lifetime", started, exited);
+                    if (sink.FrameworkStart is { } first)
+                        sink.RecordProcessSpan("process startup", started, first);
+                }
+                sink.Flush();
+                DisposeOtlp();
+            };
             Volatile.Write(ref _listener, listener);
         }
     }
@@ -168,6 +199,36 @@ public static partial class TestTrace
         private readonly ConcurrentQueue<string> _pending = new();
         private readonly object _write = new();
         private int _count;
+        private long _firstFrameworkTicks = long.MaxValue;
+
+        public DateTime? FrameworkStart
+        {
+            get
+            {
+                var ticks = Volatile.Read(ref _firstFrameworkTicks);
+                return ticks == long.MaxValue ? null : new DateTime(ticks, DateTimeKind.Utc);
+            }
+        }
+
+        public void ObserveFrameworkStart(DateTime start)
+        {
+            var previous = Volatile.Read(ref _firstFrameworkTicks);
+            while (start.Ticks < previous)
+            {
+                var observed = Interlocked.CompareExchange(ref _firstFrameworkTicks, start.Ticks, previous);
+                if (observed == previous)
+                    return;
+                previous = observed;
+            }
+        }
+
+        public void RecordProcessSpan(string name, DateTime start, DateTime end)
+        {
+            if (end <= start)
+                return;
+            using var activity = Source.StartActivity(name, ActivityKind.Internal, default(ActivityContext), startTime: start);
+            activity?.SetEndTime(end);
+        }
 
         public FileSink(string path)
         {
@@ -192,7 +253,8 @@ public static partial class TestTrace
                     : null,
                 Environment.ProcessId));
             _pending.Enqueue(line);
-            if (Interlocked.Increment(ref _count) % 256 == 0)
+            var count = Interlocked.Increment(ref _count);
+            if (count == 1 || count % 256 == 0)
                 Flush();
         }
 

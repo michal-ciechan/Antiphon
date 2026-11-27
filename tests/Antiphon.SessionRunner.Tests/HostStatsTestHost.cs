@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -41,9 +42,12 @@ internal sealed class HostStatsTestHost : IAsyncDisposable
             builder.Services.AddSingleton(time);
         builder.Services.AddHostStats(builder.Configuration, startSampler: false);
 
-        var app = builder.Build();
+        WebApplication app;
+        using (TestTrace.Span("HostStatsTestHost build"))
+            app = builder.Build();
         app.MapHostStatsRoutes();
-        await app.StartAsync();
+        using (TestTrace.Span("HostStatsTestHost start"))
+            await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single();
         var uri = new Uri(address.TrimEnd('/') + "/");
@@ -54,6 +58,7 @@ internal sealed class HostStatsTestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var span = TestTrace.Span("HostStatsTestHost dispose");
         Http.Dispose();
         await _app.StopAsync();
         await _app.DisposeAsync();

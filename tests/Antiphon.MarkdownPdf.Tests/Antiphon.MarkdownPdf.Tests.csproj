@@ -9,6 +9,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.44.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
+    <Compile Include="..\Shared\TestTraceOtlp.cs" Link="TestSupport\TestTraceOtlp.cs" />
+    <Compile Include="..\Shared\TestTrace.cs" Link="TestSupport\TestTrace.cs" />
     <PackageReference Include="Shouldly" Version="4.3.0" />
     <ProjectReference Include="../../tools/Antiphon.MarkdownPdf/Antiphon.MarkdownPdf.csproj" />
     <ProjectReference Include="../Antiphon.MarkdownPdf.FakeBrowser/Antiphon.MarkdownPdf.FakeBrowser.csproj"

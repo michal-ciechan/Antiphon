@@ -19,7 +19,8 @@ public static partial class TestTrace
 
     static partial void InstallOtlp()
     {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(OtlpVariable)))
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(DirectoryVariable))
+            || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(OtlpVariable)))
             return;
         lock (Gate)
         {
@@ -28,7 +29,7 @@ public static partial class TestTrace
             var service = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME");
             var provider = Sdk.CreateTracerProviderBuilder()
                 .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(string.IsNullOrWhiteSpace(service) ? SourceName : service))
-                .AddSource("*")
+                .AddSource(SourceName, "TUnit", "TUnit.Lifecycle")
                 .SetSampler(new AlwaysOnSampler())
                 .AddOtlpExporter(o =>
                 {
@@ -37,10 +38,11 @@ public static partial class TestTrace
                     o.BatchExportProcessorOptions.ScheduledDelayMilliseconds = 1_000;
                 })
                 .Build();
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => provider.Dispose();
             _otlp = provider;
         }
     }
+
+    static partial void DisposeOtlp() => _otlp?.Dispose();
 
     static partial void FlushOtlp() => _otlp?.ForceFlush(10_000);
 }

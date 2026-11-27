@@ -1,3 +1,4 @@
+using Antiphon.Tests.TestHelpers;
 using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.AspNetCore.Builder;
@@ -50,7 +51,9 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
         if (time is not null) builder.Services.AddSingleton(time);
         builder.Services.AddBuildSlotBroker(builder.Configuration);
 
-        var app = builder.Build();
+        WebApplication app;
+        using (TestTrace.Span("BuildSlotTestHost build"))
+            app = builder.Build();
         if (observeRequest is not null)
             app.Use(async (context, next) =>
             {
@@ -64,7 +67,8 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
                 await next();
             });
         app.MapBuildSlotRoutes();
-        await app.StartAsync();
+        using (TestTrace.Span("BuildSlotTestHost start"))
+            await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single();
         var uri = new Uri(address.TrimEnd('/') + "/");
@@ -75,6 +79,7 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var span = TestTrace.Span("BuildSlotTestHost dispose");
         Http.Dispose();
         await _app.StopAsync();
         await _app.DisposeAsync();

@@ -563,6 +563,7 @@ namespace Antiphon.Nightly
                 foreach (var prefixArg in s.Host.Prefix ?? new string[0])
                     if (!string.IsNullOrWhiteSpace(prefixArg)) nativeArgs.Add(prefixArg);
                 nativeArgs.AddRange(NightlyTestsPlan.NativeExecutionArguments(trxPath, execDiagDir, chunkClasses, PsValue.Str(PsValue.Prop(chunk, "exactFilter")), groupFilter, methodFilter));
+                envMap["ANTIPHON_TEST_TRACE_DIR"] = execDiagDir;
                 var phaseEnv = new Hashtable(StringComparer.OrdinalIgnoreCase);
                 foreach (DictionaryEntry pair in envMap) phaseEnv[PsValue.Str(pair.Key)] = PsValue.Str(pair.Value);
                 EnablePhaseEnvironment(phaseEnv, c.LogRoot, c.InvocationId, chunkId, c.Attempt, suiteId, c.Profile, c.TimingRoot, c.ExplicitPhaseRoot);

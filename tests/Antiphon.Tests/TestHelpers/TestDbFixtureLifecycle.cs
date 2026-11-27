@@ -70,6 +70,7 @@ internal class TestDbOperations
         string sharedDatabaseName,
         string templateDatabaseName)
     {
+        using var span = TestTrace.Span("database template protect", "antiphon.fixture", "db-assembly");
         await using var maintenance = new NpgsqlConnection(maintenanceConnectionString);
         await maintenance.OpenAsync().ConfigureAwait(false);
         await TestDbFixtureLifecycle.TerminateBackendsAsync(maintenance, sharedDatabaseName).ConfigureAwait(false);

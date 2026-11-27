@@ -75,6 +75,7 @@ namespace Antiphon.Scripts
             [ExportExpectedDurationRosterCommand.Name] = ExportExpectedDurationRosterCommand.Run,
             // The test trace summary answers every input itself: exit 0 printed, 1 unreadable or no span (one stderr line), 2 usage.
             [SummarizeTestTraceCommand.Name] = SummarizeTestTraceCommand.Run,
+            [TestTraceBreakdownCommand.Name] = TestTraceBreakdownCommand.Run,
             // The class-cost refresh answers every input itself: exit 0 written, 1 refused (one stderr line), 2 usage.
             [RefreshNightlyClassCostsCommand.Name] = RefreshNightlyClassCostsCommand.Run,
             // The away digest send answers every input itself: exit 0 sent, 1 refused or send_failed (one stderr line), 2 usage.
@@ -414,7 +415,7 @@ namespace Antiphon.Scripts
                 + " | " + LiveLaneWriteFixtureUsage + " | " + LiveLaneCensusUsage + " | " + LiveLaneEmitPolicyHashUsage + " | " + LiveLaneGroupUsage + " | " + RcLedgerStampUsage + " | " + PostLandCommand.Usage + " | " + EvidenceCommand.Usage + " | " + NightlyProbeCommand.Usage + " | " + NightlyHealthCommand.Usage + " | " + NightlyReportCommand.Usage + " | " + NightlyTestsCommand.Usage + " | " + NightlyRunCommand.Usage + " | " + SummarizeTestPhasesCommand.Usage + " | " + NightlySeedCommand.Usage + " | " + ToolchainFloorCommand.Usage
                 + " | " + TestTimingReportCommand.Usage + " | " + TestTimingEventCommand.Usage + " | " + TestSelectionCommand.Usage + " | " + ImpactedClassesCommand.Usage
                 + " | " + DerivedImpactIndexCommand.Usage + " | " + QualificationEtaCommand.Usage + " | " + WatchQualCommand.Usage
-                + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage
+                + " | " + ExportExpectedDurationRosterCommand.Usage + " | " + SummarizeTestTraceCommand.Usage + " | " + TestTraceBreakdownCommand.Usage
                 + " | " + RefreshNightlyClassCostsCommand.Usage + " | " + DigestCommand.Usage
                 + " | " + RcQualificationStatusCommand.Usage
                 + " | " + QualificationObserveCommand.Usage + " | " + QualificationPreflightCommand.Usage + " | " + QualificationLaunchCommand.Usage
