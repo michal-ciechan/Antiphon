@@ -1,4 +1,21 @@
 <Project>
+  <!-- The runner stores receipts separately from disposable source trees and build products. -->
+  <Target Name="AntiphonKeepBuildsOutOfServer2Evidence"
+          BeforeTargets="Restore;PrepareForBuild;Publish"
+          Condition="'$(OS)' != 'Windows_NT'">
+    <PropertyGroup>
+      <_AntiphonEvidencePathPattern>^/work/(code-evidence|review-evidence|merge-evidence|test-evidence|evidence)(/|$)</_AntiphonEvidencePathPattern>
+      <_AntiphonBuildOutput Condition="'$(OutDir)' != ''">$([System.IO.Path]::GetFullPath('$(OutDir)', '$(MSBuildProjectDirectory)'))</_AntiphonBuildOutput>
+      <_AntiphonBuildIntermediate Condition="'$(BaseIntermediateOutputPath)' != ''">$([System.IO.Path]::GetFullPath('$(BaseIntermediateOutputPath)', '$(MSBuildProjectDirectory)'))</_AntiphonBuildIntermediate>
+      <_AntiphonPublishOutput Condition="'$(PublishDir)' != ''">$([System.IO.Path]::GetFullPath('$(PublishDir)', '$(MSBuildProjectDirectory)'))</_AntiphonPublishOutput>
+    </PropertyGroup>
+    <Error Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(MSBuildProjectDirectory)', '$(_AntiphonEvidencePathPattern)'))
+                      Or $([System.Text.RegularExpressions.Regex]::IsMatch('$(_AntiphonBuildOutput)', '$(_AntiphonEvidencePathPattern)'))
+                      Or $([System.Text.RegularExpressions.Regex]::IsMatch('$(_AntiphonBuildIntermediate)', '$(_AntiphonEvidencePathPattern)'))
+                      Or $([System.Text.RegularExpressions.Regex]::IsMatch('$(_AntiphonPublishOutput)', '$(_AntiphonEvidencePathPattern)'))"
+           Text="Builds use a runner workspace or task scratch directory. Keep only test results, logs, and receipts under /work evidence roots." />
+  </Target>
+
   <!--
     CARD-0222: cap the growth of MSBuild's per-project "file writes" ledger.
 

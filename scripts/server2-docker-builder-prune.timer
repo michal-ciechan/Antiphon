@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule server2 Docker build cache pruning
+ConditionVirtualization=!container
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

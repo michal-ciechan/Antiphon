@@ -1,0 +1,10 @@
+[Unit]
+Description=Prune unused server2 Docker build cache older than 24 hours
+ConditionVirtualization=!container
+After=docker.service
+Requisite=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker --host unix:///var/run/docker.sock builder prune --force --filter until=24h
+TimeoutStartSec=15min
