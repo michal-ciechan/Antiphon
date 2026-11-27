@@ -160,7 +160,7 @@ internal static class MigrationTestDatabase
 
     /// <summary>
     /// <c>AddReviewEngine.Down</c> always throws. A tip clone whose review engine tables are all
-    /// empty drops every one of them, the review identity functions, and their history rows here.
+    /// empty reverses the review identity migration before dropping the review tables and history.
     /// A stored review row in any of them is
     /// refused with that same message; this helper does not call Down and does not discard the rows.
     /// </summary>
@@ -177,7 +177,19 @@ internal static class MigrationTestDatabase
         if (recorded > 0)
             throw new NotSupportedException(ReviewEngineDowngradeRefusal);
 
+        // This fixture can clone a tip with unrelated later migrations. Apply only the identity
+        // migration's Down SQL, using its own operations to remove the dependent AgentTasks FK.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        if ((await db.Database.GetAppliedMigrationsAsync(ct)).Contains(OpenReviewRunMigration))
+        {
+            var migrations = db.GetService<IMigrationsAssembly>();
+            var identity = migrations.CreateMigration(migrations.Migrations[OpenReviewRunMigration], db.Database.ProviderName!);
+            var generator = db.GetService<IMigrationsSqlGenerator>();
+            foreach (var command in generator.Generate(identity.DownOperations))
+                await db.Database.ExecuteSqlRawAsync(command.CommandText, ct);
+        }
         await db.Database.ExecuteSqlRawAsync(ReviewEngineDetachSql, ct);
+        await transaction.CommitAsync(ct);
     }
 
     /// <summary>
