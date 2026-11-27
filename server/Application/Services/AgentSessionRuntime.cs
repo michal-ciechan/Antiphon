@@ -1445,7 +1445,7 @@ public sealed partial class AgentSessionRuntime
 
     /// <summary>The synthetic append shares serialization, persistence and publication with runner ingestion.</summary>
     internal async Task<bool> WriteRestartBoundaryIfInterruptedAsync(Guid sessionId, CancellationToken ct,
-        DateTime? channelGeneration = null)
+        DateTime? channelGeneration = null, bool continueInterruptedChannelTurn = false)
     {
         using var lease = await (_states ?? throw new InvalidOperationException("Transcript ingestion requires SessionStateStore.")).BeginWriteAsync(sessionId, ct);
         bool working;
@@ -1458,11 +1458,14 @@ public sealed partial class AgentSessionRuntime
         }
         if (!working && channelGeneration == null) return false;
         var uuid = channelGeneration is { } accepted
-            ? $"channel-generation/{SessionGeneration.Normalize(accepted).Ticks}" : Guid.NewGuid().ToString("D");
+            ? $"{ChannelRestartContinuation.BoundaryUuidPrefix}{SessionGeneration.Normalize(accepted).Ticks}"
+            : Guid.NewGuid().ToString("D");
+        var continuation = channelGeneration is not null && working && continueInterruptedChannelTurn
+            ? ChannelRestartContinuation.Due : null;
         var boundary = new SessionRunnerTranscriptEvent(sessionId, 0, TranscriptKinds.SessionRestartBoundary,
             uuid, null, _timeProvider.GetUtcNow(), "system", working
                 ? "Session relaunched; the previous turn had been interrupted mid-flight."
-                : "Channel session resumed after an idle turn.", null, null, null, null, null);
+                : "Channel session resumed after an idle turn.", null, null, null, null, continuation);
         var result = await PersistTranscriptCoreAsync(sessionId, [boundary], lease, ct: ct);
         await PublishCommittedAsync(lease, result);
         if (channelGeneration != null && result.LastStoredSeq == null)
@@ -1472,6 +1475,8 @@ public sealed partial class AgentSessionRuntime
             if (!await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId
                     && t.Kind == TranscriptKinds.SessionRestartBoundary && t.Uuid == uuid, ct))
                 throw new InvalidOperationException("Could not persist the channel session restart boundary.");
+            // A prior caller may have stopped after committing but before publishing to memory.
+            if (lease is not null) await lease.ReconcileAsync(false, ct);
         }
         Actions().Hint(sessionId);
         return working && result.LastStoredSeq is not null;

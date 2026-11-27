@@ -2069,10 +2069,14 @@ public class AgentSessionLaunchFailureTests
         await fixture.LaunchInteractiveAsync(resume: true);
         await fixture.LaunchInteractiveAsync(resume: true);
         var settings = fixture.Services.GetRequiredService<IOptions<AgentSessionSettings>>().Value;
-        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == fixture.SessionId
-            && m.Origin == QueuedMessageOrigin.System && m.Body == settings.ResumeContinuePrompt)).ShouldBe(1);
-        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == fixture.SessionId
-            && t.Kind == TranscriptKinds.SessionRestartBoundary)).ShouldBe(1);
+        var continuations = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == fixture.SessionId
+            && m.Origin == QueuedMessageOrigin.System && m.Body == settings.ResumeContinuePrompt).ToListAsync();
+        var continued = continuations.ShouldHaveSingleItem();
+        continued.RuntimeActionKey.ShouldBe($"channel-resume-continue/{boundary.Id:N}");
+        var replayed = await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.AgentSessionId == fixture.SessionId
+            && t.Kind == TranscriptKinds.SessionRestartBoundary);
+        replayed.Id.ShouldBe(boundary.Id);
+        replayed.StopReason.ShouldBe(ChannelRestartContinuation.Queued);
     }
 
     [Test]

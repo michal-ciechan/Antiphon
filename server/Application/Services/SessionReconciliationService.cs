@@ -380,7 +380,7 @@ public sealed class SessionReconciliationService
             else
             {
                 _logger.LogInformation(
-                    "Interrupted brief: session {SessionId} is Running with dispatch brief debt; "
+                    "Interrupted launch: session {SessionId} is Running with unfinished launch work; "
                     + "the runner still serves it and this process does not own the launch (runner {RunnerId})",
                     session.Id, owner ?? "local");
             }
@@ -397,10 +397,12 @@ public sealed class SessionReconciliationService
     /// </summary>
     private IQueryable<AgentSession> InterruptedLaunchCandidates(string? owner)
     {
+        var pendingContinuations = ChannelRestartContinuation.Pending(_db);
         var query = _db.AgentSessions.Where(s =>
             s.Status == SessionStatus.Starting
             || (s.Status == SessionStatus.Running
-                && _db.AgentTasks.Any(t =>
+                && (pendingContinuations.Any(t => t.AgentSessionId == s.Id)
+                    || _db.AgentTasks.Any(t =>
                     t.AgentSessionId == s.Id
                     && t.Status == AgentTaskStatus.Dispatched
                     && t.DispatchedAt != null
@@ -423,7 +425,7 @@ public sealed class SessionReconciliationService
                             && m.CanceledAt == null
                             && m.LastDeliveryStartedAt == null
                             && m.DeliveryVerdict == null
-                            && m.CreatedAt >= t.DispatchedAt)))));
+                            && m.CreatedAt >= t.DispatchedAt))))));
         return owner is null
             ? query.Where(s => s.RunnerId == null)
             : query.Where(s => s.RunnerId == owner);

@@ -570,10 +570,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
             // Persist the channel turn boundary before the process can emit startup output.
             // It still identifies the old window after further resumes or delayed discovery.
-            bool? channelInterrupted = null;
-            if (resumeMode == AgentSessionResumeMode.Resume
-                && await _db.ChatChannels.AnyAsync(c => c.Enabled && c.AgentId == agentId, ct))
-                channelInterrupted = await _runtime.WriteRestartBoundaryIfInterruptedAsync(session.Id, ct, acceptedGeneration);
+            var strictResume = resumeMode == AgentSessionResumeMode.Resume;
+            var channelResume = strictResume && await _db.ChatChannels.AnyAsync(c => c.Enabled && c.AgentId == agentId, ct);
+            var autoContinue = strictResume && CanAutoContinue
+                && !await _db.Agents.AsNoTracking().Where(a => a.Id == agentId)
+                    .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct);
+            if (channelResume)
+                await _runtime.WriteRestartBoundaryIfInterruptedAsync(session.Id, ct, acceptedGeneration, autoContinue);
 
             // CARD-0679 D-8: for a remote session the Start-to-ready segment survives a lost
             // phone-home connection. Nothing has been typed yet, so a loss after the runner
@@ -682,7 +685,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // record) so working/idle, the queue and the cards all read idle, not "Working"
             // forever (live miss 2026-08-08).
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
-            var interruptedTurn = channelInterrupted ?? await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+            var interruptedTurn = !channelResume && await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
             await InitializeGrokRulesAsync(session, ct);
 
             await _eventBus.PublishToGroupAsync(
@@ -709,12 +712,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // queue the auto-continue for the interrupted turn. WhenIdle deliberately serialises it
             // AFTER the launch note's turn — enqueued any earlier it would race the remote-control
             // commands and the note into one garbled composer.
-            var checkSeat = await _db.Agents.AsNoTracking().Where(a => a.Id == agentId)
-                .AnyAsync(StandingSpecialistSeatPolicy.SeatOrSlug(_delegationSettings), ct);
-            if (interruptedTurn && resumeMode == AgentSessionResumeMode.Resume && !checkSeat)
+            if (autoContinue && (channelResume || interruptedTurn))
             {
                 await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
-                typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct);
+                typedSomething |= await EnqueueResumeContinueAsync(session.Id, ct, channelResume);
             }
 
             // CARD-0283: optional cardless work body, after notes and the resume-continue so a
@@ -996,6 +997,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             try
             {
                 await RecoverRunningDispatchBriefAsync(session, agentId, ct);
+                await EnqueueResumeContinueAsync(session.Id, ct, channelResume: true);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -3644,16 +3646,27 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     // Queues the interrupted-turn continue prompt (see AgentSessionSettings.ResumeAutoContinue).
     // WhenIdle: the restart boundary already makes the session read idle, so this flushes
     // immediately when nothing else is talking — and waits its turn when a launch note is.
-    private async Task<bool> EnqueueResumeContinueAsync(Guid sessionId, CancellationToken ct)
+    private bool CanAutoContinue =>
+        _settings.ResumeAutoContinue && !string.IsNullOrWhiteSpace(_settings.ResumeContinuePrompt);
+
+    private async Task<bool> EnqueueResumeContinueAsync(Guid sessionId, CancellationToken ct, bool channelResume)
     {
-        if (!_settings.ResumeAutoContinue || string.IsNullOrWhiteSpace(_settings.ResumeContinuePrompt))
+        if (!CanAutoContinue)
             return false;
 
         try
         {
-            await _messageQueue.EnqueueAsync(
-                sessionId, _settings.ResumeContinuePrompt, MessageSendMode.WhenIdle, ct,
-                origin: QueuedMessageOrigin.System);
+            if (channelResume)
+            {
+                if (!await _messageQueue.EnqueueChannelResumeContinuationAsync(sessionId, _settings.ResumeContinuePrompt, ct))
+                    return false;
+            }
+            else
+            {
+                await _messageQueue.EnqueueAsync(
+                    sessionId, _settings.ResumeContinuePrompt, MessageSendMode.WhenIdle, ct,
+                    origin: QueuedMessageOrigin.System);
+            }
             _logger.LogInformation(
                 "Session {SessionId} resumed an interrupted turn; queued the auto-continue prompt", sessionId);
             return true;

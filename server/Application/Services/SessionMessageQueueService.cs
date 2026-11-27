@@ -132,6 +132,19 @@ public sealed partial class SessionMessageQueueService
 
     internal void SupervisionChanged(Guid taskId) => _completionNotes?.Recovery.Check(taskId);
 
+    internal async Task<bool> EnqueueChannelResumeContinuationAsync(Guid sessionId, string body, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var boundaryId = await ChannelRestartContinuation.Pending(db).Where(t => t.AgentSessionId == sessionId)
+            .OrderByDescending(t => t.Sequence).Select(t => (Guid?)t.Id).FirstOrDefaultAsync(ct);
+        if (boundaryId is not { } boundary) return false;
+
+        await EnqueueCoreAsync(sessionId, body, MessageSendMode.WhenIdle, origin: QueuedMessageOrigin.System,
+            runtimeActionKey: $"channel-resume-continue/{boundary:N}", channelRestartBoundaryId: boundary, ct: ct);
+        return true;
+    }
+
     internal Task<SessionQueueDto> EnqueueSupervisionNoticeAsync(TaskSupervisionNotice notice,
         Action<Guid> onCreated, CancellationToken ct, TimeSpan? lockWait = null) =>
         EnqueueCoreAsync(notice.RecipientSessionId!.Value, notice.Body, MessageSendMode.WhenIdle,
@@ -535,7 +548,8 @@ public sealed partial class SessionMessageQueueService
         Guid? reviewThreadId = null, string? runtimeActionKey = null,
         Guid? sourceTaskSupervisionNoticeId = null,
         TimeSpan? lockWait = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Guid? channelRestartBoundaryId = null)
     {
         var trimmed = (body ?? string.Empty).Trim();
         if (trimmed.Length == 0)
@@ -812,6 +826,15 @@ public sealed partial class SessionMessageQueueService
             if (runtimeActionKey is not null && await db.SessionQueuedMessages.AnyAsync(m =>
                 m.AgentSessionId == sessionId && m.RuntimeActionKey == runtimeActionKey, ct))
                 return await GetQueueAsync(sessionId, ct);
+
+            if (channelRestartBoundaryId is { } restart)
+            {
+                var boundary = await ChannelRestartContinuation.Pending(db)
+                    .SingleOrDefaultAsync(t => t.Id == restart && t.AgentSessionId == sessionId, ct);
+                if (boundary is null) return await GetQueueAsync(sessionId, ct);
+                // The boundary acknowledgement and the keyed queue row commit together.
+                boundary.StopReason = ChannelRestartContinuation.Queued;
+            }
 
             if (sourceChannelInboundId is Guid inboundId)
             {
