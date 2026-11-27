@@ -163,7 +163,7 @@ namespace Antiphon.Nightly
                 unresolved = Each(PsValue.Prop(resolved, "unresolved"));
             }
             var schedule = Schedule(prepared.ToArray(), priorityMembers, historyDigest, unresolved, true, state.InvocationId, state.Attempt, previousRun, state.Sha,
-                state.UtcNow, "");
+                state.UtcNow, fallbackReason);
             state.DispatchSchedule = schedule;
             WriteBestEffort(state, schedule);
             RunPrepared(state, steps, schedule, finishedPrefix, selectedSuites);
