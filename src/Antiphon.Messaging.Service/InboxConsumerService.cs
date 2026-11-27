@@ -76,7 +76,7 @@ public sealed class InboxConsumerService(
                         // Duplicate (Channel, ConversationId, ChannelMessageId) is a lost insert race. Any other
                         // persist failure must crash the host: EnableAutoCommit would otherwise
                         // advance the Kafka offset with no Inbox row and no monitor signal.
-                        logger.LogWarning(ex, "[inbox] persist failed for {Channel} {MessageId}",
+                        logger.LogDebug("[inbox] duplicate receipt for {Channel} {MessageId} ignored",
                             message.Channel, message.ChannelMessageId);
                     }
                 }

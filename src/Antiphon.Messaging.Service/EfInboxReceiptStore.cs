@@ -13,43 +13,23 @@ public sealed class EfInboxReceiptStore(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
-        var existing = await db.Inbox.FirstOrDefaultAsync(
-            x => x.Channel == message.Channel
-                 && x.ConversationId == message.Conversation.Id
-                 && x.ChannelMessageId == message.ChannelMessageId, cancellationToken);
-        if (existing is not null)
-        {
-            if (existing.Offset is null)
-            {
-                existing.Topic = topic;
-                existing.Partition = partition;
-                existing.Offset = offset;
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            return;
-        }
-
-        db.Inbox.Add(new InboxMessage
-        {
-            Id = Guid.NewGuid(),
-            Channel = message.Channel,
-            ChannelMessageId = message.ChannelMessageId,
-            ConversationId = message.Conversation.Id,
-            ConversationTitle = message.Conversation.Title,
-            AuthorDisplay = message.Author.DisplayName,
-            Text = message.Text,
-            MentionsMe = message.Mentions.Any(m => m.IsMe),
-            HasAttachments = message.Attachments.Count > 0,
-            ReplyHandle = message.ReplyHandle,
-            Status = InboxStatus.Pending,
-            ReceivedAt = message.Timestamp.ToUniversalTime(),
-            EnvelopeJson = envelopeJson,
-            Topic = topic,
-            Partition = partition,
-            Offset = offset,
-        });
-        await InboxUniqueConstraint.SaveChangesIgnoringDuplicateAsync(
-            db, logger, message.Channel, message.ChannelMessageId, cancellationToken);
+        // Ingress and the Kafka consumer both own this receipt. Insert or backfill its coordinates
+        // in one statement so racing writers never provoke a database error for a redelivery.
+        var changed = await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Inbox" ("Id", "Channel", "ConversationId", "ChannelMessageId", "ConversationTitle",
+                "AuthorDisplay", "Text", "MentionsMe", "HasAttachments", "ReplyHandle", "Status",
+                "ReceivedAt", "EnvelopeJson", "Topic", "Partition", "Offset", "AckAttemptCount")
+            VALUES ({Guid.NewGuid()}, {message.Channel}, {message.Conversation.Id}, {message.ChannelMessageId},
+                {message.Conversation.Title}, {message.Author.DisplayName}, {message.Text}, {message.Mentions.Any(m => m.IsMe)},
+                {message.Attachments.Count > 0}, {message.ReplyHandle}, {nameof(InboxStatus.Pending)},
+                {message.Timestamp.ToUniversalTime()}, {envelopeJson}, {topic}, {partition}, {offset}, 0)
+            ON CONFLICT ("Channel", "ConversationId", "ChannelMessageId") DO UPDATE SET
+                "Topic" = excluded."Topic", "Partition" = excluded."Partition", "Offset" = excluded."Offset"
+            WHERE "Inbox"."Offset" IS NULL
+            """, cancellationToken);
+        if (changed == 0)
+            logger.LogDebug("[inbox] duplicate receipt for {Channel} {MessageId} ignored",
+                message.Channel, message.ChannelMessageId);
     }
 
     public async Task<IReadOnlyList<InboundReceipt>> GetOverdueAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)

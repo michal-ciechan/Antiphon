@@ -160,7 +160,7 @@ public sealed class InboxConsumerServiceTests
         hostStopped.ShouldBeFalse("a persist failure faulted the BackgroundService and stopped the host");
         sink.Calls.ShouldBe(2);
         sink.Recorded.ShouldBe(["663"]);
-        logs.ShouldContain(l => l.Contains("[inbox] persist failed") && l.Contains("662"));
+        logs.ShouldContain(l => l.Contains("[inbox] duplicate receipt") && l.Contains("662"));
     }
 
     [Test]

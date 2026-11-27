@@ -1,5 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace Antiphon.Messaging.Service;
@@ -13,48 +11,11 @@ internal static class InboxUniqueConstraint
 {
     internal const string ChannelMessageIndex = "IX_Inbox_Channel_ConversationId_ChannelMessageId";
 
-    public static async Task SaveChangesIgnoringDuplicateAsync(
-        DbContext db,
-        ILogger logger,
-        string channel,
-        string channelMessageId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await db.SaveChangesAsync(cancellationToken);
-        }
-        catch (DbUpdateException ex) when (IsViolation(ex))
-        {
-            logger.LogDebug(
-                ex,
-                "[inbox] duplicate receipt for {Channel} {MessageId} ignored",
-                channel,
-                channelMessageId);
-        }
-    }
-
     public static bool IsViolation(Exception exception)
     {
         for (var ex = exception; ex is not null; ex = ex.InnerException)
-        {
-            if (ex is PostgresException pg && pg.SqlState == PostgresErrorCodes.UniqueViolation)
+            if (ex is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: ChannelMessageIndex })
                 return true;
-
-            if (IsSqliteUniqueConstraint(ex))
-                return true;
-        }
-
         return false;
-    }
-
-    private static bool IsSqliteUniqueConstraint(Exception ex)
-    {
-        if (!string.Equals(ex.GetType().FullName, "Microsoft.Data.Sqlite.SqliteException", StringComparison.Ordinal))
-            return false;
-        var code = ex.GetType().GetProperty("SqliteErrorCode")?.GetValue(ex);
-        if (code is 19 or 2067)
-            return true;
-        return ex.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase);
     }
 }

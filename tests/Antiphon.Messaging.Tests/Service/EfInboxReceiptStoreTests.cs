@@ -114,34 +114,18 @@ public sealed class EfInboxReceiptStoreTests
     }
 
     [Test]
-    public async Task SaveChanges_of_a_duplicate_channel_message_id_is_ignored()
+    public async Task Redelivery_preserves_the_original_envelope_and_first_non_null_offset()
     {
         await using var harness = await StoreHarness.CreateAsync();
-        await harness.InsertAsync(new InboxMessage
-        {
-            Id = Guid.NewGuid(),
-            Channel = "telegram",
-            ChannelMessageId = "662",
-            ConversationId = "chat-1",
-            ReplyHandle = "chat-1",
-            Status = InboxStatus.Pending,
-            ReceivedAt = DateTimeOffset.UnixEpoch,
-            EnvelopeJson = "{}",
-        });
-
-        await harness.InsertIgnoringDuplicateAsync(new InboxMessage
-        {
-            Id = Guid.NewGuid(),
-            Channel = "telegram",
-            ChannelMessageId = "662",
-            ConversationId = "chat-1",
-            ReplyHandle = "chat-1",
-            Status = InboxStatus.Pending,
-            ReceivedAt = DateTimeOffset.UnixEpoch,
-            EnvelopeJson = "{}",
-        });
-
-        (await harness.LoadAsync()).ShouldHaveSingleItem().ChannelMessageId.ShouldBe("662");
+        var message = Sample("662");
+        await harness.Store.RecordAsync(message, "original", "channels.inbound", 1, 10, CancellationToken.None);
+        await harness.Store.RecordAsync(message with { Text = "edited" }, "redelivery",
+            "channels.inbound", 2, 11, CancellationToken.None);
+        var receipt = (await harness.LoadAsync()).ShouldHaveSingleItem();
+        receipt.EnvelopeJson.ShouldBe("original");
+        receipt.Text.ShouldBe(message.Text);
+        receipt.Partition.ShouldBe(1);
+        receipt.Offset.ShouldBe(10);
     }
 
     [Test]
@@ -239,15 +223,6 @@ public sealed class EfInboxReceiptStoreTests
             var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
             db.Inbox.Add(row);
             await db.SaveChangesAsync();
-        }
-
-        public async Task InsertIgnoringDuplicateAsync(InboxMessage row)
-        {
-            using var scope = Services.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
-            db.Inbox.Add(row);
-            await InboxUniqueConstraint.SaveChangesIgnoringDuplicateAsync(
-                db, NullLogger<EfInboxReceiptStore>.Instance, row.Channel, row.ChannelMessageId, CancellationToken.None);
         }
 
         public async Task<List<InboxMessage>> LoadAsync()
