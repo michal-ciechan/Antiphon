@@ -2000,6 +2000,7 @@ public class AgentSessionLaunchFailureTests
         var adapter = new FakeAgentProtocolAdapter { PromptOutput = "ready" };
         var probe = new CountingRcProbe { Armed = true };
         await using var fixture = await LaunchFixture.CreateAsync(adapter, s => s.AddSingleton<IRcBridgeProbe>(probe));
+        await fixture.BindChannelAsync();
         var gate = fixture.Services.GetRequiredService<SessionMessageQueueService>().GetLock(fixture.SessionId);
         bool? queueAcquired = null;
         adapter.OnPrompt = (prompt, _) =>
@@ -2014,6 +2015,9 @@ public class AgentSessionLaunchFailureTests
         await fixture.LaunchInteractiveAsync(remoteControlName: "fixture", resume: true);
         queueAcquired.ShouldBe(false);
         gate.CurrentCount.ShouldBe(1);
+        await using var db = LaunchFixture.CreateContext();
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == fixture.SessionId
+            && t.Kind == TranscriptKinds.SessionRestartBoundary)).ShouldBe(1);
     }
 
     [Test]
@@ -2862,6 +2866,7 @@ public class AgentSessionLaunchFailureTests
         public required Guid AgentId { get; init; }
         public required string Workspace { get; init; }
         public AgentSessionRuntime Runtime => Harness.Runtime;
+        public Task<string> BindChannelAsync() => Harness.BindChannelAsync();
         public IServiceProvider Services => LaunchScope.ServiceProvider;
 
         public static Task<LaunchFixture> CreateAsync(params FakeAgentProtocolAdapter[] adapters) =>

@@ -607,7 +607,9 @@ public static class TranscriptKinds
     /// before its TurnEnd could land, and nothing is running any more. Counts as a turn END for
     /// working/idle purposes, exactly like the interrupt marker: without it the relaunched
     /// session reads "working" forever and every WhenIdle delivery strands (live miss 2026-08-08,
-    /// Antiphon-Opus stuck "Working" across a restart).
+    /// Antiphon-Opus stuck "Working" across a restart). A strict resume of a bound channel
+    /// also seals its idle turn before the next process starts so historical reply discovery
+    /// cannot attach new output to the old prompt.
     /// </summary>
     public const string SessionRestartBoundary = "SessionRestartBoundary";
 

@@ -1444,7 +1444,8 @@ public sealed partial class AgentSessionRuntime
     }
 
     /// <summary>The synthetic append shares serialization, persistence and publication with runner ingestion.</summary>
-    internal async Task<bool> WriteRestartBoundaryIfInterruptedAsync(Guid sessionId, CancellationToken ct)
+    internal async Task<bool> WriteRestartBoundaryIfInterruptedAsync(Guid sessionId, CancellationToken ct,
+        DateTime? channelGeneration = null)
     {
         using var lease = await (_states ?? throw new InvalidOperationException("Transcript ingestion requires SessionStateStore.")).BeginWriteAsync(sessionId, ct);
         bool working;
@@ -1455,14 +1456,25 @@ public sealed partial class AgentSessionRuntime
             working = await SessionMessageQueueService.IsWorkingAsync(
                 scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
         }
-        if (!working) return false;
+        if (!working && channelGeneration == null) return false;
+        var uuid = channelGeneration is { } accepted
+            ? $"channel-generation/{SessionGeneration.Normalize(accepted).Ticks}" : Guid.NewGuid().ToString("D");
         var boundary = new SessionRunnerTranscriptEvent(sessionId, 0, TranscriptKinds.SessionRestartBoundary,
-            Guid.NewGuid().ToString("D"), null, _timeProvider.GetUtcNow(), "system",
-            "Session relaunched; the previous turn had been interrupted mid-flight.", null, null, null, null, null);
+            uuid, null, _timeProvider.GetUtcNow(), "system", working
+                ? "Session relaunched; the previous turn had been interrupted mid-flight."
+                : "Channel session resumed after an idle turn.", null, null, null, null, null);
         var result = await PersistTranscriptCoreAsync(sessionId, [boundary], lease, ct: ct);
         await PublishCommittedAsync(lease, result);
+        if (channelGeneration != null && result.LastStoredSeq == null)
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            if (!await db.TranscriptEntries.AnyAsync(t => t.AgentSessionId == sessionId
+                    && t.Kind == TranscriptKinds.SessionRestartBoundary && t.Uuid == uuid, ct))
+                throw new InvalidOperationException("Could not persist the channel session restart boundary.");
+        }
         Actions().Hint(sessionId);
-        return result.LastStoredSeq is not null;
+        return working && result.LastStoredSeq is not null;
     }
 
     private async Task<PersistResult> PersistTranscriptCoreAsync(Guid sessionId, IReadOnlyList<SessionRunnerTranscriptEvent> entries,

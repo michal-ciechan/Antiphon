@@ -568,6 +568,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await AdmitWorkspaceAsync(session, ct);
 
+            // Persist the channel turn boundary before the process can emit startup output.
+            // It still identifies the old window after further resumes or delayed discovery.
+            bool? channelInterrupted = null;
+            if (resumeMode == AgentSessionResumeMode.Resume
+                && await _db.ChatChannels.AnyAsync(c => c.Enabled && c.AgentId == agentId, ct))
+                channelInterrupted = await _runtime.WriteRestartBoundaryIfInterruptedAsync(session.Id, ct, acceptedGeneration);
+
             // CARD-0679 D-8: for a remote session the Start-to-ready segment survives a lost
             // phone-home connection. Nothing has been typed yet, so a loss after the runner
             // acknowledged the Launch re-attaches to the session it holds, and a loss before the ack
@@ -675,7 +682,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // record) so working/idle, the queue and the cards all read idle, not "Working"
             // forever (live miss 2026-08-08).
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
-            var interruptedTurn = await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
+            var interruptedTurn = channelInterrupted ?? await WriteRestartBoundaryIfInterruptedAsync(session.Id, ct);
             await InitializeGrokRulesAsync(session, ct);
 
             await _eventBus.PublishToGroupAsync(
