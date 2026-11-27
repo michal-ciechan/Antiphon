@@ -16,6 +16,7 @@ public sealed class PhoneHomeCloseRaceTests
     public async Task Superseded_close_does_not_warn_when_the_credit_writer_stop_aborts_the_socket()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var stopReceiving = new CancellationTokenSource();
         var closing = new TaskCompletionSource<WebSocketState>(TaskCreationOptions.RunContinuationsAsynchronously);
         var rejectedClose = new TaskCompletionSource<WebSocketState>(TaskCreationOptions.RunContinuationsAsynchronously);
         var logger = new RecordingLogger<PhoneHomeLiveConnection>();
@@ -29,19 +30,29 @@ public sealed class PhoneHomeCloseRaceTests
                 closing.SetResult(socket.State);
                 // The canceled writer drives the production receive loop's Abort before the
                 // close checks state, as ManagedWebSocket does at handshake entry.
-                await Should.ThrowAsync<OperationCanceledException>(() => receiving!.WaitAsync(ct));
+                try { await receiving!.WaitAsync(ct); }
+                catch (OperationCanceledException) when (receiving!.IsCanceled) { }
                 rejectedClose.SetResult(socket.State);
                 throw new WebSocketException(WebSocketError.InvalidState);
             },
         };
         await using var connection = NewConnection(socket, logger);
-        receiving = connection.ReceiveLoopAsync(deadline.Token);
+        receiving = connection.ReceiveLoopAsync(stopReceiving.Token);
 
-        await connection.DisposeAsync("superseded");
+        try
+        {
+            await connection.DisposeAsync("superseded");
 
-        (await closing.Task.WaitAsync(deadline.Token)).ShouldBe(WebSocketState.Open);
-        (await rejectedClose.Task.WaitAsync(deadline.Token)).ShouldBe(WebSocketState.Aborted);
-        logger.Entries.Where(entry => entry.Level == LogLevel.Warning).ShouldBeEmpty();
+            (await closing.Task.WaitAsync(deadline.Token)).ShouldBe(WebSocketState.Open);
+            (await rejectedClose.Task.WaitAsync(deadline.Token)).ShouldBe(WebSocketState.Aborted);
+            logger.Entries.Where(entry => entry.Level == LogLevel.Warning).ShouldBeEmpty();
+        }
+        finally
+        {
+            stopReceiving.Cancel();
+            try { await receiving; }
+            catch (OperationCanceledException) when (receiving.IsCanceled) { }
+        }
     }
 
     [Test]
