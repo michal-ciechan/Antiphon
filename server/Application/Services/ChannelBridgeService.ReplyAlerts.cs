@@ -31,46 +31,13 @@ public sealed partial class ChannelBridgeService
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         if (_settings.GroupReplyDeadlineMinutes > 0)
         {
-            var cutoff = now.AddMinutes(-_settings.GroupReplyDeadlineMinutes);
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            await db.Database.ExecuteSqlRawAsync(
-                "SET LOCAL lock_timeout = '100ms'; SET LOCAL statement_timeout = '2s'", ct);
-            var overdue = await db.Database.SqlQuery<ReplyDeadlineRow>($"""
-                SELECT i."Id", i."AgentId", i."Provider", i."ConversationId", i."NativeMessageId",
-                       q."AgentSessionId" AS "SessionId",
-                       CASE WHEN q."Status" = 0 AND q."DeliveryAttempts" = 0 THEN q."Id" END AS "PendingId"
-                FROM "ChatChannels" AS c
-                JOIN LATERAL (
-                    SELECT r."Id" FROM "ChannelInbounds" AS r
-                    WHERE r."Provider" = c."Provider" AND r."ConversationId" = c."ExternalId"
-                      AND r."AgentId" = c."AgentId" AND r."ChatChannelId" = c."Id"
-                      AND (c."LastReplyAt" IS NULL OR r."AcceptedAt" > c."LastReplyAt")
-                    ORDER BY r."AcceptanceSequence" LIMIT 1
-                ) AS head ON true
-                JOIN "ChannelInbounds" AS i ON i."Id" = head."Id"
-                LEFT JOIN "SessionQueuedMessages" AS q ON q."Id" = i."QueueMessageId"
-                WHERE c."Enabled" AND c."Provider" = 'telegram' AND c."Kind" = {(int)ChatChannelKind.Group}
-                  AND i."AcceptedAt" <= {cutoff} AND i."InputWithheldIncidentAt" IS NULL
-                  AND NOT EXISTS (SELECT 1 FROM "AgentIncidents" AS a WHERE a."Id" = i."Id")
-                ORDER BY i."AcceptanceSequence" LIMIT {WithheldIncidentPageSize}
-                FOR UPDATE OF i SKIP LOCKED
-                """).ToListAsync(ct);
-            // A concurrent scanner can commit between our query snapshot and its inbound lock.
-            var ids = overdue.Select(r => r.Id).ToArray();
-            var claimed = await db.AgentIncidents.Where(i => ids.Contains(i.Id)).Select(i => i.Id).ToHashSetAsync(ct);
-            foreach (var row in overdue.Where(r => !claimed.Contains(r.Id)))
+            try { await RecordOverdueGroupsAsync(db, now, ct); }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                db.AgentIncidents.Add(new AgentIncident
-                {
-                    Id = row.Id, AgentId = row.AgentId, SessionId = row.SessionId,
-                    Severity = AlertSeverity.Critical, Kind = AgentIncidentKind.ChannelReplyLost,
-                    FailureReason = NoOutboundReason, CreatedAt = now,
-                    Message = $"No outbound reply since inbound {row.Provider}:{row.ConversationId}/{row.NativeMessageId}. "
-                        + ChannelRecoveryRoute(row.AgentId, row.SessionId, row.PendingId),
-                });
+                // The existing withheld incidents still need their push if this lookup times out.
+                db.ChangeTracker.Clear();
+                _logger.LogWarning(ex, "Group reply deadline scan failed; retrying");
             }
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
         }
 
         // Pre-upgrade withheld incidents used independent IDs. Match the committed stamp,
@@ -111,6 +78,50 @@ public sealed partial class ChannelBridgeService
             await db.AgentIncidents.Where(i => i.Id == page.Id && i.HumanNotifiedAt == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(i => i.HumanNotifiedAt, now), ct);
         }
+    }
+
+    private async Task RecordOverdueGroupsAsync(AppDbContext db, DateTime now, CancellationToken ct)
+    {
+        var cutoff = now.AddMinutes(-_settings.GroupReplyDeadlineMinutes);
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlRawAsync(
+            "SET LOCAL lock_timeout = '100ms'; SET LOCAL statement_timeout = '2s'", ct);
+        var overdue = await db.Database.SqlQuery<ReplyDeadlineRow>($"""
+            SELECT i."Id", i."AgentId", i."Provider", i."ConversationId", i."NativeMessageId",
+                   q."AgentSessionId" AS "SessionId",
+                   CASE WHEN q."Status" = 0 AND q."DeliveryAttempts" = 0 THEN q."Id" END AS "PendingId"
+            FROM "ChatChannels" AS c
+            JOIN LATERAL (
+                SELECT r."Id" FROM "ChannelInbounds" AS r
+                WHERE r."Provider" = c."Provider" AND r."ConversationId" = c."ExternalId"
+                  AND r."AgentId" = c."AgentId" AND r."ChatChannelId" = c."Id"
+                  AND (c."LastReplyAt" IS NULL OR r."AcceptedAt" > c."LastReplyAt")
+                ORDER BY r."AcceptanceSequence" LIMIT 1
+            ) AS head ON true
+            JOIN "ChannelInbounds" AS i ON i."Id" = head."Id"
+            LEFT JOIN "SessionQueuedMessages" AS q ON q."Id" = i."QueueMessageId"
+            WHERE c."Enabled" AND c."Provider" = 'telegram' AND c."Kind" = {(int)ChatChannelKind.Group}
+              AND i."AcceptedAt" <= {cutoff} AND i."InputWithheldIncidentAt" IS NULL
+              AND NOT EXISTS (SELECT 1 FROM "AgentIncidents" AS a WHERE a."Id" = i."Id")
+            ORDER BY i."AcceptanceSequence" LIMIT {WithheldIncidentPageSize}
+            FOR UPDATE OF i SKIP LOCKED
+            """).ToListAsync(ct);
+        // A concurrent scanner can commit between our query snapshot and its inbound lock.
+        var ids = overdue.Select(r => r.Id).ToArray();
+        var claimed = await db.AgentIncidents.Where(i => ids.Contains(i.Id)).Select(i => i.Id).ToHashSetAsync(ct);
+        foreach (var row in overdue.Where(r => !claimed.Contains(r.Id)))
+        {
+            db.AgentIncidents.Add(new AgentIncident
+            {
+                Id = row.Id, AgentId = row.AgentId, SessionId = row.SessionId,
+                Severity = AlertSeverity.Critical, Kind = AgentIncidentKind.ChannelReplyLost,
+                FailureReason = NoOutboundReason, CreatedAt = now,
+                Message = $"No outbound reply since inbound {row.Provider}:{row.ConversationId}/{row.NativeMessageId}. "
+                    + ChannelRecoveryRoute(row.AgentId, row.SessionId, row.PendingId),
+            });
+        }
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
     }
 
     private sealed class ReplyDeadlineRow

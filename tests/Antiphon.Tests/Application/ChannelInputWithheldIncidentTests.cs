@@ -79,6 +79,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         await h.DrainOutboundAsync();
         var reply = h.Messaging.SentReplies.ShouldHaveSingleItem();
         reply.ConversationId.ShouldBe(chat);
+        reply.Kind.ShouldBe(ChannelReplyKind.Answer);
         reply.Text.ShouldBe("fixture answer");
         (await db.SessionQueuedMessages.SingleAsync(m => m.Id == row.Id, ct)).DeliveryAttempts.ShouldBe(1);
     }
@@ -555,6 +556,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         var chat = await h.BindChannelAsync();
         await using (var db = Db(schema.ConnectionString))
         {
+            await db.Agents.Where(a => a.Id == h.AgentId).ExecuteUpdateAsync(s => s.SetProperty(a => a.AlwaysOn, false), ct);
             await db.ChatChannels.Where(c => c.ExternalId == chat)
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.DigestEnabled, true));
         }
