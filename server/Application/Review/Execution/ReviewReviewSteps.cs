@@ -413,8 +413,11 @@ public static class ReviewReviewSteps
             }
         }
 
-        string? reviewId = null;
-        string? reviewUrl = null;
+        var previousPublication = ReviewWalk.Output<PublishOutput>(execution);
+        var publication = new PublishOutput(
+            [.. (previousPublication?.Inline ?? []), .. inline.Select(i => i.Finding.Key)],
+            [.. (previousPublication?.SummaryOnly ?? []), .. summaryOnly.Select(f => f.Key)],
+            belowBar.Select(f => f.Key).ToList(), previousPublication?.ReviewId, previousPublication?.ReviewUrl);
         var canPost = walk.Host.Capabilities.CanPostReviews && run.Subject.PrNumber is not null;
         if (canPost && (inline.Count > 0 || summaryOnly.Count > 0))
         {
@@ -422,8 +425,7 @@ public static class ReviewReviewSteps
                 ReviewWalk.Output<VerifyOutput>(verify), verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued);
             var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding))).ToList();
             var posted = await walk.Host.PostReviewAsync(walk.Binding.Target, new CodeHostReview(walk.Iteration.HeadSha ?? walk.HeadSha, body, comments), ct);
-            reviewId = posted.ReviewId;
-            reviewUrl = posted.Url;
+            publication = publication with { ReviewId = posted.ReviewId, ReviewUrl = posted.Url };
             var remaining = posted.Comments.ToList();
             foreach (var (finding, candidate) in inline)
             {
@@ -437,6 +439,7 @@ public static class ReviewReviewSteps
                 }
 
                 finding.Posted = true;
+                finding.ExternalThreadUrl ??= posted.Url;
                 finding.UpdatedAt = walk.Now();
             }
 
@@ -446,6 +449,12 @@ public static class ReviewReviewSteps
                 finding.ExternalThreadUrl ??= posted.Url;
                 finding.UpdatedAt = walk.Now();
             }
+
+            // The POST was admitted. Keep its local links and receipt even if Close won
+            // while GitHub returned it. This save changes no run or node lifecycle fields.
+            execution.OutputJson = ReviewWalk.ToJson(publication);
+            using var receiptBudget = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await ReviewRunWrites.SaveAsync(walk.Db, run.Id, receiptBudget.Token);
         }
 
         var blocking = findings.Where(f => ReviewRoundsPolicy.IsBlocking(f, run.Round, policy)).ToList();
@@ -457,8 +466,7 @@ public static class ReviewReviewSteps
 
         var where = canPost ? "posted" : "kept in Antiphon (the code host takes no reviews)";
         var summary = $"{created.Count} findings: {inline.Count} inline, {summaryOnly.Count} in the summary, {belowBar.Count} below round {run.Round}'s bar; {where}";
-        return NodeResult.Ok(null, summary, new PublishOutput(inline.Select(i => i.Finding.Key).ToList(), summaryOnly.Select(f => f.Key).ToList(),
-            belowBar.Select(f => f.Key).ToList(), reviewId, reviewUrl));
+        return NodeResult.Ok(null, summary, publication);
     }
 
     public static string HoldsName(string cid) => $"holds_{cid.ToLowerInvariant()}";

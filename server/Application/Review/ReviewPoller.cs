@@ -275,6 +275,7 @@ public sealed class ReviewPoller(
                 {
                     var run = await WithServiceAsync(comment.AuthorLogin, s =>
                         s.CreateRunAsync(new CreateReviewRunRequest(repo.Host, name, comment.PrNumber), marker, command.Steer, ct));
+                    target = target with { ReviewRunId = run.Id };
                     if (run.Existing == true)
                     {
                         run = await WithServiceAsync(comment.AuthorLogin,
@@ -289,8 +290,8 @@ public sealed class ReviewPoller(
                 }
                 else
                 {
-                    var runId = latest.Id;
-                    var run = await WithServiceAsync(comment.AuthorLogin, s => s.RequestRoundAsync(runId, command.Steer, comment.AuthorLogin, marker, ct));
+                    target = target with { ReviewRunId = latest.Id };
+                    var run = await WithServiceAsync(comment.AuthorLogin, s => s.RequestRoundAsync(latest.Id, command.Steer, comment.AuthorLogin, marker, ct));
                     reply = $"Round {run.Round} queued{SteerText(command.Steer)}.";
                 }
             }

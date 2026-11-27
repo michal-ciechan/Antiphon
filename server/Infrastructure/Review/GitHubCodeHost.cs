@@ -217,8 +217,19 @@ public sealed class GitHubCodeHost(
         if (review.Comments.Count == 0 || reviewId.Length == 0)
             return new CodeHostPostedReview(reviewId, url, []);
 
-        var listed = await GetAsync(target, $"{RepoPath(target)}/pulls/{number}/reviews/{reviewId}/comments?per_page={PageSize}", JsonMediaType, ct);
-        using var comments = Parse(listed, "review comments");
+        JsonDocument commentsDocument;
+        try
+        {
+            var listed = await GetAsync(target, $"{RepoPath(target)}/pulls/{number}/reviews/{reviewId}/comments?per_page={PageSize}", JsonMediaType, ct);
+            commentsDocument = Parse(listed, "review comments");
+        }
+        catch (Exception ex) when (ex is CodeHostException or OperationCanceledException)
+        {
+            // The review exists even if the follow-up read cannot enrich its receipt.
+            return new CodeHostPostedReview(reviewId, url, []);
+        }
+
+        using var comments = commentsDocument;
         var remaining = comments.RootElement.ValueKind == JsonValueKind.Array ? comments.RootElement.EnumerateArray().ToList() : [];
         var posted = new List<CodeHostPostedComment>();
         foreach (var wanted in review.Comments)
@@ -245,8 +256,9 @@ public sealed class GitHubCodeHost(
             var threads = await ThreadIdsByCommentAsync(target, ct);
             posted = posted.Select(c => threads.TryGetValue(c.CommentId, out var thread) ? c with { ThreadId = thread } : c).ToList();
         }
-        catch (CodeHostException)
+        catch (Exception ex) when (ex is CodeHostException or OperationCanceledException)
         {
+            // The REST comment IDs already identify the published threads.
         }
 
         return new CodeHostPostedReview(reviewId, url, posted);

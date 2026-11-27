@@ -207,7 +207,7 @@ Manual intake returns the existing run without queuing a round. Use Refresh to r
 
 An explicit close removes open gates from the queue, skips outstanding workflow steps and records the viewer, reason and time. Reviewer task creation saves the run, node and attempt link with the task before dispatch. Close uses the delegated-task cancellation path for those tasks. A server worker retries cancellation of closed or timed-out reviewers after restart, including seats held while waiting for input. The deadline lives on the task and applies independently of workflow polling.
 
-Each GitHub write, including an individual merge retry, takes a database lock on its run and checks its status before sending. An admitted write completes before the close commits. A later write is refused. Writes require a verified numeric repository ID.
+Each GitHub write bound to a run takes a shared lock on that run and checks its status before sending. This includes individual merge retries and poller replies about a specific run. Close and workflow saves take the run lock before touching its child rows. A confirmed GitHub review POST records its local receipt and finding links before the executor checks whether close superseded the publishing step. If GitHub cannot return the comment details, the accepted review URL is retained. Writes require a verified numeric repository ID.
 
 ### Database activation
 
