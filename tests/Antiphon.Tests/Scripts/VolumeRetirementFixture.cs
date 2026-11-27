@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Antiphon.Tests.Application;
 using Shouldly;
@@ -125,49 +124,34 @@ internal static class VolumeRetirementFixture
         var mode = await Bash("chmod 0755 " + Quote(Path.Combine(bin, "git")) + " " +
             Quote(Path.Combine(bin, "ssh")) + " " + Quote(Path.Combine(bin, "scp")));
         mode.Exit.ShouldBe(0, "c1609: host transport mode; " + mode.Output);
-        var repoRoot = DelegateScriptRunner.RepoRoot;
-        var psi = new ProcessStartInfo("pwsh")
+        // Unit 66: Get-C1008RetireProofExports is the bridge's RetireProofExports (uncoordinated: its ssh and scp are the bridge's own,
+        // here the shims on the overlay PATH); the real bounded Git runner and writer run the shimmed git.
+        var environment = new Dictionary<string, string>
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = repoRoot
+            ["PATH"] = bin + ":" + Environment.GetEnvironmentVariable("PATH"), ["H7_EVIDENCE"] = evidence, ["H7_INVENTORY_DIR"] = inventoryDir,
+            ["H7_REMOTE_ROOT"] = remoteRoot, ["H7_SCP_LOG"] = scpLog, ["H7_SSH_LOG"] = Path.Combine(evidence, "ssh-log"), ["H7_HOST_GIT_TRACE"] = trace,
+            ["H7_BARE"] = bare, ["H7_HOST_DENY"] = deny ? "1" : "0", ["GIT_TERMINAL_PROMPT"] = "0",
         };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-NonInteractive");
-        psi.ArgumentList.Add("-Command");
-        psi.ArgumentList.Add(
-            "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(repoRoot, "scripts/c590-command.ps1")) +
-            "; . " + Quote(Path.Combine(repoRoot, "scripts/c590-real.ps1")) +
-            "; $exports = @(Get-C1008RetireProofExports -EvidenceRoot $env:H7_EVIDENCE -Run 'h7fixture' " +
-            "-RecycleOperation '" + Operation + "' -InventoryRemote 'true' -ProjectId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'); " +
-            "$exports | ForEach-Object { Write-Output $_ }");
-        psi.Environment["PATH"] = bin + ":" + Environment.GetEnvironmentVariable("PATH");
-        psi.Environment["H7_EVIDENCE"] = evidence;
-        psi.Environment["H7_INVENTORY_DIR"] = inventoryDir;
-        psi.Environment["H7_REMOTE_ROOT"] = remoteRoot;
-        psi.Environment["H7_SCP_LOG"] = scpLog;
-        psi.Environment["H7_SSH_LOG"] = Path.Combine(evidence, "ssh-log");
-        psi.Environment["H7_HOST_GIT_TRACE"] = trace;
-        psi.Environment["H7_BARE"] = bare;
-        psi.Environment["H7_HOST_DENY"] = deny ? "1" : "0";
-        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        using var proc = Process.Start(psi)!;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync(deadline.Token);
-        var stderrTask = proc.StandardError.ReadToEndAsync(deadline.Token);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var files = new System.IO.Abstractions.FileSystem();
+        var session = new Antiphon.Nightly.C590Bridge.Session(DelegateScriptRunner.RepoRoot, Antiphon.Nightly.NightlyHost.Production(output, error), files,
+            new Antiphon.Nightly.C590BridgeSeams
+            {
+                World = new Antiphon.Nightly.C590BridgeOs(output, error, environment),
+                Processes = new Antiphon.Nightly.C1609BoundedProcesses(files, environment: environment),
+            }, false);
+        var exit = 0;
         try
         {
-            await proc.WaitForExitAsync(deadline.Token);
+            foreach (var export in session.RetireProofExports(evidence, "h7fixture", Operation, "true", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1", coordinated: false))
+                output.WriteLine(export);
         }
-        catch (OperationCanceledException)
-        {
-            if (!proc.HasExited) { proc.Kill(true); await proc.WaitForExitAsync(); }
-            throw new TimeoutException("c1609: host proof writer exceeded 60s");
-        }
-        return (proc.ExitCode, await stdoutTask + await stderrTask);
+        catch (Antiphon.Nightly.C590Exit stop) { exit = stop.Code; }
+        catch (Exception e) when (e is Antiphon.Nightly.C1609Refusal or Antiphon.Nightly.C590Failure) { error.WriteLine(e.Message); exit = 1; }
+        await Task.CompletedTask;
+        return (exit, output.ToString() + error.ToString());
     }
-
     internal static string Truncate(string value)
     {
         var flat = value.Replace('\r', ' ').Replace('\n', ' ');

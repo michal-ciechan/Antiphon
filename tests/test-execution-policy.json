@@ -1793,17 +1793,6 @@
         },
         {
           "suite": "antiphon",
-          "class": "VolumeRetirementHostProofTests",
-          "methods": [
-            "Coordinator_receipt_names_the_failing_script_and_reason",
-            "Desktop_children_start_when_the_working_directory_is_264_characters"
-          ],
-          "platform": "windows",
-          "reason": "Linux-only by construction: the witness puts #!/bin/sh ssh, scp and git shims on PATH and chmod's them. The case remains required on Linux.",
-          "owner": "CARD-1514"
-        },
-        {
-          "suite": "antiphon",
           "class": "ScriptModelSpawnLaneTests",
           "methods": [
             "Probe_A_overlaps_probe_B",

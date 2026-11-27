@@ -23,9 +23,9 @@ const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const argv = process.argv.slice(2);
 const rootArg = () => argv[argv.indexOf('--root') + 1];
 let scope;
-function call(file, args, allowFailure = false, timeout = 90000) {
+function call(file, args, allowFailure = false, timeout = 90000, env = undefined) {
   const started = performance.now();
-  const r = cp.spawnSync(file, args, {encoding:'utf8', timeout, maxBuffer:8 * 1024 * 1024});
+  const r = cp.spawnSync(file, args, {encoding:'utf8', timeout, maxBuffer:8 * 1024 * 1024, env});
   if (scope) fs.appendFileSync(scope.root + '/commands.jsonl', JSON.stringify({
     file, args:args.map((a,i) => i && args[i-1] === '-c' ? {bytes:Buffer.byteLength(a),sha256:hash(a)} : a),
     exit:r.status, milliseconds:performance.now()-started, stdoutBytes:Buffer.byteLength(r.stdout || ''),
@@ -226,10 +226,10 @@ function proof(f) {
   const originHash=crypto.createHash('sha256').update(originURL).digest('hex');
   const proofName=crypto.createHash('sha256').update('repos/outer\n'+originURL).digest('hex');
   f.inventory=crypto.createHash('sha256').update('C1008_PRIVATE_ORIGIN repo=repos/outer origin='+originURL+' originHash='+originHash+' proofName='+proofName+'\n').digest('hex');
-  const psi=call('pwsh',['-NoProfile','-NonInteractive','-Command',
-    '$ErrorActionPreference="Stop"; $env:PATH='+q(bin+':'+process.env.PATH)+'; . '+q(repo+'/scripts/c1008-host-proof.ps1')+
-    '; Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+
-    ' -ProofVersion 2 -PhaseNonce '+q(f.nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(f.proof)+' -CreatedUnix '+Math.floor(Date.now()/1000)+' -LogPath '+q(dir+'/proof.log')]);
+  // Unit 66: the desktop proof writer is the c1609-host-proof command (C1609HostProof), with the git shim first on its PATH.
+  const psi=call(repo+'/scripts/antiphon',['c1609-host-proof','write','--origin-url',originURL,'--repo-relative','repos/outer','--operation-id',f.op,
+    '--phase-nonce',f.nonce,'--inventory-digest',f.inventory,'--approved-origins',originURL,'--proof-directory',f.proof,
+    '--created-unix',String(Math.floor(Date.now()/1000)),'--log-path',dir+'/proof.log'],false,90000,{...process.env,PATH:bin+':'+process.env.PATH});
   assert.equal(psi.code,0);
   // Custody requires the applier to own the proof and forbids group/world write.
   // The audit helper is uid 1654 and sees the proof through a read-only bind,
@@ -335,18 +335,20 @@ async function liveChild(f,args){
   const bin=local+'/bin';fs.mkdirSync(bin);
   fs.writeFileSync(bin+'/git','#!/bin/bash\nargs=(); for a in "$@"; do if [ "$a" = '+q(originURL)+' ]; then args+=('+q(scope.root+'/origin.git')+'); else args+=("$a"); fi; done\nexec /usr/local/bin/git -c protocol.file.allow=always "$'+'{args[@]}"\n',{mode:0o755});
   let previous='',pending='',stdout='',stderr='',failure,proofs=0,controls=0;
-  const host=(command)=>call('pwsh',['-NoProfile','-NonInteractive','-Command',
-    '$ErrorActionPreference="Stop"; $env:PATH='+q(bin+':'+process.env.PATH)+'; . '+q(repo+'/scripts/c1008-host-proof.ps1')+'; '+command],true,60000);
+  // Unit 66: the desktop writer and live check are the c1609-host-proof command's write and live-check verbs.
+  const host=(args)=>call(repo+'/scripts/antiphon',['c1609-host-proof',...args],true,60000,{...process.env,PATH:bin+':'+process.env.PATH});
   const respond=line=>{
     if(line.startsWith('C1609_PROOF_REQUEST ')){
       const fields=line.split(' ');assert.equal(fields.length,6);assert.match(fields[2],/^[0-9a-f]{32}$/);
       config.phase ??= fields[2];assert.equal(fields[2],config.phase);
       const required=fields[3]==='renew'?rootRead(f.host+'/server/retirement/'+f.op+'/inventory-'+config.phase+'/published-objects.txt').trim().split('\n').filter(Boolean).map(l=>{
-        const match=l.match(/^C1609_PROVED_OBJECT repo=repos\/outer object=([0-9a-f]{40}) type=(commit|tag|tree|blob)$/);assert(match);return '[pscustomobject]@{objectId='+q(match[1])+';type='+q(match[2])+'}';
+        const match=l.match(/^C1609_PROVED_OBJECT repo=repos\/outer object=([0-9a-f]{40}) type=(commit|tag|tree|blob)$/);assert(match);return match[1]+':'+match[2];
       }):[];
       const nonce=crypto.randomBytes(16).toString('hex'),started=Math.floor(Date.now()/1000),directory=local+'/proof-'+proofs++;
       fs.mkdirSync(directory);
-      const r=host('Write-C1008HostOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+' -ProofVersion 2 -PhaseNonce '+q(nonce)+' -InventoryDigest '+q(f.inventory)+' -ApprovedOrigins '+q(originURL)+' -ProofDirectory '+q(directory)+' -CreatedUnix '+started+' -LogPath '+q(local+'/proof.log')+' -RequiredObjects @('+required.join(',')+')'+(previous?' -PreviousProofFile '+q(previous)+' -FreshGraph':''));
+      const r=host(['write','--origin-url',originURL,'--repo-relative','repos/outer','--operation-id',f.op,'--phase-nonce',nonce,'--inventory-digest',f.inventory,
+        '--approved-origins',originURL,'--proof-directory',directory,'--created-unix',String(started),'--log-path',local+'/proof.log']
+        .concat(required.length?['--required-objects',required.join(',')]:[]).concat(previous?['--previous-proof-file',previous,'--fresh-graph']:[]));
       assert.equal(r.code,0,'native real proof writer: '+r.stdout+r.stderr);
       const name='c1008-proof-'+f.op+'-'+started+'-'+nonce,destination=config.control+'/'+name;
       const files=fs.readdirSync(directory).sort();assert.equal(files.length,2);
@@ -356,7 +358,8 @@ async function liveChild(f,args){
       return 'C1609_PROOF_RESPONSE '+fields[1]+' '+name+' '+started+' '+nonce+' '+f.inventory+' '+digest+' '+fields[4]+' '+fields[5];
     }
     if(line.startsWith('C1609_CONTROL_REQUEST ')){
-      assert(previous);const r=host('Assert-C1609LiveOriginProof -OriginUrl '+q(originURL)+' -RepoRelative repos/outer -OperationId '+q(f.op)+' -ProofFile '+q(previous)+' -ApprovedOrigins '+q(originURL)+' -NetworkBudgetMs 5000');
+      assert(previous);const r=host(['live-check','--origin-url',originURL,'--repo-relative','repos/outer','--operation-id',f.op,'--proof-file',previous,
+        '--approved-origins',originURL,'--network-budget-ms','5000']);
       assert.equal(r.code,0,'native real live control: '+r.stdout+r.stderr);controls++;
       return line.replace('C1609_CONTROL_REQUEST ','C1609_CONTROL_RESPONSE ');
     }

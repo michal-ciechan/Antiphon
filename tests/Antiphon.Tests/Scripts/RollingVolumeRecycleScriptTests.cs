@@ -691,7 +691,7 @@ public sealed class RollingVolumeRecycleScriptTests
             run.Exit.ShouldNotBe(0);
         }
         // Invoke both real validators with raw JSON before any switch binding: the command's (unit 65: C#, the context read as
-        // ConvertFrom-Json read it) here, the bridge's (scripts/c590-real.ps1, W10) below.
+        // ConvertFrom-Json read it) here, the bridge's (C590Bridge, unit 66) below.
         foreach (var vector in new[] { "false", "true", "string", "null", "number", "omitted", "unknown", "volumes", "project", "operation" })
         {
             var context = (Antiphon.Nightly.PlainObject)Antiphon.Nightly.RollingPs.Parse("{\"version\":1,\"project\":\"antiphon-runner-temp\",\"operationId\":\"c100800000000000000000000000000000001\",\"dryRun\":false,\"resume\":false,\"projectId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\"}");
@@ -712,38 +712,27 @@ public sealed class RollingVolumeRecycleScriptTests
             catch (Antiphon.Nightly.Server2RollingRefusal) { accepted = false; }
             accepted.ShouldBe(vector is "false" or "true", "recycle-manifest-strict: Assert-RecycleContext " + vector);
         }
-        var raw = await C1008Process("pwsh", "-NoProfile", "-Command", $$"""
-            $ErrorActionPreference='Stop'
-            $repo='{{DelegateScriptRunner.RepoRoot.Replace("'", "''", StringComparison.Ordinal)}}'
-            foreach ($pair in @(,@('c590-real.ps1','Assert-C1008BridgeContext'))) {
-                $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repo ('scripts/'+$pair[0])),[ref]$null,[ref]$null)
-                $name=$pair[1]
-                $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
-                if (-not $function) { throw 'real validator missing' }
-                Invoke-Expression $function.Extent.Text
-                foreach ($vector in @('false','true','string','null','number','omitted','unknown','volumes','project','operation')) {
-                    $context='{"version":1,"project":"antiphon-runner-temp","operationId":"c100800000000000000000000000000000001","dryRun":false,"resume":false,"projectId":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"}' | ConvertFrom-Json
-                    switch ($vector) {
-                        true {$context.dryRun=$true}
-                        string {$context.dryRun='false'}
-                        null {$context.dryRun=$null}
-                        number {$context.dryRun=0}
-                        omitted {$context.PSObject.Properties.Remove('dryRun')}
-                        unknown {$context | Add-Member -NotePropertyName recycleCaches -NotePropertyValue $false}
-                        volumes {$context | Add-Member -NotePropertyName volumes -NotePropertyValue @('antiphon-runner_runner-state')}
-                        project {$context.project='unsupported'}
-                        operation {$context.operationId='../receipt'}
-                    }
-                    $accepted=$true
-                    try { & $name -Context $context -Case 'retire-temp-runner' } catch {$accepted=$false}
-                    if ($accepted -ne ($vector -in @('false','true'))) { throw "recycle-manifest-strict: $name $vector accepted=$accepted" }
-                    Write-Output "$name/$vector checked"
-                }
-            }
-            """);
-        raw.Exit.ShouldBe(0, "recycle-manifest-strict: independent raw validators; " + raw.Output);
         foreach (var vector in new[] { "false", "true", "string", "null", "number", "omitted", "unknown", "volumes", "project", "operation" })
-            raw.Output.ShouldContain("Assert-C1008BridgeContext/" + vector + " checked");
+        {
+            // Unit 66: the bridge's validator (Assert-C1008BridgeContext, C590Bridge), on the context as ConvertFrom-Json read it.
+            var context = (Antiphon.Nightly.PlainObject)Antiphon.Nightly.RollingPs.Parse("{\"version\":1,\"project\":\"antiphon-runner-temp\",\"operationId\":\"c100800000000000000000000000000000001\",\"dryRun\":false,\"resume\":false,\"projectId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1\"}");
+            switch (vector)
+            {
+                case "true": context["dryRun"] = true; break;
+                case "string": context["dryRun"] = "false"; break;
+                case "null": context["dryRun"] = null; break;
+                case "number": context["dryRun"] = 0; break;
+                case "omitted": context.Remove("dryRun"); break;
+                case "unknown": context.Add("recycleCaches", false); break;
+                case "volumes": context.Add("volumes", new object[] { "antiphon-runner_runner-state" }); break;
+                case "project": context["project"] = "unsupported"; break;
+                case "operation": context["operationId"] = "../receipt"; break;
+            }
+            var accepted = true;
+            try { Antiphon.Nightly.C590Bridge.AssertC1008BridgeContext(context, "retire-temp-runner"); }
+            catch (Antiphon.Nightly.Server2RollingRefusal) { accepted = false; }
+            accepted.ShouldBe(vector is "false" or "true", "recycle-manifest-strict: Assert-C1008BridgeContext " + vector);
+        }
     }
 
     // Unit 65: the legacy rolling and jq rosters (scripts/test-deploy-server2.ps1 through test-deploy-server2-jq.ps1, four jq-probe
@@ -766,7 +755,7 @@ public sealed class RollingVolumeRecycleScriptTests
     public void C1008_Transport_scripts_are_ascii()
     {
         foreach (var script in new[] { "lib/Antiphon.Nightly/Server2RollingDeploy.cs", "lib/Antiphon.Nightly/Server2RollingCensus.cs",
-                     "lib/Antiphon.Nightly/Server2RollingPs.cs", "lib/Antiphon.Nightly/Server2RollingOs.cs", "c590-real.ps1", "c590-remote.sh",
+                     "lib/Antiphon.Nightly/Server2RollingPs.cs", "lib/Antiphon.Nightly/Server2RollingOs.cs", "lib/Antiphon.Nightly/C590Bridge.cs", "c590-remote.sh",
                      "verify-docker-stack.ps1" })
             File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", script)).All(x => x < 128)
                 .ShouldBeTrue("recycle-doc-contract: ASCII transport " + script);
@@ -2984,88 +2973,9 @@ public sealed class RollingVolumeRecycleScriptTests
         }
     }
 
-    [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1008_Host_proof_file_omits_credentials()
-    {
-        C1008HostFixture.RequireNativeLinux();
-        const string token = "ghp_FAKE_TOKEN_SHOULD_NOT_LEAK";
-        var root = Path.Combine("/var/tmp", "c1008-proof-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(Path.Combine(root, "bin"));
-        var proof = Path.Combine(root, "proof");
-        var log = Path.Combine(root, "proof.log");
-        Directory.CreateDirectory(proof);
-        try
-        {
-            var origin = Path.Combine(root, "origin.git");
-            var seed = Path.Combine(root, "seed");
-            var prepared = await C994ScriptProcess.Run("bash", "-c", $$"""
-                set -euo pipefail
-                git init -q --bare {{BashSingle(origin)}}
-                git init -q -b main {{BashSingle(seed)}}
-                git -C {{BashSingle(seed)}} -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm seed --allow-empty
-                git -C {{BashSingle(seed)}} push -q {{BashSingle(origin)}} main
-                git -C {{BashSingle(seed)}} rev-parse HEAD
-                """);
-            prepared.Exit.ShouldBe(0, prepared.Output);
-            var tip = prepared.Output.Trim();
-            var resolvedGit = await C994ScriptProcess.Run("bash", "-c", "command -v git");
-            resolvedGit.Exit.ShouldBe(0, resolvedGit.Output);
-            var git = Path.Combine(root, "bin", "git");
-            await File.WriteAllTextAsync(git,
-                "#!/bin/bash\nset -euo pipefail\nprintf '%s\\n' \"$*\" >> \"$C1008_FAKE_GIT_ARGS\"\n" +
-                "args=(); for arg in \"$@\"; do\n" +
-                "  if [ \"$arg\" = https://github.com/example/private.git ]; then arg=" + BashSingle(origin) + "; fi\n" +
-                "  args+=(\"$arg\"); done\n" +
-                "if [ \"$1\" = ls-remote ]; then\n" +
-                "  printf '%s\\n' \"password=" + token + "\" >&2\n" +
-                "  printf '%s\\n' \"note " + token + "\"\nfi\n" +
-                "exec " + BashSingle(resolvedGit.Output.Trim()) + " \"${args[@]}\"\n");
-            var mode = await C994ScriptProcess.Run("chmod", "0755", git);
-            mode.Exit.ShouldBe(0, "private-origin: fake git; " + mode.Output);
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
-            var psi = new ProcessStartInfo("pwsh")
-            {
-                UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-                WorkingDirectory = DelegateScriptRunner.RepoRoot
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-NonInteractive");
-            psi.ArgumentList.Add("-Command");
-            psi.ArgumentList.Add(
-                "$ErrorActionPreference='Stop'; . " + BashSingle(script) + "; " +
-                "Write-C1008HostOriginProof -OriginUrl $env:C1008_TEST_ORIGIN -RepoRelative 'repos/school-revision' " +
-                "-OperationId 'c100800000000000000000000000000000001' -ProofDirectory $env:C1008_TEST_PROOF " +
-                "-CreatedUnix 1700000000 -LogPath $env:C1008_TEST_LOG");
-            psi.Environment["PATH"] = Path.Combine(root, "bin") + ":" + Environment.GetEnvironmentVariable("PATH");
-            psi.Environment["C1008_FAKE_GIT_ARGS"] = Path.Combine(root, "git-args.txt");
-            psi.Environment["C1008_TEST_ORIGIN"] = "https://" + token + "@github.com/example/private.git";
-            psi.Environment["C1008_TEST_PROOF"] = proof;
-            psi.Environment["C1008_TEST_LOG"] = log;
-            psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
-            using var proc = Process.Start(psi)!;
-            var stdout = await proc.StandardOutput.ReadToEndAsync();
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            await proc.WaitForExitAsync(deadline.Token);
-            var output = stdout + stderr;
-            proc.ExitCode.ShouldBe(0, "private-origin: host proof writer; " + output);
-            var proofText = string.Join('\n', Directory.GetFiles(proof).Select(File.ReadAllText));
-            proofText.ShouldContain(tip + "\trefs/heads/main");
-            proofText.ShouldContain("operation c100800000000000000000000000000000001");
-            var bundle = Directory.GetFiles(proof, "*.bundle").ShouldHaveSingleItem();
-            var heads = await C994ScriptProcess.Run(resolvedGit.Output.Trim(), "bundle", "list-heads", bundle);
-            heads.Exit.ShouldBe(0, heads.Output);
-            heads.Output.ShouldContain(tip + " refs/heads/main");
-            foreach (var artifact in new[] { proofText, output, File.Exists(log) ? File.ReadAllText(log) : "",
-                         File.Exists(Path.Combine(root, "git-args.txt")) ? File.ReadAllText(Path.Combine(root, "git-args.txt")) : "" })
-                artifact.ShouldNotContain(token);
-        }
-        finally
-        {
-            if (Directory.Exists(root)) ReadOnlyDirectory.Delete(root);
-        }
-    }
+    // Unit 66: C1008_Host_proof_file_omits_credentials ran the v1 writer of scripts/c1008-host-proof.ps1 (a token-bearing origin scrubbed
+    // into a "c1008-host-proof 1" proof). That writer had no caller and was not ported; the v2 writer refuses such an origin before Git
+    // (VolumeRetirementHostProofTests.Private_and_public_origins_share_offline_gate) and keeps Git's stderr out of every refusal.
 
     private static string AuthRemote(string message, int code) =>
         "#!/bin/bash\nprintf '%s\\n' " + BashSingle(message) + " >&2\nexit " + code + "\n";

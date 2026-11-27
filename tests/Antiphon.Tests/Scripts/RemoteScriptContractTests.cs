@@ -2775,19 +2775,21 @@ public sealed class RemoteScriptContractTests
         envAt.ShouldBeGreaterThan(resolveAt);
         createAt.ShouldBeGreaterThan(envAt);
 
-        var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-real.ps1"));
-        bridge.Contains("throw 'AuditTimeoutInvalid'", StringComparison.Ordinal).ShouldBeTrue();
-        bridge.Contains("-notmatch '^[1-9][0-9]{0,6}$'", StringComparison.Ordinal).ShouldBeTrue();
-        bridge.Contains("export C1008_AUDIT_TIMEOUT_SECONDS='$($env:C1008_AUDIT_TIMEOUT_SECONDS)'", StringComparison.Ordinal)
+        // Unit 66: the live bridge is C590Bridge (its ssh child C590BridgeOs), where it was scripts/c590-real.ps1.
+        var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "C590Bridge.cs"));
+        bridge.Contains("throw new C590Failure(\"AuditTimeoutInvalid\")", StringComparison.Ordinal).ShouldBeTrue();
+        bridge.Contains("Regex.IsMatch(auditTimeout, \"^[1-9][0-9]{0,6}$\"", StringComparison.Ordinal).ShouldBeTrue();
+        bridge.Contains("\"export C1008_AUDIT_TIMEOUT_SECONDS='\" + auditTimeout + \"'\"", StringComparison.Ordinal)
             .ShouldBeTrue("a desktop override has to cross ssh");
-        var sshAt = bridge.IndexOf("function Invoke-C590Ssh", StringComparison.Ordinal);
-        var sshEnd = bridge.IndexOf("\nfunction ", sshAt + 1, StringComparison.Ordinal);
-        sshAt.ShouldBeGreaterThanOrEqualTo(0);
-        sshEnd.ShouldBeGreaterThan(sshAt);
-        var ssh = bridge[sshAt..sshEnd];
-        ssh.Contains("-o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=240", StringComparison.Ordinal)
-            .ShouldBeTrue();
-        ssh.Contains("WaitForExit", StringComparison.Ordinal).ShouldBeFalse("Invoke-C590Ssh has no wall deadline");
+        Antiphon.Nightly.C590BridgeOs.SshOptions.ShouldBe(["-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=240", "mc@server2"]);
+        var bridgeOs = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "C590BridgeOs.cs")).Replace("\r\n", "\n");
+        var runAt = bridgeOs.IndexOf("private int Run(ProcessStartInfo start", StringComparison.Ordinal);
+        var runEnd = bridgeOs.IndexOf("\n        }\n", runAt, StringComparison.Ordinal);
+        runAt.ShouldBeGreaterThanOrEqualTo(0);
+        runEnd.ShouldBeGreaterThan(runAt);
+        var ssh = bridgeOs[runAt..runEnd];
+        ssh.Contains("process.WaitForExit();", StringComparison.Ordinal).ShouldBeTrue("the bridge's ssh has no wall deadline");
+        System.Text.RegularExpressions.Regex.IsMatch(ssh, @"WaitForExit\(\w").ShouldBeFalse("the bridge's ssh has no wall deadline");
         ssh.Contains("timeout ", StringComparison.Ordinal).ShouldBeFalse();
 
         // Unit 65: the deploy-server2 command's redeploy-old phase starts deploy-parent on a verifier child it waits for without a
@@ -2805,7 +2807,7 @@ public sealed class RemoteScriptContractTests
         var caseEnd = os.IndexOf("public Server2RollingChild Git(", caseAt, StringComparison.Ordinal);
         caseAt.ShouldBeGreaterThanOrEqualTo(0);
         var hostCase = os[caseAt..caseEnd];
-        hostCase.Contains("process.WaitForExit();", StringComparison.Ordinal).ShouldBeTrue();
+        hostCase.Contains("DockerStackVerify.Run(", StringComparison.Ordinal).ShouldBeTrue("unit 66: the verifier runs in this process");
         System.Text.RegularExpressions.Regex.IsMatch(hostCase, @"WaitForExit\(\s*[^)\s]").ShouldBeFalse("the verifier child has no wall deadline");
 
         var doc = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "docs", "docker-stack.md"));
@@ -3226,43 +3228,22 @@ public sealed class RemoteScriptContractTests
             Path.Combine(bridgeRoot, "deploy-parent/c590-result.json"));
         foreach (var failCopy in new[] { true, false })
         {
-            var psi = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-            psi.ArgumentList.Add("-NoProfile"); psi.ArgumentList.Add("-Command");
-            psi.ArgumentList.Add($$"""
-                $ErrorActionPreference='Stop'
-                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-command.ps1'
-                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-real.ps1'
-                function Invoke-C628ClaudeTokenOnDeploy { return $false }
-                function Invoke-C590Ssh {
-                    param([string]$Command)
-                    if ($Command.Contains('bash /home/mc/antiphon-c590/c590-remote.sh')) {
-                        if (-not $Command.Contains("export C1008_RESUME='1'")) {throw 'resume transport missing'}
-                        $env:C590_CASE='deploy-parent'; $env:C590_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-                        $env:C590_RUN='c1008fixture'; $env:C590_REEXEC='1'; $env:C1008_RESUME='1'; $env:C604_SERVER_ORIGIN='http://127.0.0.1:1'
-                        & bash '{{copied.Root}}/remote.sh' | Out-Null
-                        return $LASTEXITCODE
-                    }
-                    return 0
-                }
-                function scp {
-                    if ($args -contains '-r') {
-                        if ({{(failCopy ? "$true" : "$false")}}) { $global:LASTEXITCODE=77; return }
-                        Copy-Item -Recurse -Force '{{copied.Root}}/evidence/deploy-parent' '{{bridgeRoot}}'
-                    }
-                    $global:LASTEXITCODE=0
-                }
-                $manifest=[pscustomobject]@{evidenceRoot='{{bridgeRoot}}';sourceSha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';runId='c1008copy';
-                  recycle=[pscustomobject]@{version=1;project='antiphon-runner';operationId='c100800000000000000000000000000000001';
-                    dryRun=$false;resume=$true;projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1'} }
-                Invoke-C590LiveCase -Case deploy-parent -Manifest $manifest
-                """);
-            using var child = Process.Start(psi)!;
-            var stdout = child.StandardOutput.ReadToEndAsync(); var stderr = child.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            try { await child.WaitForExitAsync(deadline.Token); }
-            catch { if (!child.HasExited) { child.Kill(true); await child.WaitForExitAsync(); } throw; }
-            var output = await stdout + await stderr;
-            child.ExitCode.ShouldBe(failCopy ? 2 : 0, "recycle-receipt-facts: real bridge copy after host removal; " + output);
+            // Unit 66: the live bridge in process (C590BridgeWorld): every ssh answers 0 and the copy back copies the host's evidence or
+            // fails with 77. (The PowerShell stub ran remote.sh only for an unstaged `bash /home/mc/antiphon-c590/c590-remote.sh`, which
+            // deploy-parent's private tool stage never sends.)
+            using var world = new C590BridgeWorld();
+            var bridged = world.RunCase("deploy-parent", new JsonObject
+            {
+                ["evidenceRoot"] = bridgeRoot, ["sourceSha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ["runId"] = "c1008copy",
+                ["recycle"] = new JsonObject
+                {
+                    ["version"] = 1, ["project"] = "antiphon-runner", ["operationId"] = "c100800000000000000000000000000000001",
+                    ["dryRun"] = false, ["resume"] = true, ["projectId"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1",
+                },
+            }, rules: [new JsonObject { ["name"] = "scp", ["match"] = "^-o BatchMode=yes -r ", ["copyFrom"] = failCopy ? "" : Path.Combine(copied.Root, "evidence", "deploy-parent"), ["exit"] = failCopy ? 77 : 0 }]);
+            var output = bridged.Output + bridged.Error;
+            bridged.Exit.ShouldBe(failCopy ? 2 : 0, "recycle-receipt-facts: real bridge copy after host removal; " + output);
+            world.Remotes().Last().ShouldContain("export C1008_RESUME='1'", Case.Sensitive, "recycle-receipt-facts: resume transport");
             if (failCopy) output.ShouldContain("RecycleReceiptUnavailable");
             copied.Removed.Length.ShouldBe(3, "recycle-receipt-facts: copy retry never removes a second generation");
             var hostJournal = Path.Combine(copied.Root, "server/recycle/c100800000000000000000000000000000001.json");
@@ -5151,12 +5132,11 @@ public sealed class RemoteScriptContractTests
     [Test]
     public void Custody_containment_is_routed_to_the_remote_and_not_left_pending()
     {
-        var live = System.IO.File.ReadAllText(System.IO.Path.Combine(
-            Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "c590-real.ps1"));
         var stack = System.IO.File.ReadAllText(System.IO.Path.Combine(
             Infrastructure.DockerStackDocuments.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "DockerStackVerify.cs"));
 
-        live.ShouldContain("'custody-containment'");
+        // Unit 66: the live roster is the command's (the bridge is C590Bridge).
+        Antiphon.Nightly.DockerStackVerify.LiveCases.ShouldContain("custody-containment");
         // The stub boundary exists too, and refuses the same things the remote refuses first.
         stack.ShouldContain("case \"custody-containment\":");
         stack.ShouldContain("ExpectedCgroupV1");
@@ -5165,7 +5145,7 @@ public sealed class RemoteScriptContractTests
         // Every host-lane case the remote script implements must be routed, or the row is a stub.
         var remote = Remote();
         foreach (var hostCase in new[] { "custody-containment", "deploy-parent", "nested-residue" })
-            live.Contains("'" + hostCase + "'", StringComparison.Ordinal)
+            Antiphon.Nightly.DockerStackVerify.LiveCases.Contains(hostCase)
                 .ShouldBeTrue(hostCase + " is implemented in c590-remote.sh but never routed there");
         remote.ShouldContain("custody-containment) case_custody_containment");
     }
@@ -5472,8 +5452,8 @@ public sealed class RemoteScriptContractTests
         deploy.ShouldContain("bridge-nf.txt");
         deploy.ShouldNotContain("--remove-orphans");
         Block(text, "compose_temp").ShouldContain("-p \"$TEMP_PROJECT\"");
-        var live = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "c590-real.ps1"));
-        live.ShouldContain("'deploy-temp-runner'");
+        Antiphon.Nightly.DockerStackVerify.LiveCases.ShouldContain("deploy-temp-runner");
+
     }
 
     [Test]
@@ -6016,12 +5996,12 @@ public sealed class RemoteScriptContractTests
     {
         RequireLinuxPwsh();
         var remote = Remote();
-        var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
+        var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/Antiphon.Nightly/C590Bridge.cs"));
         var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/verify-card0849-caches.ps1"));
         foreach (var name in new[] { "runner-cache-inventory", "runner-cache-fixture", "runner-cache-seed", "runner-cache-reset",
                      "verify-runner-caches", "verify-runner-caches-retired", "runner-cache-prune-preview", "runner-cache-prune" })
         {
-            bridge.ShouldContain("'" + name + "'");
+            bridge.ShouldContain("\"" + name + "\"");
             remote.ShouldContain(name + ")");
         }
         remote.ShouldContain("if [ \"$LANE\" != host ]; then printf 'DIAGNOSIS=WrongLane", customMessage: "wrong-lane-no-effect");
@@ -8106,8 +8086,8 @@ public sealed class RemoteScriptContractTests
         process.ExitCode.ShouldBe(0, "cold-transport " + frontOutput);
         frontOutput.Contains("cold-transport").ShouldBeTrue("cold-transport");
         frontOutput.Contains("cold-conflict-refused").ShouldBeTrue("refusal-CacheDonorSourceConflict");
-        var bridge = File.ReadAllText(Path.Combine(repo, "scripts", "c590-real.ps1"));
-        bridge.Contains("$Manifest.coldSeed -isnot [bool]").ShouldBeTrue("cold-bridge-boolean-only");
+        var bridge = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "C590Bridge.cs"));
+        bridge.Contains("if (!(M(\"coldSeed\") is bool)").ShouldBeTrue("cold-bridge-boolean-only");
         bridge.Contains("export C590_COLD_SEED=").ShouldBeTrue("cold-bridge-host-flag");
     }
 

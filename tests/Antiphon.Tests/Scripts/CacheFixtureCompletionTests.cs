@@ -71,26 +71,61 @@ public sealed class CacheFixtureCompletionTests
     public void Modern_daemon_missing_volume_text_is_positive_absence() =>
         Run("c1315-fail-closed.sh", "modern-volume-absent", "PASS modern-volume-absent");
 
+    // Unit 66: the live bridge's receipt (C590Bridge's Invoke-C590Ssh) in process on C590BridgeWorld, where
+    // scripts/fixtures/cache-bridge-diagnostics.ps1 drove scripts/c590-real.ps1 with function fakes of ssh, scp and Write-C590Result.
     [Test]
-    public async Task Bridge_retains_diagnostics_and_refuses_failed_transport()
+    public void Bridge_retains_diagnostics_and_refuses_failed_transport()
     {
-        var start = new ProcessStartInfo("pwsh")
+        var noise = new System.Text.Json.Nodes.JsonArray("CacheRecoveryInvalid credential=TOKEN_SENTINEL_BRIDGE", "DIAGNOSIS=FixturePrunePreviewFailed", "password=TOKEN_SENTINEL_BRIDGE");
+        foreach (var _ in Enumerable.Range(0, 300)) noise.Add("CacheRecoveryInvalid");
+        foreach (var scenario in new[] { "inner", "transport", "missing" })
         {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-            ArgumentList = { "-NoProfile", "-File", Path.Combine(DelegateScriptRunner.RepoRoot,
-                "scripts/fixtures/cache-bridge-diagnostics.ps1"), "-Repo", DelegateScriptRunner.RepoRoot }
-        };
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        try { await process.WaitForExitAsync(timeout.Token); }
-        catch { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
-        var output = await stdout + await stderr;
-        process.ExitCode.ShouldBe(0, output);
-        output.ShouldContain("BRIDGE_COMPLETE", customMessage: output);
+            using var world = new C590BridgeWorld();
+            var caseRoot = Path.Combine(world.Checkout, ".antiphon", "bridge-model", scenario);
+            var remote = Path.Combine(world.Root, "remote-case");
+            Directory.CreateDirectory(remote);
+            File.WriteAllText(Path.Combine(remote, "c590-result.json"),
+                "{\"accepted\":" + (scenario == "transport" ? "true" : "false") + ",\"diagnosis\":\"FixturePrunePreviewFailed\",\"exit\":2}");
+            var run = world.RunCase("runner-cache-fixture", new System.Text.Json.Nodes.JsonObject
+            {
+                ["evidenceRoot"] = caseRoot, ["sourceSha"] = new string('a', 40), ["runId"] = "c849aaaaaaaaaaaaaaaa0",
+            }, rules:
+            [
+                new System.Text.Json.Nodes.JsonObject { ["name"] = "ssh", ["match"] = "bash '/home/mc/antiphon-c590/c590-remote\\.sh'", ["stdout"] = noise.DeepClone(), ["exit"] = scenario == "inner" ? 2 : 255 },
+                new System.Text.Json.Nodes.JsonObject { ["name"] = "scp", ["match"] = "^-o BatchMode=yes -r ", ["copyFrom"] = scenario == "missing" ? "" : remote, ["exit"] = 0 },
+            ]);
+            run.Exit.ShouldBe(2, scenario + ": transport accepted; " + run.Output + run.Error);
+            var result = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(caseRoot, "c590-result.json")))!;
+            result["accepted"]!.GetValue<bool>().ShouldBeFalse(scenario);
+            var log = File.ReadAllText(Path.Combine(caseRoot, "remote-output.txt"));
+            log.Length.ShouldBeLessThanOrEqualTo(32768, "unbounded diagnostic output");
+            var expectedExit = scenario == "inner" ? 2 : 255;
+            Retained(log, expectedExit).ShouldBeTrue(scenario + ": safe diagnostic and numeric exit retained; " + log);
+            result["diagnosis"]!.GetValue<string>().ShouldBe(scenario switch
+            {
+                "inner" => "FixturePrunePreviewFailed",
+                "transport" => "RemoteTransportFailed",
+                _ => "RemoteResultMissing exit=255",
+            });
+        }
+        // Retained text shaped like a Windows receipt: CRLF, a drive path, native wording.
+        Retained("C:\\Antiphon\\worktrees\\card-task-fbd9be0e\\scripts\\c590-real.ps1: CacheRecoveryInvalid\r\nssh.exe : CacheRecoveryInvalid\r\n"
+            + "The system cannot find the file specified\r\ntransport-exit=2\r\n", 2).ShouldBeTrue();
+        Retained("CacheRecoveryInvalid\rtransport-exit=2\r", 2).ShouldBeTrue();
+        Retained("CacheRecoveryInvalid\ntransport-exit=2\n", 2).ShouldBeTrue();
+        Retained("The system cannot find the file specified\ntransport-exit=2\n", 2).ShouldBeFalse();
+        Retained("CacheRecoveryInvalid credential=TOKEN_SENTINEL_BRIDGE\ntransport-exit=2\n", 2).ShouldBeFalse();
+        Retained("password=TOKEN_SENTINEL_BRIDGE\nCacheRecoveryInvalid\ntransport-exit=2\n", 2).ShouldBeFalse();
     }
 
+    // A receipt keeps the safe token, never a secret, and its numeric transport exit.
+    private static bool Retained(string text, int expectedExit)
+    {
+        var log = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal);
+        return System.Text.RegularExpressions.Regex.IsMatch(log, "(?m)(?<![A-Za-z0-9])CacheRecoveryInvalid(?![A-Za-z0-9])")
+            && !System.Text.RegularExpressions.Regex.IsMatch(log, "TOKEN_SENTINEL|password|credential", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            && System.Text.RegularExpressions.Regex.IsMatch(log, "(?m)^transport-exit=" + expectedExit + "$");
+    }
     private static void Run(string script, string mode, string witness, string argument = "")
     {
         var output = LinuxShell(

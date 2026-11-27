@@ -23,11 +23,10 @@
 //
 // Every external action goes through IServer2RollingWorld: the runner and census HTTP, ssh mc@server2 (the host jq helper, the
 // FD8 rollout lock, the recycle receipt discovery, the temp retirement census and the temp container census), the
-// verify-docker-stack host cases and git. The CLI binds Server2RollingOs. A host case still starts scripts/verify-docker-stack.ps1
-// by path (pwsh -NoProfile -File ... -Case <case> -Manifest <path>): every case this command runs is on c590-real.ps1's live
-// roster, which only that launcher's head routes to server2 (DockerStackVerify refuses a live case without the stub), so it is
-// the same child the script started. Files are IFileSystem's, the clock, waits and stopwatches the host's. Plain C#: no
-// PowerShell types. ASCII only.
+// verify-docker-stack host cases and git. The CLI binds Server2RollingOs. Since unit 66 a host case is the verify-docker-stack command
+// in this process (DockerStackVerify: the head and the live server2 bridge, C590Bridge), where the script and unit 65 started
+// pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case <case> -Manifest <path>. Files are IFileSystem's, the clock, waits
+// and stopwatches the host's. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -273,8 +272,8 @@ namespace Antiphon.Nightly
         Server2RollingChild TempProjectCensus(Server2RollingCall call);
 
         /// <summary>
-        /// Invoke-HostCase's verifier: pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case &lt;case&gt; -Manifest &lt;path&gt;,
-        /// its output to output and its errors to error; the exit code. Throws when it cannot start.
+        /// Invoke-HostCase's verifier (the script's pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case &lt;case&gt; -Manifest
+        /// &lt;path&gt;; since unit 66 the verify-docker-stack command in process), its output to output and its errors to error; the exit code.
         /// </summary>
         int HostCase(string hostCase, string manifestPath, TextWriter output, TextWriter error);
 

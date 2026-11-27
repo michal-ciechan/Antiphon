@@ -1,6 +1,7 @@
 // The production world of the deploy-server2 command (unit 65): the children and HTTP deploy-server2.ps1 started, with the same
-// argument vectors, inputs, deadlines and reaping. ssh is "ssh" on PATH (BatchMode, a 15 s connect timeout, mc@server2), the
-// verifier is pwsh -NoProfile -File <checkout>/scripts/verify-docker-stack.ps1, git is "git" on PATH and HTTP is HttpClient
+// argument vectors, inputs, deadlines and reaping. ssh is "ssh" on PATH (BatchMode, a 15 s connect timeout, mc@server2), a host
+// case is the verify-docker-stack command in this process (unit 66: DockerStackVerify with the live server2 bridge, where the
+// script started pwsh -NoProfile -File <checkout>/scripts/verify-docker-stack.ps1), git is "git" on PATH and HTTP is HttpClient
 // (Invoke-WebRequest -SkipHttpErrorCheck: any status is an answer; the census reads time out after 60 s). An environment, when
 // given, is laid over each child's (the Linux host-jq fixtures put their fake ssh first on PATH). Plain C#: no PowerShell types.
 // ASCII only.
@@ -245,17 +246,36 @@ namespace Antiphon.Nightly
         /// <inheritdoc />
         public int HostCase(string hostCase, string manifestPath, TextWriter output, TextWriter error)
         {
-            var verifier = Path.Combine(_checkout, "scripts", "verify-docker-stack.ps1");
-            var start = Start("pwsh", new[] { "-NoProfile", "-File", verifier, "-Case", hostCase, "-Manifest", manifestPath }, input: false);
-            using var process = new Process { StartInfo = start };
-            var gate = new object();
-            process.OutputDataReceived += (_, e) => { if (e.Data != null) lock (gate) output.WriteLine(e.Data); };
-            process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (gate) error.WriteLine(e.Data); };
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            process.WaitForExit();
-            return process.ExitCode;
+            // Unit 66: the verify-docker-stack command in this process (its head and the live server2 bridge), where unit 65 started
+            // pwsh -NoProfile -File scripts/verify-docker-stack.ps1 -Case <case> -Manifest <path>. The environment, when given, is laid
+            // over the variables the bridge reads and over its children's.
+            var production = NightlyHost.Production(output, error);
+            var host = new NightlyHost
+            {
+                Clock = production.Clock,
+                Git = production.Git,
+                Launcher = production.Launcher,
+                Processes = production.Processes,
+                Probe = production.Probe,
+                Out = output,
+                Error = error,
+                Trace = TextWriter.Null,
+                Variables = name => _environment != null && _environment.TryGetValue(name, out var value) ? value : Environment.GetEnvironmentVariable(name),
+            };
+            var files = new System.IO.Abstractions.FileSystem();
+            try
+            {
+                return DockerStackVerify.Run(new DockerStackVerifyOptions { Case = hostCase, Manifest = manifestPath, Checkout = _checkout }, host, files, new C590BridgeSeams
+                {
+                    World = new C590BridgeOs(output, error, _environment),
+                    Processes = new C1609BoundedProcesses(files, environment: _environment),
+                });
+            }
+            catch (NightlyUsageException e)
+            {
+                error.WriteLine("usage: antiphon-scripts verify-docker-stack: " + e.Message);
+                return 2;
+            }
         }
 
         /// <inheritdoc />

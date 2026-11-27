@@ -1177,62 +1177,44 @@ public sealed class AntiphonCliLauncherTests
         run.Exit.ShouldBe(0, run.Stdout + run.Stderr);
     }
 
-    // ---- unit 47: scripts/verify-docker-stack.ps1, which the deploy-server2 command (unit 65), c590-real.ps1, c1609-manual.ps1 and
-    // verify-card0849-caches.ps1 start by path (pwsh -File). Its head stays: the manifest checks, the c590-real.ps1 context guards
-    // and the live server2 bridge; everything past it is the verify-docker-stack command. No test here runs a routed case without
-    // the stub (that is the bridge: RetireTempRunnerTimestampTests drives it with fake ssh and scp) ----
+    // ---- unit 47 and unit 66: scripts/verify-docker-stack.ps1, which c1609-manual.ps1, verify-card0849-caches.ps1 and the CARD-0590
+    // checkpoint entry of c590-real.ps1 (W10) start by path (pwsh -File). Since unit 66 it is a thin launcher: the head (the manifest
+    // checks and the C994 and C1008 context guards) and the live server2 bridge are the verify-docker-stack command (DockerStackVerify,
+    // C590Bridge), which the deploy-server2 command runs in its own process ----
 
-    private static readonly string[] StackVerifierFiles = ["verify-docker-stack.ps1", "c590-command.ps1", "c590-real.ps1", "c1008-host-proof.ps1", "c1609-host-proof.ps1"];
-
-    /// <summary>A temporary checkout root holding the verifier, the scripts its head loads, and scripts/lib/antiphon-cli.ps1.</summary>
+    /// <summary>A temporary checkout root holding the verifier launcher and scripts/lib/antiphon-cli.ps1.</summary>
     private static NightlyFixture StackVerifierCheckout(out string manifest, string fields = "")
     {
         var fixture = Checkout();
-        foreach (var name in StackVerifierFiles)
-            File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", name), fixture.PathOf("scripts", name));
+        File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-docker-stack.ps1"), fixture.PathOf("scripts", "verify-docker-stack.ps1"));
         manifest = fixture.PathOf("manifest.json");
         File.WriteAllText(manifest, "{\"evidenceRoot\":" + JsonSerializer.Serialize(fixture.PathOf("evidence")) + fields + "}");
         return fixture;
     }
 
     [Test]
-    public async Task Stack_verifier_launcher_hands_stub_and_unrouted_cases_to_the_command()
+    public async Task Stack_verifier_launcher_hands_every_case_to_the_command()
     {
         using var fixture = StackVerifierCheckout(out var manifest);
         var entry = fixture.PathOf("scripts", "verify-docker-stack.ps1");
         var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "verify-docker-stack", ["CLI_ECHO_ENV"] = "ANTIPHON_C590_STUB,ANTIPHON_C590_SINK" };
 
-        // Stub mode: every case, a routed one included, is the command's; the stub and sink reach it through the environment.
-        var stub = await NightlyRunHops.LauncherEcho(entry, ["-Case", "deploy-parent", "-Manifest", manifest, "-RefreshClaudeToken"], fixture.Root, pwsh: true,
+        // Stub mode: the stub and sink reach the command through the environment.
+        var stub = await NightlyRunHops.LauncherEcho(entry, ["-Case", "deploy-parent", "-Manifest", manifest], fixture.Root, pwsh: true,
             environment: new Dictionary<string, string>(echo) { ["ANTIPHON_C590_STUB"] = "1", ["ANTIPHON_C590_SINK"] = fixture.PathOf("sink.jsonl") });
         stub.ExitCode.ShouldBe(0, stub.Stderr);
         stub.Arguments.ShouldBe(["--case", "deploy-parent", "--manifest", manifest]);
         stub.Stdout.ShouldContain("\"ANTIPHON_C590_STUB\":\"1\"");
 
-        // Without the stub a case the bridge does not route (CP-5's) reaches the command too.
-        var unrouted = await NightlyRunHops.LauncherEcho(entry, ["-Case", "e2e-staged-apphost", "-Manifest", manifest], fixture.Root, pwsh: true, environment: echo);
-        unrouted.ExitCode.ShouldBe(0, unrouted.Stderr);
-        unrouted.Arguments.ShouldBe(["--case", "e2e-staged-apphost", "--manifest", manifest]);
-    }
+        // Without the stub a live case is the command's too (its bridge), and -RefreshClaudeToken is --refresh-claude-token.
+        var live = await NightlyRunHops.LauncherEcho(entry, ["-Case", "deploy-parent", "-Manifest", manifest, "-RefreshClaudeToken"], fixture.Root, pwsh: true, environment: echo);
+        live.ExitCode.ShouldBe(0, live.Stderr);
+        live.Arguments.ShouldBe(["--case", "deploy-parent", "--manifest", manifest, "--refresh-claude-token"]);
 
-    [Test]
-    public async Task Stack_verifier_launcher_head_still_refuses_before_the_command()
-    {
-        var echo = new Dictionary<string, string> { ["CLI_ECHO_COMMAND"] = "verify-docker-stack", ["ANTIPHON_C590_STUB"] = "1" };
-        using var fixture = StackVerifierCheckout(out _);
-        var entry = fixture.PathOf("scripts", "verify-docker-stack.ps1");
+        // A missing manifest is the command's refusal now: the launcher has no head of its own.
         var missing = await NightlyRunHops.LauncherEcho(entry, ["-Case", "version-check", "-Manifest", fixture.PathOf("absent.json")], fixture.Root, pwsh: true, environment: echo);
-        missing.ExitCode.ShouldBe(1);
-        missing.Arguments.ShouldBeNull("the CLI never ran");
-        (missing.Stdout + missing.Stderr).ShouldContain("Manifest is required");
-
-        // A C994 cleanup context on any other case is refused by c590-real.ps1's guard in the head.
-        using var guarded = StackVerifierCheckout(out var manifest, ",\"tempContainerCleanup\":{\"version\":1}");
-        var refused = await NightlyRunHops.LauncherEcho(guarded.PathOf("scripts", "verify-docker-stack.ps1"), ["-Case", "version-check", "-Manifest", manifest],
-            guarded.Root, pwsh: true, environment: echo);
-        refused.ExitCode.ShouldBe(1);
-        refused.Arguments.ShouldBeNull("the CLI never ran");
-        (refused.Stdout + refused.Stderr).ShouldContain("TempContainerContextInvalid");
+        missing.ExitCode.ShouldBe(0, missing.Stderr);
+        missing.Arguments.ShouldBe(["--case", "version-check", "--manifest", fixture.PathOf("absent.json")]);
     }
 
     [Test]
@@ -1248,10 +1230,21 @@ public sealed class AntiphonCliLauncherTests
         run.Exit.ShouldBe(2, run.Stderr);
         run.Stdout.Trim().ShouldBe("DIAGNOSIS=RevisionMismatch");
         File.ReadAllText(fixture.PathOf("evidence", "c590-result.json")).ShouldBe("{\"accepted\":false,\"diagnosis\":\"RevisionMismatch\",\"exit\":2}" + Environment.NewLine);
+
+        // The head is the command's: a cleanup context on another case exits 1 before the case.
+        File.WriteAllText(manifest, "{\"evidenceRoot\":" + JsonSerializer.Serialize(fixture.PathOf("evidence")) + ",\"tempContainerCleanup\":{\"version\":1}}");
+        var refusedStart = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", fixture.PathOf("scripts", "verify-docker-stack.ps1"), "-Case", "version-check", "-Manifest", manifest })
+            refusedStart.ArgumentList.Add(argument);
+        refusedStart.Environment["ANTIPHON_SCRIPTS_DLL"] = StagedCli;
+        refusedStart.Environment["ANTIPHON_C590_STUB"] = "1";
+        var refused = await Finish(Process.Start(refusedStart) ?? throw new InvalidOperationException("pwsh did not start"));
+        refused.Exit.ShouldBe(1, refused.Stdout + refused.Stderr);
+        refused.Stderr.ShouldContain("verify-docker-stack: TempContainerContextInvalid");
     }
 
     [Test]
-    public void Stack_verifier_launcher_keeps_its_parameters_and_head_and_holds_no_switch()
+    public void Stack_verifier_launcher_keeps_its_parameters_and_holds_no_head()
     {
         var path = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-docker-stack.ps1");
         var bytes = File.ReadAllBytes(path);
@@ -1260,19 +1253,14 @@ public sealed class AntiphonCliLauncherTests
         text.ShouldStartWith("# CARD-0590 stack verifier. -Case selects one literal checkpoint or guard.\nparam(\n    [Parameter(Mandatory = $true)][string]$Case,\n"
             + "    [Parameter(Mandatory = $true)][string]$Manifest,\n    [switch]$RefreshClaudeToken\n)\n");
         text.Split('\n').Select(line => line.Trim()).Where(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^\.\s")).ToArray().ShouldBe([
-            ". (Join-Path $PSScriptRoot 'c590-command.ps1')",
-            ". (Join-Path $PSScriptRoot 'c590-real.ps1')",
-            ". (Join-Path $PSScriptRoot 'c590-real.ps1')",
-            ". (Join-Path $PSScriptRoot 'c590-real.ps1')",
             ". (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')"]);
-        text.ShouldContain("Invoke-C590LiveCase -Case $Case -Manifest $m -RawManifest $rawManifest");
-        text.ShouldContain("exit (Invoke-AntiphonCli -Command 'verify-docker-stack' -Arguments @('--case', $Case, '--manifest', $Manifest))");
-        text.ShouldNotContain("switch ($Case)");
-        text.ShouldNotContain("Write-C590Result");
-        foreach (var gone in new[] { "test-docker.ps1", "test-docker-container.ps1", "verify-card0604-dind-runner.ps1" })
+        text.ShouldContain("if ($RefreshClaudeToken) { $arguments += '--refresh-claude-token' }");
+        text.ShouldContain("exit (Invoke-AntiphonCli -Command 'verify-docker-stack' -Arguments $arguments)");
+        foreach (var gone in new[] { "Invoke-C590LiveCase", "Assert-C994RawManifest", "switch ($Case)", "Write-C590Result", "ConvertFrom-Json" })
+            text.ShouldNotContain(gone);
+        foreach (var gone in new[] { "test-docker.ps1", "test-docker-container.ps1", "verify-card0604-dind-runner.ps1", "c590-command.ps1", "c1008-host-proof.ps1", "c1609-host-proof.ps1" })
             File.Exists(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", gone)).ShouldBeFalse(gone);
     }
-
     // Unit 48: nothing started the CARD-0660 image qualification by path, so the verify-card0660-codex-image command has no
     // launcher, and its W10 fixture went with it (the owner's approval); its checks run in process (CodexRunnerImageContractTests).
     // Unit 51: the W8 operator tools are commands. Nothing started them by path, so none keeps a launcher, and the phone-home

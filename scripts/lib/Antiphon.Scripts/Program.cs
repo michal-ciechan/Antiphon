@@ -310,6 +310,8 @@ namespace Antiphon.Scripts
             [DockerVerifierCommands.TestDockerContainer] = DockerVerifierCommands.RunTestDockerContainer,
             [DockerVerifierCommands.VerifyDindRunner] = DockerVerifierCommands.RunVerifyDindRunner,
             [DockerVerifierCommands.VerifyCodexImage] = DockerVerifierCommands.RunVerifyCodexImage,
+            // The CARD-1609 desktop origin proof's verbs (unit 66): exit 0 proven, 1 refused (one stderr line). Usage is 2.
+            [DockerVerifierCommands.HostProof] = DockerVerifierCommands.RunHostProof,
             // The desktop deploy answers every input itself (unit 49). deploy-local: exit 0 DEPLOY VERDICT: ok, 1 failed (a step's
             // failure, the restart and the verification included), 3 refused (a linked or unverifiable worktree; nothing touched).
             // Usage is 2.

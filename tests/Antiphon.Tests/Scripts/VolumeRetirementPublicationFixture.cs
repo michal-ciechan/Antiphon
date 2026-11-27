@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using System.IO.Abstractions;
 using System.Text.Json;
+using Antiphon.Nightly;
 using Antiphon.TestSupport;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
@@ -163,41 +165,43 @@ internal sealed class VolumeRetirementPublicationFixture : IDisposable
 
     internal sealed record Proof(int Exit, string Output, string Directory, string File);
 
-    internal async Task<Proof> WriteProof((string Oid, string Type)[]? required = null, int version = 2,
-        string previous = "", string extraShim = "", bool baselineWriter = false, string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false, string? writerRevision = null, int networkBudgetMs = 5000)
+    /// <summary>
+    /// Unit 66: the desktop proof is C1609HostProof (scripts/c1609-host-proof.ps1 and c1008-host-proof.ps1 before). Only transport
+    /// is mapped (C1609MappedGit: the fixture origin to the bare repository, file transport allowed); the real bounded Git runner
+    /// and writer stay active. A shim sees each Git call's arguments and requested directory as the PowerShell shims did. The proof
+    /// is stamped with the system clock: the fixture's real shell audit compares it with its own date.
+    /// </summary>
+    internal C1609HostProof HostProof(C1609MappedGit.Shim? shim = null) =>
+        new(new C1609MappedGit(new Dictionary<string, string> { [Origin] = Bare }) { Around = shim }, new FileSystem(), () => DateTimeOffset.UtcNow);
+
+    internal async Task<Proof> WriteProof((string Oid, string Type)[]? required = null, string previous = "", C1609MappedGit.Shim? shim = null,
+        string phaseNonce = Nonce, bool finalCheck = false, bool freshGraph = false, int networkBudgetMs = 5000)
     {
         var directory = Path.Combine(Root, "proof-" + ++sequence);
         Directory.CreateDirectory(directory);
-        var baselineSource = "";
-        if (baselineWriter || writerRevision is not null)
+        var proof = HostProof(shim);
+        var exit = 0;
+        var output = "";
+        try
         {
-            var baselineFile = Path.Combine(Root, "base-c1609-host-proof.ps1");
-            await File.WriteAllTextAsync(baselineFile, await Git(DelegateScriptRunner.RepoRoot, "show", (writerRevision ?? TaskBase) + ":scripts/c1609-host-proof.ps1"));
-            baselineSource = ". " + Ps(baselineFile) + "; ";
+            if (finalCheck) proof.AssertLiveOriginProof(Origin, Relative, VolumeRetirementFixture.Operation, previous, [Origin], networkBudgetMs);
+            else proof.WriteOriginProof(new C1609ProofRequest
+            {
+                OriginUrl = Origin, RepoRelative = Relative, OperationId = VolumeRetirementFixture.Operation, PhaseNonce = phaseNonce, InventoryDigest = Inventory,
+                ApprovedOrigins = [Origin], ProofDirectory = directory, CreatedUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), LogPath = Path.Combine(Root, "host-proof.log"),
+                RequiredObjects = (required ?? []).Select(r => new C1609RequiredObject(r.Oid, r.Type)).ToArray(), PreviousProofFile = previous, FreshGraph = freshGraph,
+            });
         }
-        var script = "$ErrorActionPreference='Stop'; . " + Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
-            baselineSource +
-            // Only transport is mapped; the real bounded Git runner and writer stay active.
-            "$original=${function:Invoke-C1609HostGit}; function Invoke-C1609HostGit { " +
-            "param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory=''," +
-            "[string]$InputText='', [string]$OutputFile=''); " + extraShim +
-            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
-            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
-            "try { " + (finalCheck ? "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(Relative) +
-                " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile " + Ps(previous) +
-                " -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs " + networkBudgetMs :
-            "Write-C1008HostOriginProof -OriginUrl " + Ps(version == 1 ? Bare : Origin) + " -RepoRelative " + Ps(Relative) +
-            " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofVersion " + version +
-            " -PhaseNonce " + Ps(phaseNonce) + " -InventoryDigest " + Ps(Inventory) + " -ApprovedOrigins @(" + Ps(Origin) + ") " +
-            "-ProofDirectory " + Ps(directory) + " -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath " + Ps(Path.Combine(Root, "host-proof.log")) +
-            " -RequiredObjects @(" + string.Join(',', (required ?? []).Select(r => "[pscustomobject]@{objectId=" + Ps(r.Oid) + ";type=" + Ps(r.Type) + "}")) + ") " +
-            "-PreviousProofFile " + Ps(previous) + (freshGraph ? " -FreshGraph" : "")) + "; exit 0 } catch { Write-Output $_.Exception.Message; exit 2 }";
-        var result = await Run("pwsh", ["-NoProfile", "-NonInteractive", "-Command", script], seconds: 60);
-        var file = Path.Combine(directory, Sha(Relative + "\n" + (version == 1 ? Bare : Origin)));
-        if (result.Exit != 0) File.Exists(file).ShouldBeFalse("a refused writer cannot emit an authorizing header");
-        return new Proof(result.Exit, result.Output, directory, file);
+        catch (C1609Refusal e)
+        {
+            exit = 2;
+            output = e.Message + "\n";
+        }
+        await Task.CompletedTask;
+        var file = Path.Combine(directory, Sha(Relative + "\n" + Origin));
+        if (exit != 0) File.Exists(file).ShouldBeFalse("a refused writer cannot emit an authorizing header");
+        return new Proof(exit, output, directory, file);
     }
-
     // Real control-stream consumer for the fixture-owned origin. Only the network
     // address is mapped; writer, live check, shell gate, custody and responses are real.
     private async Task<Func<string, Task<string?>>> Coordinator(Proof initial, string control, Func<Task>? beforeControl,
@@ -261,11 +265,7 @@ internal sealed class VolumeRetirementPublicationFixture : IDisposable
     {
         Host.ShouldNotBeNull();
         var controlRoot = Path.Combine(Root, "control-" + ++sequence);
-        // Production c590-real.ps1 already runs in a warm PowerShell controller.
-        // Keep module startup outside the host effect window here too;
-        // each request still invokes the real helper and reads the origin again.
-        await using var liveHost = await StartLiveControlHost();
-        var callback = await Coordinator(proof, controlRoot, beforeControl, liveHost.Check);
+        var callback = await Coordinator(proof, controlRoot, beforeControl, LiveControl());
         var binding = "export C1609_EXCHANGE=1 C1609_EXCHANGE_PROOF_ROOT=" + Q(controlRoot) + "\n";
         Func<string, string>? transform = extraGates == 0 ? null : source => source.Replace(
             "            c1609_write_ready_receipt || c1008_refuse RecycleReceiptUnavailable",
@@ -291,78 +291,24 @@ internal sealed class VolumeRetirementPublicationFixture : IDisposable
         return (result.Exit, text);
     }
 
-    private async Task<LiveControlHost> StartLiveControlHost()
+    // Unit 66: the final control-stream read in process (Assert-C1609LiveOriginProof was a warm pwsh controller here); each request
+    // still invokes the real live check and reads the origin again.
+    private Func<string, Task<bool>> LiveControl()
     {
-        using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "start");
-        var script = "$ErrorActionPreference='Stop'; . " + Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
-            "$original=${function:Invoke-C1609HostGit}; function Invoke-C1609HostGit { " +
-            "param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory=''," +
-            "[string]$InputText='', [string]$OutputFile=''); " +
-            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq " + Ps(Origin) + "){" + Ps(Bare) + "}else{$_}}); " +
-            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile }; " +
-            "[Console]::Out.WriteLine('C1901_CONTROL_READY'); " +
-            "while($null -ne ($line=[Console]::ReadLine())) { try { $request=$line|ConvertFrom-Json; " +
-            "Assert-C1609LiveOriginProof -OriginUrl " + Ps(Origin) + " -RepoRelative " + Ps(Relative) +
-            " -OperationId " + Ps(VolumeRetirementFixture.Operation) + " -ProofFile $request.file -ApprovedOrigins @(" + Ps(Origin) + ") -NetworkBudgetMs 5000; " +
-            "[Console]::Out.WriteLine('C1901_CONTROL_OK') } catch { [Console]::Out.WriteLine('C1901_CONTROL_REFUSED') } }; exit 0";
-        var file = Path.Combine(Root, "live-control-" + ++sequence + ".ps1");
-        await File.WriteAllTextAsync(file, script);
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, WorkingDirectory = Root,
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", file }) start.ArgumentList.Add(arg);
-        start.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
-        start.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
-        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
-        var host = new LiveControlHost(Process.Start(start)!, Root);
-        try { await host.Ready(); return host; }
-        catch { await host.Stop(force: true); throw; }
-    }
-
-    private sealed class LiveControlHost(Process process, string root) : IAsyncDisposable
-    {
-        private readonly Task<string> stderr = process.StandardError.ReadToEndAsync();
-        private int requests;
-
-        internal async Task Ready()
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-            (await process.StandardOutput.ReadLineAsync(deadline.Token)).ShouldBe("C1901_CONTROL_READY");
-        }
-
-        internal async Task<bool> Check(string file)
+        var proof = HostProof();
+        var requests = 0;
+        return async file =>
         {
             using var phase = TestTiming.BeginPhase(TestPhaseKind.ProcessWait, "run");
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             var clock = Stopwatch.StartNew();
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { file }).AsMemory(), deadline.Token);
-            await process.StandardInput.FlushAsync(deadline.Token);
-            var response = await process.StandardOutput.ReadLineAsync(deadline.Token);
-            response.ShouldBeOneOf("C1901_CONTROL_OK", "C1901_CONTROL_REFUSED");
-            var success = response == "C1901_CONTROL_OK";
-            await File.AppendAllTextAsync(Path.Combine(root, "live-controls.jsonl"),
+            var success = true;
+            try { proof.AssertLiveOriginProof(Origin, Relative, VolumeRetirementFixture.Operation, file, [Origin], 5000); }
+            catch (C1609Refusal) { success = false; }
+            await File.AppendAllTextAsync(Path.Combine(Root, "live-controls.jsonl"),
                 JsonSerializer.Serialize(new { request = ++requests, milliseconds = clock.Elapsed.TotalMilliseconds, success }) + "\n");
             return success;
-        }
-
-        internal async Task Stop(bool force)
-        {
-            using var phase = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "stop");
-            try
-            {
-                if (force && !process.HasExited) process.Kill(entireProcessTree: true);
-                else if (!process.HasExited) process.StandardInput.Close();
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                try { await process.WaitForExitAsync(deadline.Token); }
-                catch { if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); } throw; }
-                await File.AppendAllTextAsync(Path.Combine(root, "live-control-stderr.log"), await stderr);
-                if (!force) process.ExitCode.ShouldBe(0, "the owned controller must exit cleanly after stdin closes");
-            }
-            finally { process.Dispose(); }
-        }
-
-        public async ValueTask DisposeAsync() => await Stop(force: false);
+        };
     }
-
     internal async Task<(int Exit, string Output)> Audit(Proof proof, bool baseline = false, bool complete = true, string? sourceRevision = null, bool inventory = false, string? beforeInventoryClock = null)
     {
         using var phase = TestTiming.BeginPhase(TestPhaseKind.OurCode, "run");

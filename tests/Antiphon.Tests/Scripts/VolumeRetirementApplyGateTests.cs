@@ -66,9 +66,9 @@ public sealed class VolumeRetirementApplyGateTests
         leftovers.ShouldNotContain("docker volume rm --", Case.Sensitive);
         leftovers.ShouldNotContain("c1609_apply_gate", Case.Sensitive);
 
-        var bridge = Read("scripts/c590-real.ps1");
+        var bridge = Read("scripts/lib/Antiphon.Nightly/C590Bridge.cs");
         bridge.ShouldContain("^enabled-c1008[0-9a-f]{32}$", Case.Sensitive);
-        bridge.ShouldContain("export ANTIPHON_VOLUME_RETIREMENT_APPLY='$applyGate'", Case.Sensitive);
+        bridge.ShouldContain("\"export ANTIPHON_VOLUME_RETIREMENT_APPLY='\" + applyGate + \"'\"", Case.Sensitive);
         Read("scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs").ShouldContain("InvokeHostCase(\"retire-temp-runner\"", Case.Sensitive);
         Read("scripts/c1609-manual.ps1").ShouldContain("-Case retire-temp-runner", Case.Sensitive);
 

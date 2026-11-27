@@ -1,7 +1,7 @@
 // The CARD-0590 command boundary of the ported entries (unit 47 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md,
 // W8 slice B): the C# twin of Invoke-C590 and Write-C590Result (scripts/c590-command.ps1) for the commands verify-docker-stack,
-// test-docker and test-docker-container. c590-command.ps1 itself stays: the live bridge scripts/c590-real.ps1 and the launcher
-// scripts/verify-docker-stack.ps1 still dot-source it.
+// test-docker and test-docker-container. Since unit 66 it is the live bridge's too (C590Bridge, scripts/c590-real.ps1 before), and
+// c590-command.ps1 is gone.
 //
 // Invoke records {"exe":...,"args":[...]} as one compact JSON line in the sink file ANTIPHON_C590_SINK names (when it is set),
 // then, with ANTIPHON_C590_STUB set (any non-empty value), starts nothing; without it, it starts the executable with those
@@ -82,8 +82,11 @@ namespace Antiphon.Nightly
             }
         }
 
-        /// <summary>Write-C590Result: writes the result file, prints DIAGNOSIS=, and returns exitCode (the command's exit).</summary>
-        public int Result(string evidenceRoot, bool accepted, string diagnosis, int exitCode, JsonObject extra = null)
+        /// <summary>
+        /// Write-C590Result: writes the result file, prints DIAGNOSIS= (unless print is false: a caller that captured the function's
+        /// output, as the live bridge's proof exports did, never showed it), and returns exitCode (the command's exit).
+        /// </summary>
+        public int Result(string evidenceRoot, bool accepted, string diagnosis, int exitCode, JsonObject extra = null, bool print = true)
         {
             if (string.IsNullOrEmpty(evidenceRoot)) throw new C590Failure("the manifest has no evidenceRoot");
             _files.Directory.CreateDirectory(evidenceRoot);
@@ -91,7 +94,7 @@ namespace Antiphon.Nightly
             if (extra != null)
                 foreach (var pair in extra) record[pair.Key] = pair.Value?.DeepClone();
             _files.File.WriteAllText(_files.Path.Combine(evidenceRoot, ResultFileName), record.ToJsonString(Compact) + Environment.NewLine, Encoding.ASCII);
-            _host.Out.WriteLine("DIAGNOSIS=" + (diagnosis ?? ""));
+            if (print) _host.Out.WriteLine("DIAGNOSIS=" + (diagnosis ?? ""));
             return exitCode;
         }
     }

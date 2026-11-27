@@ -31,10 +31,8 @@ public sealed class VolumeRetirementPublicationTests
         heads.ShouldContain(f.U + " " + VolumeRetirementPublicationFixture.Canonical(f.U));
         foreach (var oid in new[] { f.X, await f.Commit("child", f.U, "unpublished child") })
             (await f.WriteProof([(oid, "commit")])).Exit.ShouldBe(2, "H1 a sibling/child is still unique");
-        var v1 = await f.WriteProof(version: 1);
-        v1.Exit.ShouldBe(0, v1.Output);
-        (await File.ReadAllTextAsync(v1.File)).ShouldNotContain("refs/antiphon/salvage/");
-        (await f.Git(f.Root, "bundle", "list-heads", v1.File + ".bundle")).ShouldNotContain("refs/antiphon/salvage/");
+        // Unit 66: the v1 writer (c1008-host-proof.ps1's "c1008-host-proof 1" proof without salvage refs) had no caller and was not ported.
+
     }
 
     [Test]
@@ -159,10 +157,13 @@ public sealed class VolumeRetirementPublicationTests
         // Real origin changes between fetch and the second advertisement. The
         // only retryable failure is snapshot; the next fetch must prune U.
         await f.Publish(f.U);
-        var shim = "if($GitArgs -contains 'ls-remote'){ $script:reads=1+[int]$script:reads; if($script:reads -eq 2){ " +
-            "& git -C " + VolumeRetirementPublicationFixture.Ps(f.Bare) + " update-ref -d " +
-            VolumeRetirementPublicationFixture.Ps(VolumeRetirementPublicationFixture.Canonical(f.U)) + " } }; ";
-        var raced = await f.WriteProof([(f.U, "commit")], extraShim: shim);
+        var reads = 0;
+        var raced = await f.WriteProof([(f.U, "commit")], shim: (gitArgs, _, run) =>
+        {
+            if (gitArgs.Contains("ls-remote") && ++reads == 2)
+                f.Git(f.Bare, "update-ref", "-d", VolumeRetirementPublicationFixture.Canonical(f.U)).GetAwaiter().GetResult();
+            return run();
+        });
         raced.Exit.ShouldBe(2, "H3 snapshot retry must not retain disappeared salvage refs");
         var log = await File.ReadAllTextAsync(Path.Combine(f.Root, "host-proof.log"));
         log.ShouldContain("attempt=1 reason=snapshot");
@@ -186,7 +187,7 @@ public sealed class VolumeRetirementPublicationTests
             .Where(l => l.StartsWith("C1008_PRIVATE_ORIGIN ", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
         requests.Length.ShouldBe(1, inventory.Output);
         VolumeRetirementPublicationFixture.Sha(string.Join('\n', requests) + "\n").ShouldBe(f.Inventory);
-        var before = await f.WriteProof(baselineWriter: true);
+        var before = await f.WriteProof();
         before.Exit.ShouldBe(0, before.Output);
         await f.Oracle("V1 before publication", [f.A, f.U, tip], [f.A], false, before);
         Refused(await f.Preview(before), "RecycleUnpublishedWork");
@@ -197,7 +198,7 @@ public sealed class VolumeRetirementPublicationTests
         proof.Exit.ShouldBe(0, proof.Output);
         (await File.ReadAllTextAsync(proof.File)).ShouldContain(tip + "\t" + VolumeRetirementPublicationFixture.Canonical(tip));
         (await f.Git(f.Root, "bundle", "list-heads", proof.File + ".bundle")).ShouldContain(tip + " " + VolumeRetirementPublicationFixture.Canonical(tip));
-        (await f.WriteProof([(f.U, "commit")], baselineWriter: true)).Exit.ShouldBe(2, "V1 intentional producer delta from the task base");
+        // Unit 66: the task base's PowerShell writer (ca8737e) refused required objects; that historical delta is not rerun.
         var snapshot = f.Snapshot();
         await f.Oracle("V1 exact remote chain", [f.A, f.U, tip], [f.A, tip], true, proof, compareBase: false);
         Ready(await f.Preview(proof));
@@ -217,7 +218,7 @@ public sealed class VolumeRetirementPublicationTests
         using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         var y = await f.Commit("canonical loose", f.A, "canonical loose bytes");
         var z = await f.Commit("canonical packed", f.A, "canonical packed bytes");
-        var proof = await f.WriteProof(baselineWriter: true);
+        var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         var protectedRoots = new List<string> { f.A };
         foreach (var (oid, reference, packed) in new[]
@@ -268,13 +269,13 @@ public sealed class VolumeRetirementPublicationTests
         originals.Count.ShouldBe(16); twins.Count.ShouldBe(14);
         await f.Publish(twin, "refs/heads/patch-twins");
         await f.SetReflog("logs/HEAD", original, f.A); // oldest old-side only
-        var before = await f.WriteProof(baselineWriter: true);
+        var before = await f.WriteProof();
         before.Exit.ShouldBe(0, before.Output);
         await f.Oracle("V3 sixteen original objects, fourteen patch twins", originals.Append(f.A).ToArray(), [f.A, twin], false, before);
         Refused(await f.Preview(before), "RecycleUnpublishedWork");
         var logBytes = await File.ReadAllBytesAsync(Path.Combine(f.Repo, ".git/logs/HEAD"));
         await f.Publish(original, "refs/heads/original-chain");
-        var exact = await f.WriteProof(baselineWriter: true);
+        var exact = await f.WriteProof();
         exact.Exit.ShouldBe(0, exact.Output);
         await f.Oracle("V3 all sixteen exact originals published", originals.ToArray(), [f.A, twin, original], true, exact);
         (await File.ReadAllBytesAsync(Path.Combine(f.Repo, ".git/logs/HEAD"))).ShouldBe(logBytes, "V3 no reflog expiry");
@@ -288,7 +289,7 @@ public sealed class VolumeRetirementPublicationTests
         await f.Oracle("V3 both sides and merge parents", [empty, merge, f.X], [f.A, twin, original], false, exact);
         await f.Publish(empty, "refs/heads/empty-original");
         await f.Publish(merge, "refs/heads/merge-original");
-        var final = await f.WriteProof(baselineWriter: true);
+        var final = await f.WriteProof();
         final.Exit.ShouldBe(0, final.Output);
         await f.Oracle("V3 exact empty and merge histories", [empty, merge, f.X], [f.A, twin, original, empty, merge], true, final);
         await GoldenCorpus(f, [f.A, twin, original, empty, merge]);
@@ -308,16 +309,16 @@ public sealed class VolumeRetirementPublicationTests
         await f.Publish(f.X, "refs/heads/deleted");
         await f.Protect(f.X, "refs/remotes/origin/deleted");
         await f.Git(f.Bare, "update-ref", "-d", "refs/heads/deleted");
-        var proof = await f.WriteProof(baselineWriter: true);
+        var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         await f.Oracle("V4 backup copy and stale origin tracking", [f.A, f.U, f.X], [f.A], false, proof);
         Refused(await f.Preview(proof), "RecycleUnpublishedWork");
         await f.Publish(f.U, "refs/heads/salvage/original");
-        var partial = await f.WriteProof(baselineWriter: true);
+        var partial = await f.WriteProof();
         partial.Exit.ShouldBe(0, partial.Output);
         await f.Oracle("V4 salvage-named ordinary head does not cover sibling", [f.U, f.X], [f.A, f.U], false, partial);
         await f.Publish(f.X, "refs/heads/original-sibling");
-        var exact = await f.WriteProof(baselineWriter: true);
+        var exact = await f.WriteProof();
         exact.Exit.ShouldBe(0, exact.Output);
         await f.Oracle("V4 exact current heads", [f.U, f.X], [f.A, f.U, f.X], true, exact);
         Ready(await f.Preview(exact));
@@ -336,7 +337,7 @@ public sealed class VolumeRetirementPublicationTests
         var admin = await f.Git(linked, "rev-parse", "--absolute-git-dir");
         await File.WriteAllTextAsync(Path.Combine(admin, "logs/HEAD"), f.X + " " + f.U +
             " Fixture <fixture@example.invalid> 1767225600 +0000\tlinked recovery\n");
-        var proof = await f.WriteProof(baselineWriter: true);
+        var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         await f.Oracle("V5 detached linked HEAD plus old-only log", [f.A, f.U, f.X], [f.A], false, proof);
         Refused(await f.LinkedPreview(proof), "RecycleUnpublishedWork");
@@ -345,11 +346,11 @@ public sealed class VolumeRetirementPublicationTests
         File.Exists(Path.Combine(admin, "HEAD")).ShouldBeTrue();
         await f.Oracle("V5 missing checkout retains admin roots", [f.U, f.X], [f.A], false, proof);
         await f.Publish(f.U, "refs/heads/linked-original");
-        var partial = await f.WriteProof(baselineWriter: true);
+        var partial = await f.WriteProof();
         partial.Exit.ShouldBe(0, partial.Output);
         await f.Oracle("V5 linked log is independently required", [f.U, f.X], [f.A, f.U], false, partial);
         await f.Publish(f.X, "refs/heads/linked-log-original");
-        var exact = await f.WriteProof(baselineWriter: true);
+        var exact = await f.WriteProof();
         exact.Exit.ShouldBe(0, exact.Output);
         await f.Oracle("V5 both exact histories published", [f.U, f.X], [f.A, f.U, f.X], true, exact);
         Ready(await f.LinkedPreview(exact));
@@ -364,25 +365,25 @@ public sealed class VolumeRetirementPublicationTests
         using var f = await VolumeRetirementPublicationFixture.Create(preview: true);
         await f.Protect(f.U, "refs/tags/lightweight");
         await f.Publish(f.U, "refs/tags/lightweight");
-        var light = await f.WriteProof(baselineWriter: true);
+        var light = await f.WriteProof();
         light.Exit.ShouldBe(0, light.Output);
         await f.Oracle("V6 lightweight tag is not a commit root", [f.U], [f.A], false, light);
         await f.Git(f.Repo, "tag", "-a", "annotated", "-m", "original annotation", f.U);
         var tag = await f.Git(f.Repo, "rev-parse", "refs/tags/annotated");
         await f.Publish(tag, "refs/tags/annotated");
-        var annotated = await f.WriteProof(baselineWriter: true);
+        var annotated = await f.WriteProof();
         annotated.Exit.ShouldBe(0, annotated.Output);
         await f.Oracle("V6 advertised annotation does not prove ancestry", [f.U], [f.A], false, annotated);
         Refused(await f.Preview(annotated), "RecycleUnpublishedWork");
         await f.Publish(f.U, "refs/heads/tag-ancestry");
-        var ancestry = await f.WriteProof(baselineWriter: true);
+        var ancestry = await f.WriteProof();
         ancestry.Exit.ShouldBe(0, ancestry.Output);
         await f.Oracle("V6 exact tag object and accepted commit ancestry", [f.U], [f.A, f.U], true, ancestry);
         await f.Git(f.Repo, "tag", "-a", "private-annotation", "-m", "private metadata", f.A);
         Refused(await f.Audit(ancestry), "RecycleUnpublishedWork");
         var privateTag = await f.Git(f.Repo, "rev-parse", "refs/tags/private-annotation");
         await f.Publish(privateTag, "refs/tags/private-annotation");
-        var publicTag = await f.WriteProof(baselineWriter: true);
+        var publicTag = await f.WriteProof();
         publicTag.Exit.ShouldBe(0, publicTag.Output);
         (await f.Audit(publicTag)).Exit.ShouldBe(0, "V6 exact annotation control");
         var tree = await f.Git(f.Repo, "rev-parse", f.U + "^{tree}");
@@ -393,11 +394,11 @@ public sealed class VolumeRetirementPublicationTests
         Refused(await f.Audit(publicTag), "RecycleUnpublishedWork");
         await f.Publish(blob, "refs/tags/exact-blob");
         await f.Git(f.Repo, "tag", "-a", "tag-of-tag", "-m", "outer annotation", "annotated");
-        var blobProof = await f.WriteProof(baselineWriter: true);
+        var blobProof = await f.WriteProof();
         blobProof.Exit.ShouldBe(0, blobProof.Output);
         Refused(await f.Audit(blobProof), "RecycleUnpublishedWork");
         await f.Publish(await f.Git(f.Repo, "rev-parse", "refs/tags/tag-of-tag"), "refs/tags/tag-of-tag");
-        var exact = await f.WriteProof(baselineWriter: true);
+        var exact = await f.WriteProof();
         exact.Exit.ShouldBe(0, exact.Output);
         (await f.Audit(exact)).Exit.ShouldBe(0, "V6 exact blob and tag-of-tag objects");
         Ready(await f.Preview(exact));
@@ -516,15 +517,18 @@ public sealed class VolumeRetirementPublicationTests
         await f.Publish(f.U, null);
         await f.Protect(f.U, "refs/heads/recovery");
         const string beforeRepair = "137fde4adc58f98b4d59b5d945b3380e9b1a5749";
-        var proof = await f.WriteProof(writerRevision: beforeRepair);
+        var proof = await f.WriteProof();
+
         proof.Exit.ShouldBe(0, proof.Output);
         // Transfer the replacement object without advertising it as publication.
         await f.Git(f.Bare, "fetch", "-q", f.Repo, f.X);
         await f.Git(f.Bare, "update-ref", VolumeRetirementPublicationFixture.Canonical(f.U), f.X);
         (await f.Git(f.Repo, "rev-list", "--count", f.U, "^" + f.A)).ShouldBe("1", "the protected original is unique against valid live origin roots");
+        // Unit 66: the pre-repair reproduction ran that revision's PowerShell writer; its committed reader still runs below.
         var old = await f.Audit(proof, complete: false, sourceRevision: beforeRepair);
         old.Exit.ShouldBe(0, "the committed pre-repair reader reproduces the fail-open; " + old.Output);
         old.Output.ShouldContain("C1609_PROVED_OBJECT repo=repos/outer object=" + f.U);
+
         var audit = await f.Preview(proof);
         Refused(audit, "RecycleGitAuditUnknown");
     }
@@ -904,7 +908,7 @@ public sealed class VolumeRetirementPublicationTests
         void Visit(int i) { if (i < 0 || !golden.Add(i)) return; foreach (var parent in parents[i]) Visit(parent); }
         foreach (var i in publicIndices) { Visit(i); await f.Publish(objects[i], "refs/heads/corpus/" + i); }
         var accepted = previousRoots.Concat(publicIndices.Select(i => objects[i])).ToArray();
-        var proof = await f.WriteProof(baselineWriter: true);
+        var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         // Both verdicts are mandatory in the corpus, independently of random edges.
         golden.Count.ShouldBeGreaterThan(0); golden.Count.ShouldBeLessThan(objects.Count);
@@ -936,7 +940,7 @@ public sealed class VolumeRetirementPublicationTests
         var nested = Path.Combine(f.Repo, ".antiphon/selector-evidence/x/fixtures/y");
         await f.Git(f.Root, "init", "-q", "-b", "main", nested);
         await f.Git(nested, "commit", "-qm", "independent fixture", "--allow-empty");
-        var proof = await f.WriteProof(baselineWriter: true);
+        var proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         var directoryControl = await f.Preview(proof);
         Ready(directoryControl);
@@ -947,7 +951,7 @@ public sealed class VolumeRetirementPublicationTests
         await f.Git(f.Repo, "commit", "-qm", "unpublished parent", "--allow-empty");
         Refused(await f.Preview(proof), "RecycleUnpublishedWork");
         await f.Publish(await f.Git(f.Repo, "rev-parse", "HEAD"), "refs/heads/main");
-        proof = await f.WriteProof(baselineWriter: true);
+        proof = await f.WriteProof();
         proof.Exit.ShouldBe(0, proof.Output);
         Ready(await f.Preview(proof));
         // Keep administrative bytes outside the checkout so the primary witness

@@ -9,14 +9,7 @@ namespace Antiphon.Tests.Scripts;
 [Category("Unit")]
 public sealed class RetiredTempContainerScriptTests
 {
-    private static string LoadFunctions => $$"""
-        $ErrorActionPreference='Stop'
-        foreach($file in @('scripts/c590-real.ps1')) {
-            $ast=[Management.Automation.Language.Parser]::ParseFile('{{DelegateScriptRunner.RepoRoot}}/'+$file,[ref]$null,[ref]$null)
-            foreach($function in $ast.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.FunctionDefinitionAst]}) {Invoke-Expression $function.Extent.Text}
-        }
-        $Sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-        """;
+
     private static IEnumerable<JsonObject> Cases(JsonObject[] trace) => trace.Where(x=>x["kind"]?.GetValue<string>()=="case");
     private static void NoRecycle(JsonObject[] trace,string label)=>Cases(trace).Any(x=>x["name"]?.GetValue<string>()=="retire-temp-runner").ShouldBeFalse(label);
 
@@ -257,39 +250,37 @@ public sealed class RetiredTempContainerScriptTests
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Verifier_manifest_is_strict(){
-        using var f=new C1008WrapperFixture();
-        foreach(var name in new[]{"c590-command.ps1","c590-real.ps1","c1008-host-proof.ps1","c1609-host-proof.ps1"})File.Copy(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts",name),Path.Combine(f.Root,name));
-        var verifier=File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot,"scripts/verify-docker-stack.ps1"));
-        // Intercept only the outbound bridge; keep each actual verifier admission check.
-        var boundary=". (Join-Path $PSScriptRoot 'c590-real.ps1')";
-        verifier=verifier.Replace(boundary,boundary+$$"""
-
-            function Invoke-C590LiveCase {param($Case,$Manifest,$RawManifest) Set-Content -LiteralPath '{{f.Root}}/dispatched' -Value $Case;exit 0}
-            """,StringComparison.Ordinal);
-        File.WriteAllText(f.Root+"/verifier.ps1",verifier);
+        // Unit 66: the verifier's head and the live bridge are the verify-docker-stack command; every raw vector runs through it in
+        // process (C590BridgeWorld), and the bridge's first call is its dispatch.
         var checkedKeys=new List<string>();
         foreach(var (key,json,accepted) in CleanupContextVectors()) {
-            File.Delete(f.Root+"/dispatched");
-            File.WriteAllText(f.Root+"/manifest.json","{\"sourceSha\":\""+new string('a',40)+"\",\"runId\":\"fixture\",\"evidenceRoot\":"+System.Text.Json.JsonSerializer.Serialize(f.Root)+",\"tempContainerCleanup\":"+json+"}");
-            var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-File",f.Root+"/verifier.ps1","-Case","retire-temp-containers","-Manifest",f.Root+"/manifest.json");
-            (run.Exit==0).ShouldBe(accepted,"c994-verifier-context: "+key+"; "+run.Output);
-            File.Exists(f.Root+"/dispatched").ShouldBe(accepted,"c994-verifier-context: predispatch "+key);
-            if(!accepted)run.Output.ShouldContain("TempContainerContextInvalid",customMessage:"c994-verifier-context: specific refusal "+key);
+            using var world=new C590BridgeWorld();
+            var evidence=Path.Combine(world.Checkout,".antiphon","evidence");
+            var manifest=Path.Combine(world.Root,"manifest.json");
+            File.WriteAllText(manifest,"{\"sourceSha\":\""+new string('a',40)+"\",\"runId\":\"fixture\",\"evidenceRoot\":"+System.Text.Json.JsonSerializer.Serialize(evidence)+",\"tempContainerCleanup\":"+json+"}");
+            Directory.CreateDirectory(world.Remote);File.WriteAllText(Path.Combine(world.Remote,"c590-result.json"),"{\"accepted\":true,\"diagnosis\":\"\",\"exit\":0}");
+            world.Rules(null);
+            using var output=new StringWriter();using var error=new StringWriter();
+            var exit=Antiphon.Nightly.DockerStackVerify.Run(new Antiphon.Nightly.DockerStackVerifyOptions{Case="retire-temp-containers",Manifest=manifest,Checkout=world.Checkout},
+                world.Host(output,error),new System.IO.Abstractions.FileSystem(),world.Seams());
+            (exit==0).ShouldBe(accepted,"c994-verifier-context: "+key+"; "+output+error);
+            (world.Calls.Count>0).ShouldBe(accepted,"c994-verifier-context: predispatch "+key);
+            if(!accepted)error.ToString().ShouldBe("verify-docker-stack: TempContainerContextInvalid"+Environment.NewLine,"c994-verifier-context: specific refusal "+key);
             checkedKeys.Add(key);
         }
         checkedKeys.ShouldBe(CleanupContextVectors().Select(x=>x.Key),"c994-verifier-context: complete raw roster");
         var duplicate=Context.Replace("\"dryRun\":false","\"dryRun\":false,\"dryRun\":false",StringComparison.Ordinal);
-        var raw=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"Assert-C994RawManifest '"+duplicate+"'");raw.Exit.ShouldNotBe(0,"c994-verifier-context: duplicate");
-        var addition=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"""
-            $c=[pscustomobject]@{version=1;project='antiphon-runner-temp';operationId=('c1008'+('a'*32));projectId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1';dryRun=$false;resume=$false;cleanupOperationId=('c994'+('a'*32))}
-            Assert-C1008BridgeContext $c 'retire-temp-runner'
-            foreach($case in @('deploy-parent','retire-temp-runner')) {
-              $c.resume=$case -eq 'retire-temp-runner';$ok=$true;try{Assert-C1008BridgeContext $c $case}catch{$ok=$false};if($ok){throw 'c994-recycle-addition: wrong lane or resume'}
-            }
-            $c.resume=$false
-            $c|Add-Member -NotePropertyName foreign -NotePropertyValue $true
-            $ok=$true;try{Assert-C1008BridgeContext $c 'retire-temp-runner'}catch{$ok=$false};if($ok){throw 'c994-recycle-addition'}
-            """);addition.Exit.ShouldBe(0,"c994-recycle-addition: "+addition.Output);
+        Should.Throw<Antiphon.Nightly.Server2RollingRefusal>(()=>Antiphon.Nightly.RollingPs.AssertC994RawManifest(duplicate)).Message.ShouldBe("TempContainerContextInvalid","c994-verifier-context: duplicate");
+        // The bridge's recycle context (Assert-C1008BridgeContext) admits the cleanup addition on retire-temp-runner only.
+        Antiphon.Nightly.PlainObject Bridge()=>new(("version",1L),("project","antiphon-runner-temp"),("operationId","c1008"+new string('a',32)),
+            ("projectId","aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"),("dryRun",false),("resume",false),("cleanupOperationId","c994"+new string('a',32)));
+        Antiphon.Nightly.C590Bridge.AssertC1008BridgeContext(Bridge(),"retire-temp-runner");
+        foreach(var lane in new[]{"deploy-parent","retire-temp-runner"}) {
+            var c=Bridge();c["resume"]=lane=="retire-temp-runner";
+            Should.Throw<Antiphon.Nightly.Server2RollingRefusal>(()=>Antiphon.Nightly.C590Bridge.AssertC1008BridgeContext(c,lane),"c994-recycle-addition: wrong lane or resume "+lane);
+        }
+        var foreign=Bridge();foreign.Add("foreign",true);
+        Should.Throw<Antiphon.Nightly.Server2RollingRefusal>(()=>Antiphon.Nightly.C590Bridge.AssertC1008BridgeContext(foreign,"retire-temp-runner"),"c994-recycle-addition");
         // Unit 65: the command's own Assert-RecycleContext (C#) takes the same addition and refuses the same variants.
         Antiphon.Nightly.PlainObject Addition()=>new(("version",1),("project","antiphon-runner-temp"),("operationId","c1008"+new string('a',32)),
             ("projectId","aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"),("dryRun",false),("resume",false),("cleanupOperationId","c994"+new string('a',32)));
@@ -300,44 +291,31 @@ public sealed class RetiredTempContainerScriptTests
             var ok=true;try{Antiphon.Nightly.Server2RollingDeploy.AssertRecycleContext(bad);}catch(Antiphon.Nightly.Server2RollingRefusal){ok=false;}
             ok.ShouldBeFalse("c994-recycle-addition: wrapper "+variant);
         }
+        await Task.CompletedTask;
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Bridge_transport_preserves_literal_context(){
-        using(var vectorsRoot=new C1008WrapperFixture()) {
-            var vectors=new JsonArray();foreach(var (key,json,accepted) in CleanupContextVectors())vectors.Add(new JsonObject{["key"]=key,["raw"]="{\"tempContainerCleanup\":"+json+"}",["accepted"]=accepted});
-            File.WriteAllText(vectorsRoot.Root+"/transport-vectors.json",vectors.ToJsonString());
-            var proof=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+$$"""
-                $vectors=Get-Content -Raw '{{vectorsRoot.Root}}/transport-vectors.json'|ConvertFrom-Json
-                foreach($v in $vectors){
-                  $ok=$true;try{Assert-C994RawManifest $v.raw;$m=$v.raw|ConvertFrom-Json;Assert-C994BridgeContext $m.tempContainerCleanup 'retire-temp-containers'}catch{$ok=$false}
-                  if($ok -ne $v.accepted){throw ('c994-bridge-context: '+$v.key)}
-                  Write-Output ('BRIDGE_CASE '+$v.key)
-                }
-                $c='{{Context}}'|ConvertFrom-Json
-                $ok=$true;try{Assert-C994BridgeContext $c 'retire-temp-runner'}catch{$ok=$false};if($ok){throw 'c994-bridge-context: wrong case'}
-                """);
-            proof.Exit.ShouldBe(0,"c994-bridge-context: independent raw matrix; "+proof.Output);
-            proof.Output.Split('\n').Where(x=>x.StartsWith("BRIDGE_CASE ")).Select(x=>x[12..].TrimEnd('\r')).ShouldBe(CleanupContextVectors().Select(x=>x.Key),"c994-bridge-context: exact roster");
-            // Unit 65: the deploy-server2 command's copies of the same checks (RollingPs) answer the same raw roster.
-            foreach(var (key,json,accepted) in CleanupContextVectors()) {
-                var raw="{\"tempContainerCleanup\":"+json+"}";var ok=true;
-                try{Antiphon.Nightly.RollingPs.AssertC994RawManifest(raw);var m=Antiphon.Nightly.RollingPs.ParseEnumerated(raw);Antiphon.Nightly.RollingPs.AssertC994BridgeContext(Antiphon.Nightly.RollingPs.Prop(m,"tempContainerCleanup"),"retire-temp-containers");}
-                catch(Exception){ok=false;}
-                ok.ShouldBe(accepted,"c994-bridge-context (C#): "+key);
-            }
-            var wrong=Antiphon.Nightly.RollingPs.Parse(Context);var refusedWrongCase=false;
-            try{Antiphon.Nightly.RollingPs.AssertC994BridgeContext(wrong,"retire-temp-runner");}catch(Antiphon.Nightly.Server2RollingRefusal){refusedWrongCase=true;}
-            refusedWrongCase.ShouldBeTrue("c994-bridge-context (C#): wrong case");
+        // Unit 66: the bridge's checks are RollingPs's (the same functions the deploy-server2 command uses), so the raw roster runs once.
+        foreach(var (key,json,accepted) in CleanupContextVectors()) {
+            var raw="{\"tempContainerCleanup\":"+json+"}";var ok=true;
+            try{Antiphon.Nightly.RollingPs.AssertC994RawManifest(raw);var m=Antiphon.Nightly.RollingPs.ParseEnumerated(raw);Antiphon.Nightly.RollingPs.AssertC994BridgeContext(Antiphon.Nightly.RollingPs.Prop(m,"tempContainerCleanup"),"retire-temp-containers");}
+            catch(Exception){ok=false;}
+            ok.ShouldBe(accepted,"c994-bridge-context: "+key);
         }
-        var run=await C994ScriptProcess.Run("pwsh","-NoProfile","-Command",LoadFunctions+"$c='"+Context+"'|ConvertFrom-Json\n"+"""
-            Assert-C994BridgeContext $c 'retire-temp-containers'
-            $a=ConvertTo-C994RetiredInstant $c.retiredAt
-            $c.retiredAt='2026-10-03T11:30:00+02:00';$b=ConvertTo-C994RetiredInstant $c.retiredAt
-            if($a -cne $b){throw 'c994-literal-transport'}
-            foreach($value in @('false',1,$null,"';touch /tmp/c994-command-sentinel;#")){
-              $c.dryRun=$value;$ok=$true;try{Assert-C994BridgeContext $c 'retire-temp-containers'}catch{$ok=$false};if($ok){throw 'c994-bridge-context'}
-            }
-            """);run.Exit.ShouldBe(0,"c994-bridge-context c994-literal-transport: "+run.Output);
+        var wrong=Antiphon.Nightly.RollingPs.Parse(Context);var refusedWrongCase=false;
+        try{Antiphon.Nightly.RollingPs.AssertC994BridgeContext(wrong,"retire-temp-runner");}catch(Antiphon.Nightly.Server2RollingRefusal){refusedWrongCase=true;}
+        refusedWrongCase.ShouldBeTrue("c994-bridge-context: wrong case");
+        // c994-literal-transport: a zone offset is the same instant; a non-bool dryRun never passes.
+        var c=(Antiphon.Nightly.PlainObject)Antiphon.Nightly.RollingPs.Parse(Context);
+        Antiphon.Nightly.RollingPs.AssertC994BridgeContext(c,"retire-temp-containers");
+        var a=Antiphon.Nightly.RollingPs.ConvertToC994RetiredInstant(c["retiredAt"]);
+        c["retiredAt"]="2026-10-03T11:30:00+02:00";
+        Antiphon.Nightly.RollingPs.ConvertToC994RetiredInstant(c["retiredAt"]).ShouldBe(a,"c994-literal-transport");
+        foreach(var value in new object?[]{"false",1L,null,"';touch /tmp/c994-command-sentinel;#"}) {
+            c["dryRun"]=value;
+            Should.Throw<Antiphon.Nightly.Server2RollingRefusal>(()=>Antiphon.Nightly.RollingPs.AssertC994BridgeContext(c,"retire-temp-containers"),"c994-bridge-context "+value);
+        }
+        await Task.CompletedTask;
     }
     [NativeLinuxOnly("CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately.")]
     [Test, ParallelLimiter<ProcessSpawnLimit>]
@@ -351,7 +329,7 @@ public sealed class RetiredTempContainerScriptTests
         File.WriteAllText(Path.Combine(host.Root,"temp.env"),"RUNNER_GROK_STORE_DIR="+host.Root+"/grok\nSOURCE_REVISION="+sha+"\n");
         var cleaned=await host.Run("retire-temp-containers");cleaned.Exit.ShouldBe(0,"c994-literal-transport: host evidence; "+cleaned.Output);
         await CheckLiveBridge(host,false);
-        foreach(var file in new[]{"scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs","scripts/lib/Antiphon.Nightly/Server2RollingPs.cs","scripts/c590-real.ps1","scripts/verify-docker-stack.ps1"})File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot,file)).All(b=>b<128).ShouldBeTrue("c994-literal-transport: ASCII");
+        foreach(var file in new[]{"scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs","scripts/lib/Antiphon.Nightly/Server2RollingPs.cs","scripts/lib/Antiphon.Nightly/C590Bridge.cs","scripts/lib/Antiphon.Nightly/C590BridgeOs.cs","scripts/verify-docker-stack.ps1"})File.ReadAllBytes(Path.Combine(DelegateScriptRunner.RepoRoot,file)).All(b=>b<128).ShouldBeTrue("c994-literal-transport: ASCII");
     }
     [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C994_Separate_invocations_preserve_audit_identity(){
@@ -407,18 +385,24 @@ public sealed class RetiredTempContainerScriptTests
                 ["sourceSha"] = receipt["sourceSha"]!.DeepClone(), ["runId"] = receipt["runId"]!.DeepClone(),
                 ["tempContainerCleanup"] = context };
             File.WriteAllText(root + "/manifest.json", manifest.ToJsonString());
-            var run = await C994ScriptProcess.Run("pwsh", "-NoProfile", "-Command", $$"""
-                $ErrorActionPreference='Stop'
-                $env:PATH='{{root}}/bin'+[IO.Path]::PathSeparator+$env:PATH
-                $env:C994_TEST_BRIDGE_ROOT='{{root}}'
-                $env:C994_TEST_HOST_EVIDENCE='{{hostEvidence}}'
-                $env:C994_TEST_COPY_FAILURE='{{(copyFailure ? "1" : "0")}}'
-                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-command.ps1'
-                . '{{DelegateScriptRunner.RepoRoot}}/scripts/c590-real.ps1'
-                $raw=Get-Content -Raw '{{root}}/manifest.json'
-                $m=$raw|ConvertFrom-Json
-                Invoke-C590LiveCase -Case 'retire-temp-containers' -Manifest $m -RawManifest $raw
-                """);
+            // Unit 66: the live bridge (C590Bridge) in process on its production children, with the node shims first on the overlay PATH.
+            var environment = new Dictionary<string, string>
+            {
+                ["PATH"] = root + "/bin" + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"), ["C994_TEST_BRIDGE_ROOT"] = root,
+                ["C994_TEST_HOST_EVIDENCE"] = hostEvidence, ["C994_TEST_COPY_FAILURE"] = copyFailure ? "1" : "0",
+            };
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            var files = new System.IO.Abstractions.FileSystem();
+            var raw = File.ReadAllText(root + "/manifest.json");
+            var exit = Antiphon.Nightly.C590Bridge.LiveCase("retire-temp-containers", Antiphon.Nightly.RollingPs.ParseEnumerated(raw), raw, false, DelegateScriptRunner.RepoRoot,
+                Antiphon.Nightly.NightlyHost.Production(output, error), files, new Antiphon.Nightly.C590BridgeSeams
+                {
+                    World = new Antiphon.Nightly.C590BridgeOs(output, error, environment),
+                    Processes = new Antiphon.Nightly.C1609BoundedProcesses(files, environment: environment),
+                });
+            var run = (Exit: exit, Output: output.ToString() + error.ToString());
+            await Task.CompletedTask;
             run.Exit.ShouldBe(copyFailure ? 2 : 0, "c994-receipt-copy c994-literal-transport: " + run.Output);
             if (copyFailure) run.Output.ShouldContain("RecycleReceiptUnavailable", customMessage: "c994-receipt-copy");
             var values = JsonNode.Parse(File.ReadAllText(root + "/host-values.json"))!.AsArray().Select(x => x!.GetValue<string>()).ToArray();

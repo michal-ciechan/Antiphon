@@ -7010,8 +7010,8 @@ c1008_git_program() {
 # CARD-1105 / CARD-1316. One overall budget for the whole audit. A clean standing
 # server2 volume (800 repositories) measured 5225 s, so the default is 10800 s
 # (C1008_AUDIT_TIMEOUT_SECONDS, resolved by c1008_resolve_audit_cap on the host).
-# The read-only OLD-volume replay took 1404 s at load 17. deploy-server2.ps1 does
-# not wrap redeploy-old's deploy-parent in a wall deadline. Invoke-C590Ssh waits
+# The read-only OLD-volume replay took 1404 s at load 17. The deploy-server2 command does
+# not wrap redeploy-old's deploy-parent in a wall deadline. The live bridge's ssh (C590Bridge) waits
 # until ssh exits: ConnectTimeout only bounds the handshake, and ServerAlive
 # disconnects only when the server stops answering. docker start -a waits until
 # this helper exits. Status 124 or 137 is RecycleGitAuditUnknown, never a pass.
@@ -8076,7 +8076,7 @@ unpublished_detail() {
     fi
     printf 'proof=%s commits=%s tips=%s gone-tracking=%s unadvertised-local=%s' "$proof" "$commits" "$tips" "$tracking" "$local_refs"
 }
-# CARD-1607. The same scrub on the desktop (scripts/c1008-host-proof.ps1): drop
+# CARD-1607. The same scrub on the desktop (C1609HostProof.ScrubOrigin): drop
 # userinfo only when it holds a password or a token prefix, then refuse if a
 # token-shaped substring remains. git@ and scp-style URLs stay intact.
 c1008_scrub_origin() {

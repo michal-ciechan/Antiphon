@@ -77,7 +77,7 @@ if($Case -in @('retire-temp-runner','retire-temp-containers')) {
   if($roots -cnotcontains $path){$roots+=@($path)}
   [IO.File]::WriteAllText($registry,(ConvertTo-Json -InputObject @($roots) -Compress))
   @{kind='real-case';name=$Case;recycle=$r.recycle}|ConvertTo-Json -Compress -Depth 20|Add-Content -LiteralPath $env:C727_TEST_TRACE
-  & pwsh -NoProfile -NonInteractive -File '${repo}/scripts/verify-docker-stack.ps1' -Case $Case -Manifest $Manifest
+  & '${repo}/scripts/antiphon' verify-docker-stack --case $Case --manifest $Manifest
   exit $LASTEXITCODE
 }
 if($Case -eq 'retirement-proof-read') {

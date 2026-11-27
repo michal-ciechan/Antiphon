@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Text.Json.Nodes;
 using Antiphon.Tests.Infrastructure;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
@@ -6,8 +6,10 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
-// CARD-0737. deploy-parent must not touch bw unless a refresh was asked for, and it must not
-// claim the runner logged out while an existing token file is left in place.
+// CARD-0737. deploy-parent must not touch bw unless a refresh was asked for, and it must not claim the runner logged out while an
+// existing token file is left in place. Unit 66 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the live bridge is
+// C590Bridge, so these rows run the verify-docker-stack command in process on C590BridgeWorld (fake ssh, scp and bw; a fake home for
+// the ~/.bw-session pickup) where they ran scripts/c590-real.ps1 and verify-docker-stack.ps1's head in pwsh with a bw shim.
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ClaudeTokenRefreshOptInTests
@@ -17,73 +19,112 @@ public sealed class ClaudeTokenRefreshOptInTests
 
     private const string RefreshSkipped = "refresh skipped, previous file unchanged";
 
-    [Test]
-    public async Task Default_path_does_not_call_bw_or_warn_logged_out_when_the_file_is_present()
+    private static JsonObject Manifest(params (string Key, JsonNode? Value)[] fields)
     {
-        var run = await ProbeAsync("default");
-        run.ExitCode.ShouldBe(0, run.Output);
-        run.BwCalled.ShouldBeFalse(run.Output);
+        var manifest = new JsonObject { ["sourceSha"] = new string('a', 40), ["runId"] = "c737test" };
+        foreach (var (key, value) in fields) manifest[key] = value;
+        return manifest;
+    }
+
+    private static JsonArray Unreadable() => [new JsonObject { ["name"] = "bw", ["exit"] = 2 }];
+
+    [Test]
+    public void Default_path_does_not_call_bw_or_warn_logged_out_when_the_file_is_present()
+    {
+        using var world = new C590BridgeWorld();
+        world.Variables["BW_SESSION"] = "c737-not-a-vault-session";
+        var run = world.RunCase("deploy-parent", Manifest(), rules: Unreadable());
+        run.Exit.ShouldBe(0, run.Output + run.Error);
+        world.Names().ShouldNotContain("bw", run.Output);
         run.Output.ShouldContain(KeepLine);
         run.Output.ShouldNotContain("claudeAuth=logged-out");
         run.Output.ShouldNotContain("ClaudeOAuthTokenUnavailable");
     }
 
     [Test]
-    public async Task Locked_vault_on_an_explicit_refresh_skips_and_keeps_the_previous_file()
+    public void Locked_vault_on_an_explicit_refresh_skips_and_keeps_the_previous_file()
     {
-        var run = await ProbeAsync("locked");
-        run.ExitCode.ShouldBe(0, run.Output);
-        run.BwCalled.ShouldBeFalse(run.Output);
+        // No BW_SESSION and no ~/.bw-session pickup.
+        using var world = new C590BridgeWorld();
+        var run = world.RunCase("deploy-parent", Manifest(), refresh: true, rules: Unreadable());
+        run.Exit.ShouldBe(0, run.Output + run.Error);
+        world.Names().ShouldNotContain("bw", run.Output);
         run.Output.ShouldContain(RefreshSkipped);
         run.Output.ShouldNotContain("claudeAuth=logged-out");
+
+        // A session, but no bw that resolves.
+        using var absent = new C590BridgeWorld { BwPresent = false };
+        absent.Variables["BW_SESSION"] = "c737-not-a-vault-session";
+        var missing = absent.RunCase("deploy-parent", Manifest(), refresh: true);
+        missing.Output.ShouldContain(RefreshSkipped);
+        absent.Names().ShouldNotContain("bw");
     }
 
     [Test]
-    public async Task Manifest_refresh_calls_bw_and_skips_when_the_item_is_unreadable()
+    public void Manifest_refresh_calls_bw_and_skips_when_the_item_is_unreadable()
     {
-        var run = await ProbeAsync("manifest");
-        run.ExitCode.ShouldBe(0, run.Output);
-        run.BwCalled.ShouldBeTrue(run.Output);
+        using var world = new C590BridgeWorld();
+        File.WriteAllText(Path.Combine(world.Home, ".bw-session"), "  c737-pickup-session \n");
+        var run = world.RunCase("deploy-parent", Manifest(("refreshClaudeToken", true)), rules: Unreadable());
+        run.Exit.ShouldBe(0, run.Output + run.Error);
+        world.Names().ShouldContain("bw", run.Output);
+        world.BwSession.ShouldBe("c737-pickup-session", "the trimmed ~/.bw-session pickup reaches bw as its BW_SESSION");
         run.Output.ShouldContain(RefreshSkipped);
         run.Output.ShouldNotContain("claudeAuth=logged-out");
         run.Output.ShouldNotContain(KeepLine);
+        world.Remotes().ShouldNotContain(r => r.StartsWith("umask 077", StringComparison.Ordinal), "no token write after an unreadable item");
     }
 
     [Test]
     [Arguments("verify-switch")]
     [Arguments("verify-env")]
-    public async Task Verify_parent_threads_the_refresh_request_past_the_dot_source(string mode)
+    public void Verify_parent_threads_the_refresh_request_past_the_dot_source(string mode)
     {
-        var run = await ProbeAsync(mode);
-        run.ExitCode.ShouldBe(0, run.Output);
-        run.BwCalled.ShouldBeTrue(run.Output);
+        using var world = new C590BridgeWorld();
+        world.Variables["BW_SESSION"] = "c737-not-a-vault-session";
+        if (mode == "verify-env") world.Variables["ANTIPHON_REFRESH_CLAUDE_TOKEN"] = "1";
+        var run = world.RunCase("deploy-parent", Manifest(), refresh: mode == "verify-switch", rules:
+        [
+            new JsonObject { ["name"] = "bw", ["stdout"] = new JsonArray("SENTINEL_CLAUDE_TOKEN_0123456789"), ["exit"] = 0 },
+            new JsonObject { ["name"] = "ssh", ["match"] = "umask 077", ["readStdin"] = true, ["exit"] = 0 },
+        ]);
+        run.Exit.ShouldBe(0, run.Output + run.Error);
+        world.Names().ShouldContain("bw");
+        world.Remotes()[0].ShouldBe("umask 077 && mkdir -p /home/mc/antiphon-server2/secrets && cat > '/home/mc/antiphon-server2/secrets/claude_oauth_token.tmp'"
+            + " && chmod 0600 '/home/mc/antiphon-server2/secrets/claude_oauth_token.tmp' && mv -f '/home/mc/antiphon-server2/secrets/claude_oauth_token.tmp'"
+            + " '/home/mc/antiphon-server2/secrets/claude_oauth_token'");
+        world.Calls.Single(c => c["end"] != null)["stdin"]!.GetValue<string>().ShouldBe("SENTINEL_CLAUDE_TOKEN_0123456789" + Environment.NewLine,
+            "the token crosses on ssh's input with PowerShell's piped newline, never argv");
+        world.Calls.Where(c => c["end"] == null).SelectMany(c => c["args"]!.AsArray()).ShouldNotContain(a => a!.GetValue<string>().Contains("SENTINEL", StringComparison.Ordinal));
+        (run.Output + run.Error).ShouldNotContain("SENTINEL");
     }
 
     [Test]
     public void Deploy_parent_calls_the_gate_and_the_switch_is_threaded()
     {
-        var bridge = DockerStackDocuments.Read("scripts/c590-real.ps1");
-        var verify = DockerStackDocuments.Read("scripts/verify-docker-stack.ps1");
+        var bridge = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/C590Bridge.cs");
+        var verify = DockerStackDocuments.Read("scripts/lib/Antiphon.Nightly/DockerStackVerify.cs");
+        var launcher = DockerStackDocuments.Read("scripts/verify-docker-stack.ps1");
         var remote = DockerStackDocuments.Read("scripts/c590-remote.sh");
         var credentials = DockerStackDocuments.Read("docs/agent-credentials.md");
         var stack = DockerStackDocuments.Read("docs/docker-stack.md");
 
-        var start = bridge.IndexOf("if ($Case -eq 'deploy-parent')", StringComparison.Ordinal);
-        var end = bridge.IndexOf("if ($Case -eq 'git-credential-smoke')", StringComparison.Ordinal);
+        var start = bridge.IndexOf("if (RollingPs.Eq(hostCase, \"deploy-parent\")", StringComparison.Ordinal);
+        var end = bridge.IndexOf("if (RollingPs.Eq(hostCase, \"git-credential-smoke\"))", StringComparison.Ordinal);
         (start >= 0 && end > start).ShouldBeTrue("deploy-parent block was not found");
         var block = bridge[start..end];
-        block.ShouldContain("Invoke-C628ClaudeTokenOnDeploy");
-        block.ShouldNotContain("Send-C628ClaudeOAuthToken");
-        block.ShouldNotContain("bw ");
+        block.ShouldContain("ClaudeTokenOnDeploy(manifest)");
+        block.ShouldNotContain("SendClaudeToken");
+        block.ShouldNotContain("BwPassword");
 
         bridge.ShouldContain(KeepLine);
         bridge.ShouldContain(RefreshSkipped);
         bridge.Contains("claudeAuth=logged-out", StringComparison.Ordinal)
             .ShouldBeFalse("the desktop bridge must not claim the runner logged out");
-        bridge.ShouldContain("[switch]$RefreshClaudeToken");
         bridge.ShouldContain("ANTIPHON_REFRESH_CLAUDE_TOKEN");
-        verify.ShouldContain("[switch]$RefreshClaudeToken");
-        verify.ShouldContain("$script:C628RefreshClaudeToken");
+        verify.ShouldContain("\"--refresh-claude-token\"");
+        launcher.ShouldContain("[switch]$RefreshClaudeToken");
+        launcher.ShouldContain("'--refresh-claude-token'");
 
         var absent = remote.Split('\n').Single(line => line.Contains("WARN ClaudeOAuthTokenAbsent", StringComparison.Ordinal));
         absent.ShouldContain("-RefreshClaudeToken");
@@ -97,110 +138,4 @@ public sealed class ClaudeTokenRefreshOptInTests
         stack.Contains("delivers from the vault", StringComparison.Ordinal)
             .ShouldBeFalse("the stack runbook no longer says every deploy delivers the token from the vault");
     }
-
-    private static async Task<Probe> ProbeAsync(string mode)
-    {
-        var root = Path.Combine(Path.GetTempPath(), "c737-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        var home = Path.Combine(root, "home");
-        var bwDir = Path.Combine(root, "bw");
-        var empty = Path.Combine(root, "empty");
-        Directory.CreateDirectory(home);
-        Directory.CreateDirectory(bwDir);
-        Directory.CreateDirectory(empty);
-        var marker = Path.Combine(root, "bw-called.txt");
-        var bw = Path.Combine(bwDir, "bw");
-        if (OperatingSystem.IsWindows())
-        {
-            // pwsh resolves bw.cmd through PATHEXT on Windows.
-            bw += ".cmd";
-            await File.WriteAllTextAsync(bw, "@echo called>>\"%C737_MARKER%\"\r\n@exit /b 2\r\n");
-        }
-        else
-        {
-            await File.WriteAllTextAsync(bw, "#!/bin/sh\nprintf 'called\\n' >> \"$C737_MARKER\"\nexit 2\n");
-            File.SetUnixFileMode(bw, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-
-        var probe = Path.Combine(root, "probe.ps1");
-        var extraArgs = new List<string>();
-        if (mode is "verify-switch" or "verify-env")
-        {
-            // The real leading lines of verify-docker-stack.ps1, up to and including the line that
-            // sets the script variable, so moving the copy after the dot-source turns this red.
-            var scriptsDir = Path.Combine(C590Harness.RepoRoot, "scripts");
-            var lines = File.ReadAllLines(Path.Combine(scriptsDir, "verify-docker-stack.ps1"));
-            var last = Array.FindIndex(lines, l => l.Contains("$script:C628RefreshClaudeToken =", StringComparison.Ordinal));
-            last.ShouldBeGreaterThan(0, "the script variable assignment was not found");
-            var head = string.Join("\n", lines.Take(last + 1)).Replace("$PSScriptRoot", "'" + scriptsDir + "'");
-            var manifestPath = Path.Combine(root, "manifest.json");
-            await File.WriteAllTextAsync(manifestPath, "{\"evidenceRoot\":\"x\"}");
-            await File.WriteAllTextAsync(probe, head + "\n}\n"
-                + "$env:BW_SESSION = 'c737-not-a-vault-session'\n"
-                + "$env:PATH = $env:C737_BWDIR + [IO.Path]::PathSeparator + $env:PATH\n"
-                + "[void](Invoke-C628ClaudeTokenOnDeploy -Manifest ([pscustomobject]@{}))\n"
-                + "exit 0\n");
-            extraArgs.AddRange(["-Case", "x", "-Manifest", manifestPath]);
-            if (mode == "verify-switch") extraArgs.Add("-RefreshClaudeToken");
-        }
-        else await File.WriteAllTextAsync(probe, """
-            $ErrorActionPreference = 'Continue'
-            Remove-Item Env:ANTIPHON_REFRESH_CLAUDE_TOKEN -ErrorAction SilentlyContinue
-            Remove-Item Env:BW_SESSION -ErrorAction SilentlyContinue
-            $env:HOME = $env:C737_HOME
-            $env:USERPROFILE = $env:C737_HOME
-            if ($env:C737_MODE -eq 'default' -or $env:C737_MODE -eq 'manifest') {
-                $env:BW_SESSION = 'c737-not-a-vault-session'
-                $env:PATH = $env:C737_BWDIR + [IO.Path]::PathSeparator + $env:PATH
-            }
-            if ($env:C737_MODE -eq 'locked') {
-                $env:PATH = $env:C737_EMPTY
-            }
-            . $env:C737_SCRIPT
-            $manifest = [pscustomobject]@{}
-            if ($env:C737_MODE -eq 'manifest') {
-                $manifest = [pscustomobject]@{ refreshClaudeToken = $true }
-            }
-            if (Get-Command Invoke-C628ClaudeTokenOnDeploy -ErrorAction SilentlyContinue) {
-                if ($env:C737_MODE -eq 'locked') {
-                    Invoke-C628ClaudeTokenOnDeploy -Refresh -Manifest $manifest
-                } else {
-                    Invoke-C628ClaudeTokenOnDeploy -Manifest $manifest
-                }
-            } else {
-                [void](Send-C628ClaudeOAuthToken)
-            }
-            exit 0
-            """);
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "pwsh",
-            WorkingDirectory = root,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        psi.Environment["C737_MODE"] = mode;
-        psi.Environment["C737_HOME"] = home;
-        psi.Environment["C737_BWDIR"] = bwDir;
-        psi.Environment["C737_EMPTY"] = empty;
-        psi.Environment["C737_MARKER"] = marker;
-        psi.Environment["C737_SCRIPT"] = Path.Combine(C590Harness.RepoRoot, "scripts", "c590-real.ps1");
-        psi.Environment.Remove("BW_SESSION");
-        psi.Environment.Remove("ANTIPHON_REFRESH_CLAUDE_TOKEN");
-        psi.Environment.Remove("ANTIPHON_C590_STUB");
-        foreach (var arg in new[] { "-NoProfile", "-File", probe }.Concat(extraArgs))
-            psi.ArgumentList.Add(arg);
-        if (mode == "verify-env")
-            psi.Environment["ANTIPHON_REFRESH_CLAUDE_TOKEN"] = "1";
-
-        using var process = Process.Start(psi) ?? throw new InvalidOperationException("pwsh did not start");
-        var stdout = await process.StandardOutput.ReadToEndAsync();
-        var stderr = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-        return new Probe(process.ExitCode, stdout + stderr, File.Exists(marker));
-    }
-
-    private sealed record Probe(int ExitCode, string Output, bool BwCalled);
 }

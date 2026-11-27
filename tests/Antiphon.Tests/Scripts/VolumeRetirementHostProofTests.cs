@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.IO.Abstractions;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.TestSupport;
@@ -9,12 +12,39 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Scripts;
 
+// Unit 66 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: the desktop origin proof is C1609HostProof and the
+// retirement coordinator C1609Coordinator (scripts/c1609-host-proof.ps1, c1008-host-proof.ps1 and c590-real.ps1 before), so these
+// rows run in process. Only the transport is mapped (C1609MappedGit: the fixture origin to its local bare repository); the real
+// bounded Git runner, writer and live check stay active, and a shim sees each Git call as the PowerShell shims did. The v1 writer
+// of c1008-host-proof.ps1 had no caller and was not ported: its rows run the v2 writer, which every retirement uses.
 [Timeout(600_000)]
 [Category("Unit")]
 public sealed class VolumeRetirementHostProofTests
 {
     private const string Operation = "c100800000000000000000000000000000001";
     private const string Repo = "repos/school-revision";
+    private const long Created = 1700000000;
+
+    // The writer's wall clock: the proof's created and completed seconds (a fake one; no shell reads it here).
+    private static DateTimeOffset Now() => DateTimeOffset.FromUnixTimeSeconds(Created);
+
+    private static C1609HostProof Writer(IReadOnlyDictionary<string, string>? origins = null, C1609MappedGit.Shim? shim = null) =>
+        new(new C1609MappedGit(origins ?? new Dictionary<string, string>()) { Around = shim }, new FileSystem(), Now);
+
+    private static (int Exit, string Output) Refusal(Action write)
+    {
+        try { write(); return (0, ""); }
+        catch (C1609Refusal e) { return (2, e.Message + "\n"); }
+    }
+
+    private static (int Exit, string Output) Versioned(C1609HostProof proof, string origin, string directory, string log, string operation = Operation,
+        IReadOnlyList<C1609RequiredObject>? required = null, string previous = "") =>
+        Refusal(() => proof.WriteOriginProof(new C1609ProofRequest
+        {
+            OriginUrl = origin, RepoRelative = Repo, OperationId = operation, PhaseNonce = new string('b', 32), InventoryDigest = new string('c', 64),
+            ApprovedOrigins = [origin], ProofDirectory = directory, CreatedUnix = Created, LogPath = log, RequiredObjects = required ?? [], PreviousProofFile = previous,
+        }));
+
 
     [Test]
     [Arguments("forward")]
@@ -102,21 +132,29 @@ public sealed class VolumeRetirementHostProofTests
     }
 
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task C1986_Result_boundary_preserves_withdrawal_diagnosis()
+    public void C1986_Result_boundary_preserves_withdrawal_diagnosis()
     {
-        var root = Directory.CreateTempSubdirectory("c1986-result-").FullName;
-        try
+        // Write-C590Result's replacement of a generic refusal by this invocation's withdrawn-ref record (C590Bridge's Result).
+        using var world = new C590BridgeWorld();
+        var root = Path.Combine(world.Root, "evidence");
+        var diagnosis = "RecycleOriginMoved reason=withdrawn-ref repo=repos/outer ref=refs/heads/required old=" + new string('a', 40) + " new=deleted";
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var session = new C590Bridge.Session(world.Checkout, world.Host(output, error), new FileSystem(), world.Seams(), false);
+        session.Proof.OriginMovedDiagnosis = diagnosis;
+        foreach (var generic in new[] { "RemoteResultMissing exit=2", "RecycleGitAuditUnknown", "RecycleGitAuditUnknown audit check=host-ls-remote status=2 repo=repos/outer" })
         {
-            var diagnosis = "RecycleOriginMoved reason=withdrawn-ref repo=repos/outer ref=refs/heads/required old=" + new string('a', 40) + " new=deleted";
-            var command = ". " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-command.ps1")) + "; " +
-                "$script:C1986OriginMovedDiagnosis=" + Quote(diagnosis) + "; " +
-                "Write-C590Result -EvidenceRoot " + Quote(root) + " -Accepted $false -Diagnosis 'RemoteResultMissing exit=2' -ExitCode 2";
-            var result = await Pwsh(command);
-            result.Exit.ShouldBe(2);
-            (await File.ReadAllTextAsync(Path.Combine(root, "c590-result.json"))).ShouldContain(diagnosis);
+            Should.Throw<C590Exit>(() => session.Result(root, false, generic, 2)).Code.ShouldBe(2);
+            File.ReadAllText(Path.Combine(root, "c590-result.json")).ShouldBe("{\"accepted\":false,\"diagnosis\":\"" + diagnosis + "\",\"exit\":2}" + Environment.NewLine);
         }
-        finally { DeleteOwned(root, "c1986-result-"); }
+        // Never an accepted result, another exit or another specific refusal.
+        Should.Throw<C590Exit>(() => session.Result(root, false, "RecycleUnpublishedWork", 2));
+        File.ReadAllText(Path.Combine(root, "c590-result.json")).ShouldContain("\"diagnosis\":\"RecycleUnpublishedWork\"");
+        Should.Throw<C590Exit>(() => session.Result(root, false, "RemoteResultMissing exit=2", 1)).Code.ShouldBe(1);
+        File.ReadAllText(Path.Combine(root, "c590-result.json")).ShouldContain("\"diagnosis\":\"RemoteResultMissing exit=2\"");
+        Should.Throw<C590Exit>(() => session.Result(root, true, "RecycleGitAuditUnknown", 2));
+        File.ReadAllText(Path.Combine(root, "c590-result.json")).ShouldContain("\"diagnosis\":\"RecycleGitAuditUnknown\"");
+        output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)[0].ShouldBe("DIAGNOSIS=" + diagnosis);
     }
 
     [Test]
@@ -152,25 +190,20 @@ public sealed class VolumeRetirementHostProofTests
     public async Task Fresh_graph_renewal_fetches_again_for_unchanged_advertisement()
     {
         using var f = await VolumeRetirementPublicationFixture.Create();
-        var trace = Path.Combine(f.Root, "actual-fetches.txt");
-        var observeFetch = "if($GitArgs -contains 'fetch'){[IO.File]::AppendAllText(" +
-            VolumeRetirementPublicationFixture.Ps(trace) + ", 'fetch'+[char]10)}; ";
-        var initial = await f.WriteProof([(f.A, "commit")], extraShim: observeFetch);
+        var fetches = 0;
+        C1609MappedGit.Shim observeFetch = (gitArgs, _, run) => { if (gitArgs.Contains("fetch")) fetches++; return run(); };
+        var initial = await f.WriteProof([(f.A, "commit")], shim: observeFetch);
         initial.Exit.ShouldBe(0, initial.Output);
-        File.Exists(trace).ShouldBeTrue("the first real writer fetched the origin");
-        var initialFetches = (await File.ReadAllLinesAsync(trace)).Length;
-        initialFetches.ShouldBeGreaterThan(0);
-        var renewed = await f.WriteProof([(f.A, "commit")], previous: initial.File,
-            freshGraph: true, extraShim: observeFetch);
+        fetches.ShouldBeGreaterThan(0, "the first real writer fetched the origin");
+        var initialFetches = fetches;
+        var renewed = await f.WriteProof([(f.A, "commit")], previous: initial.File, freshGraph: true, shim: observeFetch);
         renewed.Exit.ShouldBe(0, renewed.Output);
-        (await File.ReadAllLinesAsync(trace)).Length.ShouldBeGreaterThan(initialFetches,
-            "FreshGraph must fetch again even while the prior advertisement and required objects are unchanged");
+        fetches.ShouldBeGreaterThan(initialFetches, "FreshGraph must fetch again even while the prior advertisement and required objects are unchanged");
     }
 
-    // 2026-11-16 live preview c1008d39: the CARD-1955 script-only export nests the desktop
-    // evidence root 70 characters deeper, so the renewed proof directory became 264 characters.
-    // Windows cannot start a process whose current directory is MAX_PATH (260) or longer, and the
-    // final live control refused before any network read. The shim emulates that limit here.
+    // 2026-11-16 live preview c1008d39: the CARD-1955 script-only export nests the desktop evidence root 70 characters deeper, so
+    // the renewed proof directory became 264 characters. Windows cannot start a process whose current directory is MAX_PATH (260)
+    // or longer, and the final live control refused before any network read. The shim emulates that limit here.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Final_live_check_runs_git_outside_a_long_desktop_proof_directory()
@@ -185,29 +218,30 @@ public sealed class VolumeRetirementHostProofTests
         var copied = Path.Combine(deep, Path.GetFileName(initial.File));
         File.Copy(initial.File, copied);
         File.Copy(initial.File + ".bundle", copied + ".bundle");
-        var trace = Path.Combine(f.Root, "live-check-cwd.txt");
-        var windowsCwdLimit = "[IO.File]::AppendAllText(" + VolumeRetirementPublicationFixture.Ps(trace) +
-            ", $WorkingDirectory+[char]10); if($WorkingDirectory.Length -ge 260){throw 'cwd-max-path'}; ";
-
-        var final = await f.WriteProof(previous: copied, finalCheck: true, extraShim: windowsCwdLimit);
+        var used = new List<string>();
+        var final = await f.WriteProof(previous: copied, finalCheck: true, shim: (_, directory, run) =>
+        {
+            used.Add(directory);
+            if (directory.Length >= 260) throw new IOException("cwd-max-path");
+            return run();
+        });
 
         final.Exit.ShouldBe(0, "the final live control must not start Git inside the long proof directory: " + final.Output);
-        var used = (await File.ReadAllLinesAsync(trace)).ShouldHaveSingleItem();
-        used.ShouldNotBe(deep);
-        Directory.Exists(used).ShouldBeFalse("the live check removes its own scratch working directory");
-        var recorded = Path.GetFullPath(used);
+        var one = used.ShouldHaveSingleItem();
+        one.ShouldNotBe(deep);
+        Directory.Exists(one).ShouldBeFalse("the live check removes its own scratch working directory");
+        var recorded = Path.GetFullPath(one);
         var temp = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         recorded.StartsWith(temp + Path.DirectorySeparatorChar, StringComparison.Ordinal)
             .ShouldBeTrue("the live check cwd must be a temp scratch, not an arbitrary short path: " + recorded);
-        Path.GetFileName(recorded).ShouldMatch(@"^c1609-live-[0-9a-f]{32}$",
-            "the live check cwd must be the c1609-live- temp directory");
+        Path.GetFileName(recorded).ShouldMatch(@"^c1609-live-[0-9a-f]{32}$", "the live check cwd must be the c1609-live- temp directory");
     }
 
-    // The writer scratch refuses a name outside c1609-host-<32 hex> and a reparse-point proof
-    // directory. The live scratch must apply the same two checks to its own directory.
+    // The writer scratch refuses a name outside c1609-host-<32 hex> and a reparse-point proof directory. The live scratch must apply
+    // the same two checks to its own directory.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
-    public async Task Live_scratch_refuses_a_bad_name_or_reparse_point()
+    public void Live_scratch_refuses_a_bad_name_or_reparse_point()
     {
         var root = Directory.CreateTempSubdirectory("c1609-live-custody-").FullName;
         try
@@ -218,20 +252,14 @@ public sealed class VolumeRetirementHostProofTests
             Directory.CreateSymbolicLink(link, target);
             var real = Path.Combine(root, "c1609-live-" + new string('b', 32));
             Directory.CreateDirectory(real);
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1609-host-proof.ps1");
-            var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
-                "try { Assert-C1609LiveScratchCustody -Scratch 'not-a-live-scratch'; Write-Output 'bad-name-admitted'; exit 1 } " +
-                "catch { if ($_.Exception.Message -cne 'custody') { Write-Output $_.Exception.Message; exit 3 } }; " +
-                "try { Assert-C1609LiveScratchCustody -Scratch $env:C1957_LINK; Write-Output 'reparse-admitted'; exit 2 } " +
-                "catch { if ($_.Exception.Message -cne 'custody') { Write-Output $_.Exception.Message; exit 4 } }; " +
-                "Assert-C1609LiveScratchCustody -Scratch $env:C1957_REAL; " +
-                "exit 0";
-            var result = await Pwsh(command, new[] { ("C1957_LINK", link), ("C1957_REAL", real) });
-            result.Exit.ShouldBe(0, result.Output);
-            var text = await File.ReadAllTextAsync(script);
-            var live = text.IndexOf("function Assert-C1609LiveOriginProof", StringComparison.Ordinal);
-            var git = text.IndexOf("Invoke-C1609HostGit", live, StringComparison.Ordinal);
-            var check = text.IndexOf("Assert-C1609LiveScratchCustody", live, StringComparison.Ordinal);
+            var proof = Writer();
+            Should.Throw<C1609Refusal>(() => proof.AssertLiveScratchCustody("not-a-live-scratch")).Message.ShouldBe("custody", "bad name admitted");
+            Should.Throw<C1609Refusal>(() => proof.AssertLiveScratchCustody(link)).Message.ShouldBe("custody", "reparse point admitted");
+            proof.AssertLiveScratchCustody(real);
+            var text = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "C1609HostProof.cs"));
+            var live = text.IndexOf("public void AssertLiveOriginProof(", StringComparison.Ordinal);
+            var git = text.IndexOf("HostGit(", live, StringComparison.Ordinal);
+            var check = text.IndexOf("AssertLiveScratchCustody(scratch)", live, StringComparison.Ordinal);
             live.ShouldBeGreaterThanOrEqualTo(0);
             check.ShouldBeGreaterThan(live);
             check.ShouldBeLessThan(git, "the live check must custody-check its scratch before Git starts");
@@ -239,170 +267,108 @@ public sealed class VolumeRetirementHostProofTests
         finally { DeleteOwned(root, "c1609-live-custody-"); }
     }
 
-    // remote-output.txt used to record only failure-line. c1609-host-proof.ps1 and c590-real.ps1
-    // both had a line 389, so the first live receipt could not name the failing script.
+    // remote-output.txt used to record only failure-line, and c1609-host-proof.ps1 and c590-real.ps1 both had a line 389, so the
+    // first live receipt could not name the failing source. The port records the C# source that refused (and no line).
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    [NativeLinuxOnly("Linux-only by construction: the witness puts #!/bin/sh ssh, scp and git shims on PATH and chmod's them. The case remains required on Linux.")]
-    public async Task Coordinator_receipt_names_the_failing_script_and_reason()
+    public void Coordinator_receipt_names_the_failing_source_and_reason()
     {
-        var root = Directory.CreateTempSubdirectory("c1957-receipt-").FullName;
-        try
+        var phase = new string('b', 32);
+        var exchange = new string('a', 32);
+        var controlNonce = new string('f', 32);
+        var required = new string('e', 64);
+        const string project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        var proofLeaf = "c1008-proof-c1008" + new string('a', 32) + "-1700000000-" + new string('c', 32);
+        const string origin = "https://fixture.invalid/retired.git";
+        const string repo = "repos/outer";
+        using (var world = new C590BridgeWorld())
         {
-            var evidence = Path.Combine(root, "evidence");
+            world.Rules([new JsonObject
+            {
+                ["name"] = "ssh",
+                ["protocol"] = new JsonArray(
+                    new JsonObject { ["out"] = "C1609_PROOF_REQUEST " + exchange + " " + phase + " initial none " + required },
+                    new JsonObject { ["read"] = true },
+                    new JsonObject { ["outFields"] = "C1609_CONTROL_REQUEST " + controlNonce + " ready {7} {9}" }),
+            }]);
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            var evidence = Path.Combine(world.Root, "evidence");
             Directory.CreateDirectory(evidence);
             var receipt = Path.Combine(evidence, "remote-output.txt");
-            var shim = Path.Combine(root, "bin");
-            Directory.CreateDirectory(shim);
-            await File.WriteAllTextAsync(Path.Combine(shim, "ssh"), """
-                #!/bin/sh
-                if [ -n "$C1957_PROOF_LINE" ]; then
-                    printf '%s\n' "$C1957_PROOF_LINE"
-                    IFS= read -r response || true
-                    set -- $response
-                    printf '%s\n' "C1609_CONTROL_REQUEST ${C1957_CONTROL_NONCE} ready $7 $9"
-                else
-                    printf '%s\n' 'C1609_PROOF_REQUEST bad'
-                fi
-                exit 0
-                """);
-            (await Run("chmod", "0755", Path.Combine(shim, "ssh"))).Exit.ShouldBe(0);
-            var phase = new string('b', 32);
-            var exchange = new string('a', 32);
-            var controlNonce = new string('f', 32);
-            var required = new string('e', 64);
-            var project = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-            var proofLeaf = "c1008-proof-c1008" + new string('a', 32) + "-1700000000-" + new string('c', 32);
-            var body = "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1")) + "; " +
-                "function Get-C1008RetireProofExports { param($EvidenceRoot,$Run,$RecycleOperation,$InventoryRemote,$ProjectId,[switch]$Coordinated,[int]$NetworkBudgetMs=600000,$PreviousProofDirectory,$RequiredObjectDigest,[switch]$RequireObjectCoverage,$InventoryPhaseNonce) " +
-                "$origin='https://fixture.invalid/retired.git'; $repo='repos/outer'; $proofName=Get-C1008Sha256 ($repo+[char]10+$origin); $originHash=Get-C1008Sha256 $origin; " +
-                "$dir=Join-Path $EvidenceRoot $env:C1957_PROOF_LEAF; New-Item -ItemType Directory -Force -Path $dir | Out-Null; " +
-                "[IO.File]::WriteAllText((Join-Path $dir $proofName), \"not-a-proof`n\"); " +
-                "$inv=Join-Path $EvidenceRoot ('inventory-'+$env:C1957_PHASE); New-Item -ItemType Directory -Force -Path $inv | Out-Null; " +
-                "[IO.File]::WriteAllText((Join-Path $inv 'private-origins.txt'), ('C1008_PRIVATE_ORIGIN repo='+$repo+' origin='+$origin+' originHash='+$originHash+' proofName='+$proofName+[char]10)); " +
-                "[IO.File]::WriteAllText((Join-Path $inv 'trusted-origins.json'), ('{\"schema\":1,\"projectId\":\"'+$ProjectId+'\",\"origins\":[\"'+$origin+'\"]}')); " +
-                "return @((" + "'export C1008_HOST_PROOF=''/home/mc/antiphon-c590/'+$env:C1957_PROOF_LEAF+''''" + "), 'export C1008_OPERATION_STARTED=''1700000000''', ('export C1609_PROOF_NONCE='''+('" + new string('d', 32) + "')+''''), ('export C1609_PROOF_INVENTORY='''+$env:C1957_REQUIRED+'''')) }; " +
-                "Invoke-C1609RetirementCoordinator -Remote 'true' -EvidenceRoot $env:C1957_EVIDENCE -Run 'c727aabbccddee00' -Operation '" + Operation + "' -ProjectId $env:C1957_PROJECT -ReceiptPath $env:C1957_RECEIPT | Out-Null; " +
-                "exit 0";
-            var proofLine = "C1609_PROOF_REQUEST " + exchange + " " + phase + " initial none " + required;
-            var spoke = await Pwsh(body, new[]
+            var session = new C590Bridge.Session(world.Checkout, world.Host(output, error), new FileSystem(), world.Seams(), false)
             {
-                ("C1957_PROOF_LINE", proofLine), ("C1957_CONTROL_NONCE", controlNonce), ("C1957_PHASE", phase),
-                ("C1957_REQUIRED", required), ("C1957_PROOF_LEAF", proofLeaf), ("C1957_PROJECT", project),
-                ("C1957_EVIDENCE", evidence), ("C1957_RECEIPT", receipt)
-            }, shim);
-            spoke.Exit.ShouldBe(0, spoke.Output);
-            var live = await File.ReadAllTextAsync(receipt);
-            live.ShouldContain("transport-exit=2", Case.Sensitive);
-            live.ShouldContain("failure-script=c1609-host-proof.ps1", Case.Sensitive);
-            live.ShouldContain("failure-reason=proof", Case.Sensitive);
-            var liveLine = ReceiptField(live, "failure-line");
-            int.Parse(liveLine, System.Globalization.CultureInfo.InvariantCulture).ShouldBeGreaterThan(0);
-
-            await File.WriteAllTextAsync(receipt, "");
-            var protocolBody = "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1")) + "; " +
-                "Invoke-C1609RetirementCoordinator -Remote 'true' -EvidenceRoot $env:C1957_EVIDENCE -Run 'c727aabbccddee00' -Operation '" + Operation + "' -ProjectId '" + project + "' -ReceiptPath $env:C1957_RECEIPT | Out-Null; exit 0";
-            var protocol = await Pwsh(protocolBody, new[] { ("C1957_EVIDENCE", evidence), ("C1957_RECEIPT", receipt) }, shim);
-            protocol.Exit.ShouldBe(0, protocol.Output);
-            var text = await File.ReadAllTextAsync(receipt);
-            text.ShouldContain("transport-exit=2", Case.Sensitive);
-            text.ShouldContain("failure-script=c590-real.ps1", Case.Sensitive);
-            text.ShouldContain("failure-reason=protocol", Case.Sensitive);
-            var lineNo = int.Parse(ReceiptField(text, "failure-line"), System.Globalization.CultureInfo.InvariantCulture);
-            var source = await File.ReadAllLinesAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
-            source[lineNo - 1].ShouldContain("throw 'protocol'", Case.Sensitive);
+                // The PowerShell test replaced Get-C1008RetireProofExports: a proof set whose one proof is not a v2 proof.
+                ProofExports = (root, _, _, _, projectId, _, _, _, _, _, _) =>
+                {
+                    var proofName = C1609HostProof.Sha256(repo + "\n" + origin);
+                    var dir = Path.Combine(root, proofLeaf);
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(Path.Combine(dir, proofName), "not-a-proof\n");
+                    var inventory = Path.Combine(root, "inventory-" + phase);
+                    Directory.CreateDirectory(inventory);
+                    File.WriteAllText(Path.Combine(inventory, "private-origins.txt"),
+                        "C1008_PRIVATE_ORIGIN repo=" + repo + " origin=" + origin + " originHash=" + C1609HostProof.Sha256(origin) + " proofName=" + proofName + "\n");
+                    File.WriteAllText(Path.Combine(inventory, "trusted-origins.json"), "{\"schema\":1,\"projectId\":\"" + projectId + "\",\"origins\":[\"" + origin + "\"]}");
+                    return ["export C1008_HOST_PROOF='/home/mc/antiphon-c590/" + proofLeaf + "'", "export C1008_OPERATION_STARTED='1700000000'",
+                        "export C1609_PROOF_NONCE='" + new string('d', 32) + "'", "export C1609_PROOF_INVENTORY='" + required + "'"];
+                },
+            };
+            session.Coordinate("true", evidence, "c727aabbccddee00", Operation, project, receipt).ShouldBe(2);
+            var live = File.ReadAllText(receipt);
+            live.ShouldContain("transport-exit=2\n", Case.Sensitive);
+            live.ShouldContain("failure-script=" + C1609HostProof.Site + "\n", Case.Sensitive);
+            live.ShouldContain("failure-reason=proof\n", Case.Sensitive);
+            live.ShouldContain("failure-line=0\n", Case.Sensitive);
+            live.ShouldContain("control-step=proof-read\n", Case.Sensitive);
         }
-        finally { DeleteOwned(root, "c1957-receipt-"); }
+        using (var world = new C590BridgeWorld())
+        {
+            world.Rules([new JsonObject { ["name"] = "ssh", ["stdout"] = new JsonArray("C1609_PROOF_REQUEST bad") }]);
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            var evidence = Path.Combine(world.Root, "evidence");
+            Directory.CreateDirectory(evidence);
+            var receipt = Path.Combine(evidence, "remote-output.txt");
+            new C590Bridge.Session(world.Checkout, world.Host(output, error), new FileSystem(), world.Seams(), false)
+                .Coordinate("true", evidence, "c727aabbccddee00", Operation, project, receipt).ShouldBe(2);
+            File.ReadAllText(receipt).ShouldBe("transport-exit=2\nfailure-line=0\nfailure-script=" + C1609Coordinator.Site + "\nfailure-reason=protocol\n");
+        }
     }
 
-    // Every desktop child the retirement coordinator starts must still start when the directory
-    // it would inherit is 264 characters. The shim emulates the Windows rule that a cwd of 260
-    // or more cannot start a process. Nothing here runs on native Windows.
+    // Every desktop child the retirement coordinator starts must still start when the directory it would inherit is 264 characters:
+    // the coordinator's ssh, the proof's ssh and scp, and Git without an explicit directory start in the temp path; an explicit short
+    // scratch stays Git's directory.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
-    [NativeLinuxOnly("Linux-only by construction: the witness puts #!/bin/sh ssh, scp and git shims on PATH and chmod's them. The case remains required on Linux.")]
-    public async Task Desktop_children_start_when_the_working_directory_is_264_characters()
+    public void Desktop_children_start_when_the_working_directory_is_264_characters()
     {
-        var root = Directory.CreateTempSubdirectory("c1957-cwd-").FullName;
+        using var world = new C590BridgeWorld();
+        var deep = Path.Combine(world.Root, "retirement-tooling", new string('d', 40), ".antiphon", "rolling-server2", "exchange-" + new string('e', 32));
+        if (deep.Length < 264) deep = Path.Combine(deep, new string('x', Math.Max(1, 264 - deep.Length - 1)));
+        deep.Length.ShouldBeGreaterThanOrEqualTo(264, "the witness must use a 264-character working directory");
+        foreach (var segment in deep.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)) segment.Length.ShouldBeLessThanOrEqualTo(255);
+        var temp = Path.GetTempPath().TrimEnd('\\', '/');
+        world.CurrentDirectory = deep;
+        world.Rules([]);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var evidence = Path.Combine(world.Root, "evidence");
+        Directory.CreateDirectory(evidence);
+        new C590Bridge.Session(world.Checkout, world.Host(output, error), new FileSystem(), world.Seams(), false)
+            .Coordinate("true", evidence, "c727aabbccddee00", Operation, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Path.Combine(evidence, "remote-output.txt")).ShouldBe(0);
+        world.Calls.Single(c => c["end"] == null)["cwd"]!.GetValue<string>().ShouldBe(temp, "the coordinator's ssh starts in the temp path");
+
         var scratch = Path.Combine(Path.GetTempPath(), "c1609-host-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            var deep = Path.Combine(root, "retirement-tooling", new string('d', 40), ".antiphon", "rolling-server2",
-                "exchange-" + new string('e', 32));
-            if (deep.Length < 264)
-            {
-                var fill = 264 - deep.Length - 1;
-                deep = Path.Combine(deep, new string('x', Math.Max(1, fill)));
-            }
-            Directory.CreateDirectory(deep);
-            deep.Length.ShouldBeGreaterThanOrEqualTo(264, "the witness must use a 264-character working directory");
-            foreach (var segment in deep.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-                segment.Length.ShouldBeLessThanOrEqualTo(255);
-            Directory.CreateDirectory(scratch);
-            var trace = Path.Combine(root, "children.txt");
-            var shim = Path.Combine(root, "bin");
-            Directory.CreateDirectory(shim);
-            var shimText = """
-                #!/bin/sh
-                cwd=$(pwd)
-                printf '%s\t%s\n' "$(basename "$0")" "$cwd" >> "$C1957_TRACE"
-                if [ "${#cwd}" -ge 260 ]; then
-                    printf '%s\n' 'cwd-max-path' >&2
-                    exit 2
-                fi
-                exit 0
-                """;
-            foreach (var name in new[] { "ssh", "scp", "git" })
-            {
-                var path = Path.Combine(shim, name);
-                await File.WriteAllTextAsync(path, shimText);
-                (await Run("chmod", "0755", path)).Exit.ShouldBe(0);
-            }
-            var evidence = Path.Combine(root, "evidence");
-            Directory.CreateDirectory(evidence);
-            var receipt = Path.Combine(evidence, "remote-output.txt");
-            var command = "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1")) + "; " +
-                "$code = Invoke-C1609RetirementCoordinator -Remote 'true' -EvidenceRoot $env:C1957_EVIDENCE -Run 'c727aabbccddee00' -Operation '" + Operation + "' -ProjectId 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' -ReceiptPath $env:C1957_RECEIPT; " +
-                "if ($code -ne 0) { Write-Output ('coordinator-exit='+$code); exit 2 }; " +
-                "$scp = Invoke-C1609BoundedProcess -FileName scp -Arguments @('-o','BatchMode=yes') -TimeoutMs 15000; " +
-                "if ($scp.ExitCode -ne 0) { Write-Output 'scp-failed'; exit 3 }; " +
-                "$ssh = Invoke-C1609BoundedProcess -FileName ssh -Arguments @('-o','BatchMode=yes','mc@server2','true') -TimeoutMs 15000; " +
-                "if ($ssh.ExitCode -ne 0) { Write-Output 'proof-ssh-failed'; exit 4 }; " +
-                "try { Invoke-C1609HostGit -Repo 'repos/outer' -GitArgs @('ls-remote','https://fixture.invalid/retired.git') -WorkingDirectory $env:C1957_DEEP -TimeoutMs 15000 | Out-Null } catch { Write-Output $_.Exception.Message; exit 5 }; " +
-                "try { Invoke-C1609HostGit -Repo 'repos/outer' -GitArgs @('status') -WorkingDirectory $env:C1957_SCRATCH -TimeoutMs 15000 | Out-Null } catch { Write-Output $_.Exception.Message; exit 6 }; " +
-                "exit 0";
-            var result = await Pwsh(command, new[]
-            {
-                ("C1957_TRACE", trace), ("C1957_EVIDENCE", evidence), ("C1957_RECEIPT", receipt),
-                ("C1957_DEEP", deep), ("C1957_SCRATCH", scratch)
-            }, shim, deep);
-            result.Exit.ShouldBe(0, result.Output);
-            var rows = await File.ReadAllLinesAsync(trace);
-            rows.Length.ShouldBeGreaterThanOrEqualTo(4, "coordinator ssh, proof ssh, scp and both git starts");
-            rows.Any(row => row.StartsWith("ssh\t", StringComparison.Ordinal)).ShouldBeTrue();
-            rows.Any(row => row.StartsWith("scp\t", StringComparison.Ordinal)).ShouldBeTrue();
-            rows.Where(row => row.StartsWith("git\t", StringComparison.Ordinal)).Count().ShouldBe(2);
-            foreach (var row in rows)
-            {
-                var cwd = row[(row.IndexOf('\t') + 1)..];
-                cwd.Length.ShouldBeLessThan(260, "a 264-character directory must not be the child cwd: " + row);
-            }
-            var gitRows = rows.Where(row => row.StartsWith("git\t", StringComparison.Ordinal)).Select(row => row[(row.IndexOf('\t') + 1)..]).ToArray();
-            gitRows.ShouldContain(row => row.EndsWith(Path.DirectorySeparatorChar + Path.GetFileName(scratch), StringComparison.Ordinal)
-                || row.Equals(scratch, StringComparison.Ordinal), "an explicit short scratch stays the git cwd");
-            gitRows.ShouldNotContain(deep);
-        }
-        finally
-        {
-            if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
-            DeleteOwned(root, "c1957-cwd-");
-        }
+        var children = new C1609BoundedProcesses(new FileSystem(), () => deep);
+        foreach (var requested in new[] { "", deep })
+            children.StartInfo("ssh", ["-o", "BatchMode=yes"], requested, input: true).WorkingDirectory.ShouldBe(temp, "a 264-character directory is never a child's: " + requested);
+        children.StartInfo("git", ["status"], scratch, input: true).WorkingDirectory.ShouldBe(scratch, "an explicit short scratch stays the git cwd");
+        C1609BoundedProcesses.StartDirectory("", "C:\\short", temp).ShouldBe("", "a short current directory is inherited");
+        C1609BoundedProcesses.StartDirectory(scratch, deep, temp).ShouldBe(scratch);
     }
 
-    // Operator decision 2026-11-16 widened only the host freshness fence to a provisional
-    // 11,000 ms. CARD-1989 made the desktop live check's control and Git budget
-    // configurable (ANTIPHON_RETIRE_CONTROL_WINDOW_MS, default and cap 8,000 ms) below
-    // those unchanged host fences.
+    // Operator decision 2026-11-16 widened only the host freshness fence to a provisional 11,000 ms. CARD-1989 made the desktop live
+    // check's control and Git budget configurable (ANTIPHON_RETIRE_CONTROL_WINDOW_MS, default and cap 8,000 ms) below those unchanged
+    // host fences.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Final_live_check_bounds_the_configurable_desktop_budget()
@@ -410,22 +376,22 @@ public sealed class VolumeRetirementHostProofTests
         using var f = await VolumeRetirementPublicationFixture.Create();
         var initial = await f.WriteProof([(f.A, "commit")]);
         initial.Exit.ShouldBe(0, initial.Output);
-        var trace = Path.Combine(f.Root, "live-check-budget.txt");
-        var observeGit = "[IO.File]::AppendAllText(" + VolumeRetirementPublicationFixture.Ps(trace) + ", 'git'+[char]10); ";
+        var gitCalls = 0;
+        C1609MappedGit.Shim observeGit = (_, _, run) => { gitCalls++; return run(); };
 
-        var admitted = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: 8000, extraShim: observeGit);
+        var admitted = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: 8000, shim: observeGit);
         admitted.Exit.ShouldBe(0, "8,000 ms fits below the unchanged host read and effect fences: " + admitted.Output);
-        File.Exists(trace).ShouldBeTrue("the admitted live check reads the origin through the observed Git runner");
+        gitCalls.ShouldBeGreaterThan(0, "the admitted live check reads the origin through the observed Git runner");
         foreach (var budget in new[] { 0, 8001, 11000 })
         {
-            if (File.Exists(trace)) File.Delete(trace);
-            var refused = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: budget, extraShim: observeGit);
+            gitCalls = 0;
+            var refused = await f.WriteProof(previous: initial.File, finalCheck: true, networkBudgetMs: budget, shim: observeGit);
             refused.Exit.ShouldBe(2, budget + ": " + refused.Output);
-            File.Exists(trace).ShouldBeFalse(budget + " ms must be refused before Git starts");
+            gitCalls.ShouldBe(0, budget + " ms must be refused before Git starts");
         }
-        var coordinator = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-real.ps1"));
-        coordinator.ShouldContain("$remaining=[Math]::Min($controlWindowMs-[int]($controlWatch.ElapsedMilliseconds-$cleanupMs),", Case.Sensitive);
-        coordinator.ShouldContain("if(($controlWatch.ElapsedMilliseconds-$cleanupMs) -gt $controlWindowMs){throw 'control-deadline'}", Case.Sensitive);
+        var coordinator = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "C1609Coordinator.cs"));
+        coordinator.ShouldContain("var remaining = Math.Min(controlWindowMs - (int)(controlWatch.ElapsedMilliseconds - cleanupMs),", Case.Sensitive);
+        coordinator.ShouldContain("if (controlWatch.ElapsedMilliseconds - cleanupMs > controlWindowMs) throw Refuse(\"control-deadline\");", Case.Sensitive);
     }
 
     [Test]
@@ -448,14 +414,15 @@ public sealed class VolumeRetirementHostProofTests
             (await Git(work, "remote", "add", "origin", origin)).Exit.ShouldBe(0);
             (await Git(work, "push", "-q", "origin", "main")).Exit.ShouldBe(0);
             var tip = (await Git(work, "rev-parse", "HEAD")).Output.Trim();
+            const string url = "https://fixture.invalid/renewal.git";
+            var map = new Dictionary<string, string> { [url] = origin };
             var proof = Path.Combine(root, "proof");
             Directory.CreateDirectory(proof);
-            var log = Path.Combine(root, "proof.log");
-            var wrote = await Proof(origin, proof, log);
+            var wrote = Versioned(Writer(map), url, proof, Path.Combine(root, "proof.log"));
             wrote.Exit.ShouldBe(0, "c1609-h1: " + wrote.Output);
             var proofFile = Directory.GetFiles(proof).Single(path => !path.EndsWith(".bundle", StringComparison.Ordinal));
             var body = await File.ReadAllTextAsync(proofFile);
-            body.ShouldContain("c1008-host-proof 1");
+            body.ShouldStartWith("c1008-host-proof 2\n");
             body.ShouldContain("operation " + Operation);
             body.ShouldContain(tip + "\trefs/heads/main");
             body.ShouldNotContain(origin);
@@ -465,8 +432,7 @@ public sealed class VolumeRetirementHostProofTests
             heads.Output.ShouldContain(tip);
             heads.Output.ShouldContain("refs/heads/main");
 
-            // One seed supplies all renewal controls; every producer invocation
-            // still owns a fresh origin-only proof repository and output.
+            // One seed supplies all renewal controls; every producer invocation still owns a fresh origin-only proof repository and output.
             (await Git(work, "tag", "-a", "published", "-m", "published", tip)).Exit.ShouldBe(0);
             await File.WriteAllTextAsync(Path.Combine(work, "sentinel"), "advanced\n");
             (await Git(work, "add", "sentinel")).Exit.ShouldBe(0);
@@ -494,20 +460,7 @@ public sealed class VolumeRetirementHostProofTests
             })
             {
                 var destination = Path.Combine(root, label); Directory.CreateDirectory(destination);
-                var request = System.Text.Json.JsonSerializer.Serialize(new[] { new { objectId = oid, type } });
-                var command = "$ErrorActionPreference='Stop'; . " + Quote(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1")) + "; " +
-                    "$original=${function:Invoke-C1609HostGit}; " +
-                    "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='', $InputText=$null, [string]$OutputFile='') " +
-                    "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/renewal.git'){$env:C1609_BARE}else{$_}}); " +
-                    "$io=@{};if($null -ne $InputText){$io.InputText=$InputText};if($OutputFile){$io.OutputFile=$OutputFile}; " +
-                    "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory @io }; " +
-                    "$required=@{};if((Get-Command Write-C1008HostOriginProof).Parameters.ContainsKey('RequiredObjects')) { " +
-                    "$required.RequiredObjects=@($env:C1609_REQUIRED|ConvertFrom-Json) }; " +
-                    "Write-C1008HostOriginProof -OriginUrl 'https://fixture.invalid/renewal.git' -RepoRelative '" + Repo + "' -OperationId '" + Operation +
-                    "' -ProofVersion 2 -PhaseNonce ('b'*32) -InventoryDigest ('c'*64) -ApprovedOrigins @('https://fixture.invalid/renewal.git') " +
-                    "-ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @required";
-                var renewal = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", destination),
-                    ("C1609_LOG", Path.Combine(root, "renewal.log")), ("C1609_REQUIRED", request) });
+                var renewal = Versioned(Writer(map), url, destination, Path.Combine(root, "renewal.log"), required: [new C1609RequiredObject(oid, type)]);
                 if (admitted) renewal.Exit.ShouldBe(0, "H1 fresh origin graph proves " + label + "; " + renewal.Output);
                 else
                 {
@@ -542,9 +495,10 @@ public sealed class VolumeRetirementHostProofTests
                 (await Git(work, "push", "-q", "origin", "main")).Exit.ShouldBe(0);
                 var proof = Path.Combine(root, "proof");
                 Directory.CreateDirectory(proof);
-                var wrote = await Proof(origin, proof, Path.Combine(root, "proof.log"));
+                var url = "https://fixture.invalid/" + name;
+                var wrote = Versioned(Writer(new Dictionary<string, string> { [url] = origin }), url, proof, Path.Combine(root, "proof.log"));
                 wrote.Exit.ShouldBe(0, name + ": " + wrote.Output);
-                var text = string.Join('\n', Directory.GetFiles(proof).Select(File.ReadAllText));
+                var text = string.Join('\n', Directory.GetFiles(proof).Where(p => !p.EndsWith(".bundle", StringComparison.Ordinal)).Select(File.ReadAllText));
                 text.ShouldContain("refs/heads/main");
                 text.ShouldNotContain("ghp_");
                 text.ShouldNotContain("password");
@@ -556,13 +510,15 @@ public sealed class VolumeRetirementHostProofTests
         var refuseRoot = Directory.CreateTempSubdirectory("c1609-h2-refuse-").FullName;
         try
         {
-            // Userinfo is stripped first. The remaining token needle must refuse before git runs.
-            var refused = await Proof("https://user:ghp_PRIVATE_SENTINEL@example.com/token.git",
+            // A credential-bearing origin is never an approved scrubbed origin: refused before Git runs, and the token never crosses.
+            var gitCalls = 0;
+            var refused = Versioned(Writer(shim: (_, _, run) => { gitCalls++; return run(); }), "https://user:ghp_PRIVATE_SENTINEL@example.com/token.git",
                 refuseRoot, Path.Combine(refuseRoot, "proof.log"));
             refused.Exit.ShouldNotBe(0, refused.Output);
             refused.Output.ShouldContain("RecycleGitAuditUnknown");
             refused.Output.ShouldNotContain("ghp_PRIVATE_SENTINEL");
-            Directory.GetFiles(refuseRoot).ShouldBeEmpty();
+            gitCalls.ShouldBe(0);
+            Directory.GetFiles(refuseRoot).Where(p => !p.EndsWith("proof.log", StringComparison.Ordinal)).ShouldBeEmpty();
         }
         finally { DeleteOwned(refuseRoot, "c1609-h2-refuse-"); }
     }
@@ -576,12 +532,13 @@ public sealed class VolumeRetirementHostProofTests
         {
             var proof = Path.Combine(root, "proof");
             Directory.CreateDirectory(proof);
-            var missing = Path.Combine(root, "missing.git");
-            var run = await Proof(missing, proof, Path.Combine(root, "proof.log"));
+            const string url = "https://fixture.invalid/missing.git";
+            var run = Versioned(Writer(new Dictionary<string, string> { [url] = Path.Combine(root, "missing.git") }), url, proof, Path.Combine(root, "proof.log"));
             run.Exit.ShouldNotBe(0, run.Output);
             run.Output.ShouldContain("RecycleGitAuditUnknown");
             run.Output.ShouldNotContain("fatal:");
             Directory.GetFiles(proof).ShouldBeEmpty();
+            await Task.CompletedTask;
         }
         finally { DeleteOwned(root, "c1609-h3-"); }
     }
@@ -594,28 +551,20 @@ public sealed class VolumeRetirementHostProofTests
         var hash = Sha(origin);
         var name = Sha(Repo + "\n" + origin);
         var line = "C1008_PRIVATE_ORIGIN repo=" + Repo + " origin=" + origin + " originHash=" + hash + " proofName=" + name;
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
-        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
-            "$text = $env:C1609_LINES; " +
-            "try { $rows = @(Read-C1008PrivateOriginLines -Text $text); Write-Output ('rows=' + $rows.Count) } " +
-            "catch { Write-Output ('refused=' + $_.Exception.Message); exit 2 }";
-        var one = await Pwsh(command, new[] { ("C1609_LINES", line + "\n") });
-        one.Exit.ShouldBe(0, one.Output);
-        one.Output.ShouldContain("rows=1");
-        var duplicate = await Pwsh(command, new[] { ("C1609_LINES", line + "\n" + line + "\n") });
-        duplicate.Exit.ShouldBe(2, duplicate.Output);
-        duplicate.Output.ShouldContain("RecycleGitAuditUnknown");
-        var wrong = await Pwsh(command, new[] { ("C1609_LINES", line.Replace(hash, new string('0', 64), StringComparison.Ordinal) + "\n") });
-        wrong.Exit.ShouldBe(2, wrong.Output);
-        wrong.Output.ShouldContain("RecycleGitAuditUnknown");
+        C1609HostProof.ReadPrivateOriginLines(line + "\n").Count.ShouldBe(1);
+        Should.Throw<C1609Refusal>(() => C1609HostProof.ReadPrivateOriginLines(line + "\n" + line + "\n")).Message.ShouldBe("RecycleGitAuditUnknown");
+        Should.Throw<C1609Refusal>(() => C1609HostProof.ReadPrivateOriginLines(line.Replace(hash, new string('0', 64), StringComparison.Ordinal) + "\n"))
+            .Message.ShouldBe("RecycleGitAuditUnknown");
 
         var proof = Directory.CreateTempSubdirectory("c1609-h4-").FullName;
         try
         {
-            var bad = await Proof(origin, proof, Path.Combine(proof, "proof.log"), "not-an-operation");
+            var gitCalls = 0;
+            var bad = Versioned(Writer(shim: (_, _, run) => { gitCalls++; return run(); }), origin, proof, Path.Combine(proof, "proof.log"), "not-an-operation");
             bad.Exit.ShouldNotBe(0, bad.Output);
             bad.Output.ShouldContain("RecycleGitAuditUnknown");
-            Directory.GetFiles(proof).ShouldBeEmpty();
+            gitCalls.ShouldBe(0);
+            Directory.GetFiles(proof).Where(p => !p.EndsWith("proof.log", StringComparison.Ordinal)).ShouldBeEmpty();
         }
         finally { DeleteOwned(proof, "c1609-h4-"); }
 
@@ -627,8 +576,8 @@ public sealed class VolumeRetirementHostProofTests
             var files = Directory.GetFiles(Path.Combine(bound, "proof"));
             var body = await File.ReadAllTextAsync(files.Single(p => !p.EndsWith(".bundle", StringComparison.Ordinal)));
             body.ShouldStartWith("c1008-host-proof 2\n", customMessage: "H4 current publication transport requires a typed v2 proof");
-            body.ShouldContain("nonce " + new string('b',32));
-            body.ShouldContain("inventory " + new string('c',64));
+            body.ShouldContain("nonce " + new string('b', 32));
+            body.ShouldContain("inventory " + new string('c', 64));
             var bundle = files.Single(p => p.EndsWith(".bundle", StringComparison.Ordinal));
             body.ShouldContain("bundle " + Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(bundle))).ToLowerInvariant());
             body.ShouldContain("count 3\n", customMessage: "head plus original annotated tag and peeled object");
@@ -642,16 +591,8 @@ public sealed class VolumeRetirementHostProofTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Origins_and_git_configuration_cannot_redirect_credentials()
     {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
-        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
-            "$user = ConvertTo-C1008ScrubbedOrigin -OriginUrl 'https://user:pass@example.com/repo.git'; " +
-            "$token = ConvertTo-C1008ScrubbedOrigin -OriginUrl 'https://example.com/token.git'; " +
-            "Write-Output ('user=' + $user); if ($null -eq $token) { Write-Output 'token=null' } else { Write-Output ('token=' + $token) }";
-        var run = await Pwsh(command);
-        run.Exit.ShouldBe(0, run.Output);
-        run.Output.ShouldContain("user=https://example.com/repo.git");
-        run.Output.ShouldContain("token=null");
-        run.Output.ShouldNotContain("pass@");
+        C1609HostProof.ScrubOrigin("https://user:pass@example.com/repo.git").ShouldBe("https://example.com/repo.git");
+        C1609HostProof.ScrubOrigin("https://example.com/token.git").ShouldBeNull();
 
         var denied = Directory.CreateTempSubdirectory("c1609-h5-v2-").FullName;
         try
@@ -671,40 +612,32 @@ public sealed class VolumeRetirementHostProofTests
         var root = Directory.CreateTempSubdirectory("c1609-h6-").FullName;
         try
         {
-            var bin = Path.Combine(root, "bin");
-            Directory.CreateDirectory(bin);
             var proof = Path.Combine(root, "proof");
             Directory.CreateDirectory(proof);
-            if (OperatingSystem.IsWindows())
-            {
-                await File.WriteAllTextAsync(Path.Combine(bin, "git.cmd"),
-                    "@echo SENTINEL_STDERR_C1609 1>&2\r\n@exit /b 1\r\n");
-            }
-            else
-            {
-                var git = Path.Combine(bin, "git");
-                await File.WriteAllTextAsync(git, "#!/bin/sh\nprintf '%s\\n' SENTINEL_STDERR_C1609 >&2\nexit 1\n");
-                var mode = await Run("chmod", "0755", git);
-                mode.Exit.ShouldBe(0, mode.Output);
-            }
-            var run = await Proof("https://example.com/repo.git", proof, Path.Combine(root, "proof.log"),
-                pathPrefix: bin);
+            // Git's own error names the mapped path, which carries the sentinel: it is on Git's stderr only and must not cross.
+            const string url = "https://example.com/repo.git";
+            var run = Versioned(Writer(new Dictionary<string, string> { [url] = Path.Combine(root, "SENTINEL_STDERR_C1609") }), url, proof, Path.Combine(root, "proof.log"));
             run.Exit.ShouldNotBe(0, run.Output);
             run.Output.ShouldContain("RecycleGitAuditUnknown");
             run.Output.ShouldNotContain("SENTINEL_STDERR_C1609");
             var log = Path.Combine(root, "proof.log");
             if (File.Exists(log)) (await File.ReadAllTextAsync(log)).ShouldNotContain("SENTINEL_STDERR_C1609");
             Directory.GetFiles(proof).ShouldBeEmpty();
+            // The bounded runner keeps standard output only, and stops a child at its deadline.
+            var children = new C1609BoundedProcesses(new FileSystem());
+            var kept = children.Run(new C1609ProcessCall { FileName = "git", Arguments = ["no-such-command-c1609"], CaptureOutput = true, TimeoutMs = 30000 });
+            kept.ExitCode.ShouldNotBe(0);
+            kept.Stdout.ShouldNotContain("no-such-command-c1609");
+            Should.Throw<C1609Refusal>(() => children.Run(new C1609ProcessCall { FileName = "git", Arguments = ["--version"], TimeoutMs = 0 })).Message.ShouldBe("deadline");
         }
         finally { DeleteOwned(root, "c1609-h6-"); }
     }
 
-    // The desktop writes the proof under C:\src\Antiphon\.antiphon/rolling-server2/<run>/exchange-<n>/
-    // c1008-proof-<op>-<started>-<nonce>: 194 characters, so <name>.bundle is 266 and its .lock 271.
-    // Git for Windows without core.longpaths cannot create a file past MAX_PATH (259), so every
-    // retire-temp preview refused as host-ls-remote status=2 reason=git (2026-11-03 runs c7273562,
-    // c727c831, c7272de4). The seam fails any Git path that could not take a .lock under 259
-    // characters, the way that Git does; the .NET writes are long-path safe.
+    // The desktop writes the proof under C:\src\Antiphon\.antiphon/rolling-server2/<run>/exchange-<n>/c1008-proof-<op>-<started>-<nonce>:
+    // 194 characters, so <name>.bundle is 266 and its .lock 271. Git for Windows without core.longpaths cannot create a file past
+    // MAX_PATH (259), so every retire-temp preview refused as host-ls-remote status=2 reason=git (2026-11-03 runs c7273562, c727c831,
+    // c7272de4). The shim fails any Git path that could not take a .lock under 259 characters, the way that Git does; the .NET writes
+    // are long-path safe.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1693_Desktop_length_proof_directory_keeps_every_git_path_under_max_path()
@@ -731,27 +664,22 @@ public sealed class VolumeRetirementHostProofTests
             }
             var first = LongDirectory('p');
             var renewed = LongDirectory('r');
-            var violations = Path.Combine(root, "long-git-paths.txt");
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
-            var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
-                "$original=${function:Invoke-C1609HostGit}; " +
-                "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='', $InputText=$null, [string]$OutputFile='') " +
-                "foreach($path in @($GitArgs)+@($WorkingDirectory)){if(([string]$path).Length+'.lock'.Length -gt 259){" +
-                "$verb=if($GitArgs[0] -ceq '--git-dir'){$GitArgs[2]}else{$GitArgs[0]}; [IO.File]::AppendAllText($env:C1693_VIOLATIONS,($verb+' length='+([string]$path).Length+[char]10));" +
-                "throw (Get-C1008HostLsRemoteDiagnosis -Repo $Repo -Status 2)}}; " +
-                "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
-                "$io=@{};if($null -ne $InputText){$io.InputText=$InputText};if($OutputFile){$io.OutputFile=$OutputFile}; " +
-                "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory @io }; " +
-                "$previous=@{};if($env:C1693_PREVIOUS){$previous.PreviousProofFile=$env:C1693_PREVIOUS}; " +
-                "Write-C1008HostOriginProof -OriginUrl 'https://fixture.invalid/proof.git' -RepoRelative '" + Repo + "' -OperationId '" + Operation +
-                "' -ProofVersion 2 -PhaseNonce ('b'*32) -InventoryDigest ('c'*64) -ApprovedOrigins @('https://fixture.invalid/proof.git') " +
-                "-ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @previous";
-            var name = Sha(Repo + "\nhttps://fixture.invalid/proof.git");
+            var violations = new List<string>();
+            const string url = "https://fixture.invalid/proof.git";
+            var writer = Writer(new Dictionary<string, string> { [url] = origin }, (gitArgs, directory, run) =>
+            {
+                foreach (var path in gitArgs.Append(directory))
+                    if (path.Length + ".lock".Length > 259)
+                    {
+                        violations.Add((gitArgs[0] == "--git-dir" ? gitArgs[2] : gitArgs[0]) + " length=" + path.Length);
+                        throw new IOException("max-path");
+                    }
+                return run();
+            });
+            var name = Sha(Repo + "\n" + url);
 
-            var wrote = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", first),
-                ("C1609_LOG", Path.Combine(first, "host-proof.log")), ("C1693_VIOLATIONS", violations), ("C1693_PREVIOUS", "") });
-            var seen = File.Exists(violations) ? File.ReadAllText(violations) : "";
-            seen.ShouldBeEmpty("C1693 a fresh proof hands Git no path past MAX_PATH; " + wrote.Output);
+            var wrote = Versioned(writer, url, first, Path.Combine(first, "host-proof.log"));
+            violations.ShouldBeEmpty("C1693 a fresh proof hands Git no path past MAX_PATH; " + wrote.Output);
             wrote.Exit.ShouldBe(0, "C1693 fresh proof at desktop length; " + wrote.Output);
             var bundle = Path.Combine(first, name + ".bundle");
             bundle.Length.ShouldBe(266);
@@ -764,25 +692,20 @@ public sealed class VolumeRetirementHostProofTests
             heads.Output.ShouldContain("refs/heads/main");
 
             // A renewal with an unchanged advertisement reuses the previous long-path bundle.
-            var reused = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", renewed),
-                ("C1609_LOG", Path.Combine(renewed, "host-proof.log")), ("C1693_VIOLATIONS", violations),
-                ("C1693_PREVIOUS", Path.Combine(first, name)) });
-            seen = File.Exists(violations) ? File.ReadAllText(violations) : "";
-            seen.ShouldBeEmpty("C1693 a reused renewal hands Git no path past MAX_PATH; " + reused.Output);
+            var reused = Versioned(writer, url, renewed, Path.Combine(renewed, "host-proof.log"), previous: Path.Combine(first, name));
+            violations.ShouldBeEmpty("C1693 a reused renewal hands Git no path past MAX_PATH; " + reused.Output);
             reused.Exit.ShouldBe(0, "C1693 reused renewal at desktop length; " + reused.Output);
-            File.ReadAllBytes(Path.Combine(renewed, name + ".bundle"))
-                .ShouldBe(File.ReadAllBytes(bundle), "C1693 the reused renewal keeps the proven graph bytes");
+            File.ReadAllBytes(Path.Combine(renewed, name + ".bundle")).ShouldBe(File.ReadAllBytes(bundle), "C1693 the reused renewal keeps the proven graph bytes");
             File.Exists(Path.Combine(renewed, name)).ShouldBeTrue();
         }
         finally { DeleteOwned(root, prefix); }
     }
 
-    // After the MAX_PATH repair the 2026-11-04 01:19Z preview (run c72743c9) still refused:
-    // host-proof.log read attempt=1..3 reason=snapshot. Every attempt re-cloned the whole
-    // 5081-ref origin into a fresh scratch, so each attempt's ls-remote..ls-remote window held
-    // a full clone, and the standing fleet pushed or deleted a branch inside every one. The seam
-    // lands one fleet push and one land-time branch delete on origin during each full clone and
-    // none during an incremental fetch; a retry must then prove the moved origin exactly.
+    // After the MAX_PATH repair the 2026-11-04 01:19Z preview (run c72743c9) still refused: host-proof.log read attempt=1..3
+    // reason=snapshot. Every attempt re-cloned the whole 5081-ref origin into a fresh scratch, so each attempt's ls-remote..ls-remote
+    // window held a full clone, and the standing fleet pushed or deleted a branch inside every one. The shim lands one fleet push and
+    // one land-time branch delete on origin during each full clone and none during an incremental fetch; a retry must then prove the
+    // moved origin exactly.
     [Test]
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task C1693_Snapshot_retry_proves_an_origin_that_moved_during_the_full_clone()
@@ -853,27 +776,32 @@ public sealed class VolumeRetirementHostProofTests
         var proof = Path.Combine(root, "proof");
         Directory.CreateDirectory(proof);
         var log = Path.Combine(proof, "host-proof.log");
-        var clones = Path.Combine(root, "full-clones.txt");
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
-        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
-            "$original=${function:Invoke-C1609HostGit}; " +
-            "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='', $InputText=$null, [string]$OutputFile='') " +
-            "$fetch=$GitArgs.Count -gt 2 -and $GitArgs[0] -ceq '--git-dir' -and $GitArgs[2] -ceq 'fetch'; $full=$false; " +
-            "if($fetch){$full=-not (& git --git-dir $GitArgs[1] for-each-ref --count=1); if($full){[IO.File]::AppendAllText($env:C1693_CLONES,'full'+[char]10)}}; " +
-            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
-            "$io=@{};if($null -ne $InputText){$io.InputText=$InputText};if($OutputFile){$io.OutputFile=$OutputFile}; " +
-            "$out=& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory @io; " +
-            "if($fetch -and ($full -or $env:C1693_EVERY -eq '1')){$script:churn++; $main=(& git --git-dir $env:C1609_BARE rev-parse refs/heads/main); " +
-            "& git --git-dir $env:C1609_BARE update-ref ('refs/heads/fleet-'+$script:churn) $main; & git --git-dir $env:C1609_BARE update-ref -d refs/heads/landed}; " +
-            "return $out }; " +
-            "Write-C1008HostOriginProof -OriginUrl 'https://fixture.invalid/proof.git' -RepoRelative '" + Repo + "' -OperationId '" + Operation +
-            "' -ProofVersion 2 -PhaseNonce ('b'*32) -InventoryDigest ('c'*64) -ApprovedOrigins @('https://fixture.invalid/proof.git') " +
-            "-ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG";
-        var result = await Pwsh(command, new[] { ("C1609_BARE", origin), ("C1609_PROOF", proof), ("C1609_LOG", log),
-            ("C1693_CLONES", clones), ("C1693_EVERY", churnEveryFetch ? "1" : "0") });
-        var name = Sha(Repo + "\nhttps://fixture.invalid/proof.git");
-        return (result, File.Exists(log) ? (await File.ReadAllTextAsync(log)).Replace("\r", "", StringComparison.Ordinal) : "",
-            Path.Combine(proof, name), File.Exists(clones) ? File.ReadAllLines(clones).Length : 0);
+        var clones = 0;
+        var churn = 0;
+        const string url = "https://fixture.invalid/proof.git";
+        var writer = Writer(new Dictionary<string, string> { [url] = origin }, (gitArgs, _, run) =>
+        {
+            var fetch = gitArgs.Count > 2 && gitArgs[0] == "--git-dir" && gitArgs[2] == "fetch";
+            var full = false;
+            if (fetch)
+            {
+                full = Git(root, "--git-dir", gitArgs[1], "for-each-ref", "--count=1").GetAwaiter().GetResult().Output.Trim().Length == 0;
+                if (full) clones++;
+            }
+            var result = run();
+            if (fetch && (full || churnEveryFetch))
+            {
+                churn++;
+                var main = Git(root, "--git-dir", origin, "rev-parse", "refs/heads/main").GetAwaiter().GetResult().Output.Trim();
+                Git(root, "--git-dir", origin, "update-ref", "refs/heads/fleet-" + churn, main).GetAwaiter().GetResult();
+                Git(root, "--git-dir", origin, "update-ref", "-d", "refs/heads/landed").GetAwaiter().GetResult();
+            }
+            return result;
+        });
+        var result = Versioned(writer, url, proof, log);
+        var name = Sha(Repo + "\n" + url);
+        await Task.CompletedTask;
+        return (result, File.Exists(log) ? (await File.ReadAllTextAsync(log)).Replace("\r", "", StringComparison.Ordinal) : "", Path.Combine(proof, name), clones);
     }
 
     [Test]
@@ -973,70 +901,18 @@ public sealed class VolumeRetirementHostProofTests
 
     private static async Task<(int Exit, string Output)> VersionedProof(string root, bool unsafeOrigin = false)
     {
-        var origin = Path.Combine(root,"origin.git"); var work = Path.Combine(root,"work");
-        (await Git(root,"init","-q","--bare",origin)).Exit.ShouldBe(0);
-        (await Git(root,"init","-q","-b","main",work)).Exit.ShouldBe(0);
-        await File.WriteAllTextAsync(Path.Combine(work,"published"),"published\n");
-        (await Git(work,"add","published")).Exit.ShouldBe(0);
-        (await Git(work,"commit","-qm","published")).Exit.ShouldBe(0);
-        (await Git(work,"tag","-a","v1","-m","published")).Exit.ShouldBe(0);
-        (await Git(work,"push","-q",origin,"main","--tags")).Exit.ShouldBe(0);
-        var proof = Path.Combine(root,"proof"); Directory.CreateDirectory(proof);
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot,"scripts/c1008-host-proof.ps1");
-        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; $extra=@{}; $url=$env:C1609_BARE; " +
-            "if((Get-Command Write-C1008HostOriginProof).Parameters.ContainsKey('ProofVersion')) { " +
-            "$url=if($env:C1609_UNSAFE -eq '1'){$env:C1609_BARE}else{'https://fixture.invalid/proof.git'}; " +
-            "$extra=@{ProofVersion=2;PhaseNonce=('b'*32);InventoryDigest=('c'*64);ApprovedOrigins=@($url)}; " +
-            "$original=${function:Invoke-C1609HostGit}; " +
-            "function Invoke-C1609HostGit { param($Repo,[string[]]$GitArgs,[int]$TimeoutMs=30000,[string]$WorkingDirectory='',[string]$InputText='',[string]$OutputFile='') " +
-            "$mapped=@('-c','protocol.file.allow=always')+@($GitArgs|ForEach-Object {if($_ -ceq 'https://fixture.invalid/proof.git'){$env:C1609_BARE}else{$_}}); " +
-            "& $original -Repo $Repo -GitArgs $mapped -TimeoutMs $TimeoutMs -WorkingDirectory $WorkingDirectory -InputText $InputText -OutputFile $OutputFile } }; " +
-            "Write-C1008HostOriginProof -OriginUrl $url -RepoRelative '" + Repo + "' -OperationId '" + Operation +
-            "' -ProofDirectory $env:C1609_PROOF -CreatedUnix ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -LogPath $env:C1609_LOG @extra";
-        return await Pwsh(command,new[]{("C1609_BARE",origin),("C1609_PROOF",proof),("C1609_LOG",Path.Combine(root,"proof.log")),("C1609_UNSAFE",unsafeOrigin?"1":"0")});
-    }
-
-    private static async Task<(int Exit, string Output)> Proof(string origin, string proof, string log,
-        string? operation = null, string? pathPrefix = null)
-    {
-        Directory.CreateDirectory(proof);
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-host-proof.ps1");
-        var command = "$ErrorActionPreference='Stop'; . " + Quote(script) + "; " +
-            "Write-C1008HostOriginProof -OriginUrl $env:C1609_ORIGIN -RepoRelative $env:C1609_REPO " +
-            "-OperationId $env:C1609_OPERATION -ProofDirectory $env:C1609_PROOF " +
-            "-CreatedUnix 1700000000 -LogPath $env:C1609_LOG";
-        return await Pwsh(command, new (string, string)[]
-        {
-            ("C1609_ORIGIN", origin),
-            ("C1609_REPO", Repo),
-            ("C1609_OPERATION", operation ?? Operation),
-            ("C1609_PROOF", proof),
-            ("C1609_LOG", log)
-        }, pathPrefix);
-    }
-
-    private static async Task<(int Exit, string Output)> Pwsh(string command,
-        IEnumerable<(string Key, string Value)>? env = null, string? pathPrefix = null, string? cwd = null)
-    {
-        var psi = new ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-            WorkingDirectory = cwd ?? DelegateScriptRunner.RepoRoot
-        };
-        psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-NonInteractive");
-        psi.ArgumentList.Add("-Command");
-        psi.ArgumentList.Add(command);
-        if (pathPrefix is not null)
-        {
-            var current = Environment.GetEnvironmentVariable("PATH") ?? "";
-            psi.Environment["PATH"] = pathPrefix + Path.PathSeparator + current;
-        }
-        if (env is not null)
-        {
-            foreach (var (key, value) in env) psi.Environment[key] = value;
-        }
-        return await Run(psi);
+        var origin = Path.Combine(root, "origin.git"); var work = Path.Combine(root, "work");
+        (await Git(root, "init", "-q", "--bare", origin)).Exit.ShouldBe(0);
+        (await Git(root, "init", "-q", "-b", "main", work)).Exit.ShouldBe(0);
+        await File.WriteAllTextAsync(Path.Combine(work, "published"), "published\n");
+        (await Git(work, "add", "published")).Exit.ShouldBe(0);
+        (await Git(work, "commit", "-qm", "published")).Exit.ShouldBe(0);
+        (await Git(work, "tag", "-a", "v1", "-m", "published")).Exit.ShouldBe(0);
+        (await Git(work, "push", "-q", origin, "main", "--tags")).Exit.ShouldBe(0);
+        var proof = Path.Combine(root, "proof"); Directory.CreateDirectory(proof);
+        const string url = "https://fixture.invalid/proof.git";
+        // Unsafe: the allowlist names the local path itself, a file transport no proof may use.
+        return Versioned(Writer(new Dictionary<string, string> { [url] = origin }), unsafeOrigin ? origin : url, proof, Path.Combine(root, "proof.log"));
     }
 
     private static async Task<(int Exit, string Output)> Git(string cwd, params string[] args)
@@ -1054,16 +930,6 @@ public sealed class VolumeRetirementHostProofTests
         return await Run(psi);
     }
 
-    private static Task<(int Exit, string Output)> Run(string file, params string[] args)
-    {
-        var psi = new ProcessStartInfo(file)
-        {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
-        };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
-        return Run(psi);
-    }
-
     private static async Task<(int Exit, string Output)> Run(ProcessStartInfo psi)
     {
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("child did not start");
@@ -1079,18 +945,8 @@ public sealed class VolumeRetirementHostProofTests
         return (proc.ExitCode, await stdout + await stderr);
     }
 
-    private static string ReceiptField(string receipt, string name)
-    {
-        var line = receipt.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n')
-            .Single(row => row.StartsWith(name + "=", StringComparison.Ordinal));
-        return line[(name.Length + 1)..];
-    }
-
     private static string Sha(string text) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
-
-    private static string Quote(string path) => "'" + path.Replace("'", "''") + "'";
-
     private static void DeleteOwned(
         string root,
         string prefix,

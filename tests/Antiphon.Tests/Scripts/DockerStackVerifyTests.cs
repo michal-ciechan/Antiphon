@@ -8,42 +8,15 @@ namespace Antiphon.Tests.Scripts;
 
 /// <summary>
 /// The verify-docker-stack command (Antiphon.Nightly.DockerStackVerify, unit 47 of the 2026-11-22 plan) beyond the smoke and
-/// recovery rows: the live roster it refuses outside stub mode equals scripts/c590-real.ps1's, the default arm, the record it
-/// writes, the commands it starts without the stub (on a recording launcher), the e2e-staged-apphost consumer and the failures
-/// that were the script's thrown errors (exit 1). In process through C590Harness; nothing starts.
+/// recovery rows: the default arm, the record it writes, the commands it starts without the stub (on a recording launcher), the
+/// e2e-staged-apphost consumer and the failures that were the script's thrown errors (exit 1). In process through C590Harness;
+/// nothing starts. Unit 66: the live roster and a live case without the stub are the bridge's (C590BridgeTests); the head's
+/// refusals run here for every case.
 /// </summary>
 [Category("Unit")]
 public sealed class DockerStackVerifyTests
 {
     private static readonly Dictionary<string, string?> NoStub = new() { [C590Boundary.StubVariable] = null };
-
-    [Test]
-    public void Live_roster_is_c590_real_roster()
-    {
-        var bridge = File.ReadAllText(Path.Combine(C590Harness.RepoRoot, "scripts", "c590-real.ps1")).ReplaceLineEndings("\n");
-        var start = bridge.IndexOf("$script:C590LiveCases = @(", StringComparison.Ordinal);
-        var end = bridge.IndexOf("\n)\n", start, StringComparison.Ordinal);
-        (start >= 0 && end > start).ShouldBeTrue("the live roster block was not found");
-        var roster = bridge[start..end].Split('\n')
-            .Where(line => !line.TrimStart().StartsWith('#'))
-            .SelectMany(line => Regex.Matches(line, "'([a-z0-9-]+)'").Select(match => match.Groups[1].Value))
-            .ToArray();
-        roster.ShouldNotBeEmpty();
-        DockerStackVerify.LiveCases.ShouldBe(roster);
-    }
-
-    [Test]
-    [Arguments("deploy-parent")]
-    [Arguments("Custody-Containment")]
-    [Arguments("failure-summary")]
-    public void A_live_case_without_the_stub_is_the_bridge_s_and_a_usage_error(string caseName)
-    {
-        var run = C590Harness.Run("verify-docker-stack", C590Harness.Happy(), NoStub, args: ["--case", caseName]);
-        run.ExitCode.ShouldBe(2);
-        run.Output.ShouldContain(caseName + " is a live case: scripts/verify-docker-stack.ps1 runs it through the c590-real.ps1 bridge");
-        run.ResultJson.ShouldBeEmpty();
-        run.Launches.ShouldBeEmpty();
-    }
 
     [Test]
     public void Unrouted_case_is_unknown_in_stub_mode_and_pending_otherwise()
@@ -136,6 +109,23 @@ public sealed class DockerStackVerifyTests
     public void The_committed_consumer_still_names_the_staged_apphost()
     {
         File.ReadAllText(Path.Combine([C590Harness.RepoRoot, .. DockerStackVerify.StagedApphostConsumer])).ShouldContain("TestAppHostPath");
+    }
+
+    [Test]
+    public void The_head_refuses_before_any_case_in_stub_mode_too()
+    {
+        // Unit 66: the launcher's head is the command's: a repeated name, a cleanup context on another case and a recycle context
+        // on a case that cannot carry one exit 1 before the case answers.
+        var duplicate = C590Harness.Run("verify-docker-stack", Extra(new() { ["tempContainerCleanup"] = new Dictionary<string, object?> { ["version"] = 1 } }),
+            args: ["--case", "version-check"]);
+        duplicate.ExitCode.ShouldBe(1);
+        duplicate.Output.ShouldContain("verify-docker-stack: TempContainerContextInvalid");
+        duplicate.ResultJson.ShouldBeEmpty();
+        var recycle = C590Harness.Run("verify-docker-stack", Extra(new() { ["Recycle"] = new Dictionary<string, object?> { ["version"] = 1 } }),
+            args: ["--case", "deploy-parent"]);
+        recycle.ExitCode.ShouldBe(1);
+        recycle.Output.ShouldContain("verify-docker-stack: RecycleContextInvalid");
+        recycle.Commands.ShouldBeEmpty();
     }
 
     [Test]

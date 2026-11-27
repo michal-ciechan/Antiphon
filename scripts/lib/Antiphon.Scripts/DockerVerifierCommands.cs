@@ -1,7 +1,7 @@
 // The W8 verifiers (unit 47 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, W8 slice B), with the scripts'
-// parameters in kebab case: verify-docker-stack (the stub boundaries and literal guards of scripts/verify-docker-stack.ps1, which
-// stays as the launcher the owner-gated deploy and server2 scripts start by path: its head keeps the c590-real.ps1 live bridge and
-// hands everything else here), test-docker (scripts/test-docker.ps1), test-docker-container (scripts/test-docker-container.ps1)
+// parameters in kebab case: verify-docker-stack (the stub boundaries and literal guards of scripts/verify-docker-stack.ps1 and,
+// since unit 66, its head and the live server2 bridge of scripts/c590-real.ps1; the .ps1 is a thin launcher for the W10 scripts
+// that still start it by path), test-docker (scripts/test-docker.ps1), test-docker-container (scripts/test-docker-container.ps1)
 // and verify-card0604-dind-runner (scripts/verify-card0604-dind-runner.ps1); nothing started the last three by path, so none keeps
 // a launcher. Unit 48 added verify-card0660-codex-image (scripts/verify-card0660-codex-image.ps1, with the owner's approval to
 // delete its fixture scripts/fixtures/c913-image-wrapper.ps1; nothing else started it by path, so no launcher either). The
@@ -26,18 +26,28 @@ namespace Antiphon.Scripts
         internal const string TestDockerContainer = "test-docker-container";
         internal const string VerifyDindRunner = "verify-card0604-dind-runner";
         internal const string VerifyCodexImage = "verify-card0660-codex-image";
+        internal const string HostProof = "c1609-host-proof";
 
         internal const string Usage = DockerStackVerifyOptions.Usage + " | " + DockerTestOptions.Usage + " | " + DockerTestContainerOptions.Usage
-            + " | " + DindRunnerOptions.Usage + " | " + CodexImageOptions.Usage;
+            + " | " + DindRunnerOptions.Usage + " | " + CodexImageOptions.Usage + " | " + C1609HostProofOptions.Usage;
 
         private static string Checkout => SourceCheckout.Root() ?? Environment.CurrentDirectory;
 
         private static NightlyHost Host() => NightlyHost.Production(Console.Out, Console.Error);
 
-        // CARD-0590: exit 0 accepted, 2 refused (the c590 result written) or usage, the manifest's runExit for failure-summary,
-        // 1 the manifest could not be read or a command could not start.
-        internal static int RunVerifyDockerStack(string[] args) =>
-            DockerStackVerify.Run(DockerStackVerifyOptions.Parse(args.Skip(1).ToArray(), Checkout), Host(), new FileSystem());
+        // CARD-0590: exit 0 accepted, 2 refused (the c590 result written) or usage, the manifest's runExit for failure-summary or the
+        // remote result's exit for a live case, 1 the head refused, the manifest could not be read or a command could not start.
+        // Unit 66: a live case (no ANTIPHON_C590_STUB) runs the server2 bridge here, on this console (C590BridgeOs) and the bounded
+        // children of its retirement coordinator (C1609BoundedProcesses).
+        internal static int RunVerifyDockerStack(string[] args)
+        {
+            var files = new FileSystem();
+            return DockerStackVerify.Run(DockerStackVerifyOptions.Parse(args.Skip(1).ToArray(), Checkout), Host(), files, new C590BridgeSeams
+            {
+                World = new C590BridgeOs(Console.Out, Console.Error),
+                Processes = new C1609BoundedProcesses(files),
+            });
+        }
 
         // CARD-0590: exit 0 accepted, 2 refused or usage, the manifest's childExit, or c590-remote.sh's code with --throwaway-stack.
         internal static int RunTestDocker(string[] args)
@@ -55,6 +65,14 @@ namespace Antiphon.Scripts
         internal static int RunVerifyDindRunner(string[] args) =>
             DindRunnerHarness.Run(DindRunnerOptions.Parse(args.Skip(1).ToArray(), Checkout), Host(), new FileSystem(),
                 new DindRunnerSeams { Http = DindRunnerHarness.Http() });
+
+        // CARD-1609 (unit 66): the desktop origin proof's write and live-check verbs for the native retirement harness (exit 0 proven, 1
+        // refused with one stderr line, 2 usage), on the production children (git found on PATH) and the real file system.
+        internal static int RunHostProof(string[] args)
+        {
+            var host = Host();
+            return C1609HostProofCommand.Run(C1609HostProofOptions.Parse(args.Skip(1).ToArray()), host, C1609HostProofCommand.Production(host, new FileSystem()));
+        }
 
         // CARD-0660 V-9: exit 0 every applicable row ok, 1 one or more not, 2 setup failed or usage.
         internal static int RunVerifyCodexImage(string[] args) =>

@@ -51,7 +51,6 @@ public class ScriptModelSpawnLaneTests
         "RollingVolumeRecycleScriptTests.C1371_Census_distinguishes_cross_read_count_drift_from_malformed_counts",
         "RollingVolumeRecycleScriptTests.C1374_Wrapper_census_recovers_transient_reads",
         "RollingVolumeRecycleScriptTests.C1008_Host_proof_admits_only_an_authenticated_private_origin",
-        "RollingVolumeRecycleScriptTests.C1008_Host_proof_file_omits_credentials",
     ];
 
     // S1 floor was HostJq. S2 appends the three Rolling classes.

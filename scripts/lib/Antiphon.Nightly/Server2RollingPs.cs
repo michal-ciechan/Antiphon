@@ -14,8 +14,9 @@
 //
 // It also holds the functions deploy-server2.ps1 dot-sourced from scripts/c590-real.ps1 (Assert-C994RawManifest,
 // ConvertTo-C994RetiredInstant, Assert-C994BridgeContext), scripts/c1008-host-proof.ps1 (Test-C1008SafeAuditDiagnosis) and
-// scripts/c1609-read-packet.ps1 (New-C1609RetirementReadPacket). Those scripts stay for their W10 callers (verify-docker-stack.ps1's
-// live bridge, c1609-manual.ps1); these are the command's copies, with the same refusals. Plain C#: no PowerShell types. ASCII only.
+// scripts/c1609-read-packet.ps1 (New-C1609RetirementReadPacket), with the same refusals. Since unit 66 the live server2 bridge
+// (C590Bridge, C1609HostProof) uses these too. c590-real.ps1 keeps its own two C994 functions for c1609-manual.ps1, and
+// c1609-read-packet.ps1 stays for the W10 node harness adapter. Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.Collections;

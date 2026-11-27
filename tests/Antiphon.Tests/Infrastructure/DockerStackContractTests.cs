@@ -716,19 +716,25 @@ public sealed class DockerStackContractTests
     [Test]
     public void Server2_deploy_streams_the_claude_token_file()
     {
-        var bridge = Text("scripts/c590-real.ps1");
-        bridge.ShouldContain("$script:C628ClaudeTokenItem = 'antiphon/server2/claude-oauth-token'");
-        bridge.ShouldContain("& bw get password $script:C628ClaudeTokenItem --nointeraction");
-        bridge.ShouldContain("$token | & ssh -o BatchMode=yes");
-        bridge.ShouldContain("cat > '$target.tmp' && chmod 0600 '$target.tmp'");
-        bridge.ShouldContain("if ($Case -eq 'deploy-parent') {");
+        // Unit 66: the live bridge is C590Bridge (scripts/c590-real.ps1 before), its children C590BridgeOs.
+        var bridge = Text("scripts/lib/Antiphon.Nightly/C590Bridge.cs");
+        var os = Text("scripts/lib/Antiphon.Nightly/C590BridgeOs.cs");
+        bridge.ShouldContain("public const string ClaudeTokenItem = \"antiphon/server2/claude-oauth-token\";");
+        bridge.ShouldContain("_world.BwPassword(ClaudeTokenItem, session)");
+        os.ShouldContain("new[] { \"get\", \"password\", item, \"--nointeraction\" }");
+        bridge.ShouldContain("_world.SshWithInput(remote, token)");
+        os.ShouldContain("(input ?? \"\") + Environment.NewLine");
+        bridge.ShouldContain("cat > '\" + target + \".tmp' && chmod 0600 '\" + target + \".tmp'");
+        bridge.ShouldContain("if (RollingPs.Eq(hostCase, \"deploy-parent\") && recycleDryRun != \"1\") ClaudeTokenOnDeploy(manifest);");
         bridge.ShouldContain("ClaudeOAuthTokenRefreshSkipped");
-        bridge.ShouldContain("Invoke-C628ClaudeTokenOnDeploy");
-        foreach (var line in bridge.Replace("\r\n", "\n").Split('\n').Where(line => line.Contains("$token", StringComparison.Ordinal)))
+        // Each code line that uses the token variable (string literals and comments aside).
+        foreach (var code in bridge.Replace("\r\n", "\n").Split('\n')
+                     .Select(line => System.Text.RegularExpressions.Regex.Replace(line.Split("//")[0], "\"(?:[^\"\\\\]|\\\\.)*\"", "\"\""))
+                     .Where(code => System.Text.RegularExpressions.Regex.IsMatch(code, @"\btoken\b")))
         {
-            line.Contains("Write-", StringComparison.Ordinal).ShouldBeFalse("the token is never written out: " + line.Trim());
-            System.Text.RegularExpressions.Regex.IsMatch(line, @"ssh[^|]*\$token")
-                .ShouldBeFalse("the token is never an ssh argument: " + line.Trim());
+            System.Text.RegularExpressions.Regex.IsMatch(code, @"\.Write|Warning\(").ShouldBeFalse("the token is never written out: " + code.Trim());
+            System.Text.RegularExpressions.Regex.IsMatch(code, @"\bSsh\(|Scp\(|SshWithInput\(\s*token")
+                .ShouldBeFalse("the token is never an ssh argument: " + code.Trim());
         }
 
         var remote = Text("scripts/c590-remote.sh").Replace("\r\n", "\n");

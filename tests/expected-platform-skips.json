@@ -34,11 +34,6 @@
     },
     {
       "platform": "windows",
-      "test": "Antiphon.Tests.Scripts.RollingVolumeRecycleScriptTests.C1008_Host_proof_file_omits_credentials",
-      "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
-    },
-    {
-      "platform": "windows",
       "test": "Antiphon.Tests.Scripts.VolumeRetirementApplyGateTests.Recheck_target_refuses_a_changed_fingerprint",
       "reasonPrefix": "CARD-1050: C1008 host contracts require native Linux (bash, flock and POSIX filesystem semantics); Windows PowerShell wrapper contracts run separately."
     },

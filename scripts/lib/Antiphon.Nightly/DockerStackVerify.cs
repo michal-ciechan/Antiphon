@@ -1,21 +1,23 @@
 // CARD-0590 stack verifier: the literal checkpoints and guards of scripts/verify-docker-stack.ps1 (unit 47 of
-// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, W8 slice B). The CLI runs it as
+// docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, W8 slice B) and, since unit 66 (W10 part 1), its head and the live
+// server2 bridge of scripts/c590-real.ps1 (C590Bridge). The CLI runs it as
 //
-//   antiphon-scripts verify-docker-stack --case <name> --manifest <path>
+//   antiphon-scripts verify-docker-stack --case <name> --manifest <path> [--refresh-claude-token]
 //
-// scripts/verify-docker-stack.ps1 stays at its path with its parameters (-Case, -Manifest, -RefreshClaudeToken): the owner-gated
-// deploy-server2 command (Server2RollingOs.HostCase, unit 65) and scripts c590-real.ps1, c1609-manual.ps1 and verify-card0849-caches.ps1 start it by path. It keeps its head
-// unchanged: the manifest checks and context guards of scripts/c590-real.ps1 (C994, C1008) and, without ANTIPHON_C590_STUB, the
-// live server2 bridge (Invoke-C590LiveCase) for every case on c590-real.ps1's roster, which always ends the script. Whatever
-// reaches past that head (stub mode, or a case the bridge does not route) is handed to this command.
+// The deploy-server2 command (Server2RollingOs.HostCase) runs it in its own process. scripts/verify-docker-stack.ps1 is a thin
+// launcher with its parameters (-Case, -Manifest, -RefreshClaudeToken) for the W10 scripts that still start it by path
+// (c1609-manual.ps1, verify-card0849-caches.ps1 and the kept CARD-0590 checkpoint entry of c590-real.ps1).
 //
-// Each case answers as the script's switch did: a refusal is accepted=false, its diagnosis and exit 2; acceptance exit 0 (the
-// failure-summary row exits the manifest's runExit). The commands a case records go through C590Boundary (recorded in the sink;
-// started only without the stub). Cases match ignoring case, as the PowerShell switch did; manifest keys match exactly. A case
-// with no arm is UnknownCase in stub mode, else "RealCasePending <case>". Run directly without the stub, a case on the live
-// roster (LiveCases, kept equal to c590-real.ps1's by DockerStackVerifyTests) is a usage error: only the launcher's bridge runs
-// it. Exit 1: the manifest could not be read, a value could not be cast, or a command could not start (one stderr line).
-// Plain C#: no PowerShell types. ASCII only.
+// The head runs for every case, in the launcher's order: the raw manifest's names and C994 retirement instant
+// (Assert-C994RawManifest), its ConvertFrom-Json reading, the C994 cleanup context (retire-temp-containers, or any manifest that has
+// one) and the C1008 recycle context (any manifest with a recycle key). A refusal there is exit 1 with one stderr line, as the
+// head's throw was. Without ANTIPHON_C590_STUB a case on LiveCases (matched ignoring case, as -contains did) is the live bridge.
+//
+// Every other case answers as the script's switch did: a refusal is accepted=false, its diagnosis and exit 2; acceptance exit 0
+// (the failure-summary row exits the manifest's runExit). The commands a case records go through C590Boundary (recorded in the
+// sink; started only without the stub). Cases match ignoring case, as the PowerShell switch did; manifest keys match exactly. A
+// case with no arm is UnknownCase in stub mode, else "RealCasePending <case>". Exit 1: the manifest could not be read, a value
+// could not be cast, or a command could not start (one stderr line). Plain C#: no PowerShell types. ASCII only.
 #nullable disable
 using System;
 using System.Collections.Generic;
@@ -31,7 +33,7 @@ namespace Antiphon.Nightly
     public sealed class DockerStackVerifyOptions
     {
         /// <summary>The CLI's usage line.</summary>
-        public const string Usage = "verify-docker-stack --case <name> --manifest <path>";
+        public const string Usage = "verify-docker-stack --case <name> --manifest <path> [--refresh-claude-token]";
 
         /// <summary>The checkpoint or guard.</summary>
         public string Case { get; init; } = "";
@@ -39,14 +41,23 @@ namespace Antiphon.Nightly
         /// <summary>The manifest file.</summary>
         public string Manifest { get; init; } = "";
 
-        /// <summary>The checkout the e2e-staged-apphost case reads its consumer from.</summary>
+        /// <summary>--refresh-claude-token (-RefreshClaudeToken): deploy-parent streams the vault's Claude token to server2.</summary>
+        public bool RefreshClaudeToken { get; init; }
+
+        /// <summary>The checkout: the e2e-staged-apphost consumer, and the live bridge's scripts, state and evidence root.</summary>
         public string Checkout { get; init; } = "";
 
         /// <summary>The arguments after the command name; checkout is the CLI's own.</summary>
         public static DockerStackVerifyOptions Parse(IReadOnlyList<string> arguments, string checkout)
         {
-            var flags = NightlyArgs.Parse(arguments, new[] { "--case", "--manifest" }, Array.Empty<string>());
-            return new DockerStackVerifyOptions { Case = flags.Required("--case"), Manifest = flags.Required("--manifest"), Checkout = checkout ?? "" };
+            var flags = NightlyArgs.Parse(arguments, new[] { "--case", "--manifest" }, new[] { "--refresh-claude-token" });
+            return new DockerStackVerifyOptions
+            {
+                Case = flags.Required("--case"),
+                Manifest = flags.Required("--manifest"),
+                RefreshClaudeToken = flags.Switch("--refresh-claude-token"),
+                Checkout = checkout ?? "",
+            };
         }
     }
 
@@ -54,8 +65,8 @@ namespace Antiphon.Nightly
     public static class DockerStackVerify
     {
         /// <summary>
-        /// The cases scripts/c590-real.ps1 routes to server2 ($script:C590LiveCases, in its order). Without the stub the launcher
-        /// sends these to the live bridge, so this command never answers one outside stub mode.
+        /// The cases the live bridge routes to server2 (scripts/c590-real.ps1's $script:C590LiveCases, in its order). Without the
+        /// stub these run on server2 (C590Bridge); in stub mode they are the switch's boundaries below.
         /// </summary>
         public static readonly IReadOnlyList<string> LiveCases = new[]
         {
@@ -75,18 +86,47 @@ namespace Antiphon.Nightly
         /// <summary>The e2e-staged-apphost consumer, relative to the checkout.</summary>
         public static readonly string[] StagedApphostConsumer = { "tests", "Antiphon.E2E", "Fixtures", "IsolatedSessionRunner.cs" };
 
-        /// <summary>Runs one case. Returns the exit code; usage errors throw NightlyUsageException.</summary>
-        public static int Run(DockerStackVerifyOptions options, NightlyHost host, IFileSystem files)
+        /// <summary>
+        /// Runs one case. Returns the exit code; usage errors throw NightlyUsageException. bridge binds the live server2 bridge's
+        /// world; a live case without the stub needs it.
+        /// </summary>
+        public static int Run(DockerStackVerifyOptions options, NightlyHost host, IFileSystem files, C590BridgeSeams bridge = null)
         {
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
             if (files == null) throw new ArgumentNullException(nameof(files));
             var c590 = new C590Boundary(host, files);
-            if (!c590.Stubbed && LiveCases.Contains(options.Case, StringComparer.OrdinalIgnoreCase))
-                throw new NightlyUsageException(options.Case + " is a live case: scripts/verify-docker-stack.ps1 runs it through the c590-real.ps1 bridge");
             if (!files.File.Exists(options.Manifest)) throw new NightlyUsageException("Manifest is required (no file " + options.Manifest + ")");
             try
             {
+                string raw;
+                try
+                {
+                    raw = files.File.ReadAllText(options.Manifest);
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is NotSupportedException)
+                {
+                    throw new C590Failure("cannot read " + options.Manifest + ": " + e.Message);
+                }
+                // The launcher's head, for every case: raw timestamp validation precedes PowerShell's automatic date conversion,
+                // then the cleanup and recycle contexts are checked at the verifier boundary as well, before the bridge's own check.
+                try
+                {
+                    RollingPs.AssertC994RawManifest(raw);
+                    var m = RollingPs.ParseEnumerated(raw);
+                    if (string.Equals(options.Case, "retire-temp-containers", StringComparison.Ordinal) || RollingPs.HasExact(m, "tempContainerCleanup"))
+                        RollingPs.AssertC994BridgeContext(RollingPs.Prop(m, "tempContainerCleanup"), options.Case);
+                    if (RollingPs.Has(m, "recycle")) C590Bridge.AssertC1008BridgeContext(RollingPs.Prop(m, "recycle"), options.Case);
+                    if (!c590.Stubbed && LiveCases.Contains(options.Case, StringComparer.OrdinalIgnoreCase))
+                    {
+                        if (bridge == null) throw new ArgumentNullException(nameof(bridge), "a live case needs the bridge's world");
+                        return C590Bridge.LiveCase(options.Case, m, raw, options.RefreshClaudeToken, options.Checkout, host, files, bridge);
+                    }
+                }
+                catch (Exception e) when (e is Server2RollingRefusal || e is RollingJsonException)
+                {
+                    throw new C590Failure(e.Message);
+                }
                 var manifest = C590Manifest.Read(files, options.Manifest);
                 return Verify(options.Case, manifest, options.Checkout, c590, files);
             }

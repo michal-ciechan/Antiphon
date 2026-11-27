@@ -20,7 +20,7 @@
 // - deploy-server2 (unit 65, W8 slice C), the CARD-0727 staged server2 rolling runner deploy and its recycle, temp retirement and
 //   census phases. It replaced scripts/deploy-server2.ps1 (the W10 node harnesses that started the script by path now start
 //   scripts/antiphon deploy-server2). The behaviour is Antiphon.Nightly's Server2RollingDeploy on the production host, the real file
-//   system and Server2RollingOs (ssh, git and the scripts/verify-docker-stack.ps1 host cases as children, found on PATH), or the
+//   system and Server2RollingOs (ssh and git as children, found on PATH; since unit 66 the host cases are the verify-docker-stack command in this process), or the
 //   script's C727_TEST_* fixture seams (Server2RollingStubOs) when a harness sets them.
 // The checkout is the one this executable was built in, else the current directory. ASCII only.
 using System;
