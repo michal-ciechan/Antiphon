@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -170,8 +172,8 @@ public sealed class AdditiveMigrationRuleWitnessTests
         text.ShouldContain(NotReviewed, Case.Sensitive);
     }
 
-    // Every backticked token of the owner's selector sentence must occur in a tests/ source other
-    // than this witness. A lowercase <placeholder> stands for one non-empty argument.
+    // Every backticked token of the owner's live selector sentence must name a call in tests/.
+    // A lowercase <placeholder> requires a non-empty argument list.
     private static void AssertTokensReal(string text, IReadOnlyList<string> sources)
     {
         var section = text.IndexOf(OwnerHeading, StringComparison.Ordinal);
@@ -182,25 +184,48 @@ public sealed class AdditiveMigrationRuleWitnessTests
         var end = text.IndexOf(". ", start, StringComparison.Ordinal);
         end.ShouldBeGreaterThan(start, "selector sentence end");
         var tokens = Regex.Matches(text[start..end], "`([^`]+)`").Select(match => match.Groups[1].Value).ToArray();
-        tokens.Length.ShouldBeGreaterThanOrEqualTo(6, string.Join(", ", tokens));
-        var unmatched = tokens
-            .Where(token =>
+        tokens.Length.ShouldBeGreaterThanOrEqualTo(5, string.Join(", ", tokens));
+        var unmatched = tokens.Select(token =>
+        {
+            var placeholder = Regex.Match(token, @"\(<[a-z]+>\)\z", RegexOptions.CultureInvariant);
+            var callee = placeholder.Success ? token[..placeholder.Index] : token.TrimEnd('(');
+            var suffix = callee.StartsWith('.') ? callee : "." + callee;
+            var method = callee[(callee.LastIndexOf('.') + 1)..];
+            return (Token: token, Callee: callee, Suffix: suffix, Method: method, NeedsArgument: placeholder.Success);
+        }).ToList();
+
+        foreach (var source in sources)
+        {
+            if (unmatched.Count == 0)
+                break;
+            if (!unmatched.Any(selector => source.Contains(selector.Method, StringComparison.Ordinal)))
+                continue;
+
+            var syntax = CSharpSyntaxTree.ParseText(source).GetRoot();
+            foreach (var call in syntax.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
-                var pattern = new Regex(Regex.Replace(Regex.Escape(token), "<[a-z]+>", @"[^)\s][^)]*"), RegexOptions.CultureInvariant);
-                return !sources.Any(pattern.IsMatch);
-            })
-            .ToArray();
-        unmatched.ShouldBeEmpty("selector tokens with no tests/ call site outside the witness");
+                if (call.ContainsDiagnostics || call.Expression is IdentifierNameSyntax { Identifier.Text: "nameof" })
+                    continue;
+
+                // Use the callable expression alone. A matching string, comment, or argument
+                // inside a different call supplies no evidence for this selector.
+                var callee = string.Concat(call.Expression.DescendantTokens().Select(part => part.Text));
+                unmatched.RemoveAll(selector =>
+                    (callee == selector.Callee || callee.EndsWith(selector.Suffix, StringComparison.Ordinal))
+                    && (!selector.NeedsArgument || call.ArgumentList.Arguments.Count > 0));
+            }
+        }
+
+        unmatched.Select(selector => selector.Token).ShouldBeEmpty("selector tokens with no tests/ call site outside the witness");
     }
 
     private static IReadOnlyList<string> TestSources()
     {
         var root = Path.Combine(DelegateScriptRunner.RepoRoot, "tests");
         var self = Path.Combine(root, "Antiphon.Tests", "Application", nameof(AdditiveMigrationRuleWitnessTests) + ".cs");
-        var separator = Path.DirectorySeparatorChar;
         var files = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
-            .Where(path => !path.Contains($"{separator}bin{separator}", StringComparison.Ordinal)
-                && !path.Contains($"{separator}obj{separator}", StringComparison.Ordinal)
+            .Where(path => !Path.GetRelativePath(root, path).Split(Path.DirectorySeparatorChar)
+                    .Any(part => part is "bin" or "obj" || part.StartsWith("bin-", StringComparison.OrdinalIgnoreCase))
                 && !string.Equals(Path.GetFullPath(path), Path.GetFullPath(self), StringComparison.Ordinal))
             .Select(File.ReadAllText)
             .ToArray();
