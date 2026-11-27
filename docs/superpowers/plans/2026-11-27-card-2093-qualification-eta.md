@@ -25,7 +25,7 @@ One portable fixture assembly. The new ETA witnesses use small in-memory timing 
 ## Verification design
 
 - V-1 runs the hand-calculated CLI witness red before the repair and green on the candidate. Point 150 s, P50 12:02:30.000Z, P95 12:03:07.739Z, one unpriced chunk, and an UNVERIFIED line.
-- V-2 exercises early uncertainty, a missing baseline or invalid inputs, active progress, status and watcher output, and confirms the timing root is read-only.
+- V-2 exercises early uncertainty, a missing baseline or invalid inputs, active progress, status and watcher output, and confirms the timing root is read-only. The point and finish timestamp use the same whole milliseconds.
 - R-1 runs the required guard union, including PlanCheckpointClassSelectionGuardTests and the two companion live-gate methods.
 - R-2 runs the matched `nightly-live-lane` impact classes, LiveLaneRunnerTests and NightlyCoreGoldenTests, and the derived release-documentation classes, PerTaskFinalUnitLaneWitnessTests and ReleaseBranchModelDocumentationTests. The shared nightly code must retain the planning and live-lane fixture contracts, and the ETA documentation must preserve the per-task and release qualification rules.
 - R-3 checks entry-point wiring, diagnoses the retired estimate from the source chain and the reported incident, runs evidence-diff, and checks merge-tree against fresh origin/master. The inputs and arithmetic are portable. Record the scripts/lib startup-path census and its Windows pre-pick probe obligation.
@@ -37,12 +37,13 @@ One portable fixture assembly. The new ETA witnesses use small in-memory timing 
 | PC-3 | QualificationEtaTests.Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles | Substitute the 95th percentile of individual chunk ratios for the aggregate standard error. |
 | PC-4 | QualificationEtaTests.A_tiny_historical_duration_does_not_blow_up_the_finish_interval | Compute uncertainty from variance of individually divided ratios, reintroducing the tiny denominator. |
 | PC-5 | QualificationEtaTests.One_dominant_chunk_keeps_the_sample_provisional | Gate P95 by raw matched count instead of effective count. |
+| PC-6 | QualificationEtaTests.First_match_is_damped_and_active_chunk_counts_as_unfinished | Convert whole milliseconds back to floating seconds and pass them to AddSeconds. |
 
 ### Checkpoints
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes |
 |---|---|---|---|---|---|---|---:|---:|
-| CP-1 | all | `tests/Antiphon.Tests -> bin-c2093-eta-certified/` | eta-witness | `/*/*/QualificationEtaTests/Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles` | V-1 | exact method, 0 failed on candidate | 1 | 6 |
+| CP-1 | all | `tests/Antiphon.Tests -> bin-c2093-eta-ms/` | eta-witness | `/*/*/QualificationEtaTests/Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles` | V-1 | exact method, 0 failed on candidate | 1 | 6 |
 | CP-2 | all | CP-1 | eta-entry-points | `/*/*/(QualificationEtaTests*)\|(OperatorStatusTests*)\|(WatchQualTests*)/*` | V-2 | all three classes, 0 failed/skipped | 30 | 1 |
 | CP-3 | all | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | R-1 | all eleven classes, 0 failed/skipped | 78 | 1 |
 | CP-4 | all | CP-1 | live-gate-guards | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | R-1 | both methods, 0 failed/skipped | 2 | 1 |

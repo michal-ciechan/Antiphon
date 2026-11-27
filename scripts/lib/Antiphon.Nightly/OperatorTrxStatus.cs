@@ -175,11 +175,11 @@ namespace Antiphon.Nightly
                     + string.Join(", ", unknown.Take(BiggestChunkCount)) + (unknown.Length > BiggestChunkCount ? " and " + (unknown.Length - BiggestChunkCount) + " more" : "") + ".");
             if (known.Length > 0 || remaining.Length == 0)
             {
-                var projected = Math.Round(baselineSeconds * ratio, 3);
-                p50 = Finish(now, projected, errors);
-                if (p50 != null) point = projected;
+                var projectedMilliseconds = Math.Round(baselineSeconds * ratio * 1000);
+                p50 = Finish(now, projectedMilliseconds, errors);
+                if (p50 != null) point = projectedMilliseconds / 1000;
                 if (upperRatio.HasValue)
-                    p95 = Finish(now, Math.Round(baselineSeconds * upperRatio.Value, 3), errors);
+                    p95 = Finish(now, Math.Round(baselineSeconds * upperRatio.Value * 1000), errors);
             }
 
             var confidence = point == null ? "unavailable" : upperRatio == null ? "provisional" : "matched";
@@ -187,10 +187,11 @@ namespace Antiphon.Nightly
                 unknown, known, finishedWithoutBaseline, matched.Length, previousPath, ratio, baselineSeconds, point, p50, p95, confidence);
         }
 
-        private static DateTimeOffset? Finish(DateTimeOffset now, double seconds, List<string> errors)
+        private static DateTimeOffset? Finish(DateTimeOffset now, double milliseconds, List<string> errors)
         {
-            if (seconds < (DateTimeOffset.MaxValue - now).TotalSeconds)
-                return now.AddSeconds(seconds);
+            var availableMilliseconds = (DateTimeOffset.MaxValue - now).Ticks / TimeSpan.TicksPerMillisecond;
+            if (milliseconds >= 0 && milliseconds <= availableMilliseconds)
+                return now.AddTicks((long)milliseconds * TimeSpan.TicksPerMillisecond);
             errors.Add("rc projected duration is outside the representable time range.");
             return null;
         }
