@@ -5,10 +5,8 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0294 S2: the four fixed lines above a Blocked-on-question parent note, and the
-/// positional <c>asks:</c> extraction shared with the drawer DTO. No NLP — a trailing
-/// <c>?</c> uses <see cref="BlockedQuestion.TryExtract"/>, otherwise the last non-empty
-/// line, capped at 240 characters.
+/// The caller's Blocked note and the ask shared with the drawer DTO. Structured fields
+/// take precedence over the question and last-line fallbacks for older reports.
 /// </summary>
 internal static class BlockedNote
 {
@@ -85,12 +83,16 @@ internal static class BlockedNote
 
     public static string ExtractAsks(string? report)
     {
-        if (BlockedQuestion.TryExtract(report, out var question, out _))
-            return Cap(Flatten(question));
-        if (string.IsNullOrWhiteSpace(report))
-            return "The delegate is blocked and gave no reason.";
+        var lines = ReportLines(report);
+        return ReadField(lines, "asks:") ?? LegacyAsk(lines);
+    }
 
-        var last = LastNonEmptyLine(report);
+    private static string LegacyAsk(string[] lines)
+    {
+        var narrative = lines.TakeWhile(line => !IsFooter(line)).Where(line => !IsControlLine(line)).ToArray();
+        if (BlockedQuestion.TryExtract(string.Join('\n', narrative), out var question, out _))
+            return Cap(Flatten(question));
+        var last = narrative.LastOrDefault(line => line.Length != 0);
         return string.IsNullOrWhiteSpace(last)
             ? "The delegate is blocked and gave no reason."
             : Cap(last);
@@ -113,7 +115,20 @@ internal static class BlockedNote
     public static string Format(AgentTask task, string report, DelegationSettings settings, string? retainedQuestion = null)
     {
         var shortId = DelegationReportFormatter.Short(task.Id);
-        var asks = ExtractAsks(retainedQuestion ?? report);
+        // A retained report's old recommendation cannot answer the newly asked question.
+        var lines = ReportLines(retainedQuestion ?? report);
+        var reason = ReadField(lines, "reason:");
+        var asks = ReadField(lines, "asks:") ?? LegacyAsk(lines);
+        var recommended = ReadField(lines, "recommended:", PipelineHandoff.MaxHandoffChars)
+            ?? ReadField(lines, "recommended action:", PipelineHandoff.MaxHandoffChars);
+        var reportedAuthority = ReadField(lines, "authority:");
+        var reportedNext = ReadField(lines, "next:");
+        if (retainedQuestion is null && recommended is null)
+        {
+            var handoff = PipelineHandoff.TryParse(report);
+            if (handoff.Kind == PipelineHandoffKind.Decide && handoff.Handoff is { } proposal)
+                recommended = Cap(Flatten(proposal), PipelineHandoff.MaxHandoffChars);
+        }
         var authority = string.IsNullOrWhiteSpace(task.StandingAuthority)
             ? null
             : Flatten(task.StandingAuthority.Trim());
@@ -131,13 +146,18 @@ internal static class BlockedNote
                     or reply {shortId} "<decision>". Escalate only repository-defined hard stops.
               """;
 
-        return string.Join('\n',
-        [
-            ReasonLine(task, settings, retainedQuestion is null ? null : ReasonQuestionAfterReply),
+        var note = new List<string>
+        {
+            reason is null ? ReasonLine(task, settings, retainedQuestion is null ? null : ReasonQuestionAfterReply)
+                : $"reason: {reason}",
             $"asks: {asks}",
-            authorityLine,
-            next.ReplaceLineEndings("\n"),
-        ]);
+        };
+        if (recommended is not null) note.Add($"recommended: {recommended}");
+        if (reportedAuthority is not null) note.Add($"reported authority: {reportedAuthority}");
+        if (reportedNext is not null) note.Add($"reported next: {reportedNext}");
+        note.Add(authorityLine);
+        note.Add(next.ReplaceLineEndings("\n"));
+        return string.Join('\n', note);
     }
 
     public static string WaitingNoteAuthorityLine(AgentTask task)
@@ -146,18 +166,31 @@ internal static class BlockedNote
         return $"authority on file — `continue {shortId}` becomes available if it Blocks; `refine` now if you want it typed sooner.";
     }
 
-    private static string LastNonEmptyLine(string report)
-    {
-        var last = report.ReplaceLineEndings("\n")
-            .Split('\n')
-            .Select(l => l.Trim())
-            .LastOrDefault(l => l.Length > 0);
-        return last ?? string.Empty;
-    }
+    private static string[] ReportLines(string? report) =>
+        (report ?? "").ReplaceLineEndings("\n").Split('\n', StringSplitOptions.TrimEntries);
+
+    private static string? ReadField(string[] lines, string prefix, int limit = AsksCap) => lines
+        .Where(line => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        .Select(line => line[prefix.Length..].Trim())
+        .Where(value => value.Length != 0 && !IsControlLine(value))
+        .Select(value => Cap(value, limit))
+        .LastOrDefault();
+
+    private static readonly string[] FieldPrefixes =
+        ["reason:", "asks:", "recommended:", "recommended action:", "authority:", "next:", "handoff:", "artifact:"];
+
+    private static bool IsControlLine(string line) =>
+        line.StartsWith("[antiphon-", StringComparison.OrdinalIgnoreCase)
+        || IsFooter(line)
+        || FieldPrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsFooter(string line) =>
+        line.Equals("--- next stage ---", StringComparison.OrdinalIgnoreCase)
+        || line.Equals("--- review evidence ---", StringComparison.OrdinalIgnoreCase);
 
     private static string Flatten(string text) =>
         string.Join(' ', text.ReplaceLineEndings("\n").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
-    private static string Cap(string text) =>
-        text.Length <= AsksCap ? text : text[..AsksCap];
+    private static string Cap(string text, int limit = AsksCap) =>
+        text.Length <= limit ? text : text[..limit];
 }

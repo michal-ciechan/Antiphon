@@ -39,7 +39,9 @@ public partial class AgentTaskReplyIntegrationTests
         bool routingPins = false,
         RecordingGitWorkspaceService? gitSpy = null,
         SaveChangesInterceptor? saveInterceptor = null,
-        LandDeliveryBoundary? boundary = null) =>
+        LandDeliveryBoundary? boundary = null,
+        string? connectionString = null,
+        TimeProvider? timeProvider = null) =>
         new(
             worktreeRoot,
             supervision: new SupervisionSettings
@@ -58,16 +60,18 @@ public partial class AgentTaskReplyIntegrationTests
             routingPins: routingPins,
             gitSpy: gitSpy,
             saveInterceptor: saveInterceptor,
-            boundary: boundary);
+            boundary: boundary,
+            connectionString: connectionString,
+            configureServices: timeProvider is null ? null : services => services.AddSingleton(timeProvider));
 
     private static async Task<(ScratchGitRepo Repo, AgentTask Task, Guid SessionId, Guid Parent)> SeedC527Async(
-        Action<AgentTask>? configure = null, string prefix = "c527")
+        Action<AgentTask>? configure = null, string prefix = "c527", string? connectionString = null)
     {
         var repo = new ScratchGitRepo(prefix);
         await File.WriteAllTextAsync(Path.Combine(repo.Path, ".gitignore"), "*.secret\n");
         await repo.CommitFileAsync("tracked.txt", "tracked\n");
-        var parent = await SeedSessionAsync(repo.Path);
-        await SeedParentHistoryAsync(parent);
+        var parent = await SeedSessionAsync(repo.Path, connectionString);
+        await SeedParentHistoryAsync(parent, connectionString);
         var (task, sessionId) = await SeedDispatchedTaskAsync(repo.Path, parent, t =>
         {
             t.RepoPath = repo.Path;
@@ -76,7 +80,7 @@ public partial class AgentTaskReplyIntegrationTests
             t.AgentKind = AgentKind.ClaudeCode;
             t.DispatchedAt = DateTime.UtcNow.AddMinutes(-1);
             configure?.Invoke(t);
-        });
+        }, connectionString);
         return (repo, task, sessionId, parent);
     }
 

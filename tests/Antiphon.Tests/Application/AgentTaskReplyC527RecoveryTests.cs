@@ -2,10 +2,12 @@ using System.Text.Json;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Orchestration;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
@@ -265,13 +267,17 @@ public partial class AgentTaskReplyIntegrationTests
     [Arguments("before-enqueue", true)]
     public async Task Structured_blocked_note_reaches_the_caller_once_with_parking_disabled(string cut, bool busy)
     {
-        var seeded = await SeedC527Async(t => t.StandingAuthority = "Run read-only checks.");
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var connection = schema.ConnectionString;
+        var seeded = await SeedC527Async(t => t.StandingAuthority = "Run read-only checks.", connectionString: connection);
         using var repo = seeded.Repo;
         if (busy)
-            await SeedEntryAsync(seeded.Parent, TranscriptKinds.AssistantText, "Still working.", DateTime.UtcNow);
+            await SeedEntryAsync(seeded.Parent, TranscriptKinds.AssistantText, "Still working.", DateTime.UtcNow,
+                connectionString: connection);
         var boundary = new C527FailureBoundary(cut);
-        var factory = C527Factory(repo.WorktreeRoot, boundary: boundary);
-        var terminal = AttachTerminal(factory, seeded.Parent);
+        var clock = new C544Clock();
+        var factory = C527Factory(repo.WorktreeRoot, boundary: boundary, connectionString: connection, timeProvider: clock);
+        var terminal = AttachTerminal(factory, seeded.Parent, connection);
         var report = $"""
             reason: Publishing is outside my authority.
             asks: Decide how to dispose of the release.
@@ -281,10 +287,11 @@ public partial class AgentTaskReplyIntegrationTests
             [antiphon-finding:{seeded.Task.Id.ToString("N")[..8]} found] verification incomplete
             """;
         await SeedTurnAsync(seeded.SessionId, DelegationReportFormatter.TaskMarker(seeded.Task.Id),
-            report + $"\n[antiphon-report:{seeded.Task.Id.ToString("N")[..8]} blocked]", closingVerdict: false);
-        await CreateService(factory).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
+            report + "\n" + DelegationReportFormatter.ReportToken(seeded.Task.Id, "blocked"),
+            closingVerdict: false, connectionString: connection);
+        await CreateService(factory, timeProvider: clock).OnTurnEndAsync(seeded.SessionId, CancellationToken.None);
 
-        await using var verify = CreateContext();
+        await using var verify = CreateContext(connection);
         var task = await verify.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == seeded.Task.Id);
         task.Status.ShouldBe(AgentTaskStatus.Blocked);
         task.Result.ShouldBe(report);
@@ -297,18 +304,24 @@ public partial class AgentTaskReplyIntegrationTests
         boundary.Hits.ShouldBe(cut == "none" ? 0 : 1);
         if (cut != "none")
             (await verify.SessionQueuedMessages.AnyAsync(m => m.SourceLandNotificationId == note.Id)).ShouldBeFalse();
+        if (cut == "settlement-saved") note.State.ShouldBe(LandNotificationState.Queued);
+        if (cut == "before-enqueue") note.State.ShouldBe(LandNotificationState.RetryPending);
 
-        await C527ReconcileAsync(factory, note.Id);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var scanner = new AgentTaskLandNotificationHostedService(
+            factory.ServiceProvider.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<AgentTaskLandNotificationHostedService>.Instance);
+        await scanner.ScanLandNotificationsOnceAsync(CancellationToken.None);
         await Queue(factory).FlushSessionAsync(seeded.Parent, CancellationToken.None);
         if (busy)
         {
             terminal.SubmittedBodies.ShouldBeEmpty();
-            await SeedEntryAsync(seeded.Parent, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+            await SeedEntryAsync(seeded.Parent, TranscriptKinds.TurnEnd, null, DateTime.UtcNow, connectionString: connection);
             await Queue(factory).OnTurnEndAsync(seeded.Parent, CancellationToken.None);
         }
-        await C527ReconcileAsync(factory, note.Id);
-        await C527ReconcileAsync(factory, note.Id);
-        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, task, report);
+        await scanner.ScanLandNotificationsOnceAsync(CancellationToken.None);
+        await scanner.ScanLandNotificationsOnceAsync(CancellationToken.None);
+        var receipt = await AssertParentReceivedNoteAsync(seeded.Parent, task, report, connection);
         receipt.Note.SourceLandNotificationId.ShouldBe(note.Id);
         receipt.Prompt.Text.ShouldBe(note.Body);
         receipt.Note.NoteHeader.ShouldNotBeNull();

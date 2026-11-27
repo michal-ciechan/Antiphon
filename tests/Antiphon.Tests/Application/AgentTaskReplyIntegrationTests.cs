@@ -5363,17 +5363,18 @@ public partial class AgentTaskReplyIntegrationTests
     /// CARD-0055's confirm gate reads, so a delivery driven through this fake is judged the way
     /// production judges one.
     /// </summary>
-    internal static FakeAgentProtocolAdapter AttachTerminal(TestScopeFactory factory, Guid sessionId)
+    internal static FakeAgentProtocolAdapter AttachTerminal(TestScopeFactory factory, Guid sessionId, string? connectionString = null)
     {
+        connectionString ??= TestDbFixture.ConnectionString;
         var adapter = new FakeAgentProtocolAdapter
         {
             OnSubmitted = async submitted =>
             {
-                await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, DateTime.UtcNow);
-                await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+                await SeedEntryAsync(sessionId, TranscriptKinds.UserPrompt, submitted, DateTime.UtcNow, connectionString: connectionString);
+                await SeedEntryAsync(sessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow, connectionString: connectionString);
             },
         };
-        adapter.EnableClaudeDialogObservation(TestDbFixture.ConnectionString, sessionId);
+        adapter.EnableClaudeDialogObservation(connectionString, sessionId);
         factory.ServiceProvider.GetRequiredService<AgentSessionRuntime>().Register(sessionId, adapter);
         return adapter;
     }
@@ -5384,11 +5385,11 @@ public partial class AgentTaskReplyIntegrationTests
     /// baseline falls back to CARD-0164's wall-clock arm; the sequence floor V-5's anti-duplicate
     /// claim rests on only exists once the session has written something.
     /// </summary>
-    internal static async Task SeedParentHistoryAsync(Guid parentSessionId)
+    internal static async Task SeedParentHistoryAsync(Guid parentSessionId, string? connectionString = null)
     {
-        await SeedEntryAsync(parentSessionId, TranscriptKinds.UserPrompt, "dispatch a delegate for the slice", DateTime.UtcNow);
-        await SeedEntryAsync(parentSessionId, TranscriptKinds.AssistantText, "Dispatched.", DateTime.UtcNow);
-        await SeedEntryAsync(parentSessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow);
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.UserPrompt, "dispatch a delegate for the slice", DateTime.UtcNow, connectionString: connectionString);
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.AssistantText, "Dispatched.", DateTime.UtcNow, connectionString: connectionString);
+        await SeedEntryAsync(parentSessionId, TranscriptKinds.TurnEnd, null, DateTime.UtcNow, connectionString: connectionString);
     }
 
     internal static SessionMessageQueueService Queue(TestScopeFactory factory) =>
@@ -5401,9 +5402,9 @@ public partial class AgentTaskReplyIntegrationTests
     /// parent's transcript is provably THIS task's note and not a same-shaped neighbour.
     /// </summary>
     private static async Task<(SessionQueuedMessage Note, TranscriptEntry Prompt)> AssertParentReceivedNoteAsync(
-        Guid parentSessionId, AgentTask task, string report)
+        Guid parentSessionId, AgentTask task, string report, string? connectionString = null)
     {
-        await using var verify = CreateContext();
+        await using var verify = CreateContext(connectionString);
         var note = await verify.SessionQueuedMessages.AsNoTracking().SingleAsync(
             m => m.AgentSessionId == parentSessionId && m.Origin == QueuedMessageOrigin.Delegation);
         note.Status.ShouldBe(QueuedMessageStatus.Sent);
@@ -5723,9 +5724,9 @@ public partial class AgentTaskReplyIntegrationTests
     /// <summary>One entry appended at the session's next sequence, with a real record timestamp.</summary>
     internal static async Task SeedEntryAsync(
         Guid sessionId, string kind, string? text, DateTime timestamp, string? apiCallId = null,
-        string? toolUseId = null, string? toolName = null)
+        string? toolUseId = null, string? toolName = null, string? connectionString = null)
     {
-        await using var db = CreateContext();
+        await using var db = CreateContext(connectionString);
         var seq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId)
             .MaxAsync(t => (long?)t.Sequence) ?? 0;

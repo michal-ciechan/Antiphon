@@ -1536,6 +1536,9 @@ public sealed partial class AgentTaskReplyService
                 && services.GetService<IOptions<BlockedTaskParkingOptions>>()?.Value.Enabled == true
             ? TaskCompletionNotification.AppliesToRunnerSyncBlock(task)
             : TaskCompletionNotification.Applies(task);
+        // A newly stored Blocked report owes its caller a note even while parking is disabled.
+        // A question after Reply that retains a prior report keeps its own question-note identity.
+        owesCompletion |= !retainedUnmarked && TaskCompletionNotification.AppliesToBlockedReport(task);
         // Snapshot the final successor observation before composing the caller's header.
         // Child reservation rechecks under the existing card/handoff admission locks.
         await TaskSuccessorFence.ApplyAsync(db, task, now, ct);
@@ -3142,7 +3145,7 @@ public sealed partial class AgentTaskReplyService
         var snapshot = new TaskCompletionNotification.Snapshot(
             TaskCompletionNotification.SnapshotVersion, task.Id, task.RootTaskId, settlementEvent.Id, outcome?.Id,
             task.ParentSessionId!.Value, task.Status, report, TaskCompletionNotification.Sha256(report),
-            DelegationNoteDigest.Compute(report), task.VerificationProfileVersion!.Value, task.VerificationRound!.Value,
+            DelegationNoteDigest.Compute(report), task.VerificationProfileVersion, task.VerificationRound,
             outcome?.OrdinaryScopeCompleted, task.VerificationSubjectTaskId, task.VerificationBaselineOutcomeId,
             admission?.Selection, task.VerificationRound == VerificationRound.Interim,
             handoff.Kind is { } kind ? PipelineHandoff.Token(kind) : null, handoff.Handoff,

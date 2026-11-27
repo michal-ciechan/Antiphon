@@ -8,8 +8,8 @@ using Antiphon.Server.Domain.Enums;
 namespace Antiphon.Server.Application.Services;
 
 /// <summary>
-/// CARD-0544 D-9. Composes the durable caller-completion obligation for a profile-v1 Code/Review
-/// settlement on the CARD-0481 <see cref="AgentTaskLandNotification"/> outbox. Not a transport and
+/// Composes durable caller notes for a profile-v1 Code/Review settlement or a new Blocked
+/// report on the CARD-0481 <see cref="AgentTaskLandNotification"/> outbox. Not a transport and
 /// not a worker: the reply settlement adds the row to its own transaction, and the existing
 /// <see cref="AgentTaskLandNotificationService"/> / hosted scanner deliver and confirm it.
 ///
@@ -28,8 +28,7 @@ public static class TaskCompletionNotification
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     /// <summary>
-    /// G-119: only profile-v1 terminal reported settlements that reply into a session. Legacy
-    /// (null-profile), non-session and Blocked/question settlements keep today's direct note.
+    /// G-119: profile-v1 terminal reported settlements that reply into a session.
     /// </summary>
     public static bool Applies(AgentTask task) =>
         Profiled(task)
@@ -44,11 +43,16 @@ public static class TaskCompletionNotification
     public static bool AppliesToRunnerSyncBlock(AgentTask task) =>
         Applies(task) || (Profiled(task) && task.Status == AgentTaskStatus.Blocked);
 
+    public static bool AppliesToBlockedReport(AgentTask task) =>
+        task.Status == AgentTaskStatus.Blocked && task.SourceLandingOperationId is null && HasCaller(task);
+
     private static bool Profiled(AgentTask task) =>
         task.VerificationProfileVersion is not null
         && task.VerificationRound is not null
-        && task.ReplyTo == AgentTaskReplyTo.Session
-        && task.ParentSessionId is not null;
+        && HasCaller(task);
+
+    private static bool HasCaller(AgentTask task) =>
+        task.ReplyTo == AgentTaskReplyTo.Session && task.ParentSessionId is not null;
 
     public sealed record Snapshot(
         int Version,
@@ -61,8 +65,8 @@ public static class TaskCompletionNotification
         string RawResult,
         string RawSha256,
         string NoteDigest,
-        int ProfileVersion,
-        VerificationRound Round,
+        int? ProfileVersion,
+        VerificationRound? Round,
         VerificationScope? CompletedScope,
         Guid? SubjectTaskId,
         Guid? BaselineOutcomeId,
