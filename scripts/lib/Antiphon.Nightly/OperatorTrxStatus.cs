@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
+using System.Numerics;
 using System.Text.Json.Nodes;
 using System.Xml;
 
@@ -15,13 +16,14 @@ namespace Antiphon.Nightly
         private const int BiggestChunkCount = 8;
         private const double PriorMatches = 20;
         private const int MinimumMatchedPriorSeconds = 20;
-        private const double MinimumPercentileMatches = 20;
+        private const int MinimumPercentileMatches = 20;
         private const double NormalP95 = 1.645;
         private static readonly StringComparer ChunkNames = StringComparer.OrdinalIgnoreCase;
 
         private sealed record ChunkTime(DateTimeOffset Start, DateTimeOffset Finish)
         {
-            public double Seconds => (Finish - Start).TotalSeconds;
+            public TimeSpan Duration => Finish - Start;
+            public double Seconds => Duration.TotalSeconds;
         }
 
         internal sealed record Observation(int TrxCount, int FinishedChunks, int? ScheduledEntries, JsonArray Failures,
@@ -126,26 +128,36 @@ namespace Antiphon.Nightly
             var unknown = remaining.Where(chunk => previous.GetValueOrDefault(chunk) == null).ToArray();
             var finishedWithoutBaseline = planned.Count(chunk => live.ContainsKey(chunk) && previous.GetValueOrDefault(chunk) == null);
             var matched = planned.Where(chunk => live.GetValueOrDefault(chunk) != null && previous.GetValueOrDefault(chunk)?.Seconds > 0)
-                .Select(chunk => (Live: live[chunk].Seconds, Prior: previous[chunk].Seconds)).ToArray();
+                .Select(chunk => (Live: live[chunk].Seconds, Prior: previous[chunk].Duration)).ToArray();
 
             double ratio = 1;
             double? upperRatio = null;
-            var priorSeconds = matched.Sum(chunk => chunk.Prior);
-            // A few milliseconds of comparable history cannot establish the speed of the remaining run.
-            if (priorSeconds >= MinimumMatchedPriorSeconds)
+            var totalTicks = BigInteger.Zero;
+            var sumOfSquares = BigInteger.Zero;
+            foreach (var chunk in matched)
             {
+                var ticks = (BigInteger)chunk.Prior.Ticks;
+                totalTicks += ticks;
+                sumOfSquares += ticks * ticks;
+            }
+            // A few milliseconds of comparable history cannot establish the speed of the remaining run.
+            if (totalTicks >= MinimumMatchedPriorSeconds * TimeSpan.TicksPerSecond)
+            {
+                var priorSeconds = (double)totalTicks / TimeSpan.TicksPerSecond;
                 var rawRatio = matched.Sum(chunk => chunk.Live) / priorSeconds;
                 // The effective count discounts unequal weights. One long chunk can dominate the ratio
                 // even when many short chunks have finished.
-                var effective = priorSeconds * priorSeconds / matched.Sum(chunk => chunk.Prior * chunk.Prior);
+                var squaredTotal = totalTicks * totalTicks;
+                var effective = (double)squaredTotal / (double)sumOfSquares;
                 ratio += (rawRatio - 1) * effective / (effective + PriorMatches);
-                if (effective >= MinimumPercentileMatches)
+                // Compare before floating-point division so fractional weights meet the threshold exactly.
+                if (squaredTotal >= MinimumPercentileMatches * sumOfSquares)
                 {
                     // Use elapsed-second residuals so a very short historical chunk cannot inflate
                     // the interval just by putting a tiny denominator under its individual ratio.
                     var squaredResiduals = matched.Sum(chunk =>
                     {
-                        var residual = chunk.Live - rawRatio * chunk.Prior;
+                        var residual = chunk.Live - rawRatio * chunk.Prior.TotalSeconds;
                         return residual * residual;
                     });
                     var standardError = Math.Sqrt(squaredResiduals / (1 - 1 / effective)) / priorSeconds;
