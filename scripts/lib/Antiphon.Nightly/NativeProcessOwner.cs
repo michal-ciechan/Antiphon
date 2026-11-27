@@ -117,6 +117,8 @@ namespace Antiphon.Nightly
         // Windows CommandLineToArgvW/CRT encoding, including empty tokens and trailing slashes.
         private static string Quote(string value)
         {
+            // WSL recognizes switches such as -e before parsing the remaining command line.
+            if (value.Length > 0 && !value.Any(c => char.IsWhiteSpace(c) || c == '"')) return value;
             var text = new StringBuilder("\"");
             int slashes = 0;
             foreach (char c in value)

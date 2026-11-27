@@ -82,7 +82,7 @@ public sealed class NightlyNativeOwnershipTests
     [Test, Timeout(120_000)]
     public Task C1039_AssignBeforeResume(CancellationToken cancellationToken) => RunAsync(nameof(C1039_AssignBeforeResume), native =>
     {
-        string[] tokens = ["path with spaces", "", "a\"b", @"C:\tail\", "/*/*/(A)|(B)/*", "*", "$literal"];
+        string[] tokens = ["path with spaces", "", "a\"b", @"C:\tail\", @"C:\tail space\", "/*/*/(A)|(B)/*", "*", "$literal"];
         var r = native.NewRun("suspended root", "descendant", ["assignment"], tokens: tokens);
         native.WaitFor(() => File.Exists(Path.Combine(r.Root, "assignment.entered")), "assignment barrier");
         var rootHandle = native.Hold(Process.GetProcessById(r.Owner.Observation.Pid));
