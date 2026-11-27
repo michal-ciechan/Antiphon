@@ -37,7 +37,7 @@ public sealed class ReviewEngineRouteDocumentationTests
             var groups = Regex.Matches(source, """var\s+(\w+)\s*=\s*app\.MapGroup\((?:"([^"]+)"|(Prefix))\)""")
                 .ToDictionary(match => match.Groups[1].Value,
                     match => match.Groups[3].Success ? ReviewAuthEndpoints.Prefix : match.Groups[2].Value);
-            foreach (Match match in Regex.Matches(source, """\b(\w+)\.Map(Get|Post|Put|Patch|Delete)\(\s*"([^"]+)""""))
+            foreach (Match match in Regex.Matches(source, """\b(\w+)\.Map(Get|Post|Put|Patch|Delete)\(\s*"([^"]+)["]"""))
             {
                 var prefix = groups.GetValueOrDefault(match.Groups[1].Value);
                 var path = (prefix + match.Groups[3].Value).TrimEnd('/');
