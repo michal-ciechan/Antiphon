@@ -2046,7 +2046,16 @@ public class AgentSessionLaunchFailureTests
             var before = await store.ReadAsync(sessionId, CancellationToken.None);
             before.Working.ShouldBeTrue();
 
-            await Should.ThrowAsync<OperationCanceledException>(() => LaunchAsync(original, stop.Token));
+            OperationCanceledException? interrupted = null;
+            try
+            {
+                await LaunchAsync(original, stop.Token);
+            }
+            catch (OperationCanceledException ex)
+            {
+                interrupted = ex;
+            }
+            interrupted.ShouldNotBeNull().CancellationToken.ShouldBe(stop.Token);
             abandoned.Started.ShouldBeFalse();
             (await store.ReadAsync(sessionId, CancellationToken.None)).LastSequence.ShouldBe(before.LastSequence);
             (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId && m.Id != inboundId))
@@ -2110,24 +2119,23 @@ public class AgentSessionLaunchFailureTests
         }
     }
 
-    private sealed class ChannelBoundaryCommitCut(CancellationTokenSource stop) : SaveChangesInterceptor
+    private sealed class ChannelBoundaryCommitCut(CancellationTokenSource stop) : DbTransactionInterceptor
     {
         public Guid BoundaryId { get; private set; }
 
-        public override ValueTask<int> SavedChangesAsync(
-            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        public override Task TransactionCommittedAsync(DbTransaction transaction,
+            TransactionEndEventData eventData, CancellationToken cancellationToken = default)
         {
             if (eventData.Context?.ChangeTracker.Entries<TranscriptEntry>().SingleOrDefault(entry =>
                 entry.Entity.Kind == TranscriptKinds.SessionRestartBoundary) is { } boundary)
             {
-                // Ordinary synthetic appends have no outer transaction. At SavedChanges the
-                // row is durable, while PersistTranscriptCoreAsync has yet to return it to the store.
-                eventData.Context.Database.CurrentTransaction.ShouldBeNull();
+                // The boundary closes any open question, so its save commits under an explicit
+                // transaction. Cut after that commit, before the runtime publishes the new state.
                 BoundaryId = boundary.Entity.Id;
                 stop.Cancel();
                 stop.Token.ThrowIfCancellationRequested();
             }
-            return ValueTask.FromResult(result);
+            return Task.CompletedTask;
         }
     }
 
