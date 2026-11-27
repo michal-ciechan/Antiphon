@@ -1,4 +1,5 @@
 using Antiphon.Tests.Scripts;
+using Antiphon.ReleaseSelection;
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -7,14 +8,15 @@ using System.Text.RegularExpressions;
 
 // Additive release-only artifact mode. Ordinary one-argument behavior below is unchanged.
 // Inputs come from an immutable commit, never from candidate working bytes or schema 1.
-if (args.Length == 4 && args[0] == "--release-graph")
+if (args.Length >= 4 && args[0] == "--release-graph")
 {
     try
     {
+        var (provenSubtraction, compilerManifest, compilerManifestDigest) = ProofOptions(args[4..]);
         var repository = Path.GetFullPath(args[1]);
         var sha = args[2];
         if (!Regex.IsMatch(sha, "\\A[0-9a-f]{40}\\z", RegexOptions.CultureInvariant)
-            || Text(Git(repository, ["rev-parse", "--verify", sha + "^{commit}"])).Trim() != sha)
+            || Text(Git(repository, ["rev-parse", "--verify", sha + "^{commit}"], pinObjects: provenSubtraction)).Trim() != sha)
             throw new ArgumentException("release graph requires an exact lowercase 40-hex commit SHA");
         var output = Path.GetFullPath(args[3]);
         var relativeOutput = Path.GetRelativePath(repository, output).Replace('\\', '/');
@@ -24,7 +26,7 @@ if (args.Length == 4 && args[0] == "--release-graph")
             throw new ArgumentException("release graph requires a fresh ignored .antiphon/selector-replay/*.json output");
         Git(repository, ["check-ignore", "--quiet", "--", relativeOutput]);
 
-        var entries = Text(Git(repository, ["ls-tree", "-r", "-z", "--full-tree", sha]))
+        var entries = Text(Git(repository, ["ls-tree", "-r", "-z", "--full-tree", sha], pinObjects: provenSubtraction))
             .Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(row =>
             {
                 var tab = row.IndexOf('\t');
@@ -32,9 +34,10 @@ if (args.Length == 4 && args[0] == "--release-graph")
                 return new { Path = row[(tab + 1)..], Mode = header[0], Blob = header[2] };
             }).OrderBy(row => row.Path, StringComparer.Ordinal).ToArray();
         var sourceEntries = entries.Where(row => row.Mode is "100644" or "100755"
-            && row.Path.EndsWith(".cs", StringComparison.Ordinal)).ToArray();
+            && (row.Path.EndsWith(".cs", StringComparison.Ordinal)
+                || provenSubtraction && row.Path == "tests/impacted-classes.json")).ToArray();
         byte[] batch = sourceEntries.Length == 0 ? [] : Git(repository, ["cat-file", "--batch"],
-            string.Join('\n', sourceEntries.Select(row => row.Blob)) + "\n");
+            string.Join('\n', sourceEntries.Select(row => row.Blob)) + "\n", pinObjects: provenSubtraction);
         var inputs = entries.Where(row => row.Mode is "100644" or "100755")
             .ToDictionary(row => row.Path, _ => "", StringComparer.Ordinal);
         var position = 0;
@@ -54,17 +57,48 @@ if (args.Length == 4 && args[0] == "--release-graph")
         }
         if (position != batch.Length) throw new InvalidDataException("release graph blob payload trailing data");
 
-        var graph = ReleaseImpactGraphBuilder.Build(inputs);
         var unsupported = entries.Where(row => row.Mode is not ("100644" or "100755"))
-            .Select(row => "unsupported-git-entry:" + row.Path);
-        graph = graph with { IncompleteReasons = graph.IncompleteReasons.Concat(unsupported).Order(StringComparer.Ordinal).ToArray() };
+            .Select(row => "unsupported-git-entry:" + row.Path).ToArray();
         var inventory = string.Concat(entries.Select(row => row.Path + "\0" + row.Mode + "\0" + row.Blob + "\n"));
-        var artifact = ReleaseImpactGraphBuilder.Serialize(new
+        var inventoryDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory)));
+        var (graph, body) = provenSubtraction ? ProvenArtifact() : LegacyArtifact();
+        var artifact = ReleaseImpactGraphBuilder.Serialize(body);
+        (ReleaseImpactGraph Graph, object Body) LegacyArtifact()
         {
-            schema = "antiphon-release-graph-artifact-v1", sourceSha = sha,
-            inputManifestDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(inventory))),
-            inputs = entries, graph,
-        });
+            var legacy = WithGitGaps(ReleaseImpactGraphBuilder.Build(inputs));
+            return (legacy, new
+            {
+                schema = "antiphon-release-graph-artifact-v1", sourceSha = sha,
+                inputManifestDigest = inventoryDigest, inputs = entries, graph = legacy,
+            });
+        }
+
+        (ReleaseImpactGraph Graph, object Body) ProvenArtifact()
+        {
+            var binding = ReleaseCompilerInputs.Bind(sha,
+                entries.Where(row => row.Mode is "100644" or "100755").ToDictionary(row => row.Path, row => row.Blob, StringComparer.Ordinal),
+                Path.GetFullPath(compilerManifest!), compilerManifestDigest!);
+            var proof = ReleaseImpactGraphBuilder.BuildWithTypeProof(inputs, binding);
+            var refined = WithGitGaps(proof.Refined);
+            using var producer = File.OpenRead(typeof(ReleaseImpactGraphBuilder).Assembly.Location);
+            return (refined, new
+            {
+                schema = "antiphon-release-graph-artifact-v2", sourceSha = sha, inputManifestDigest = inventoryDigest,
+                provenSubtraction = true, proofEligible = binding.Eligible, binding.Reason, binding.ManifestDigest,
+                producerBinarySha256 = Convert.ToHexStringLower(SHA256.HashData(producer)),
+                compilerContexts = binding.Contexts.Select(bound => new
+                {
+                    bound.Input.Project, bound.Input.Assembly, bound.Input.OperatingSystem, bound.Input.Architecture,
+                    bound.Input.Framework, bound.Input.RuntimeIdentifier, bound.Input.Configuration, bound.Input.Platform,
+                }),
+                legacyReaders = DerivedImpactIndexBuilder.LegacyReaders(inputs),
+                inputs = entries, graph = refined, conservative = WithGitGaps(proof.Conservative), typeSites = proof.Sites,
+            });
+        }
+        ReleaseImpactGraph WithGitGaps(ReleaseImpactGraph value) => value with
+        {
+            IncompleteReasons = value.IncompleteReasons.Concat(unsupported).Order(StringComparer.Ordinal).ToArray(),
+        };
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         using (var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None)) stream.Write(artifact);
         Console.WriteLine($"release-impact graph incomplete/Full classes={graph.Universe.Length} paths={graph.Edges.Length} source={sha}");
@@ -79,7 +113,8 @@ if (args.Length == 4 && args[0] == "--release-graph")
 
 if (args.Length != 1 || string.IsNullOrWhiteSpace(args[0]))
 {
-    Console.Error.WriteLine("usage: Antiphon.DerivedImpactIndex <repo> | --release-graph <repo> <commit-sha> <fresh-ignored-json>");
+    Console.Error.WriteLine("usage: Antiphon.DerivedImpactIndex <repo> | --release-graph <repo> <commit-sha> <fresh-ignored-json>"
+        + " [--proven-subtraction --compiler-manifest <manifest.json> --expected-compiler-manifest-sha256 <sha256>]");
     return 1;
 }
 
@@ -104,7 +139,30 @@ return 0;
 
 static string Text(byte[] bytes) => Encoding.UTF8.GetString(bytes);
 
-static byte[] Git(string root, string[] arguments, string? input = null)
+static (bool Enabled, string? Manifest, string? Digest) ProofOptions(string[] options)
+{
+    var enabled = false;
+    var values = new Dictionary<string, string>(StringComparer.Ordinal);
+    for (var i = 0; i < options.Length; i++)
+    {
+        var key = options[i];
+        if (key == "--proven-subtraction" && !enabled)
+        {
+            enabled = true;
+            continue;
+        }
+        if (key is not ("--compiler-manifest" or "--expected-compiler-manifest-sha256") || ++i >= options.Length
+            || string.IsNullOrWhiteSpace(options[i]) || !values.TryAdd(key, options[i]))
+            throw new ArgumentException("invalid release graph options");
+    }
+    var manifest = values.GetValueOrDefault("--compiler-manifest");
+    var digest = values.GetValueOrDefault("--expected-compiler-manifest-sha256");
+    if ((manifest is null) != (digest is null) || enabled && manifest is null)
+        throw new ArgumentException("release graph proof requires a compiler manifest and its independently pinned SHA-256");
+    return (enabled, manifest, digest);
+}
+
+static byte[] Git(string root, string[] arguments, string? input = null, bool pinObjects = false)
 {
     var start = new ProcessStartInfo("git")
     {
@@ -112,6 +170,7 @@ static byte[] Git(string root, string[] arguments, string? input = null)
         RedirectStandardInput = input is not null, UseShellExecute = false,
     };
     foreach (var key in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE" }) start.Environment.Remove(key);
+    if (pinObjects) start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
     foreach (var argument in arguments) start.ArgumentList.Add(argument);
     var watch = Stopwatch.StartNew();
     using var process = Process.Start(start) ?? throw new InvalidOperationException("Git did not start");

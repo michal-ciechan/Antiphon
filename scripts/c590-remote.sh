@@ -1606,10 +1606,62 @@ c849_assert_mounts() {
         "$container" > "$CASE_DIR/runner-mounts.txt"
 }
 
+# Unit 68 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md: a container step runs Antiphon code (build-slot, the
+# saved-donor import) from the host-published CLI, mounted read-only and started with dotnet exec from sh; no pwsh. Nothing builds
+# or restores the CLI inside a container: the C849 cases measure the NuGet caches those containers use. $CHECKOUT's scripts/antiphon
+# publishes the build of the checkout's CLI inputs on this host on its first call and names it in bin-launcher/antiphon-scripts/current
+# (docs/testing-and-build.md, "The CLI entry (cached launcher)"); the image's .NET 9 runtime runs it (framework-dependent net9.0).
+# Every container sees it at /opt/antiphon-cli.
+C849_CLI_DIR=''
+
+# c849_cli: the host-published CLI's folder in C849_CLI_DIR (resolved once; a harness may preset it); 1 when there is none. Any CLI
+# call checks the checkout's inputs first and publishes when they changed (no arguments is the usage, exit 2; 9 is a CLI that could
+# not be built). The publish runs with umask 022 so uid 1654 can read it in a container; a folder another umask left unreadable is
+# refused, not changed. Its output goes to the case's cli.log.
+c849_cli() {
+    [ -z "${C849_CLI_DIR:-}" ] || return 0
+    local cache="$CHECKOUT/bin-launcher/antiphon-scripts" id='' code=0
+    [ -f "$CHECKOUT/scripts/antiphon" ] || return 1
+    ( umask 022; sh "$CHECKOUT/scripts/antiphon" ) >> "$CASE_DIR/cli.log" 2>&1 || code=$?
+    [ "$code" != 9 ] || return 1
+    { IFS= read -r id < "$cache/current" || [ -n "$id" ]; } 2>/dev/null || return 1
+    case "$id" in ''|*[!0-9a-f]*) return 1 ;; esac
+    [ -f "$cache/$id/Antiphon.Scripts.dll" ] && [ ! -L "$cache/$id" ] || return 1
+    [ -z "$(find "$cache/$id" \( \( -type f ! -perm -004 \) -o \( -type d ! -perm -005 \) \) -print -quit 2>/dev/null)" ] || return 1
+    C849_CLI_DIR="$cache/$id"
+}
+
+# c849_cli_enter <container>: the CLI's DLL inside a running container. A helper this script starts mounts the host build at
+# /opt/antiphon-cli; a runner, which cannot take a new mount, gets a root-owned copy for this run under its /tmp (docker cp) that
+# uid 1654 can read and not change, and c849_cli_leave removes it.
+c849_cli_enter() {
+    local container="$1" mounted copy="/tmp/c849-cli-$RUN"
+    c849_cli || return 1
+    mounted="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/opt/antiphon-cli"}}{{.Destination}}{{end}}{{end}}' "$container")" \
+        || return 1
+    if [ "$mounted" = /opt/antiphon-cli ]; then printf '%s\n' /opt/antiphon-cli/Antiphon.Scripts.dll; return 0; fi
+    docker exec -u 0:0 "$container" rm -rf -- "$copy" >/dev/null 2>&1 || return 1
+    docker cp "$C849_CLI_DIR/." "$container:$copy" >/dev/null 2>&1 || return 1
+    docker exec -u 0:0 "$container" chmod -R a+rX,go-w -- "$copy" >/dev/null 2>&1 || return 1
+    printf '%s/Antiphon.Scripts.dll\n' "$copy"
+}
+
+c849_cli_leave() {
+    local container="$1" dll="$2"
+    if [ "$dll" = "/tmp/c849-cli-$RUN/Antiphon.Scripts.dll" ]; then
+        docker exec -u 0:0 "$container" rm -rf -- "/tmp/c849-cli-$RUN" >/dev/null 2>&1 || true
+    fi
+}
+
 c849_smoke() {
-    local container="$1" runner_id="$2" pack
-    docker exec -u 1654:1654 -e HOME=/home/app -i "$container" /bin/sh -s > "$CASE_DIR/smoke.txt" <<'C849_SMOKE_SCRIPT' \
-        || write_result false CacheSmokeFailed 2
+    local container="$1" runner_id="$2" pack cli=/opt/antiphon-cli/Antiphon.Scripts.dll code=0
+    # A third argument "unmounted" (the masked-pack control) enters no CLI: that smoke refuses before build-slot runs.
+    if [ "${3:-}" != unmounted ]; then
+        c849_cli || write_result false CacheSmokeFailed 2
+        cli="$(c849_cli_enter "$container")" || write_result false CacheSmokeFailed 2
+    fi
+    docker exec -u 1654:1654 -e HOME=/home/app -e "C849_CLI=$cli" -i "$container" /bin/sh -s > "$CASE_DIR/smoke.txt" <<'C849_SMOKE_SCRIPT' \
+        || code=$?
 set -eu
 test "$(id -u)" = 1654
 test "$NUGET_PACKAGES" = /home/app/.nuget/packages
@@ -1643,9 +1695,11 @@ test "$output" = CARD0849_APPHOST_OK
 test -z "$(find "$NUGET_PACKAGES" -mindepth 1 -maxdepth 1 -iname 'microsoft.*.app.*' -print -quit)"
 EOF
 export DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=true
-pwsh -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1 -Label c849-smoke -- /bin/sh "$root/driver.sh" "$root" >/dev/null
+dotnet exec "$C849_CLI" build-slot --label c849-smoke -- /bin/sh "$root/driver.sh" "$root" >/dev/null
 printf 'C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK\n'
 C849_SMOKE_SCRIPT
+    c849_cli_leave "$container" "$cli"
+    [ "$code" = 0 ] || write_result false CacheSmokeFailed 2
     if ! grep -q '^C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK$' "$CASE_DIR/smoke.txt"; then
         write_result false CacheSmokeReceiptMissing 2
     fi
@@ -2047,11 +2101,14 @@ c849_saved_copy() {
         && [ "$(realpath -e -- "$source" 2>/dev/null)" = "$source" ] \
         && { [ -f "$source" ] || [ -d "$source" ]; } \
         || { printf 'CacheSavedDonorInvalid\n'; return 2; }
-    diagnosis="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint pwsh \
+    # Unit 68: the import is the host-published CLI's c849-import-saved-donor (C849SavedDonorImport), mounted read-only; the
+    # bridge no longer copies scripts/c849-import-saved-donor.ps1 here. Its stdout is the diagnosis, as the script's was.
+    c849_cli || { printf 'CacheSavedDonorReadFailed\n'; return 2; }
+    diagnosis="$(docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint dotnet \
         --mount "type=bind,source=$source,target=/saved,readonly" \
         --mount "type=bind,source=$stage,target=/stage" \
-        --mount "type=bind,source=$ROOT/c849-import-saved-donor.ps1,target=/import.ps1,readonly" \
-        "$image" -NoProfile -File /import.ps1 -Source /saved -Stage /stage)" \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
+        "$image" exec /opt/antiphon-cli/Antiphon.Scripts.dll c849-import-saved-donor --source /saved --stage /stage)" \
         || { printf '%s\n' "${diagnosis:-CacheSavedDonorReadFailed}"; return 2; }
 }
 
@@ -2483,6 +2540,7 @@ c849_seed() {
     helper="c849-seed-$RUN"
     local -a helper_launch=(docker run) helper_release=(docker rm -f)
     if [ "$backend" = volume ]; then helper_launch=(c849_fixture_launch run); helper_release=(c849_fixture_consumer_release); fi
+    c849_cli || c849_seed_failure "$donor" CacheSeedProbeStartFailed
     "${helper_launch[@]}" -d --name "$helper" --network antiphon-build-slots --user 1654:1654 \
         --entrypoint sleep -e HOME=/home/app \
         -e NUGET_PACKAGES=/home/app/.nuget/packages \
@@ -2492,7 +2550,7 @@ c849_seed() {
         --mount "type=volume,source=$C849_PACKAGES,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$C849_SCRATCH,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
-        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
         "$image" infinity >/dev/null || c849_seed_failure "$donor" CacheSeedProbeStartFailed
     if ! (c849_smoke "$helper" seed); then
         "${helper_release[@]}" "$helper" >/dev/null 2>&1 || true
@@ -3029,8 +3087,11 @@ c849_prune() {
     [ -n "$main_container" ] || write_result false CacheConsumerUnknown 2
     [ "$(docker exec -u 1654:1654 "$main_container" git -C /work/repos/antiphon rev-parse HEAD)" = "$SHA" ] \
         || write_result false CacheSourceMismatch 2
-    docker exec -u 1654:1654 -e HOME=/home/app -i "$main_container" /bin/sh -s > "$CASE_DIR/refill-summary.txt" <<'C849_REFILL' \
-        || write_result false CacheRefillFailed 2
+    local refill_cli refill_code=0
+    c849_cli || write_result false CacheRefillFailed 2
+    refill_cli="$(c849_cli_enter "$main_container")" || write_result false CacheRefillFailed 2
+    docker exec -u 1654:1654 -e HOME=/home/app -e "C849_CLI=$refill_cli" -i "$main_container" /bin/sh -s > "$CASE_DIR/refill-summary.txt" <<'C849_REFILL' \
+        || refill_code=$?
 set -eu
 root="$(mktemp -d /tmp/c849-refill-XXXXXXXX)"
 trap 'rm -rf "$root"' EXIT
@@ -3043,9 +3104,11 @@ dotnet restore Antiphon.sln -maxcpucount:1 -nodeReuse:false -p:NuGetAudit=false 
 cd client
 npm ci --ignore-scripts --no-audit --no-fund >/dev/null
 DRIVER
-pwsh -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1 -Label c849-refill -- /bin/sh "$root/driver.sh" "$root" >/dev/null
+dotnet exec "$C849_CLI" build-slot --label c849-refill -- /bin/sh "$root/driver.sh" "$root" >/dev/null
 printf 'C849_REFILL restore=0 npm=0\n'
 C849_REFILL
+    c849_cli_leave "$main_container" "$refill_cli"
+    [ "$refill_code" = 0 ] || write_result false CacheRefillFailed 2
     grep -Fxq 'C849_REFILL restore=0 npm=0' "$CASE_DIR/refill-summary.txt" \
         || write_result false CacheRefillReceiptMissing 2
     c849_smoke "$main_container" server2
@@ -4218,6 +4281,7 @@ c849_fixture_restore_container() {
     # The epoch is the parent's slot deadline, counted from container start so
     # the wait inside build-slot is included. driver.sh exits at that epoch.
     local go_deadline=$(( $(date +%s) + $(c849_fixture_slot_deadline_seconds) ))
+    c849_cli || return 1
     c849_fixture_launch run --rm --name "c849-${RUN}-restore-$project" --network antiphon-build-slots --user 1654:1654 --entrypoint /bin/sh \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
         -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch \
@@ -4226,8 +4290,8 @@ c849_fixture_restore_container() {
         --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "$work_mount" \
-        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
-        "$image" -c 'pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c849-fixture-restore -- /bin/sh "/fixture/race/$1" "/fixture/race/$2" "$3"' \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
+        "$image" -c 'dotnet exec /opt/antiphon-cli/Antiphon.Scripts.dll build-slot --label c849-fixture-restore -- /bin/sh "/fixture/race/$1" "/fixture/race/$2" "$3"' \
         sh "$driver" "$project" "$go_deadline"
 }
 
@@ -4295,7 +4359,7 @@ PS
 set -eu
 cd "$1"
 # $2 is the absolute epoch at which the go file must exist. Exiting makes
-# build-slot.ps1 release the lease in its finally block. A missing deadline
+# the build-slot command release the lease (unit 68: no pwsh). A missing deadline
 # still ends; the probe must not wait forever while it holds a slot.
 if [ -n "${2:-}" ]; then
     deadline=$2
@@ -4350,7 +4414,7 @@ PS
     c849_fixture_volume_chown_race || write_result false FixtureRaceWriteFailed 2
 }
 
-# 45 minutes matches scripts/build-slot.ps1 -SlotWaitMinutes. A digit-only
+# 45 minutes matches the build-slot command's --slot-wait-minutes default. A digit-only
 # C589_SLOT_WAIT_SECONDS is that gate's own seconds override, so the probe's
 # exit 4 and this deadline describe the same wait. The first granted slot stays
 # held until the second grant or this deadline. Releasing it to retry would
@@ -4688,6 +4752,7 @@ c849_fixture_on_signal() {
 
 c849_fixture_race_restore_barrier() {
     local image="$1" packages="$2" scratch="$3" a b slot=0
+    c849_cli || write_result false FixtureRestoreBarrierFailed 2
     C849_PROBE_TRACK=1 c849_fixture_restore_container "$image" p1 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p1.log" 2>&1 & a=$!
     c849_fixture_track_probe "$a" "c849-${RUN}-restore-p1"
     C849_PROBE_TRACK=1 c849_fixture_restore_container "$image" p2 "$packages" "$scratch" driver.sh > "$SERVER2_ROOT/race-p2.log" 2>&1 & b=$!
@@ -4763,6 +4828,7 @@ c849_fixture_race_lock_probe() {
 # Exit 4 is the build-slot gate. Any other failure stays the offline diagnosis.
 c849_fixture_offline_restore() {
     local image="$1" packages="$2" scratch="$3" code=0
+    c849_cli || write_result false FixtureOfflineRestoreFailed 2
     c849_fixture_restore_container "$image" p3 "$packages" "$scratch" offline.sh \
         > "$SERVER2_ROOT/race-offline.log" 2>&1 || code=$?
     if [ "$code" = 4 ]; then
@@ -4827,7 +4893,8 @@ c849_fixture_masked_pack() {
         --mount "type=volume,source=$mask,target=/usr/share/dotnet/packs/$pack/9.0.20,readonly,volume-nocopy" \
         "$image" infinity >/dev/null || return 1
     docker start "$helper" >/dev/null || return 1
-    (c849_smoke "$helper" fixture-masked) >/dev/null 2>&1 || code=$?
+    # The masked helper mounts only the mask and gets no CLI: its smoke refuses at the pack check, before build-slot.
+    (c849_smoke "$helper" fixture-masked unmounted) >/dev/null 2>&1 || code=$?
     c849_fixture_consumer_release "$helper" >/dev/null || return 1
     [ "$code" -ne 0 ] && grep -Fxq "ImagePackMissing:$pack" "$CASE_DIR/smoke.txt" \
         || { printf 'ControlNotSensitive\n'; return 2; }
@@ -4870,6 +4937,7 @@ c849_fixture_apphost() {
     c849_fixture_helper_lookup "$helper" || lookup=$?
     [ "$lookup" = 0 ] || write_result false FixtureNamespaceOccupied 2
     printf '%s\n' "$helper" >> "$CASE_DIR/.fixture-helpers"
+    c849_cli || write_result false FixtureAppHostStartFailed 2
     c849_fixture_launch create --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
         --label io.antiphon.owner=c849-fixture --label "io.antiphon.fixture-run=$RUN" --label io.antiphon.fixture-role=apphost \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
@@ -4878,7 +4946,7 @@ c849_fixture_apphost() {
         --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
-        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
         "$image" infinity >/dev/null || write_result false FixtureAppHostStartFailed 2
     docker start "$helper" >/dev/null || write_result false FixtureAppHostStartFailed 2
     printf '%s\n' "$helper" > "$CASE_DIR/.fixture-apphost"
@@ -5264,6 +5332,7 @@ c849_fixture_refill() {
     local image="$1" helper="c849-${RUN}-prune-smoke"
     c849_fixture_refill_tarball "$image" >/dev/null \
         || write_result false CacheRefillFailed 2
+    c849_cli || write_result false CacheRefillProbeStartFailed 2
     c849_fixture_launch run -d --name "$helper" --network antiphon-build-slots --user 1654:1654 --entrypoint sleep \
         -e HOME=/home/app -e NUGET_PACKAGES=/home/app/.nuget/packages \
         -e NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch -e NPM_CONFIG_CACHE=/home/app/.npm \
@@ -5271,7 +5340,7 @@ c849_fixture_refill() {
         --mount "type=volume,source=$C849_PACKAGES,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$C849_SCRATCH,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=volume,source=$C849_NPM,target=/home/app/.npm/_cacache,volume-nocopy" \
-        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/work/repos/antiphon/scripts/build-slot.ps1,readonly" \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
         "$image" infinity >/dev/null || write_result false CacheRefillProbeStartFailed 2
     printf '%s\n' "$helper" > "$CASE_DIR/.fixture-prune-smoke"
     c849_smoke "$helper" fixture-prune
@@ -5393,14 +5462,15 @@ c849_fixture_warm_probe() {
     local kind="$4"
     local code=0
     local output="$SERVER2_ROOT/warm-$kind.txt"
+    c849_cli || { printf 'ControlNotSensitive\n'; return 2; }
     docker run --rm --network antiphon-build-slots --user 1654:1654 --entrypoint /bin/bash \
         -e ANTIPHON_BUILD_SLOTS_URL=http://build-slots:8080/build-slots \
         --tmpfs /c660-home:exec,uid=1654,gid=1654,mode=0700 \
         --mount "type=volume,source=$packages,target=/home/app/.nuget/packages,volume-nocopy" \
         --mount "type=volume,source=$scratch,target=/var/cache/antiphon/nuget-scratch,volume-nocopy" \
         --mount "type=bind,source=$CHECKOUT/docker/session-runner-grok/verify-codex-image.sh,target=/probe.sh,readonly" \
-        --mount "type=bind,source=$CHECKOUT/scripts/build-slot.ps1,target=/scripts/build-slot.ps1,readonly" \
-        "$image" -c 'set -u; case "$1" in packages) p=/home/app/.nuget/packages;; scratch) p=/var/cache/antiphon/nuget-scratch;; home) p=/c660-home;; *) exit 2;; esac; printf warm > "$p/.warm"; code=0; pwsh -NoProfile -File /scripts/build-slot.ps1 -Label c913-warm-control -- /bin/bash /probe.sh net9-offline || code=$?; rm -f "$p/.warm"; exit "$code"' bash "$kind" \
+        --mount "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly" \
+        "$image" -c 'set -u; case "$1" in packages) p=/home/app/.nuget/packages;; scratch) p=/var/cache/antiphon/nuget-scratch;; home) p=/c660-home;; *) exit 2;; esac; printf warm > "$p/.warm"; code=0; dotnet exec /opt/antiphon-cli/Antiphon.Scripts.dll build-slot --label c913-warm-control -- /bin/bash /probe.sh net9-offline || code=$?; rm -f "$p/.warm"; exit "$code"' bash "$kind" \
         > "$output" 2>&1 || code=$?
     [ "$code" = 1 ] && grep -Eq "^C660_ROW net9-offline fail NuGet $kind( cache)? is not empty$" "$output" \
         || { printf 'ControlNotSensitive\n'; return 2; }

@@ -28,7 +28,7 @@ namespace Antiphon.Nightly
     public static class RcSelectionReplay
     {
         public const string Name = "replay-rc-selection";
-        public const string Usage = "replay-rc-selection --input-root <dir> --output <new-dir> --as-of <yyyy-MM-ddTHH:mm:ssZ> [--repository-root <git>]";
+        public const string Usage = "replay-rc-selection --input-root <dir> --output <new-dir> --as-of <yyyy-MM-ddTHH:mm:ssZ> [--repository-root <git>] [--proven-subtraction]";
         public const string VerdictFormat = "antiphon-rc-replay-verdict-v1";
         public const string AlgorithmRevision = "card-1836-replay-r2";
         const string ManifestName = "MANIFEST.sha256";
@@ -52,6 +52,7 @@ namespace Antiphon.Nightly
             public string[] Classes = Array.Empty<string>();
             public string[] Consumes = Array.Empty<string>();
             public string[] Cases = Array.Empty<string>();
+            public RcCaseIdentity[] Members = Array.Empty<RcCaseIdentity>();
             public double? PriorWallSeconds;
             public string ContentDigest = "";
         }
@@ -63,6 +64,7 @@ namespace Antiphon.Nightly
             public string Stamp = "";
             public string Sha = "";
             public string Dir = "";
+            public string AttemptId = "";
         }
 
         sealed class Origin
@@ -76,6 +78,7 @@ namespace Antiphon.Nightly
         public static int Run(string[] args, TextWriter output, TextWriter error)
         {
             string inputRoot = "", outputRoot = "", asOfText = "", repository = Environment.CurrentDirectory;
+            var provenSubtraction = false;
             for (var i = 0; i < args.Length; i++)
             {
                 string Next() => i + 1 < args.Length ? args[++i] : throw new Refusal("usage");
@@ -87,6 +90,7 @@ namespace Antiphon.Nightly
                         case "--output": outputRoot = Next(); break;
                         case "--as-of": asOfText = Next(); break;
                         case "--repository-root": repository = Next(); break;
+                        case "--proven-subtraction" when !provenSubtraction: provenSubtraction = true; break;
                         default: error.WriteLine(Name + ": unknown argument " + args[i] + "; usage: " + Usage); return 2;
                     }
                 }
@@ -101,16 +105,22 @@ namespace Antiphon.Nightly
                 if (inputRoot.Length == 0 || outputRoot.Length == 0 || asOfText.Length == 0) throw new Refusal("usage");
                 if (!DateTimeOffset.TryParseExact(asOfText, "yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var asOf))
                     throw new Refusal("as-of-format");
-                return Replay(Path.GetFullPath(inputRoot), Path.GetFullPath(outputRoot), asOf, Path.GetFullPath(repository), output);
+                return Replay(Path.GetFullPath(inputRoot), Path.GetFullPath(outputRoot), asOf, Path.GetFullPath(repository), output, provenSubtraction);
             }
             catch (Refusal r)
             {
                 error.WriteLine(Name + ": refused (" + r.Message + ")");
                 return 2;
             }
+            catch (Exception exception) when (provenSubtraction &&
+                exception is (InvalidDataException or IOException or UnauthorizedAccessException or JsonException))
+            {
+                error.WriteLine(Name + ": refused (proof-evidence:" + exception.GetType().Name + ")");
+                return 2;
+            }
         }
 
-        static int Replay(string input, string output, DateTimeOffset asOf, string repository, TextWriter log)
+        static int Replay(string input, string output, DateTimeOffset asOf, string repository, TextWriter log, bool provenSubtraction)
         {
             var phases = new OrderedDictionary(StringComparer.Ordinal);
             var clock = Stopwatch.StartNew();
@@ -154,21 +164,27 @@ namespace Antiphon.Nightly
             };
             foreach (var run in chosen.Append(predecessor))
             {
+                if (provenSubtraction && (run.Run8.Length != 8 ||
+                    run.Run8.Any(character => !char.IsAsciiLetterOrDigit(character)) || run.RunId.Length == 0))
+                    throw new Refusal("proof-cohort-run-id-unbound");
                 if (!RcChunkReceipt.IsSha(run.Sha)) throw new Refusal("run-sha:" + run.Run8);
                 var type = TestSelectionGit.Run(repository, new[] { "cat-file", "-t", run.Sha }, new[] { 0, 1, 128 });
                 if (type.Exit != 0 || type.Stdout.Trim() != "commit") throw new Refusal("candidate-sha-missing:" + run.Run8);
                 if (!Directory.Exists(run.Dir)) throw new Refusal("run-missing:" + run.Run8);
             }
+            var cohortPlans = provenSubtraction
+                ? BindCohort(frozen, custody, runs, chosen, predecessor, Str(predecessorRow["stamp"]), asOf) : null;
 
-            var selectorHash = SelectorHash;
+            var selectorHash = provenSubtraction ? Digest(Encoding.UTF8.GetBytes(
+                "antiphon-rc-proof-replay-v2\n" + SelectorHash + "\n" + ReleaseImpactEvidence.RunningSelectorBinaryDigest())) : SelectorHash;
             var predictionsDir = Path.Combine(output, "predictions");
             Directory.CreateDirectory(predictionsDir);
 
             // ---- the chained ledger: seeded by the predecessor's clean executions ---------------------------------
             var ledger = new Dictionary<string, Origin>(StringComparer.Ordinal);
             var teacher = new Dictionary<string, Origin>(StringComparer.Ordinal);
-            var predecessorPlan = Plan(predecessor);
-            foreach (var (chunk, outcome, row) in Outcomes(predecessor, predecessorPlan))
+            var predecessorPlan = cohortPlans?[predecessor.RunId] ?? Plan(predecessor);
+            foreach (var (chunk, outcome, row) in ReadOutcomes(predecessor, predecessorPlan, exact: provenSubtraction))
                 if (outcome == "clean")
                 {
                     ledger[chunk.ContentDigest] = new Origin { RunId = predecessor.RunId, Sha = predecessor.Sha, Row = row };
@@ -182,6 +198,10 @@ namespace Antiphon.Nightly
             var caught = new List<object>();
             var teacherRuns = new List<object>();
             var predictionDigests = new OrderedDictionary(StringComparer.Ordinal);
+            var resolvedDigests = new OrderedDictionary(StringComparer.Ordinal);
+            var missRecords = new List<RcSelectionMissRecord>();
+            var proofCarries = 0;
+            var unknownOutcomes = 0;
             var totalCarries = 0;
             var strictCarries = 0;
             var failuresTotal = 0;
@@ -194,7 +214,7 @@ namespace Antiphon.Nightly
             foreach (var run in chosen)
             {
                 k++;
-                var plan = Plan(run);
+                var plan = cohortPlans?[run.RunId] ?? Plan(run);
                 var census = Items(Json(Path.Combine(run.Dir, "logs", "groups-planned.json")) is IDictionary planDoc ? planDoc["census"] : null).Cast<IDictionary>()
                     .Select(c => new RcReaderCensusEntry { Reader = Str(c["reader"]), Globs = Items(c["globs"]).Select(Str).ToArray() }).ToArray();
 
@@ -204,15 +224,32 @@ namespace Antiphon.Nightly
                 {
                     { "contentDigest", c.ContentDigest }, { "sha", ledger[c.ContentDigest].Sha }, { "originRun", ledger[c.ContentDigest].RunId }, { "result", "pass" },
                 }).ToArray();
-                var selection = RcChunkSelection.Select(repository, baseline.Sha, run.Sha,
-                    plan.Select(c => new RcPlannedChunk { Id = c.Chunk, Project = c.Project, Classes = c.Classes, ContentDigest = c.ContentDigest }).ToArray(),
-                    priorRows, census, row => new RcReuse { Reusable = true });
-                Phase("git");
+                var roster = plan.Select(c => new RcPlannedChunk
+                {
+                    Id = c.Chunk, Project = c.Project, Classes = provenSubtraction
+                        ? c.Members.Select(member => member.Class).Distinct(StringComparer.Ordinal).ToArray() : c.Classes,
+                    ContentDigest = c.ContentDigest, Cases = c.Cases, Suite = c.Suite, CaseRoster = c.Members,
+                }).ToArray();
+                RcReuse Admit(IDictionary row) => new RcReuse { Reusable = true };
+                var unpruned = RcChunkSelection.Select(repository, baseline.Sha, run.Sha, roster, priorRows, census, Admit);
                 var changed = TestSelectionGit.Run(repository, new[] { "diff", "--no-ext-diff", "--no-renames", "--name-only", "-z", baseline.Sha, run.Sha, "--" })
                     .Stdout.Split('\0').Where(p => p.Length > 0).ToArray();
                 var policyB = Blob(repository, baseline.Sha, RcTrustedProjectGate.PolicyPath);
                 var policyA = Blob(repository, run.Sha, RcTrustedProjectGate.PolicyPath);
                 trustHash = RcTrustedProjectGate.PolicyDigest(policyA);
+                var selection = unpruned;
+                if (provenSubtraction)
+                {
+                    var oldPath = "type-graphs/" + baseline.Sha + ".json";
+                    var newPath = "type-graphs/" + run.Sha + ".json";
+                    if (!manifest.TryGetValue(oldPath, out var oldPin) || !manifest.TryGetValue(newPath, out var newPin))
+                        throw new Refusal("type-proof-pair-missing:" + run.Run8);
+                    var policy = Digest(Encoding.UTF8.GetBytes(RcTrustedProjectGate.PolicyDigest(policyB) + "\n" + trustHash));
+                    var proof = RcTypeProofComparison.Read(Path.Combine(frozen, oldPath), oldPin, baseline.Sha,
+                        Path.Combine(frozen, newPath), newPin, run.Sha, selectorHash, policy);
+                    selection = RcChunkSelection.Select(repository, baseline.Sha, run.Sha, roster, priorRows, census, Admit, proof);
+                }
+                Phase("git");
                 var contracts = Items(Json(Path.Combine(run.Dir, "attempt", "contracts.json"))).Cast<IDictionary>().Select(c => new RcContractReceipt
                 {
                     Project = Str(c["project"]), Side = Str(c["side"]), ExtractorVersion = Str(c["extractorVersion"]), ContractHash = Str(c["contractHash"]),
@@ -247,24 +284,41 @@ namespace Antiphon.Nightly
                 }
                 Phase("predict");
                 var predictionPath = Path.Combine(predictionsDir, k.ToString(CultureInfo.InvariantCulture) + ".json");
-                var sealedPrediction = Write(predictionPath, new OrderedDictionary(StringComparer.Ordinal)
+                var prediction = new OrderedDictionary(StringComparer.Ordinal)
                 {
                     { "run", run.RunId }, { "sha", run.Sha }, { "baselineSha", baseline.Sha }, { "baselineRun", baseline.RunId }, { "mode", selection.Mode },
                     { "fallbackReasons", selection.FallbackReasons }, { "selectorHash", selectorHash },
                     { "index", selection.Index.Select(i => (object)new OrderedDictionary { { "side", i.Side }, { "blob", i.Blob }, { "sha256", i.Sha256 } }).ToArray() },
                     { "predictions", predictions.Cast<object>().ToArray() },
-                });
+                };
+                if (provenSubtraction)
+                {
+                    prediction["provenSubtraction"] = true;
+                    prediction["typeProof"] = selection.Proof;
+                }
+                var sealedPrediction = Write(predictionPath, prediction);
                 predictionDigests[k.ToString(CultureInfo.InvariantCulture)] = sealedPrediction;
                 Phase("seal-predictions");
 
                 // ---- outcomes: only after the seal; own-gate rows first --------------------------------------------
-                var outcomes = Outcomes(run, plan, sealedPrediction, predictionPath).ToDictionary(o => o.Chunk.Chunk, StringComparer.Ordinal);
+                var outcomes = provenSubtraction ? null :
+                    Outcomes(run, plan, sealedPrediction, predictionPath).ToDictionary(o => o.Chunk.Chunk, StringComparer.Ordinal);
+                var outcomeAccess = new List<object>();
+                Action<PlannedChunk> RecordRead(string purpose) => chunk => outcomeAccess.Add(new
+                    { purpose, suite = chunk.Suite, chunk = chunk.Chunk, contentDigest = chunk.ContentDigest });
+                var resolvedPath = Path.Combine(predictionsDir, k.ToString(CultureInfo.InvariantCulture) + ".resolved.json");
+                string resolvedDigest = null;
                 if (predictions.Any(p => Str(p["decision"]) == "held"))
                 {
+                    var owned = plan.Where(c => trust.Of(c.Chunk)?.Reasons.Any(r => r.StartsWith("trust-gate-own:", StringComparison.Ordinal)) == true).ToList();
+                    var ownOutcomes = provenSubtraction
+                        ? Outcomes(run, owned, sealedPrediction, predictionPath, exact: true, RecordRead("own-gate"))
+                            .ToDictionary(o => o.Chunk.Chunk, StringComparer.Ordinal)
+                        : outcomes;
                     var own = new List<RcOwnResult>();
-                    foreach (var chunk in plan.Where(c => trust.Of(c.Chunk)?.Reasons.Any(r => r.StartsWith("trust-gate-own:", StringComparison.Ordinal)) == true))
+                    foreach (var chunk in owned)
                     {
-                        var o = outcomes[chunk.Chunk];
+                        var o = ownOutcomes[chunk.Chunk];
                         own.Add(new RcOwnResult
                         {
                             Chunk = chunk.Chunk, Disposition = o.Outcome == "unknown" ? "missing" : "executed", Result = o.Outcome == "clean" ? "pass" : "FAIL",
@@ -284,8 +338,18 @@ namespace Antiphon.Nightly
                             else { p["originRun"] = o.RunId; p["originSha"] = o.Sha; }
                         }
                     }
-                    Write(Path.Combine(predictionsDir, k.ToString(CultureInfo.InvariantCulture) + ".resolved.json"),
-                        new OrderedDictionary { { "run", run.RunId }, { "predictions", predictions.Cast<object>().ToArray() } });
+                    if (!provenSubtraction)
+                        Write(resolvedPath, new OrderedDictionary { { "run", run.RunId }, { "predictions", predictions.Cast<object>().ToArray() } });
+                }
+                if (provenSubtraction)
+                {
+                    resolvedDigest = Write(resolvedPath, new OrderedDictionary(StringComparer.Ordinal)
+                    {
+                        { "run", run.RunId }, { "initialDigest", sealedPrediction }, { "predictions", predictions.Cast<object>().ToArray() },
+                    });
+                    resolvedDigests[k.ToString(CultureInfo.InvariantCulture)] = resolvedDigest;
+                    outcomes = Outcomes(run, plan, resolvedDigest, resolvedPath, exact: true, RecordRead("score"))
+                        .ToDictionary(o => o.Chunk.Chunk, StringComparer.Ordinal);
                 }
                 Phase("outcomes");
 
@@ -316,17 +380,30 @@ namespace Antiphon.Nightly
                     if (predicted == "carry")
                     {
                         runCarries++;
+                        if (provenSubtraction && selection.Of(chunk.Chunk).Decision == "carry" &&
+                            unpruned.Of(chunk.Chunk).Decision == "execute" &&
+                            unpruned.Of(chunk.Chunk).Reasons.Any(reason =>
+                                !reason.StartsWith("project-closure:", StringComparison.Ordinal))) proofCarries++;
                         if (ledger.TryGetValue(chunk.ContentDigest, out var origin) && origin.Row != null && RcChunkReceipt.IsSha(PsValue.Str(origin.Row["sha"]))
                             && RcChunkReceipt.IsDigest(PsValue.Str(origin.Row["contentDigest"]))) strictCarries++;
                         if (chunk.PriorWallSeconds.HasValue) carriedSeconds += chunk.PriorWallSeconds.Value; else unpriced++;
                         if (actual == "FAIL") missed.Add(entry);
-                        if (actual != "clean") unsafeCarries.Add(entry);
+                        if (actual != "clean")
+                        {
+                            unsafeCarries.Add(entry);
+                            if (provenSubtraction)
+                                RecordMisses(output, frozen, repository, baseline, run, chunk, o, actual, asOf,
+                                    sealedPrediction, resolvedDigest, selection.Proof, trustHash, selectorHash,
+                                    ledger.TryGetValue(chunk.ContentDigest, out var observedOrigin) ? observedOrigin.Row : null,
+                                    Str(custody["repository"]), Str(custody["line"]), missRecords);
+                        }
                     }
                     else if (actual == "FAIL") caught.Add(entry);
                     trace.Append(JsonSerializer.Serialize(new { run = run.RunId, chunk = chunk.Chunk, contentDigest = chunk.ContentDigest, decision = predicted, reasons = (string[])p["reasons"], actual }))
                         .Append('\n');
                 }
                 totalCarries += runCarries;
+                unknownOutcomes += incomplete;
                 var universe = plan.Count;
                 var accounted = predictions.Count(p => Str(p["decision"]) == "run") + predictions.Count(p => Str(p["decision"]) == "carry");
                 var disjoint = predictions.Select(p => Str(p["chunk"])).Distinct(StringComparer.Ordinal).Count() == predictions.Count;
@@ -334,6 +411,7 @@ namespace Antiphon.Nightly
                 if (ok) reconciled++;
                 var runDir = Path.Combine(output, "runs", k.ToString(CultureInfo.InvariantCulture));
                 Directory.CreateDirectory(runDir);
+                if (provenSubtraction) Write(Path.Combine(runDir, "outcome-access.json"), outcomeAccess);
                 var report = new OrderedDictionary(StringComparer.Ordinal)
                 {
                     { "run", run.RunId }, { "sha", run.Sha }, { "baselineSha", baseline.Sha }, { "mode", selection.Mode }, { "fallbackReasons", selection.FallbackReasons },
@@ -384,10 +462,12 @@ namespace Antiphon.Nightly
             string activation, reason;
             if (missed.Count > 0 || unsafeCarries.Count > 0) { exit = 1; activation = "blocked"; reason = missed.Count > 0 ? "missed-failure" : "unsafe-carry"; }
             else if (chosen.Count < 5 || reconciled < 5) { exit = 3; activation = "insufficient"; reason = "insufficient:fewer-than-five-reconciled"; }
+            else if (provenSubtraction && unknownOutcomes > 0) { exit = 3; activation = "insufficient"; reason = "insufficient:unscorable-outcomes"; }
+            else if (provenSubtraction && proofCarries == 0) { exit = 3; activation = "insufficient"; reason = "insufficient:no-proof-carry-opportunity"; }
             else if (totalCarries == 0) { exit = 3; activation = "insufficient"; reason = "insufficient:no-carry-opportunity"; }
             else { exit = 0; activation = "criterion-met"; reason = "criterion-met"; }
             var caughtCount = caught.Count;
-            Write(Path.Combine(output, "verdict.json"), new OrderedDictionary(StringComparer.Ordinal)
+            var verdict = new OrderedDictionary(StringComparer.Ordinal)
             {
                 { "format", VerdictFormat }, { "selectorHash", selectorHash }, { "algorithmRevision", AlgorithmRevision }, { "trustPolicyHash", trustHash },
                 { "inventoryDigest", inventoryDigest }, { "predictionDigests", predictionDigests }, { "asOf", asOf.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture) },
@@ -396,7 +476,21 @@ namespace Antiphon.Nightly
                 { "carries", new OrderedDictionary { { "counterfactual", totalCarries }, { "strict", strictCarries } } },
                 { "cost", new OrderedDictionary { { "carriedSeconds", carriedSeconds }, { "unpricedCarries", unpriced } } },
                 { "activation", activation }, { "reason", reason }, { "exitCode", exit }, { "enables", false },
-            });
+            };
+            if (provenSubtraction)
+            {
+                verdict["format"] = "antiphon-rc-proof-replay-verdict-v2";
+                verdict["provenSubtraction"] = true;
+                verdict["proofDependentCarries"] = proofCarries;
+                verdict["resolvedPredictionDigests"] = resolvedDigests;
+                verdict["algorithmRevision"] = "card-2076-proof-replay-r1";
+                var orderedMisses = missRecords.OrderBy(record => record.MissId, StringComparer.Ordinal).ToArray();
+                verdict["missRecords"] = orderedMisses.Select(record =>
+                    new { missId = record.MissId, path = record.Path, sha256 = record.Sha256 }).ToArray();
+                verdict["missRecordSetDigest"] = Digest(Encoding.UTF8.GetBytes(string.Concat(
+                    orderedMisses.Select(record => record.MissId + " " + record.Sha256 + "\n"))));
+            }
+            Write(Path.Combine(output, "verdict.json"), verdict);
             Phase("verdict");
             Write(Path.Combine(output, "phases.json"), phases);
             log.WriteLine(Name + ": " + reason + " (exit " + exit.ToString(CultureInfo.InvariantCulture) + ") missed=" + missed.Count.ToString(CultureInfo.InvariantCulture)
@@ -404,7 +498,83 @@ namespace Antiphon.Nightly
             return exit;
         }
 
+        private static void RecordMisses(string output, string frozen, string repository, RunInput baseline, RunInput run,
+            PlannedChunk chunk, ChunkOutcome outcome, string actual, DateTimeOffset asOf, string initial, string resolved,
+            RcChunkProofTrace proof, string policy, string selector, IDictionary origin, string repositoryIdentity, string line,
+            List<RcSelectionMissRecord> records)
+        {
+            if (run.AttemptId.Length == 0 || repositoryIdentity.Length == 0 || line.Length == 0)
+                throw new Refusal("miss-observation-scope-unbound:" + run.Run8);
+            var diff = RcSelectionMiss.ReadDiff(repository, baseline.Sha, run.Sha);
+            var cases = new List<RcMissCase>();
+            var exact = outcome.Row != null && Str(outcome.Row["sha"]) == run.Sha &&
+                Str(outcome.Row["contentDigest"]) == chunk.ContentDigest;
+            if (actual == "FAIL" && exact)
+                foreach (var failed in outcome.FailedCases.OrderBy(item => item.CaseKey, StringComparer.Ordinal))
+                {
+                    var member = chunk.Members.SingleOrDefault(item => item.CaseKey == failed.CaseKey &&
+                        item.Class == failed.Class && item.Method == failed.Method);
+                    if (member != null)
+                        cases.Add(new RcMissCase("case", member.Assembly, member.Class, member.Method, member.CaseKey, failed.Outcome));
+                }
+            if (cases.Count == 0) cases.Add(new RcMissCase("chunk-unknown-case", null, null, null, null, null));
+            var trx = exact && outcome.Trx.Length > 0 ? outcome.Trx : null;
+            var trxSha = trx == null ? null : Digest(File.ReadAllBytes(Path.Combine(frozen, trx)));
+            var originDigest = origin == null ? null : Digest(Encoding.UTF8.GetBytes(TestSelectionJson.Canonical(origin)));
+            var removed = proof?.Removed.Where(row => chunk.Classes.Any(cls =>
+                cls == row.Class || cls.EndsWith("." + row.Class, StringComparison.Ordinal))).ToArray() ?? Array.Empty<RcRemovedIndexHit>();
+            foreach (var @case in cases.Distinct())
+            {
+                var observation = new RcSelectionMissObservation("replay", asOf.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                    repositoryIdentity, line, chunk.Suite, ReplayScope.Platform, ReplayScope.Architecture, ReplayScope.Profile,
+                    baseline.Sha, run.Sha, run.RunId, run.AttemptId, chunk.Chunk, chunk.ContentDigest, @case, actual, "carry",
+                    trx, trxSha, initial, resolved, originDigest, proof?.Identity ?? selector, policy,
+                    proof?.BaselineGraphDigest, proof?.CandidateGraphDigest, removed, diff, "unresolved");
+                records.Add(RcSelectionMiss.Record(output, observation));
+            }
+        }
+
         // ---- inputs ---------------------------------------------------------------------------------------------
+
+        private static Dictionary<string, List<PlannedChunk>> BindCohort(string frozen, IDictionary custody, List<RunInput> all, List<RunInput> chosen,
+            RunInput predecessor, string predecessorStamp, DateTimeOffset asOf)
+        {
+            var order = Json(Path.Combine(frozen, "state", "qualification-cohort.json")) as IDictionary
+                ?? throw new Refusal("proof-cohort-authority-missing");
+            var cutoff = asOf.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+            if (Str(order["asOf"]) != cutoff || Str(custody["asOf"]) != cutoff ||
+                Str(order["repository"]) != Str(custody["repository"]) || Str(order["line"]) != Str(custody["line"]))
+                throw new Refusal("proof-cohort-scope-mismatch");
+            if (Items(custody["missing"]).Length != 0 ||
+                all.Select(run => run.Run8).Distinct(StringComparer.Ordinal).Count() != all.Count ||
+                all.Select(run => run.RunId).Distinct(StringComparer.Ordinal).Count() != all.Count)
+                throw new Refusal("proof-cohort-run-ambiguous");
+            if (!Items(order["runIds"]).Select(Str).SequenceEqual(chosen.Select(run => run.RunId), StringComparer.Ordinal)
+                || Str(order["predecessorRun"]) != predecessor.RunId || Str(order["predecessorSha"]) != predecessor.Sha
+                || predecessorStamp.Length == 0 || chosen.Any(run => string.CompareOrdinal(run.Stamp, predecessorStamp) <= 0))
+                throw new Refusal("proof-cohort-order-mismatch");
+            if (all.Count > 5 && (all[all.Count - 6].RunId != predecessor.RunId || all[all.Count - 6].Sha != predecessor.Sha))
+                throw new Refusal("proof-cohort-predecessor-mismatch");
+            var attempts = new HashSet<string>(StringComparer.Ordinal);
+            var plans = new Dictionary<string, List<PlannedChunk>>(StringComparer.Ordinal);
+            var roster = Items(order["rosters"]).Cast<IDictionary>().ToLookup(row => Str(row["run"]), StringComparer.Ordinal);
+            if (roster.Count != chosen.Count + 1) throw new Refusal("proof-cohort-rosters-unbound");
+            foreach (var run in chosen.Prepend(predecessor))
+            {
+                var attempt = Json(Path.Combine(run.Dir, "attempt", "selection-attempt.json")) as IDictionary;
+                run.AttemptId = Str(attempt?["attemptId"]);
+                if (Str(attempt?["runId"]) != run.RunId || run.AttemptId.Length == 0 || !attempts.Add(run.AttemptId))
+                    throw new Refusal("proof-cohort-attempt-unbound:" + run.Run8);
+                var plan = Plan(run);
+                var rows = roster[run.RunId].ToArray();
+                if (rows.Length != 1 || Str(rows[0]["attempt"]) != run.AttemptId || Str(rows[0]["sha"]) != run.Sha ||
+                    !Items(rows[0]["contents"]).Select(Str).Order(StringComparer.Ordinal)
+                        .SequenceEqual(plan.Select(chunk => chunk.ContentDigest).Order(StringComparer.Ordinal), StringComparer.Ordinal))
+                    throw new Refusal("proof-cohort-roster-mismatch:" + run.Run8);
+                plans.Add(run.RunId, plan);
+            }
+            return plans;
+        }
 
         /// <summary>The manifest's (path, sha256) map after checking the tree has exactly those files, no links, and equal digests.</summary>
         static SortedDictionary<string, string> VerifyManifest(string root)
@@ -453,7 +623,7 @@ namespace Antiphon.Nightly
                 chunks.Add(new PlannedChunk
                 {
                     Suite = suite, Chunk = Str(c["chunk"]), Project = Str(c["project"]), Classes = Items(c["classes"]).Select(Str).ToArray(),
-                    Consumes = Items(c["consumes"]).Select(Str).ToArray(), Cases = members.Select(m => m.CaseKey).ToArray(),
+                    Consumes = Items(c["consumes"]).Select(Str).ToArray(), Cases = members.Select(m => m.CaseKey).ToArray(), Members = members,
                     PriorWallSeconds = c["priorWallSeconds"] == null ? null : Convert.ToDouble(c["priorWallSeconds"], CultureInfo.InvariantCulture), ContentDigest = digest,
                 });
             }
@@ -468,42 +638,63 @@ namespace Antiphon.Nightly
             public string Outcome = "unknown";
             public string Detail = "";
             public string FailedCase = "";
+            public RcTrxCase[] FailedCases = Array.Empty<RcTrxCase>();
             public string Trx = "";
             public IDictionary Row;
             public void Deconstruct(out PlannedChunk chunk, out string outcome, out IDictionary row) { chunk = Chunk; outcome = Outcome; row = Row; }
         }
 
-        /// <summary>The predecessor's outcomes (before any prediction; no seal needed).</summary>
-        static IEnumerable<ChunkOutcome> Outcomes(RunInput run, List<PlannedChunk> plan) => ReadOutcomes(run, plan);
-
         /// <summary>Run k's outcomes: refused unless predictions/&lt;k&gt;.json was sealed with exactly the given digest.</summary>
-        static IEnumerable<ChunkOutcome> Outcomes(RunInput run, List<PlannedChunk> plan, string sealedDigest, string predictionPath)
+        static IEnumerable<ChunkOutcome> Outcomes(RunInput run, List<PlannedChunk> plan, string sealedDigest, string predictionPath,
+            bool exact = false, Action<PlannedChunk> observe = null)
         {
             if (!File.Exists(predictionPath) || Digest(File.ReadAllBytes(predictionPath)) != sealedDigest) throw new Refusal("outcomes-before-seal:" + run.Run8);
-            return ReadOutcomes(run, plan).ToList();
+            return ReadOutcomes(run, plan, exact, observe).ToList();
         }
 
-        static IEnumerable<ChunkOutcome> ReadOutcomes(RunInput run, List<PlannedChunk> plan)
+        static IEnumerable<ChunkOutcome> ReadOutcomes(RunInput run, List<PlannedChunk> plan, bool exact = false, Action<PlannedChunk> observe = null)
         {
-            var summary = Json(Path.Combine(run.Dir, "logs", "summary.json")) as IDictionary;
+            var summaryPath = Path.Combine(run.Dir, "logs", "summary.json");
+            var summary = exact ? null : Json(summaryPath) as IDictionary;
             var rows = summary == null ? Array.Empty<IDictionary>() : Items(summary["suites"]).Cast<IDictionary>().ToArray();
+            using var exactSummary = exact && File.Exists(summaryPath) ? JsonDocument.Parse(File.ReadAllBytes(summaryPath)) : null;
+            var byId = exactSummary != null && exactSummary.RootElement.TryGetProperty("suites", out var suites)
+                ? suites.EnumerateArray().ToLookup(row => (row.GetProperty("id").GetString(), row.GetProperty("chunk").GetString()))
+                : null;
             foreach (var chunk in plan)
             {
+                observe?.Invoke(chunk);
                 var outcome = new ChunkOutcome { Chunk = chunk };
-                var matches = rows.Where(r => Str(r["id"]) == chunk.Suite && Str(r["chunk"]) == chunk.Chunk).ToArray();
+                var matches = exact
+                    ? byId?[(chunk.Suite, chunk.Chunk)].Select(row => (IDictionary)RcChunkReceipt.FromJson(row)).ToArray()
+                        ?? Array.Empty<IDictionary>()
+                    : rows.Where(r => Str(r["id"]) == chunk.Suite && Str(r["chunk"]) == chunk.Chunk).ToArray();
                 if (matches.Length == 1)
                 {
                     var row = matches[0];
+                    if (exact && (Str(row["sha"]) != run.Sha || Str(row["contentDigest"]) != chunk.ContentDigest ||
+                        Str(row["disposition"]) != "executed" || Str(row["platform"]) != ReplayScope.Platform ||
+                        Str(row["architecture"]) != ReplayScope.Architecture || Str(row["profile"]) != ReplayScope.Profile))
+                    {
+                        yield return outcome;
+                        continue;
+                    }
                     outcome.Row = row;
                     var trxName = Path.GetFileName(Str(row["trx"]).Replace('\\', '/'));
                     var trxPath = trxName.Length == 0 ? "" : Path.Combine(run.Dir, "logs", trxName);
                     var trx = trxPath.Length == 0 ? null : RcChunkReceipt.ReadTrx(trxPath);
                     outcome.Trx = trx == null ? "" : "runs/" + run.Run8 + "/logs/" + trxName;
-                    if (trx == null) outcome.Outcome = "unknown";
+                    if (trx == null) outcome.Outcome = exact && Str(row["result"]) == "FAIL" ? "FAIL" : "unknown";
+                    else if (exact && (trx.Length != chunk.Members.Length ||
+                        trx.Select(item => item.CaseKey).Distinct(StringComparer.Ordinal).Count() != trx.Length ||
+                        trx.Any(item => !chunk.Members.Any(member => member.CaseKey == item.CaseKey &&
+                            member.Class == item.Class && member.Method == item.Method))))
+                        outcome.Outcome = "unknown";
                     else
                     {
                         var reuse = RcChunkReceipt.Reusable(row, trx, chunk.Cases, ReplayScope);
-                        var failedCase = trx.FirstOrDefault(c => c.Outcome == "Failed" || c.Outcome == "Error");
+                        outcome.FailedCases = trx.Where(c => c.Outcome == "Failed" || c.Outcome == "Error").ToArray();
+                        var failedCase = outcome.FailedCases.FirstOrDefault();
                         outcome.FailedCase = failedCase?.CaseKey ?? "";
                         if (reuse.Reusable) outcome.Outcome = "clean";
                         else if (Str(row["result"]) == "FAIL" || failedCase != null) outcome.Outcome = "FAIL";

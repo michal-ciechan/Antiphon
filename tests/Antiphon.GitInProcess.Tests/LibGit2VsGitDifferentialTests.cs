@@ -25,7 +25,9 @@ public sealed class LibGit2VsGitDifferentialTests
 
     private static async Task<(LandingGitResult Result, string Error)> GitWithErrorAsync(string cwd, params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // UTF-8, as the server's and runners' git children are read.
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8 };
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         foreach (var a in args) start.ArgumentList.Add(a);
         using var p = Process.Start(start)!;
@@ -46,7 +48,9 @@ public sealed class LibGit2VsGitDifferentialTests
         answer.Output.ShouldBe(git.Output, shape);
         if (answer.ExitCode != 0) answer.Diagnostic.ShouldBe($"git_exit_{answer.ExitCode}", shape);
         // An answer the stderr-forwarding runners take (TryAnswerSilently) is only one git gives without a word.
-        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null) error.ShouldBeEmpty("git wrote to stderr: " + shape);
+        // (An absent object's cat-file -e is taken by its exit code alone: its callers never read the stderr line.)
+        if (InProcessGitReads.TryAnswerSilently(cwd, args) is not null && !(args is ["cat-file", "-e", _] && git.ExitCode == 128))
+            error.ShouldBeEmpty("git wrote to stderr: " + shape);
     }
 
     /// <summary>Every handled shape, answered and equal to git, for a checkout root.</summary>
@@ -57,9 +61,9 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", head);
         await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", head + "^{commit}");
         await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", tree);
-        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", tree + "^{commit}");
-        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40));
-        await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", new string('1', 40) + "^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", tree + "^{commit}");
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", new string('1', 40));
+        await CompareAsync(cwd, Expect.Answered, "cat-file", "-e", new string('1', 40) + "^{commit}");
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", head[..12]);
         await CompareAsync(cwd, Expect.Fallback, "cat-file", "-e", "HEAD");
         await CompareAsync(cwd, Expect.Answered, "rev-list", "--count", fixture.SeedSha + ".." + head);
@@ -284,8 +288,8 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", blob);
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", commitTag);
         await CompareAsync(repo, Expect.Answered, "cat-file", "-e", commitTag + "^{commit}");
-        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", treeTag + "^{commit}");
-        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", blob + "^{commit}");
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", treeTag + "^{commit}");
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", blob + "^{commit}");
         await CompareAsync(repo, Expect.Fallback, "cat-file", "-t", blob);
 
         // A ref named by a hex id: git reads the argument as that id (and warns), libgit2 would read the ref.
@@ -300,11 +304,83 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", "--quiet", fixture.SeedSha + "^{commit}");
         await CompareAsync(repo, Expect.Fallback, "rev-parse", "--verify", fixture.SeedSha + "^{commit}");
 
+        // A promisor remote may fetch an absent object on demand: its absence is git's to decide, presence is not.
+        var absent = new string('3', 40);
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", absent);
+        await fixture.RequiredAsync(repo, "config", "remote.origin.promisor", "true");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent);
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent + "^{commit}");
+        await CompareAsync(repo, Expect.Answered, "cat-file", "-e", head + "^{commit}");
+        await fixture.RequiredAsync(repo, "config", "--unset", "remote.origin.promisor");
+        // An included file could name a promisor too: also git's.
+        await fixture.RequiredAsync(repo, "config", "include.path", "promisor-free.inc");
+        await CompareAsync(repo, Expect.Fallback, "cat-file", "-e", absent);
+        await fixture.RequiredAsync(repo, "config", "--unset", "include.path");
+
         // A file named like the range: without "--" git dies of the ambiguity (128).
         await CompareAsync(repo, Expect.Answered, "rev-list", "--count", "master..refs/heads/side");
         await File.WriteAllTextAsync(Path.Combine(repo, "master..HEAD"), "a path, not a range");
         await CompareAsync(repo, Expect.Fallback, "rev-list", "--count", "master..HEAD");
         (await GitAsync(repo, "rev-list", "--count", "master..HEAD")).ExitCode.ShouldBe(128);
+
+        // Task-progress ref names Antiphon builds are valid without asking git; any other name is git's.
+        var task = Guid.NewGuid().ToString("N");
+        await CompareAsync(repo, Expect.Answered, "check-ref-format", "refs/antiphon/progress/" + task + "/settlement-sync");
+        await CompareAsync(repo, Expect.Answered, "check-ref-format", "refs/antiphon/progress/" + task + "/observe-97d35425e2a4");
+        await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/Observe");
+        await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/x.lock");
+        await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/a/b");
+
+        // Path reads at a checkout root: ls-tree of one path, a blob's bytes and size, and an unverified peel.
+        var source = fixture.Source;
+        Directory.CreateDirectory(Path.Combine(source, "docs", "deep"));
+        await File.WriteAllBytesAsync(Path.Combine(source, "docs", "evidence.md"), [0xEF, 0xBB, 0xBF, .. "café résumé\nline two\n"u8.ToArray()]);
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "deep", "notes.txt"), "notes\n");
+        await fixture.RequiredAsync(source, "-c", "core.autocrlf=false", "add", "docs");
+        await fixture.RequiredAsync(source, "commit", "-q", "-m", "docs");
+        var docs = (await GitAsync(source, "rev-parse", "HEAD")).Output.Trim();
+        var docsTree = (await GitAsync(source, "rev-parse", docs + "^{tree}")).Output.Trim();
+        await CompareAsync(source, Expect.Answered, "rev-parse", docs + "^{commit}");
+        await CompareAsync(source, Expect.Answered, "rev-parse", "HEAD^{commit}");
+        foreach (var path in new[] { "docs/evidence.md", "docs", "docs/deep/notes.txt", "docs/missing.md", "docs/evidence.md/x", "nope/x" })
+        {
+            await CompareAsync(source, Expect.Answered, "ls-tree", "-z", docs, "--", path);
+            await CompareAsync(source, Expect.Answered, "--literal-pathspecs", "ls-tree", "-z", docs, "--", path);
+        }
+        await CompareAsync(source, Expect.Answered, "ls-tree", "-z", docsTree, "--", "docs/evidence.md");
+        await CompareAsync(source, Expect.Fallback, "ls-tree", "-z", docs, "--", "docs/*.md");
+        await CompareAsync(source, Expect.Fallback, "ls-tree", "-z", docs, "--", "docs/");
+        await CompareAsync(source, Expect.Fallback, "ls-tree", "-z", docs, "--", ":(glob)docs");
+        foreach (var path in new[] { "docs/evidence.md", "docs/deep/notes.txt" })
+        {
+            await CompareAsync(source, Expect.Answered, "show", docs + ":./" + path);
+            await CompareAsync(source, Expect.Answered, "cat-file", "-s", docs + ":./" + path);
+        }
+        await CompareAsync(source, Expect.Fallback, "show", docs + ":./docs");
+        await CompareAsync(source, Expect.Fallback, "show", docs + ":./docs/missing.md");
+        await CompareAsync(source, Expect.Fallback, "show", docs + ":docs/evidence.md");
+        await CompareAsync(source, Expect.Fallback, "show", "HEAD:./docs/evidence.md");
+        await CompareAsync(source, Expect.Fallback, "cat-file", "-s", docs + ":./docs/../docs/evidence.md");
+        // The byte read (GitWorkspaceService.GetContentBytesAtAsync): git show's raw stdout bytes, the bound kept.
+        foreach (var path in new[] { "docs/evidence.md", "docs/deep/notes.txt" })
+        {
+            var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, RedirectStandardOutput = true };
+            start.ArgumentList.Add("show");
+            start.ArgumentList.Add(docs + ":./" + path);
+            using var git = Process.Start(start)!;
+            using var raw = new MemoryStream();
+            await git.StandardOutput.BaseStream.CopyToAsync(raw);
+            await git.WaitForExitAsync();
+            InProcessGitReads.TryShowBlobBytes(source, docs + ":./" + path, 1 << 20, out var bytes).ShouldBeTrue(path);
+            bytes.ShouldBe(raw.ToArray(), path);
+            InProcessGitReads.TryShowBlobBytes(source, docs + ":./" + path, raw.Length - 1, out var bounded).ShouldBeTrue(path);
+            bounded.ShouldBeNull("over the bound: " + path);
+        }
+        InProcessGitReads.TryShowBlobBytes(source, docs + ":./docs/missing.md", 1 << 20, out _).ShouldBeFalse();
+        InProcessGitReads.TryShowBlobBytes(Path.Combine(source, "docs"), docs + ":./evidence.md", 1 << 20, out _).ShouldBeFalse();
+
+        // Not at the checkout root: the ./ path is relative to the working directory, git's to read.
+        await CompareAsync(Path.Combine(source, "docs"), Expect.Fallback, "show", docs + ":./evidence.md");
     }
 
     [Test]
@@ -575,7 +651,9 @@ public sealed class LibGit2VsGitDifferentialTests
     private static async Task<(LandingGitResult Result, string Error)> GitInAsync(string cwd, IReadOnlyDictionary<string, string?> env,
         params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // UTF-8, as the server's and runners' git children are read.
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8 };
         start.Environment.Clear();
         foreach (var (name, value) in env) if (value is not null) start.Environment[name] = value;
         foreach (var a in args) start.ArgumentList.Add(a);

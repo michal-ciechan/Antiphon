@@ -296,6 +296,7 @@
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneInputCensusReader.cs" Link="Scripts/LiveLaneInputCensusReader.cs" />
     <!-- The CLI's git and rc project graph seams for the live lane's fingerprint and status (W2 slice S22); the CLI binds the same. -->
     <Compile Include="../../scripts/lib/Antiphon.Scripts/LiveLaneNightlySources.cs" Link="Scripts/LiveLaneNightlySources.cs" />
+    <Compile Include="../../tools/Antiphon.LandGraphAudit/ReleaseCompilerInputs.cs" Link="Scripts/ReleaseCompilerInputs.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcTagBacking.cs" Link="Scripts/RcTagBacking.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcPort.cs" Link="Scripts/RcPort.cs" />
     <Compile Include="../../scripts/lib/Antiphon.Nightly/RcShadowSample.cs" Link="Scripts/RcShadowSample.cs" />

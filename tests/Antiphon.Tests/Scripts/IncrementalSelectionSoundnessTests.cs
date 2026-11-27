@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Antiphon.Nightly;
+using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -23,6 +24,445 @@ namespace Antiphon.Tests.Scripts;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class IncrementalSelectionSoundnessTests
 {
+
+    [Test, Timeout(28_000)]
+    public async Task ProvenSubtractionReplayRecordsEverySkippedFailure(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld();
+        await world.InitializeAsync(cancellationToken);
+        var input = world.Input("missed", fails: true);
+        var output = world.Output("missed");
+        var code = ReplayProvenSelection(world, input, output, true);
+        code.ShouldBe(1, "P.incident");
+        using var verdict = Read(output, "verdict.json");
+        verdict.RootElement.GetProperty("proofDependentCarries").GetInt32().ShouldBe(1, "P.opportunity");
+        verdict.RootElement.GetProperty("enables").GetBoolean().ShouldBeFalse("P.criterion");
+        var runThree = verdict.RootElement.GetProperty("runs")[2].GetProperty("matrix");
+        runThree.GetProperty("carry/FAIL").GetInt32().ShouldBe(1, "P.incident");
+        runThree.GetProperty("run/clean").GetInt32().ShouldBe(1, "P.incident");
+        foreach (var run in new[] { 0, 1, 3, 4 })
+            verdict.RootElement.GetProperty("runs")[run].GetProperty("matrix").GetProperty("run/clean").GetInt32().ShouldBe(2);
+
+        var records = verdict.RootElement.GetProperty("missRecords").EnumerateArray().ToArray();
+        records.Length.ShouldBe(2, "P.records");
+        var identities = new List<string>();
+        foreach (var record in records)
+        {
+            var path = record.GetProperty("path").GetString()!;
+            var raw = File.ReadAllBytes(Path.Combine(output, path));
+            DigestBytes(raw).ShouldBe(record.GetProperty("sha256").GetString(), "P.evidence");
+            using var stored = JsonDocument.Parse(raw);
+            stored.RootElement.GetProperty("schema").GetString().ShouldBe("antiphon-rc-selection-miss-v1");
+            var doc = stored.RootElement.GetProperty("observation");
+            identities.Add(doc.GetProperty("case").GetProperty("caseKey").GetString()!);
+            doc.GetProperty("candidateSha").GetString().ShouldBe(world.Sha(3));
+            doc.GetProperty("baselineSha").GetString().ShouldBe(world.Sha(2));
+            doc.GetProperty("chunk").GetString().ShouldBe("left");
+            doc.GetProperty("observedBy").GetString().ShouldBe("replay");
+            doc.GetProperty("observedAtUtc").GetString().ShouldBe("2026-11-25T12:00:00.0000000Z");
+            doc.GetProperty("repository").GetString().ShouldBe("card-2076-fixture");
+            doc.GetProperty("line").GetString().ShouldBe("rc");
+            doc.GetProperty("platform").GetString().ShouldBe("windows");
+            doc.GetProperty("architecture").GetString().ShouldBe("x64");
+            doc.GetProperty("profile").GetString().ShouldBe("rc");
+            doc.GetProperty("suite").GetString().ShouldBe("antiphon");
+            doc.GetProperty("attempt").GetString().ShouldBe(ProvenReplayWorld.RunId(3));
+            doc.GetProperty("run").GetString().ShouldBe(ProvenReplayWorld.RunId(3));
+            doc.GetProperty("predicted").GetString().ShouldBe("carry");
+            doc.GetProperty("case").GetProperty("assembly").GetString().ShouldBe("L");
+            doc.GetProperty("case").GetProperty("class").GetString().ShouldBe("L.LeftTests");
+            doc.GetProperty("case").GetProperty("method").GetString().ShouldBe("M");
+            doc.GetProperty("case").GetProperty("outcome").GetString().ShouldBe("Failed");
+            doc.GetProperty("trx").GetString().ShouldBe("runs/r3000000/logs/left.trx");
+            doc.GetProperty("actual").GetString().ShouldBe("FAIL");
+            foreach (var (property, relative) in new[]
+            {
+                ("trxSha256", "frozen/runs/r3000000/logs/left.trx"),
+                ("predictionDigest", "predictions/3.json"),
+                ("resolvedDigest", "predictions/3.resolved.json"),
+                ("baselineGraph", "frozen/type-graphs/" + world.Sha(2) + ".json"),
+                ("candidateGraph", "frozen/type-graphs/" + world.Sha(3) + ".json"),
+            })
+                doc.GetProperty(property).GetString().ShouldBe(DigestBytes(File.ReadAllBytes(Path.Combine(output, relative))),
+                    "P.evidence rehash " + property);
+            var removed = doc.GetProperty("removed").EnumerateArray().Select(row =>
+                (row.GetProperty("side").GetString(), row.GetProperty("path").GetString(), row.GetProperty("class").GetString()));
+            removed.SequenceEqual(new[] { ("A", ProvenReplayWorld.Changed, "LeftTests"), ("B", ProvenReplayWorld.Changed, "LeftTests") })
+                .ShouldBeTrue("P.evidence endpoint contributions");
+            var changes = doc.GetProperty("diff").EnumerateArray().ToArray();
+            changes.Length.ShouldBe(1, "P.evidence diff");
+            changes[0].GetProperty("status").GetString().ShouldBe("M");
+            changes[0].GetProperty("oldPath").GetString().ShouldBe(ProvenReplayWorld.Changed);
+            changes[0].GetProperty("newPath").GetString().ShouldBe(ProvenReplayWorld.Changed);
+        }
+        identities.Order(StringComparer.Ordinal).SequenceEqual(["l1", "l2"], StringComparer.Ordinal).ShouldBeTrue("P.records");
+        records.Select(record => record.GetProperty("missId").GetString()).Distinct().Count().ShouldBe(2);
+        var firstPath = records[0].GetProperty("path").GetString()!;
+        var firstBytes = File.ReadAllBytes(Path.Combine(output, firstPath));
+        using var firstDocument = JsonDocument.Parse(firstBytes);
+        var observation = firstDocument.RootElement.GetProperty("observation").Deserialize<RcSelectionMissObservation>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+        var vector = observation with
+        {
+            BaselineSha = new string('1', 40), CandidateSha = new string('2', 40),
+            Run = "fixture-run", Attempt = "fixture-attempt", Chunk = "chunk-1", ContentDigest = new string('a', 64),
+            Case = new("case", "L", "L.LeftTests", "M", "l1", "Failed"),
+        };
+        var vectors = world.Output("literal-miss-identities");
+        RcSelectionMiss.Record(vectors, vector).MissId
+            .ShouldBe("c4270fc2d16562b39fefd2018b5d22a6b94b80a8cb7b65e0d0592b2d4631e325", "P.identity literal versioned case vector");
+        RcSelectionMiss.Record(vectors, vector with { Attempt = "second-attempt" }).MissId
+            .ShouldBe("98d6c07b51b32ecff6687e9fcf9c0bfd3dd4c77482d0789128ede5a100a6fa10", "P.identity exact attempt separates observations");
+        var identical = await Task.WhenAll(Enumerable.Range(0, 2)
+            .Select(_ => Task.Run(() => RcSelectionMiss.Record(output, observation), cancellationToken)));
+        identical.Select(record => record.MissId).Distinct().Single().ShouldBe(records[0].GetProperty("missId").GetString(), "P.atomic");
+        Should.Throw<InvalidDataException>(() => RcSelectionMiss.Record(output, observation with { Attribution = "wrongly-dropped" }));
+        File.ReadAllBytes(Path.Combine(output, firstPath)).ShouldBe(firstBytes, "P.conflict");
+        var revision = RcSelectionMiss.AppendDisposition(output, records[0].GetProperty("missId").GetString()!,
+            DigestBytes(firstBytes), new("unresolved", null, null, null, null, null, null));
+        using var revisionDocument = Read(output, revision.Path);
+        revisionDocument.RootElement.GetProperty("status").GetString().ShouldBe("open", "P.revision");
+        revisionDocument.RootElement.GetProperty("observationSha").GetString().ShouldBe(DigestBytes(firstBytes));
+        File.ReadAllBytes(Path.Combine(output, firstPath)).ShouldBe(firstBytes, "P.revision immutable observation");
+        var unavailable = world.Output("unavailable");
+        Directory.CreateDirectory(unavailable);
+        File.WriteAllText(Path.Combine(unavailable, "misses"), "fixture fault");
+        Should.Throw<IOException>(() => RcSelectionMiss.Record(unavailable, observation));
+        var manifest = string.Concat(records.OrderBy(record => record.GetProperty("missId").GetString(), StringComparer.Ordinal)
+            .Select(record => record.GetProperty("missId").GetString() + " " +
+                DigestBytes(File.ReadAllBytes(Path.Combine(output, record.GetProperty("path").GetString()!))) + "\n"));
+        verdict.RootElement.GetProperty("missRecordSetDigest").GetString().ShouldBe(
+            DigestBytes(System.Text.Encoding.UTF8.GetBytes(manifest)), "P.evidence set digest");
+
+        var clean = world.Output("clean");
+        ReplayProvenSelection(world, world.Input("clean", fails: false), clean, true).ShouldBe(0, "P.clean");
+        using var cleanVerdict = Read(clean, "verdict.json");
+        cleanVerdict.RootElement.GetProperty("enables").GetBoolean().ShouldBeFalse();
+        var candidateOnly = world.Output("candidate-only-approval");
+        var approvalRoot = RcIncrementalCut.IncrementalRoot(candidateOnly);
+        Directory.CreateDirectory(approvalRoot);
+        File.WriteAllText(Path.Combine(approvalRoot, "approval.json"), JsonSerializer.Serialize(new
+        {
+            format = RcIncrementalCut.ApprovalFormat, provenSubtraction = true,
+            replayVerdictDigest = DigestBytes(File.ReadAllBytes(Path.Combine(clean, "verdict.json"))),
+            selectorHash = cleanVerdict.RootElement.GetProperty("selectorHash").GetString(),
+            trustPolicyHash = cleanVerdict.RootElement.GetProperty("trustPolicyHash").GetString(),
+            shadowRunIds = new[] { "fixture-not-authority-1", "fixture-not-authority-2" },
+        }));
+        var denied = RcIncrementalCut.Admit(candidateOnly, world.Sha(3), "", DateTime.UnixEpoch, world.Repository);
+        denied.Admitted.ShouldBeFalse("P.criterion candidate proof verdict cannot activate");
+        denied.Reason.ShouldBe("incremental-not-admitted:approval-selector-mismatch");
+        var initial = "predictions/3.json";
+        var resolved = "predictions/3.resolved.json";
+        using var access = Read(output, "runs/3/outcome-access.json");
+        access.RootElement.EnumerateArray().Select(read =>
+            read.GetProperty("purpose").GetString() + "/" + read.GetProperty("chunk").GetString())
+            .SequenceEqual(["score/left", "score/right"], StringComparer.Ordinal).ShouldBeTrue("P.outcome access");
+        File.ReadAllBytes(Path.Combine(clean, initial)).ShouldBe(File.ReadAllBytes(Path.Combine(output, initial)), "P.blind");
+        File.ReadAllBytes(Path.Combine(clean, resolved)).ShouldBe(File.ReadAllBytes(Path.Combine(output, resolved)), "P.resolved");
+        DigestBytes(File.ReadAllBytes(Path.Combine(output, resolved))).ShouldBe(
+            verdict.RootElement.GetProperty("resolvedPredictionDigests").GetProperty("3").GetString(), "P.resolved digest");
+
+        var ordinary = world.Output("ordinary");
+        ReplayProvenSelection(world, input, ordinary, false).ShouldBe(3, "P.legacy");
+        using var ordinaryVerdict = Read(ordinary, "verdict.json");
+        ordinaryVerdict.RootElement.GetProperty("caughtFailures").GetArrayLength().ShouldBe(1);
+        ordinaryVerdict.RootElement.GetProperty("missedFailures").GetArrayLength().ShouldBe(0);
+    }
+
+    [Test, Timeout(9_000)]
+    public async Task ProvenSubtractionReplayRejectsInvalidArtifactsAndCohorts(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld();
+        // Cohort custody binds distinct attempts even when every run qualified the same commit.
+        await world.InitializeAsync(cancellationToken, reuseCommit: true);
+        var corrupt = world.Input("corrupt", fails: false);
+        File.AppendAllText(Path.Combine(corrupt, "type-graphs", world.Sha(3) + ".json"), "\n");
+        ReplayProvenSelection(world, corrupt, world.Output("corrupt"), true).ShouldBe(2, "P.invalid artifact");
+
+        var gap = world.Input("gap", fails: false);
+        var custodyPath = Path.Combine(gap, "custody.json");
+        var custody = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(custodyPath))!;
+        custody["runs"]!.AsArray().RemoveAt(2);
+        File.WriteAllText(custodyPath, custody.ToJsonString());
+        ProvenReplayWorld.Seal(gap);
+        ReplayProvenSelection(world, gap, world.Output("gap"), true).ShouldBe(2, "P.cohort");
+
+        var duplicate = world.Input("duplicate-attempt", fails: false);
+        var duplicatePath = Path.Combine(duplicate, "runs", "r3000000", "attempt", "selection-attempt.json");
+        File.WriteAllText(duplicatePath, JsonSerializer.Serialize(new
+        {
+            runId = ProvenReplayWorld.RunId(3), attemptId = ProvenReplayWorld.RunId(2),
+        }));
+        ProvenReplayWorld.Seal(duplicate);
+        ReplayProvenSelection(world, duplicate, world.Output("duplicate-attempt"), true).ShouldBe(2, "P.cohort duplicate attempt");
+
+        var lostRoster = world.Input("lost-roster", fails: false);
+        Overlay(lostRoster, "r3000000/logs/groups-planned.json", doc => doc["chunks"]!.AsArray().RemoveAt(0));
+        ReplayProvenSelection(world, lostRoster, world.Output("lost-roster"), true).ShouldBe(2, "P.cohort lost planned member");
+
+        var duplicateContent = world.Input("duplicate-content", fails: false);
+        var authorityPath = Path.Combine(duplicateContent, "state", "qualification-cohort.json");
+        var authority = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(authorityPath))!;
+        var roster = authority["rosters"]!.AsArray().Single(row => row!["run"]!.GetValue<string>() == ProvenReplayWorld.RunId(3));
+        var contents = roster!["contents"]!.AsArray();
+        contents.Count.ShouldBe(2, "P.roster fixture has two planned chunks");
+        contents[0]!.GetValue<string>().ShouldNotBe(contents[1]!.GetValue<string>(), "P.roster fixture identities differ");
+        contents[1] = contents[0]!.DeepClone();
+        File.WriteAllText(authorityPath, authority.ToJsonString());
+        ProvenReplayWorld.Seal(duplicateContent);
+        ReplayProvenSelection(world, duplicateContent, world.Output("duplicate-content"), true,
+                expectedRefusal: "proof-cohort-roster-mismatch:r3000000")
+            .ShouldBe(2, "P.roster duplicate content replaces a required identity at the same count");
+    }
+
+    [Test, Timeout(25_000)]
+    public async Task ProvenSubtractionReplayRefusesUnverifiableOutcomes(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld();
+        await world.InitializeAsync(cancellationToken);
+        var unknown = world.Output("unknown");
+        ReplayProvenSelection(world, world.Input("unknown", fails: true, carryHasEvidence: false), unknown, true).ShouldBe(1, "P.unknown");
+        using var unknownVerdict = Read(unknown, "verdict.json");
+        var unknownFile = unknownVerdict.RootElement.GetProperty("missRecords")[0].GetProperty("path").GetString()!;
+        using var unknownRecord = Read(unknown, unknownFile);
+        unknownRecord.RootElement.GetProperty("observation").GetProperty("case").GetProperty("kind").GetString()
+            .ShouldBe("chunk-unknown-case");
+
+        var wrongTarget = world.Input("wrong-target", fails: true);
+        Overlay(wrongTarget, "r3000000/logs/groups-planned.json", doc => doc["chunks"]![0]!["chunk"] = "renumbered-left");
+        Overlay(wrongTarget, "r3000000/logs/summary.json", doc =>
+        {
+            doc["suites"]![0]!["chunk"] = "renumbered-left";
+            doc["suites"]![0]!["architecture"] = "arm64";
+        });
+        var wrongTargetOutput = world.Output("wrong-target");
+        ReplayProvenSelection(world, wrongTarget, wrongTargetOutput, true).ShouldBe(1, "P.unknown wrong-target observation");
+        using var targetVerdict = Read(wrongTargetOutput, "verdict.json");
+        var invalidCarry = targetVerdict.RootElement.GetProperty("missRecords")[0].GetProperty("path").GetString()!;
+        using var invalidRecord = Read(wrongTargetOutput, invalidCarry);
+        var invalidObservation = invalidRecord.RootElement.GetProperty("observation");
+        invalidObservation.GetProperty("chunk").GetString().ShouldBe("renumbered-left", "P.roster presentation ordinal");
+        // v1 content vector for native antiphon cases (L, L.LeftTests, M, l1/l2).
+        invalidObservation.GetProperty("contentDigest").GetString().ShouldBe(
+            "1645f49fecef4f856b6ac7d4d11c81d1ecb417ffa405ae8084673428df05eeb5", "P.roster stable content");
+        invalidObservation.GetProperty("case").GetProperty("kind").GetString()
+            .ShouldBe("chunk-unknown-case", "P.unknown wrong-target evidence cannot name a case");
+
+        var timeout = world.Input("timeout", fails: false);
+        Overlay(timeout, "r3000000/logs/summary.json", doc => doc["suites"]![0]!["timedOut"] = true);
+        var timeoutOutput = world.Output("timeout");
+        ReplayProvenSelection(world, timeout, timeoutOutput, true).ShouldBe(1, "P.unsafe timed out carry");
+        using var timeoutVerdict = Read(timeoutOutput, "verdict.json");
+        timeoutVerdict.RootElement.GetProperty("runs")[2].GetProperty("timeouts").GetInt32().ShouldBe(1);
+
+        var skipped = world.Input("mixed-skipped", fails: false);
+        var skippedTrxPath = Path.Combine(skipped, "runs", "r3000000", "logs", "left.trx");
+        var skippedTrx = XDocument.Load(skippedTrxPath);
+        skippedTrx.Descendants().Single(element => element.Name.LocalName == "UnitTestResult" &&
+            (string?)element.Attribute("testId") == "l2").SetAttributeValue("outcome", "NotExecuted");
+        skippedTrx.Save(skippedTrxPath);
+        ProvenReplayWorld.Seal(skipped);
+        var skippedOutput = world.Output("mixed-skipped");
+        ReplayProvenSelection(world, skipped, skippedOutput, true).ShouldBe(1, "P.unsafe mixed passed and skipped");
+        using var skippedVerdict = Read(skippedOutput, "verdict.json");
+        skippedVerdict.RootElement.GetProperty("runs")[2].GetProperty("skipped").GetInt32().ShouldBe(1);
+    }
+
+    [Test, Timeout(23_000)]
+    public async Task ProvenSubtractionReplayPreservesRepairAndRenameEvidence(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld();
+        await world.InitializeAsync(cancellationToken, includeRenameEndpoint: true);
+        var output = world.Output("missed-for-repair");
+        ReplayProvenSelection(world, world.Input("missed-for-repair", fails: true), output, true).ShouldBe(1, "P.revision initial miss");
+        using var verdict = Read(output, "verdict.json");
+        var record = verdict.RootElement.GetProperty("missRecords")[0];
+        var firstPath = record.GetProperty("path").GetString()!;
+        var firstBytes = File.ReadAllBytes(Path.Combine(output, firstPath));
+
+        var owed = world.Input("owed", fails: true);
+        var thirdPlan = Path.Combine(owed, "runs", "r3000000", "logs", "groups-planned.json");
+        var chunkPlan = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(thirdPlan))!;
+        chunkPlan["census"] = JsonSerializer.SerializeToNode(
+            new[] { new { reader = "L.LeftTests", globs = new[] { ProvenReplayWorld.Changed } } });
+        File.WriteAllText(thirdPlan, chunkPlan.ToJsonString());
+        ProvenReplayWorld.Seal(owed);
+        var owedOutput = world.Output("owed");
+        ReplayProvenSelection(world, owed, owedOutput, true).ShouldBe(3, "P.opportunity all owed");
+        using var owedVerdict = Read(owedOutput, "verdict.json");
+        owedVerdict.RootElement.GetProperty("proofDependentCarries").GetInt32().ShouldBe(0);
+        owedVerdict.RootElement.GetProperty("caughtFailures").GetArrayLength().ShouldBe(1);
+        using var repaired = Read(owedOutput, "predictions/3.resolved.json");
+        var caught = repaired.RootElement.GetProperty("predictions")[0];
+        caught.GetProperty("decision").GetString().ShouldBe("run", "P.absent-reader repaired execute");
+        caught.GetProperty("reasons").EnumerateArray().Select(x => x.GetString())
+            .ShouldContain("runtime-reader:" + ProvenReplayWorld.Changed, "P.absent-reader repaired reason");
+        var repair = RcSelectionMiss.AppendDisposition(output, record.GetProperty("missId").GetString()!,
+            DigestBytes(firstBytes), new("absent-reader", nameof(ProvenSubtractionReplayPreservesRepairAndRenameEvidence), null, null,
+                "runtime-reader:" + ProvenReplayWorld.Changed, null,
+                DigestBytes(File.ReadAllBytes(Path.Combine(owedOutput, "verdict.json")))));
+        using var repairRevision = Read(output, repair.Path);
+        repairRevision.RootElement.GetProperty("status").GetString().ShouldBe("open", "P.revision reader classification awaits qualification");
+        repairRevision.RootElement.GetProperty("disposition").GetProperty("attribution").GetString().ShouldBe("absent-reader");
+        File.ReadAllBytes(Path.Combine(output, firstPath)).ShouldBe(firstBytes, "P.revision repaired output preserves original");
+
+        var withDecoy = world.Input("repaired-decoy", fails: true, extraDecoy: true);
+        Overlay(withDecoy, "r3000000/logs/groups-planned.json", doc => doc["census"] = JsonSerializer.SerializeToNode(
+            new[] { new { reader = "L.LeftTests", globs = new[] { ProvenReplayWorld.Changed } } }));
+        var decoyOutput = world.Output("repaired-decoy");
+        ReplayProvenSelection(world, withDecoy, decoyOutput, true).ShouldBe(0, "P.absent-reader fixed with one genuine safe carry");
+        using var decoyVerdict = Read(decoyOutput, "verdict.json");
+        var decoyScore = decoyVerdict.RootElement.GetProperty("runs")[2].GetProperty("matrix");
+        decoyScore.GetProperty("carry/clean").GetInt32().ShouldBe(1, "P.absent-reader unaffected decoy carries");
+        decoyScore.GetProperty("run/FAIL").GetInt32().ShouldBe(1, "P.absent-reader damaged consumer executes");
+        decoyVerdict.RootElement.GetProperty("proofDependentCarries").GetInt32().ShouldBe(1);
+
+        var renamedOutput = world.Output("rename");
+        ReplayProvenSelection(world, world.Input("rename", fails: true, rename: true), renamedOutput, true).ShouldBe(1, "P.evidence rename carry remains unsafe");
+        using var renamedVerdict = Read(renamedOutput, "verdict.json");
+        var renamedRecord = renamedVerdict.RootElement.GetProperty("missRecords")[0].GetProperty("path").GetString()!;
+        using var rename = Read(renamedOutput, renamedRecord);
+        rename.RootElement.GetProperty("observation").GetProperty("diff").EnumerateArray().Select(row =>
+            (row.GetProperty("status").GetString(), row.GetProperty("oldPath").GetString(), row.GetProperty("newPath").GetString()))
+            .SequenceEqual(new[]
+            {
+                ("M", ProvenReplayWorld.Changed, ProvenReplayWorld.Changed),
+                ("R100", ProvenReplayWorld.RenamedFrom, ProvenReplayWorld.RenamedTo),
+            }).ShouldBeTrue("P.evidence both rename ends and the other change");
+    }
+
+    [Test, Timeout(18_000)]
+    public async Task ProvenSubtractionReplayResolvesGateAndFailureDebt(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld();
+        await world.InitializeAsync(cancellationToken, includeGateEndpoints: true);
+        var holdPass = world.Output("gate-pass");
+        var holdRed = world.Output("gate-red");
+        ReplayProvenSelection(world, world.Input("gate-pass", fails: false, held: true), holdPass, true).ShouldBe(0, "P.held gate pass");
+        ReplayProvenSelection(world, world.Input("gate-red", fails: false, held: true, gateRed: true), holdRed, true).ShouldBe(0, "P.held gate red");
+        File.ReadAllBytes(Path.Combine(holdPass, "predictions/5.json"))
+            .ShouldBe(File.ReadAllBytes(Path.Combine(holdRed, "predictions/5.json")), "P.held sealed before own outcomes");
+        using var heldPrediction = Read(holdPass, "predictions/5.json");
+        var held = heldPrediction.RootElement.GetProperty("predictions")[0];
+        held.GetProperty("decision").GetString().ShouldBe("held", "P.held initial");
+        held.GetProperty("ifGatePasses").GetString().ShouldBe("carry");
+        held.GetProperty("ifGateFails").GetString().ShouldBe("run");
+        using var heldAccess = Read(holdPass, "runs/5/outcome-access.json");
+        heldAccess.RootElement.EnumerateArray().Select(read =>
+            read.GetProperty("purpose").GetString() + "/" + read.GetProperty("chunk").GetString())
+            .SequenceEqual(["own-gate/right", "score/left", "score/right"], StringComparer.Ordinal)
+            .ShouldBeTrue("P.held own-gate only until resolved seal");
+        using var passPartition = Read(holdPass, "predictions/5.resolved.json");
+        using var redPartition = Read(holdRed, "predictions/5.resolved.json");
+        passPartition.RootElement.GetProperty("predictions")[0].GetProperty("decision").GetString().ShouldBe("carry", "P.held resolved pass");
+        redPartition.RootElement.GetProperty("predictions")[0].GetProperty("decision").GetString().ShouldBe("run", "P.held resolved fail");
+        var direct = world.Output("gate-direct");
+        ReplayProvenSelection(world, world.Input("gate-direct", fails: false, held: true, direct: true), direct, true).ShouldBe(0, "P.held direct obligation");
+        using var directPartition = Read(direct, "predictions/5.resolved.json");
+        directPartition.RootElement.GetProperty("predictions")[0].GetProperty("decision").GetString().ShouldBe("run", "P.held direct hit remains owed");
+
+        var debt = world.Input("later-debt", fails: false);
+        var priorTrx = Path.Combine(debt, "runs", "r2000000", "logs", "left.trx");
+        NightlyFixture.WriteTrx(priorTrx,
+            [new("l1", "L.LeftTests", "M", "Failed"), new("l2", "L.LeftTests", "M", "Failed")]);
+        Overlay(debt, "r2000000/logs/summary.json", doc =>
+        {
+            doc["suites"]![0]!["result"] = "FAIL";
+            doc["suites"]![0]!["exitCode"] = 1;
+        });
+        var debtOutput = world.Output("later-debt");
+        ReplayProvenSelection(world, debt, debtOutput, true).ShouldBe(3, "C.debt prior failure leaves no proof-only carry");
+        using var debtPartition = Read(debtOutput, "predictions/3.resolved.json");
+        var debtPredictions = debtPartition.RootElement.GetProperty("predictions").EnumerateArray().ToArray();
+        debtPredictions.Select(item => item.GetProperty("decision").GetString()).ToArray().ShouldBe(["run", "run"], "C.debt owed set");
+        debtPredictions[0].GetProperty("reasons").EnumerateArray().Select(reason => reason.GetString())
+            .ShouldContain("open-failure", "C.debt survives subtraction");
+    }
+
+    private static void Overlay(string input, string relative, Action<System.Text.Json.Nodes.JsonNode> edit)
+    {
+        var path = Path.Combine(input, "runs", relative);
+        var document = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))!;
+        edit(document);
+        File.WriteAllText(path, document.ToJsonString());
+        ProvenReplayWorld.Seal(input);
+    }
+
+    private static int ReplayProvenSelection(ProvenReplayWorld world, string custody, string destination, bool enabled,
+        string? expectedRefusal = null)
+    {
+        string[] arguments = ["--input-root", custody, "--output", destination,
+            "--as-of", ProvenReplayWorld.AsOf, "--repository-root", world.Repository];
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var exit = RcSelectionReplay.Run(enabled ? [..arguments, "--proven-subtraction"] : arguments, stdout, stderr);
+        Console.WriteLine($"C2076 replay case={Path.GetFileName(destination)} elapsedMs={clock.ElapsedMilliseconds}");
+        if (exit == 2) Console.WriteLine(stderr.ToString());
+        if (expectedRefusal is not null)
+            stderr.ToString().Trim().ShouldBe($"{RcSelectionReplay.Name}: refused ({expectedRefusal})", "P.roster refusal reason");
+        return exit;
+    }
+
+    private static JsonDocument Read(string root, string name) => JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, name)));
+    private static string DigestBytes(byte[] bytes) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+
+    [Test, Timeout(13_000)]
+    public async Task ArchivedWrongAliasWinnerUsesTheReplayScorerAndLeavesAnOpenRepair(CancellationToken cancellationToken)
+    {
+        using var world = new ProvenReplayWorld(alias: true);
+        await world.InitializeAsync(cancellationToken);
+        var oldRoot = world.Output("archived-alias");
+        var newRoot = world.Output("repaired-alias");
+        Run(world.Input("archived", fails: true, historical: true), oldRoot).ShouldBe(1, "P.wrongly-dropped archived miss");
+        Run(world.Input("repaired", fails: true), newRoot).ShouldBe(3, "P.wrongly-dropped repaired run has no extra carry");
+        using var archived = Read(oldRoot, "verdict.json");
+        using var repaired = Read(newRoot, "verdict.json");
+        archived.RootElement.GetProperty("runs")[2].GetProperty("matrix").GetProperty("carry/FAIL").GetInt32().ShouldBe(1);
+        repaired.RootElement.GetProperty("runs")[2].GetProperty("matrix").GetProperty("run/FAIL").GetInt32().ShouldBe(1);
+        repaired.RootElement.GetProperty("missRecords").GetArrayLength().ShouldBe(0);
+        var records = archived.RootElement.GetProperty("missRecords").EnumerateArray().ToArray();
+        records.Length.ShouldBe(2);
+        using var oldGraph = Read(oldRoot, "frozen/type-graphs/" + world.Sha(3) + ".json");
+        using var newGraph = Read(newRoot, "frozen/type-graphs/" + world.Sha(3) + ".json");
+        var oldSite = AliasSite(oldGraph);
+        var newSite = AliasSite(newGraph);
+        oldSite.GetProperty("origin").GetProperty("candidates").EnumerateArray().Select(path => path.GetString())
+            .SequenceEqual(["tests/L/A.cs", ProvenReplayWorld.Changed]).ShouldBeTrue("P.wrongly-dropped frozen candidates");
+        oldSite.GetProperty("winners")[0].GetString().ShouldBe("tests/L/A.cs", "P.wrongly-dropped archived winner");
+        newSite.GetProperty("winners")[0].GetString().ShouldBe(ProvenReplayWorld.Changed, "P.wrongly-dropped repaired winner");
+        var repairDigest = ProvenReplayWorld.Digest(File.ReadAllBytes(Path.Combine(newRoot, "verdict.json")));
+        foreach (var record in records)
+        {
+            var relative = record.GetProperty("path").GetString()!;
+            var bytes = File.ReadAllBytes(Path.Combine(oldRoot, relative));
+            using var observed = JsonDocument.Parse(bytes);
+            observed.RootElement.GetProperty("observation").GetProperty("attribution").GetString().ShouldBe("unresolved");
+            var revision = RcSelectionMiss.AppendDisposition(oldRoot, record.GetProperty("missId").GetString()!,
+                ProvenReplayWorld.Digest(bytes), new("wrongly-dropped", nameof(ArchivedWrongAliasWinnerUsesTheReplayScorerAndLeavesAnOpenRepair),
+                    null, null, "bind the alias RHS against the pinned compiler inputs", null, repairDigest));
+            using var disposition = Read(oldRoot, revision.Path);
+            disposition.RootElement.GetProperty("status").GetString().ShouldBe("open");
+            disposition.RootElement.GetProperty("disposition").GetProperty("rerunDigest").GetString().ShouldBe(repairDigest);
+            File.ReadAllBytes(Path.Combine(oldRoot, relative)).ShouldBe(bytes);
+        }
+
+        int Run(string input, string output)
+        {
+            using var logger = new StringWriter();
+            var exit = RcSelectionReplay.Run(["--input-root", input, "--output", output, "--repository-root", world.Repository,
+                "--as-of", ProvenReplayWorld.AsOf, "--proven-subtraction"], logger, logger);
+            if (exit == 2) Console.WriteLine(logger.ToString());
+            return exit;
+        }
+
+        static JsonDocument Read(string root, string relative) => JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, relative)));
+        static JsonElement AliasSite(JsonDocument graph) => graph.RootElement.GetProperty("typeSites").EnumerateArray().Single(site =>
+            site.GetProperty("origin").GetProperty("consumer").GetProperty("fullName").GetString() == "L.LeftTests" &&
+            site.GetProperty("origin").GetProperty("name").GetString() == "Pick");
+    }
+
     // CARD-1836 S5 (CP-5, V-5, R-4, R-5, G-14..G-19): the offline five-run replay exposes a hidden miss and blocks activation.
     [Test, Timeout(60_000)]
     public void Five_run_replay_exposes_a_missed_failure_before_activation(CancellationToken cancellationToken)

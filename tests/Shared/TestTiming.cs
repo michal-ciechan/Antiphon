@@ -808,6 +808,9 @@ public sealed class TestTimingSession : IDisposable
         "host-load world initialization",
         "host-load 100 durable receipts",
         "host-load cancel and join world",
+        "initialize rc project repository", "commit rc project fixture",
+        "pin proof fixture compiler inputs", "emit proof fixture reference", "write pinned release graph",
+        "proof replay setup", "commit replay endpoint", "execute replay case probe",
     };
 
     private static string BoundOperation(string? operation) =>

@@ -76,6 +76,12 @@ namespace Antiphon.Nightly
     /// <summary>The release-impact envelope and its algorithm identity.</summary>
     public static class ReleaseImpactEvidence
     {
+        internal static string RunningSelectorBinaryDigest()
+        {
+            using var stream = File.OpenRead(typeof(RcChunkSelection).Assembly.Location);
+            return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        }
+
         /// <summary>The envelope schema.</summary>
         public const string Schema = "antiphon-release-impact-v1";
 

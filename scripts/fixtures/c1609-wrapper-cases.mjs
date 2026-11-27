@@ -13,11 +13,12 @@ try {
    tasks:structuredClone(vectors.emptyTasks),failRetirementPreview:mode==='refused'};
   const file=root+'/'+mode+'.json',trace=root+'/'+mode+'.jsonl',token=root+'/operator-token';
   fs.writeFileSync(file,JSON.stringify(state));fs.writeFileSync(token,'C1609_WRAPPER_FAKE_AUTH',{mode:0o600});
-  // Unit 65: the deploy-server2 command, with the script's C727_TEST_* fixture seams.
+  // Unit 65: the deploy-server2 command, with the script's C727_TEST_* fixture seams. Unit 68: both fakes run in process in the
+  // command (C727Fakes, the port of the deleted c727-fake-http.ps1 and c727-fake-verify.ps1), named by their seam values.
   const args=['deploy-server2','--rolling','--sha',state.sha,'--phase','retire-temp'];
   if(mode==='preview')args.push('--dry-run');
   const env={...process.env,ANTIPHON_OPERATOR_TOKEN_FILE:token,ANTIPHON_TASK_TOKEN:'',ANTIPHON_API:'http://127.0.0.1:1',
-   C727_TEST_HTTP_STUB:repo+'/scripts/fixtures/c727-fake-http.ps1',C727_TEST_VERIFY_STUB:repo+'/scripts/fixtures/c727-fake-verify.ps1',
+   C727_TEST_HTTP_STUB:'c727-fake-http',C727_TEST_VERIFY_STUB:'c727-fake-verify',
    C727_TEST_STATE:file,C727_TEST_TRACE:trace,C727_TEST_WAIT_MS:'100',C727_TEST_POLL_MS:'5',C727_TEST_LAND_WAIT_MS:'100'};
   const r=cp.spawnSync(repo+'/scripts/antiphon',args,{env,encoding:'utf8',timeout:120000});
   assert(!r.error);assert.equal(r.status,mode==='refused'?2:0,mode+': '+r.stdout+r.stderr);

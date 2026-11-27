@@ -79,9 +79,9 @@
     },
     {
       "path": ".gitignore",
-      "classes": 159,
+      "classes": 161,
       "reason": "cap",
-      "owed": 134,
+      "owed": 136,
       "first": [
         "CardFilePrivacyOwnershipTests",
         "CardFilePrivacyPersistenceTests",
@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 369,
+      "classes": 371,
       "reason": "allowlist"
     },
     {
@@ -2133,9 +2133,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 142,
+      "classes": 143,
       "reason": "cap",
-      "owed": 117,
+      "owed": 118,
       "first": [
         "DelegateScriptVerificationRoundTests",
         "NightlyVerificationContractTests",
@@ -2245,9 +2245,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Nightly/NightlyFixture.cs",
-      "classes": 67,
+      "classes": 68,
       "reason": "cap",
-      "owed": 42,
+      "owed": 43,
       "first": [
         "NightlyRunParityTests",
         "NightlyRunTests",
@@ -2551,6 +2551,15 @@
         "GitServiceTests",
         "LandingFixtureGitInProcessTests",
         "MechanicalPcRehearsalTests"
+      ]
+    },
+    {
+      "path": "tests/Shared/TestTiming.cs",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "VolumeRetirementReceiptTests"
       ]
     },
     {
@@ -25878,7 +25887,8 @@
         "DockerTestCommandTests",
         "LinuxTestRosterTests",
         "RetireRunnerVolumesCaptureTests",
-        "RetireRunnerVolumesTests"
+        "RetireRunnerVolumesTests",
+        "Server2RollingStubTests"
       ]
     },
     {
@@ -25899,6 +25909,12 @@
       "classes": [
         "C849FrontDoorCaptureTests",
         "RemoteScriptContractTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/C849SavedDonorImportCaptures.cs",
+      "classes": [
+        "C849SavedDonorImportTests"
       ]
     },
     {
@@ -26449,6 +26465,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/ProvenReplayWorld.cs",
+      "classes": [
+        "IncrementalSelectionSoundnessTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/PwshPrivateCacheTests.cs",
       "classes": [
         "LinuxOnlyExpectedSkipClosureTests"
@@ -26667,6 +26689,13 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/ReleaseImpactTypeProofFixture.cs",
+      "classes": [
+        "RcProjectSelectionTests",
+        "ReleaseImpactRelationTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/ReleaseSelectionFixtures.cs",
       "classes": [
         "ChangeAwareReleaseTests",
@@ -26834,19 +26863,22 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/Server2RollingCaptures.cs",
       "classes": [
-        "Server2RollingDeployTests"
+        "Server2RollingDeployTests",
+        "Server2RollingStubTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Server2RollingCapturesC1008.cs",
       "classes": [
-        "Server2RollingDeployTests"
+        "Server2RollingDeployTests",
+        "Server2RollingStubTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Scripts/Server2RollingCapturesDriver.cs",
       "classes": [
-        "Server2RollingDeployTests"
+        "Server2RollingDeployTests",
+        "Server2RollingStubTests"
       ]
     },
     {
@@ -27407,6 +27439,7 @@
         "ControlledLandingRemovalReadTests",
         "ExpectationObservationAdapterTests",
         "InterimVerificationReadinessTests",
+        "RcProjectSelectionTests",
         "ReleaseImpactEnvelopeTests",
         "StaleWorkingTranscriptWatchdogTests"
       ]
@@ -29579,13 +29612,13 @@
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
         "ProjectReadinessCollationTests",
+        "RcProjectSelectionTests",
         "ReleaseImpactEnvelopeTests",
         "RequestedModelAliasDatabaseMigrationTests",
         "ReviewEngineDatabaseMigrationTests",
         "TestTimingChokePointTests",
         "TestTimingRecorderTests",
         "TimingProbeTests",
-        "VolumeRetirementReceiptTests",
         "WorktreeNoFollowDeleteTests"
       ]
     },
@@ -29672,9 +29705,11 @@
         "ImpactedClassesCensusTests",
         "ImpactedClassesSelectorTests",
         "IncrementalSelectionSoundnessTests",
+        "LandGeneratedArtifactTests",
         "PostLandEarlyWarningTests",
         "RcInputManifestTests",
-        "RcInputOwnersMapTests"
+        "RcInputOwnersMapTests",
+        "RcProjectSelectionTests"
       ]
     },
     {

@@ -34,7 +34,7 @@ internal sealed class C590BridgeWorld : IC590BridgeWorld, IC1609Processes, IDisp
         Checkout = Path.Combine(Root, "repo");
         Directory.CreateDirectory(Path.Combine(Checkout, "scripts", "lib"));
         Remote = Path.Combine(Root, "remote");
-        foreach (var name in C590Bridge.StagedTools.Concat(["c849-import-saved-donor.ps1"]))
+        foreach (var name in C590Bridge.StagedTools)
             File.Copy(Path.Combine(C590Harness.RepoRoot, "scripts", name), Path.Combine(Checkout, "scripts", name));
         Variables["ANTIPHON_OPERATOR_TOKEN_FILE"] = Path.Combine(Root, "no-operator-token");
         Home = Path.Combine(Root, "home");

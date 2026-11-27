@@ -582,8 +582,8 @@ namespace Antiphon.Nightly
                         if (!Regex.IsMatch(auditTimeout, "^[1-9][0-9]{0,6}$", RegexOptions.IgnoreCase)) throw new C590Failure("AuditTimeoutInvalid");
                         auditTimeoutExport.Add("export C1008_AUDIT_TIMEOUT_SECONDS='" + auditTimeout + "'");
                     }
-                    if (RollingPs.Eq(hostCase, "runner-cache-seed"))
-                        Scp("-o", "BatchMode=yes", Scripts("c849-import-saved-donor.ps1"), "mc@server2:/home/mc/antiphon-c590/c849-import-saved-donor.ps1");
+                    // Unit 68: runner-cache-seed no longer copies scripts/c849-import-saved-donor.ps1 here; c590-remote.sh runs the
+                    // c849-import-saved-donor command from server2's host-published CLI, mounted read-only into the runner image.
                     var exports = new List<string>();
                     exports.AddRange(cleanupExports);
                     exports.AddRange(manualExports);

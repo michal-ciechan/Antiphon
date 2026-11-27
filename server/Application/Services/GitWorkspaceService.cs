@@ -280,6 +280,13 @@ public class GitWorkspaceService
     public virtual async Task<byte[]?> GetContentBytesAtAsync(
         string workingDirectory, string relativePath, string gitRef, long maxBytes, CancellationToken ct)
     {
+        // A regular blob at a full commit id is read in process (git's bytes, no child), the size bound kept.
+        if (InProcessReadsEligible()
+            && Antiphon.GitInProcess.InProcessGitReads.TryShowBlobBytes(workingDirectory, $"{gitRef}:./{relativePath}", maxBytes, out var shown))
+        {
+            ct.ThrowIfCancellationRequested();
+            return shown;
+        }
         Process? process = null;
         try
         {

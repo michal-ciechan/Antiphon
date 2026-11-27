@@ -374,65 +374,92 @@ async function c994Wrapper(f,phase) {
   fs.writeFileSync(f.root+'/operator-token','inert-fixture-operator');
   // The wrapper's offline prerequisite seam requires both a verifier and owned state.
   const wrapperState=f.root+'/wrapper-state.json';fs.writeFileSync(wrapperState,'{}');
-  const bridge=f.root+'/wrapper-bridge.ps1';
-  fs.writeFileSync(bridge,`
-param([string]$Case,[string]$Manifest)
-$ErrorActionPreference='Stop'
-if($Case -eq 'rollout-lock'){[Console]::WriteLine('C1008_LOCKED');[Console]::Out.Flush();[void][Console]::ReadLine();exit 0}
-if($Case -eq 'temp-project-absent'){& docker ps -aq --no-trunc --filter 'label=com.docker.compose.project=${f.temp}';exit $LASTEXITCODE}
-$m=Get-Content -Raw $Manifest|ConvertFrom-Json
-if($Case -eq 'host-jq-prerequisite'){
- if($m.sourceSha -cne '${source}' -or $m.runId -notmatch '^c727[0-9a-f]{12}$' -or $m.mode -cne 'check' -or $m.phase -notin @('drain-temp','retire-temp','deploy-temp')){exit 2}
- @{schema=1;lane='host';mode=$m.mode;lookupPath='/usr/local/bin/jq';path='/usr/local/bin/jq';
-   version='jq-1.7.1';digest='5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5';
-   uid=0;gid=0;permissions='755';trueExit=0;falseExit=1;installed=$false;outcome='existing'}|ConvertTo-Json -Compress
- exit 0
+  // Unit 68: the deploy-server2 command's verifier seam starts this adapter directly (--case <case> [--manifest <path>]; it was
+  // wrapper-bridge.ps1 under pwsh), with the same steps, outputs, files and exit codes. Not run on server2.
+  const bridge=f.root+'/wrapper-bridge.mjs';
+  const cfg={temp:f.temp,source,originUrl,root:f.root,cleanupScript,recycleScript,cwd:process.cwd(),prefix:f.prefix,main:f.main};
+  fs.writeFileSync(bridge,`#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+import cp from 'node:child_process';
+import crypto from 'node:crypto';
+const cfg=${JSON.stringify(cfg)};
+const argv=process.argv.slice(2);
+const flag=name=>{const i=argv.indexOf(name);return i>=0?argv[i+1]:undefined;};
+const kase=flag('--case'),manifest=flag('--manifest');
+const eq=(a,b)=>String(a??'').toLowerCase()===String(b).toLowerCase();
+const inherit=(file,args,env)=>{const r=cp.spawnSync(file,args,{stdio:'inherit',env:env??process.env});if(r.error)throw r.error;return r.status??1;};
+const lines=text=>{const l=text.replace(/\\r\\n/g,'\\n').split('\\n');if(l.length&&l[l.length-1]==='')l.pop();return l;};
+const post=async(url,body)=>{const r=await fetch(url,{method:'POST',...(body===undefined?{}:{headers:{'Content-Type':'application/json'},body})});if(!r.ok)throw Error('POST '+url+' '+r.status);};
+async function main(){
+  if(kase==='rollout-lock'){
+    process.stdout.write('C1008_LOCKED\\n');
+    await new Promise(done=>{process.stdin.once('data',done);process.stdin.once('end',done);});
+    return 0;
+  }
+  if(kase==='temp-project-absent')return inherit('docker',['ps','-aq','--no-trunc','--filter','label=com.docker.compose.project='+cfg.temp]);
+  const m=JSON.parse(fs.readFileSync(manifest,'utf8'));
+  if(kase==='host-jq-prerequisite'){
+    if(String(m.sourceSha)!==cfg.source||!/^c727[0-9a-f]{12}$/i.test(String(m.runId??''))||String(m.mode)!=='check'
+      ||!['drain-temp','retire-temp','deploy-temp'].some(p=>eq(m.phase,p)))return 2;
+    process.stdout.write(JSON.stringify({schema:1,lane:'host',mode:m.mode,lookupPath:'/usr/local/bin/jq',path:'/usr/local/bin/jq',
+      version:'jq-1.7.1',digest:'5942c9b0934e510ee61eb3e30273f1b3fe2590df93933a93d7c58b81d19c8ff5',
+      uid:0,gid:0,permissions:'755',trueExit:0,falseExit:1,installed:false,outcome:'existing'})+'\\n');
+    return 0;
+  }
+  const env={...process.env,C590_CASE:kase,C590_SHA:String(m.sourceSha??''),C590_RUN:String(m.runId??''),C590_REEXEC:'1',C604_SERVER_ORIGIN:cfg.originUrl};
+  let code;
+  if(kase==='retire-temp-containers'){
+    env.C994_OPERATION=String(m.tempContainerCleanup?.operationId??'');
+    code=inherit('bash',[cfg.cleanupScript],env);
+    if(code===2){
+      const r=JSON.parse(fs.readFileSync(cfg.root+'/evidence/retire-temp-containers/c590-result.json','utf8'));
+      if(eq(r.diagnosis,'TempContainerStillRunning'))await post(cfg.originUrl+'/fixture/exit-next');
+    }
+  }else if(kase==='retire-temp-runner'){
+    env.C1008_OPERATION=String(m.recycle?.operationId??'');
+    env.C1008_DRY_RUN=m.recycle?.dryRun?'1':'0';
+    let text=fs.readFileSync(cfg.recycleScript,'utf8');
+    text=text.split("C1008_CLEANUP_OPERATION=''").join("C1008_CLEANUP_OPERATION='"+String(m.recycle?.cleanupOperationId??'')+"'");
+    const file=cfg.root+'/wrapper-recycle.sh';fs.writeFileSync(file,text.replace(/[^\\x00-\\x7f]/g,'?'));
+    code=inherit('bash',[file],env);
+  }else if(kase==='retirement-proof-read'||kase==='temp-retirement-clearable'){
+    // Unit 67: the c1609-read-packet command prints the packet scripts/c1609-read-packet.ps1 built. Not run on server2.
+    const readArgs=['--operation',String(m.operationId??'')];if(kase==='temp-retirement-clearable')readArgs.push('--clearable');
+    const read=cp.spawnSync(cfg.cwd+'/scripts/antiphon',['c1609-read-packet',...readArgs],{stdio:['inherit','pipe','inherit'],encoding:'utf8',env});
+    if(read.error)throw read.error;
+    let packet=lines(read.stdout).join('\\n')+'\\n';
+    if(read.status!==0)throw Error('Fixture read packet refused');
+    const encoded=packet.match(/[A-Za-z0-9+\\/]{512,}={0,2}/g)??[];
+    if(encoded.length!==1)throw Error('Fixture read packet changed');
+    let payload=Buffer.from(encoded[0],'base64').toString('utf8');
+    payload=payload.split('antiphon-runner-temp').join(cfg.temp).split('antiphon-runner-cache-').join(cfg.prefix+'cache-').split('antiphon-runner').join(cfg.main);
+    packet=packet.split(encoded[0]).join(Buffer.from(payload,'utf8').toString('base64'));
+    packet=packet.split('/home/mc/antiphon-server2').join(cfg.root+'/server').split('C1008_PROJECT=antiphon-runner-temp').join('C1008_PROJECT='+cfg.temp);
+    const census=cp.spawnSync('bash',['-c',packet],{stdio:['inherit','pipe','inherit'],encoding:'utf8',env});
+    if(census.error)throw census.error;
+    code=census.status??1;
+    for(const line of lines(census.stdout))process.stdout.write(line.split('"'+cfg.temp+'_').join('"antiphon-runner-temp_')+'\\n');
+  }else if(kase==='deploy-temp-runner'){
+    code=inherit('docker',['compose','-p',cfg.temp,'-f',cfg.root+'/'+cfg.temp+'.json','up','-d'],env);
+    await post(cfg.originUrl+'/fixture/register',JSON.stringify({available:true,dispatchEligible:true,acceptingNewWork:true,buildVersion:cfg.source}));
+  }else if(kase==='runner-cache-seed'||kase==='verify-runner-caches')return 0;
+  else return 2;
+  // The PowerShell epilogue: a case without an evidence root (the two reads) failed at its Join-Path, exit 1.
+  if(m.evidenceRoot===undefined||m.evidenceRoot===null||m.evidenceRoot===''){process.stderr.write("Cannot bind argument to parameter 'Path' because it is null.\\n");return 1;}
+  const dest=path.join(String(m.evidenceRoot),kase);fs.mkdirSync(dest,{recursive:true});
+  if(fs.existsSync(cfg.root+'/evidence/'+kase))fs.cpSync(cfg.root+'/evidence/'+kase,dest,{recursive:true,force:true});
+  const receipt=path.join(dest,'temp-containers.json');
+  if(kase==='retire-temp-containers'&&fs.existsSync(receipt)){
+    const temp=cfg.temp.replace(/[.*+?^\${}()|[\\]\\\\]/g,'\\\\$&');
+    const text=fs.readFileSync(receipt,'utf8').replace(new RegExp('"project"(\\\\s*):(\\\\s*)"'+temp+'"','gi'),'"project"$1:$2"antiphon-runner-temp"');
+    fs.writeFileSync(receipt,text);
+    fs.writeFileSync(path.join(dest,'temp-containers.sha256'),crypto.createHash('sha256').update(fs.readFileSync(receipt)).digest('hex').toUpperCase());
+  }
+  return code;
 }
-$env:C590_CASE=$Case;$env:C590_SHA=$m.sourceSha;$env:C590_RUN=$m.runId;$env:C590_REEXEC='1';$env:C604_SERVER_ORIGIN='${originUrl}'
-if($Case -eq 'retire-temp-containers'){
- $env:C994_OPERATION=$m.tempContainerCleanup.operationId
- & bash '${cleanupScript}'
- $code=$LASTEXITCODE
- if($code -eq 2){$r=Get-Content -Raw '${f.root}/evidence/retire-temp-containers/c590-result.json'|ConvertFrom-Json;if($r.diagnosis -eq 'TempContainerStillRunning'){Invoke-RestMethod -Method POST -Uri '${originUrl}/fixture/exit-next'|Out-Null}}
-}elseif($Case -eq 'retire-temp-runner'){
- $env:C1008_OPERATION=$m.recycle.operationId
- $env:C1008_DRY_RUN=if($m.recycle.dryRun){'1'}else{'0'}
- $text=Get-Content -Raw '${recycleScript}'
- $text=$text.Replace("C1008_CLEANUP_OPERATION=''",("C1008_CLEANUP_OPERATION='"+$m.recycle.cleanupOperationId+"'"))
- $file='${f.root}/wrapper-recycle.sh';Set-Content -NoNewline -Encoding ascii $file $text
- & bash $file
- $code=$LASTEXITCODE
-}elseif($Case -in @('retirement-proof-read','temp-retirement-clearable')){
- # Unit 67: the c1609-read-packet command prints the packet scripts/c1609-read-packet.ps1 built. Not run on server2.
- $readArgs=@('--operation',[string]$m.operationId); if($Case -eq 'temp-retirement-clearable'){$readArgs+='--clearable'}
- $packet=((& '${process.cwd()}/scripts/antiphon' c1609-read-packet @readArgs) -join "\`n")+"\`n"
- if($LASTEXITCODE -ne 0){throw 'Fixture read packet refused'}
- $encoded=[regex]::Matches($packet,'[A-Za-z0-9+/]{512,}={0,2}')
- if($encoded.Count -ne 1){throw 'Fixture read packet changed'}
- $payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded[0].Value))
- $payload=$payload.Replace('antiphon-runner-temp','${f.temp}').Replace('antiphon-runner-cache-','${f.prefix}cache-').Replace('antiphon-runner','${f.main}')
- $packet=$packet.Replace($encoded[0].Value,[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)))
- $packet=$packet.Replace('/home/mc/antiphon-server2','${f.root}/server').Replace('C1008_PROJECT=antiphon-runner-temp','C1008_PROJECT=${f.temp}')
- # The command checks the production temp volume names; this fixture's volumes are named for its own temp project.
- $census=@(& bash -c $packet)
- $code=$LASTEXITCODE
- foreach($line in $census){[Console]::Out.WriteLine(([string]$line).Replace('"${f.temp}_','"antiphon-runner-temp_'))}
-}elseif($Case -eq 'deploy-temp-runner'){
- & docker compose -p '${f.temp}' -f '${f.root}/${f.temp}.json' up -d
- $code=$LASTEXITCODE
- $body=@{available=$true;dispatchEligible=$true;acceptingNewWork=$true;buildVersion='${source}'}|ConvertTo-Json
- Invoke-RestMethod -Method POST -Uri '${originUrl}/fixture/register' -ContentType application/json -Body $body|Out-Null
-}elseif($Case -in @('runner-cache-seed','verify-runner-caches')){exit 0}else{exit 2}
-$dest=Join-Path $m.evidenceRoot $Case;New-Item -ItemType Directory -Force $dest|Out-Null
-if(Test-Path -LiteralPath ('${f.root}/evidence/'+$Case)){Copy-Item -LiteralPath ('${f.root}/evidence/'+$Case) -Destination $m.evidenceRoot -Recurse -Force}
-$receipt=Join-Path $dest 'temp-containers.json'
-if($Case -eq 'retire-temp-containers' -and (Test-Path -LiteralPath $receipt)){
- $text=[IO.File]::ReadAllText($receipt) -replace ('"project"(\s*):(\s*)"'+[regex]::Escape('${f.temp}')+'"'),'"project"$1:$2"antiphon-runner-temp"'
- [IO.File]::WriteAllText($receipt,$text)
- Set-Content -NoNewline -LiteralPath (Join-Path $dest 'temp-containers.sha256') -Value (Get-FileHash -LiteralPath $receipt -Algorithm SHA256).Hash
-}
-exit $code
-`);
+main().then(code=>process.exit(code),e=>{process.stderr.write(String(e?.stack??e)+'\\n');process.exit(1);});
+`,{mode:0o755});
   const env={...process.env,ANTIPHON_API:originUrl,ANTIPHON_TASK_TOKEN:'',ANTIPHON_OPERATOR_TOKEN_FILE:f.root+'/operator-token',
     C727_TEST_VERIFY_STUB:bridge,C727_TEST_STATE:wrapperState,C727_TEST_POLL_MS:'5'};
   delete env.C727_TEST_HTTP_STUB;delete env.C727_TEST_WAIT_MS;

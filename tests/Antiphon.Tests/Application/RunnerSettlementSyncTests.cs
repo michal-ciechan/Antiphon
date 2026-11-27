@@ -1184,8 +1184,8 @@ public sealed class RunnerSettlementSyncTests
         {
             var world = new SyncWorld { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
-            var plain = immutableSeedOrigin is null && !extraMasterCommit && !withSubmodule && initialFiles is not { Count: > 0 };
-            var cloned = plain && GitTreeTemplate.Enabled && await world.CloneBaseAsync();
+            var plain = immutableSeedOrigin is null && !extraMasterCommit && !withSubmodule;
+            var cloned = plain && GitTreeTemplate.Enabled && await world.CloneBaseAsync(initialFiles);
             if (cloned)
             {
                 // The base tree (origin, desktop, base commit, the task worktree) came from the template.
@@ -1310,11 +1310,18 @@ public sealed class RunnerSettlementSyncTests
         {
             await EnsureRunnerAsync();
             File.WriteAllText(Path.Combine(Runner, file), content);
-            await RunAsync(Runner, "add", file);
-            await RunAsync(Runner, "commit", "-m", "runner " + file);
-            await RunAsync(Runner, "push", "origin", "HEAD:refs/heads/" + Branch);
-            return await RunAsync(Runner, "rev-parse", "HEAD");
+            // Setup, not the code under test: libgit2 stages, commits and pushes (to a local bare origin with no hooks)
+            // instead of five git processes plus receive-pack.
+            using var repo = new LibGit2Sharp.Repository(Runner);
+            LibGit2Sharp.Commands.Stage(repo, file);
+            var commit = repo.Commit("runner " + file, RunnerIdentity, RunnerIdentity, new LibGit2Sharp.CommitOptions());
+            repo.Network.Push(repo.Network.Remotes["origin"], "HEAD:refs/heads/" + Branch,
+                new LibGit2Sharp.PushOptions { OnPushStatusError = e => throw new InvalidOperationException("runner push refused: " + e.Message) });
+            return commit.Sha;
         }
+
+        private static LibGit2Sharp.Signature RunnerIdentity =>
+            new("CARD-0657 test", "c657@example.invalid", DateTimeOffset.Now);
 
         /// <summary>Another task's branch on the same origin, descending from B.</summary>
         public async Task<string> PublishForeignBranchAsync(string branch, string file)
@@ -1390,6 +1397,10 @@ public sealed class RunnerSettlementSyncTests
 
         private static async Task<LandingGitResult> ExecAsync(string directory, IReadOnlyList<string> arguments)
         {
+            // A read the land answers in process (rev-parse, for-each-ref, cat-file -e, ...) is answered the same way
+            // here: libgit2 instead of a git process, falling back to git for any shape it does not answer.
+            if (Antiphon.GitInProcess.InProcessGitReads.TryAnswer(directory, arguments) is { } answered)
+                return answered;
             var start = new System.Diagnostics.ProcessStartInfo("git")
             {
                 WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
@@ -1433,13 +1444,16 @@ public sealed class RunnerSettlementSyncTests
         /// (the branch carries it), instead of ~13 git processes per world. False (and the root emptied) when the
         /// template is refused, so the caller builds it with git.
         /// </summary>
-        private async Task<bool> CloneBaseAsync()
+        private async Task<bool> CloneBaseAsync(IReadOnlyDictionary<string, string>? initialFiles)
         {
             try
             {
                 var prefix = _cardBranch ? "feat/card-1213-code-" : "feat/card-task-";
-                var template = await GitTreeTemplate.BuildOnceAsync("c657-sync-world" + (_cardBranch ? "-card" : ""), ["task"],
-                    async (root, tokens) => { await BuildBaseAsync(root, prefix + tokens["task"]); return new Dictionary<string, string>(); },
+                // One template per distinct set of initial files (committed in the base commit), keyed by their hash.
+                var files = initialFiles is { Count: > 0 } ? initialFiles : null;
+                var key = "c657-sync-world" + (_cardBranch ? "-card" : "") + (files is null ? "" : "-files-" + FilesKey(files));
+                var template = await GitTreeTemplate.BuildOnceAsync(key, ["task"],
+                    async (root, tokens) => { await BuildBaseAsync(root, prefix + tokens["task"], files); return new Dictionary<string, string>(); },
                     tokenLength: 8);
                 template.CloneTo(Root, new Dictionary<string, string> { ["task"] = TaskId.ToString("N")[..8] });
                 return true;
@@ -1457,7 +1471,11 @@ public sealed class RunnerSettlementSyncTests
             }
         }
 
-        private static async System.Threading.Tasks.Task BuildBaseAsync(string root, string branch)
+        private static string FilesKey(IReadOnlyDictionary<string, string> files) => Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\0',
+                files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => f.Key + '\0' + f.Value)))))[..16];
+
+        private static async System.Threading.Tasks.Task BuildBaseAsync(string root, string branch, IReadOnlyDictionary<string, string>? files)
         {
             static async System.Threading.Tasks.Task Run(string directory, params string[] arguments)
             {
@@ -1475,6 +1493,12 @@ public sealed class RunnerSettlementSyncTests
             await Run(desktop, "config", "commit.gpgsign", "false");
             File.WriteAllText(Path.Combine(desktop, "README.md"), "base\n");
             await Run(desktop, "add", "README.md");
+            foreach (var file in files ?? new Dictionary<string, string>())
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(desktop, file.Key))!);
+                await File.WriteAllTextAsync(Path.Combine(desktop, file.Key), file.Value);
+                await Run(desktop, "add", "--", file.Key);
+            }
             await Run(desktop, "commit", "-m", "base");
             await Run(desktop, "remote", "add", "origin", origin);
             await Run(desktop, "push", "origin", "master");
@@ -1491,8 +1515,16 @@ public sealed class RunnerSettlementSyncTests
         public async Task EnsureRunnerAsync()
         {
             if (_runnerCloned) return;
-            await RunAsync(Root, "clone", "-b", Branch, Origin, Runner);
-            await ConfigureAsync(Runner);
+            // libgit2 clones the local bare origin and writes the identity: one in-process step instead of four git
+            // processes plus upload-pack.
+            LibGit2Sharp.Repository.Clone(Origin, Runner, new LibGit2Sharp.CloneOptions { BranchName = Branch });
+            using (var repo = new LibGit2Sharp.Repository(Runner))
+            {
+                repo.Config.Set("user.email", "c657@example.invalid", LibGit2Sharp.ConfigurationLevel.Local);
+                repo.Config.Set("user.name", "CARD-0657 test", LibGit2Sharp.ConfigurationLevel.Local);
+                repo.Config.Set("commit.gpgsign", false, LibGit2Sharp.ConfigurationLevel.Local);
+            }
+            await System.Threading.Tasks.Task.CompletedTask;
             _runnerCloned = true;
         }
 

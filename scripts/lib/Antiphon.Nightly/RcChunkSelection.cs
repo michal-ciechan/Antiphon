@@ -25,6 +25,10 @@ namespace Antiphon.Nightly
         public string ContentDigest { get; set; } = "";
         /// <summary>The stable case keys of its expanded roster (the admission predicate requires each passed).</summary>
         public string[] Cases { get; set; } = Array.Empty<string>();
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string Suite { get; set; } = "";
+        [System.Text.Json.Serialization.JsonIgnore]
+        public RcCaseIdentity[] CaseRoster { get; set; } = Array.Empty<RcCaseIdentity>();
     }
 
     /// <summary>A declared runtime reader (directory listing, fixture, assembled file name): its class and the path globs it reads.</summary>
@@ -62,6 +66,8 @@ namespace Antiphon.Nightly
         public string[] FallbackReasons { get; set; } = Array.Empty<string>();
         public RcIndexBinding[] Index { get; set; } = Array.Empty<RcIndexBinding>();
         public RcChunkDecision[] Decisions { get; set; } = Array.Empty<RcChunkDecision>();
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public RcChunkProofTrace Proof { get; set; }
 
         public RcChunkDecision Of(string chunk) => Decisions.FirstOrDefault(d => string.Equals(d.Chunk, chunk, StringComparison.Ordinal));
     }
@@ -76,10 +82,18 @@ namespace Antiphon.Nightly
         /// </summary>
         public static RcChunkSelectionResult Select(string root, string baselineSha, string candidateSha, IReadOnlyList<RcPlannedChunk> chunks,
             IReadOnlyList<IDictionary> priorReceipts, IReadOnlyList<RcReaderCensusEntry> census, Func<IDictionary, RcReuse> admit)
+            => Select(root, baselineSha, candidateSha, chunks, priorReceipts, census, admit, null);
+
+        public static RcChunkSelectionResult Select(string root, string baselineSha, string candidateSha, IReadOnlyList<RcPlannedChunk> chunks,
+            IReadOnlyList<IDictionary> priorReceipts, IReadOnlyList<RcReaderCensusEntry> census, Func<IDictionary, RcReuse> admit,
+            RcTypeProofComparison proof)
         {
             var result = new RcChunkSelectionResult { BaselineSha = baselineSha ?? "", CandidateSha = candidateSha ?? "" };
             var fallback = new List<string>();
             var hits = chunks.ToDictionary(c => c.Id, c => new List<string>(), StringComparer.Ordinal);
+            var removed = new List<RcRemovedIndexHit>();
+            var useProof = proof != null && proof.Matches(baselineSha, candidateSha) && proof.RosterBound(chunks);
+            if (proof != null && !useProof) fallback.Add("type-proof-endpoint-or-roster-unbound");
 
             var project = RcProjectSelection.Select(root, baselineSha, candidateSha);
             var old = ReadIndex(root, baselineSha, "B", fallback);
@@ -104,8 +118,17 @@ namespace Antiphon.Nightly
                 else
                     foreach (var (index, side) in new[] { (old, "B"), (@new, "A") })
                     {
+                        if (useProof)
+                            foreach (var (name, reason) in proof.Independent(side, path))
+                                Hit(chunks, hits, name, reason);
                         if (index.Edges.TryGetValue(path, out var classes))
-                            foreach (var cls in classes) Hit(chunks, hits, cls, "index-edge:" + side + ":" + path);
+                            foreach (var cls in classes)
+                            {
+                                if (useProof && !index.Capped.Contains(path) && proof.DropIndexHit(side, path, cls, chunks))
+                                    removed.Add(new RcRemovedIndexHit(side, path, cls));
+                                else
+                                    Hit(chunks, hits, cls, "index-edge:" + side + ":" + path);
+                            }
                     }
                 foreach (var entry in census0)
                     foreach (var glob in entry.Globs)
@@ -175,6 +198,9 @@ namespace Antiphon.Nightly
                 }
             }
             result.Decisions = decisions.ToArray();
+            if (useProof) result.Proof = new RcChunkProofTrace(proof.Identity, proof.BaselineGraphDigest, proof.CandidateGraphDigest,
+                removed.OrderBy(row => row.Side, StringComparer.Ordinal).ThenBy(row => row.Path, StringComparer.Ordinal)
+                    .ThenBy(row => row.Class, StringComparer.Ordinal).ToArray());
             return result;
         }
 
