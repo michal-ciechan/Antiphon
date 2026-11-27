@@ -87,6 +87,9 @@ namespace Antiphon.CliLauncher
                 error.WriteLine("antiphon-cli: " + CliGate.Variable + " names no checkout: " + context.Request);
                 return CliPublisher.Unavailable;
             }
+            if (CheckpointEntryDiskSpace.Refuse(args, checkout, context.Publish))
+                return CliPublisher.Unavailable;
+
             try
             {
                 var stamp = CliCache.Stamp(context.BaseDirectory);

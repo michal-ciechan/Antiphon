@@ -1,0 +1,44 @@
+<Project InitialTargets="AntiphonCheckpointBootstrapDiskSpace">
+  <UsingTask TaskName="AntiphonCheckBootstrapDiskSpace" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <ProjectDirectory ParameterType="System.String" Required="true" />
+      <StartupDirectory ParameterType="System.String" Required="true" />
+      <RestoreDirectory ParameterType="System.String" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        // InitialTargets runs for the project during restore graph generation, before NuGet writes.
+        foreach (var path in new[] { ProjectDirectory, StartupDirectory, Path.GetTempPath(), RestoreDirectory })
+        {
+            if (string.IsNullOrEmpty(path))
+                continue;
+            long free;
+            try
+            {
+                var existing = Path.GetFullPath(Path.Combine(ProjectDirectory, path));
+                while (!Directory.Exists(existing) && Path.GetDirectoryName(existing) is string parent)
+                    existing = parent;
+                var mount = Environment.OSVersion.Platform == PlatformID.Win32NT ? Path.GetPathRoot(existing) : existing;
+                free = new DriveInfo(mount).AvailableFreeSpace;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException)
+            {
+                continue;
+            }
+            if (free < (20L << 30))
+            {
+                Log.LogError("workspace_disk_low: {0} has {1} bytes available. Free at least 20 GiB before retrying.", path, free);
+                return false;
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+  <Target Name="AntiphonCheckpointBootstrapDiskSpace">
+    <AntiphonCheckBootstrapDiskSpace ProjectDirectory="$(MSBuildProjectDirectory)"
+                                    StartupDirectory="$(MSBuildStartupDirectory)"
+                                    RestoreDirectory="$(MSBuildProjectExtensionsPath)" />
+  </Target>
+</Project>

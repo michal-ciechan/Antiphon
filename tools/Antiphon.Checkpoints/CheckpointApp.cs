@@ -351,7 +351,7 @@ public static class CheckpointApp
             var remaining = budget.RemainingExecution;
             if (remaining < TimeSpan.Zero)
                 remaining = TimeSpan.Zero;
-            var comparer = new BaselineComparer(driver, slots, remaining, BeforeLaunch, budget, admissionLimit);
+            var comparer = new BaselineComparer(driver, slots, remaining, BeforeLaunch, budget, admissionLimit, runtime.DiskFreeBytes);
             try
             {
                 await comparer.CompareAsync(

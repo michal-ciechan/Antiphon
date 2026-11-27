@@ -58,6 +58,7 @@ namespace Antiphon.CliLauncher
         /// <summary>Where the one failure line goes.</summary>
         public TextWriter Error { get; init; } = Console.Error;
 
+        /// <summary>Measures the filesystems used by checkpoint bootstrap.</summary>
         public Func<string, long?> DiskFreeBytes { get; init; }
 
         /// <summary>The clock.</summary>

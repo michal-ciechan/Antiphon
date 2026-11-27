@@ -1,5 +1,8 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)] [string] $LowSpaceDirectory)
+param(
+    [Parameter(Mandatory)] [string] $LowSpaceDirectory,
+    [Parameter(Mandatory)] [string] $PowerShellEntry
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -12,21 +15,25 @@ function Test-WindowsCheckpointBootstrap {
     $fixture = [IO.Directory]::CreateTempSubdirectory('checkpoint-bootstrap-')
     try {
         $scripts = [IO.Directory]::CreateDirectory((Join-Path $fixture.FullName 'scripts'))
-        $launcher = Join-Path $scripts.FullName 'antiphon.cmd'
-        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'antiphon.cmd') -Destination $launcher
-        Push-Location -LiteralPath $lowSpace
-        try {
-            $PSNativeCommandUseErrorActionPreference = $false
-            $diagnostic = & $launcher checkpoints row 2>&1 | Out-String
-            $exitCode = $LASTEXITCODE
-        } finally {
-            Pop-Location
-        }
-        if ($exitCode -ne 9 -or $diagnostic -notmatch 'workspace_disk_low') {
-            throw 'The cold launcher did not give the low-disk refusal.'
-        }
-        if ([IO.Directory]::Exists((Join-Path $fixture.FullName 'bin-launcher'))) {
-            throw 'The cold launcher created a bootstrap cache.'
+        $cmd = Join-Path $scripts.FullName 'antiphon.cmd'
+        $exe = Join-Path $scripts.FullName 'antiphon.exe'
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'antiphon.cmd') -Destination $cmd
+        Copy-Item -LiteralPath $PowerShellEntry -Destination $exe
+        foreach ($launcher in @($cmd, $exe)) {
+            Push-Location -LiteralPath $lowSpace
+            try {
+                $PSNativeCommandUseErrorActionPreference = $false
+                $diagnostic = & $launcher checkpoints row 2>&1 | Out-String
+                $exitCode = $LASTEXITCODE
+            } finally {
+                Pop-Location
+            }
+            if ($exitCode -ne 9 -or $diagnostic -notmatch 'workspace_disk_low') {
+                throw "The launcher at $launcher did not give the low-disk refusal."
+            }
+            if ([IO.Directory]::Exists((Join-Path $fixture.FullName 'bin-launcher'))) {
+                throw "The launcher at $launcher created a bootstrap cache."
+            }
         }
         Write-Output 'PASS Test-WindowsCheckpointBootstrap'
     } finally {

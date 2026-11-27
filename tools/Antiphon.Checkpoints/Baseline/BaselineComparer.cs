@@ -15,6 +15,7 @@ public sealed class BaselineComparer
     private readonly Func<CancellationToken, Task>? _beforeLaunch;
     private readonly RunBudgetClock? _budget;
     private readonly TimeSpan _admissionLimit;
+    private readonly Func<string, long?>? _diskFreeBytes;
 
     public List<string> ToolRuns { get; } = [];
 
@@ -34,6 +35,7 @@ public sealed class BaselineComparer
         _beforeLaunch = beforeLaunch;
         _budget = budget;
         _admissionLimit = admissionLimit ?? TimeSpan.FromMinutes(45);
+        _diskFreeBytes = diskFreeBytes;
     }
 
     public async Task<IReadOnlyList<BaselineClassification>> CompareAsync(
@@ -113,7 +115,7 @@ public sealed class BaselineComparer
                     "tool-run: baseline build " + build.Id,
                     new DriverRequest("dotnet", buildArgs, checkout, buildLog),
                     deadline,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken, runDirectory).ConfigureAwait(false);
                 if (built.ExitCode != 0 || built.TimedOut)
                     continue;
 
@@ -141,12 +143,14 @@ public sealed class BaselineComparer
                     if (SafeWrite.CreateDirectory(resultsDir, SafeWrite.Under(runDirectory)) is not null)
                         continue;
                     var runArgs = BuildStep.RunArguments(build.Project, build.OutputPath, properties, filters[0], resultsDir, "run.trx");
-                    await RunLeased(
+                    var tested = await RunLeased(
                         session,
                         "tool-run: baseline run " + build.Id + " " + filters[0],
                         new DriverRequest("dotnet", runArgs, checkout),
                         deadline,
-                        cancellationToken).ConfigureAwait(false);
+                        cancellationToken, resultsDir).ConfigureAwait(false);
+                    if (tested.ExitCode == ExitCodes.DiskLow)
+                        continue;
                     var trxPath = Path.Combine(resultsDir, "run.trx");
                     var parsed = File.Exists(trxPath) ? TrxReport.Parse(trxPath) : null;
                     foreach (var (row, failure) in failures)
@@ -257,7 +261,8 @@ public sealed class BaselineComparer
         string label,
         DriverRequest request,
         DateTimeOffset deadline,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? diskResultsPath = null)
     {
         ToolRuns.Add(label);
         var remaining = _budget is null ? deadline - DateTimeOffset.UtcNow
@@ -279,6 +284,12 @@ public sealed class BaselineComparer
         if (_beforeLaunch is not null)
             await _beforeLaunch(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        if (diskResultsPath is not null && CheckpointDiskSpace.Diagnostic(
+            _diskFreeBytes, request.WorkingDirectory, diskResultsPath, Path.GetTempPath()) is { } diagnostic)
+        {
+            ToolRuns.Add(label + " slot=" + lease.State + " waited=" + lease.WaitedSeconds + "s " + diagnostic);
+            return new DriverResult(ExitCodes.DiskLow, "", diagnostic);
+        }
         if (_budget is not null)
             remaining = _budget.RemainingExecution < _budget.RemainingWall ? _budget.RemainingExecution : _budget.RemainingWall;
         if (remaining <= TimeSpan.Zero)

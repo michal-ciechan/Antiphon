@@ -90,6 +90,9 @@ namespace Antiphon.CliLauncher
                 publish.Error.WriteLine("antiphon-cli: no checkout above " + exePath);
                 return CliPublisher.Unavailable;
             }
+            if (CheckpointEntryDiskSpace.Refuse(args, checkout, publish))
+                return CliPublisher.Unavailable;
+
             var dll = Published(checkout) ?? CliPublisher.Ensure(checkout, publish);
             if (dll == null) return CliPublisher.Unavailable;
             try
