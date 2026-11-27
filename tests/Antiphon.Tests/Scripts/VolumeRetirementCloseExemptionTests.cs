@@ -229,26 +229,25 @@ public sealed class VolumeRetirementCloseExemptionTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Close_wrapper_surfaces_remote_refusal_token()
     {
-        var daemon = await Transport("printf 'TempRetirementCloseRefused: Daemon\\n' >&2; exit 2");
+        var daemon = await Transport([], ["TempRetirementCloseRefused: Daemon"], 2);
         daemon.Exit.ShouldBe(2, daemon.Output);
         daemon.Output.ShouldContain("TempRetirementCloseRefused: Daemon");
         daemon.Output.ShouldNotContain("JournalUnknown");
 
-        var retained = await Transport(
-            "printf 'TempRetirementCloseRefused: TempVolumesRetained antiphon-runner-temp_work\\n' >&2; exit 2");
+        var retained = await Transport([], ["TempRetirementCloseRefused: TempVolumesRetained antiphon-runner-temp_work"], 2);
         retained.Exit.ShouldBe(2, retained.Output);
         retained.Output.ShouldContain("TempRetirementCloseRefused: TempVolumesRetained antiphon-runner-temp_work");
 
-        var empty = await Transport("exit 2");
+        var empty = await Transport([], [], 2);
         empty.Exit.ShouldBe(2, empty.Output);
         empty.Output.ShouldContain("TempRetirementCloseRefused: JournalUnknown");
 
-        var secret = await Transport("printf 'TempRetirementCloseRefused: password=hunter2\\n' >&2; exit 2");
+        var secret = await Transport([], ["TempRetirementCloseRefused: password=hunter2"], 2);
         secret.Exit.ShouldBe(2, secret.Output);
         secret.Output.ShouldContain("TempRetirementCloseRefused: JournalUnknown");
         secret.Output.ShouldNotContain("hunter2");
 
-        var closed = await Transport("printf 'TempRetirementClosed operation=c1008aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa idempotent=false\\n'; exit 0");
+        var closed = await Transport(["TempRetirementClosed operation=c1008aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa idempotent=false"], [], 0);
         closed.Exit.ShouldBe(0, closed.Output);
         closed.Output.ShouldContain("TempRetirementClosed operation=c1008aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa idempotent=false");
     }
@@ -261,7 +260,7 @@ public sealed class VolumeRetirementCloseExemptionTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Close_wrapper_redacts_unrecognized_remote_refusals(string reason)
     {
-        var run = await Transport($"printf 'TempRetirementCloseRefused: %s\\n' '{reason}' >&2; exit 2");
+        var run = await Transport([], ["TempRetirementCloseRefused: " + reason], 2);
         run.Exit.ShouldBe(2, run.Output);
         run.Output.Trim().ShouldBe("TempRetirementCloseRefused: JournalUnknown");
     }
@@ -282,31 +281,27 @@ public sealed class VolumeRetirementCloseExemptionTests
         return await Wait(psi, TimeSpan.FromSeconds(60));
     }
 
-    private static async Task<(int Exit, string Output)> Transport(string sshBody)
+    // Unit 67: Invoke-Server2Bash is RetireRunnerVolumes.Server2Bash (scripts/retire-runner-volumes.ps1 before, dot-sourced in pwsh with
+    // a bash ssh shim on PATH); the shim's answer is now a RetireRunnerVolumesWorld rule. The host's answer is printed, a refusal is its
+    // TempRetirementCloseRefused line and exit 2.
+    private static Task<(int Exit, string Output)> Transport(string[] stdout, string[] stderr, int exit)
     {
-        var root = Directory.CreateTempSubdirectory("c1609-close-ssh-").FullName;
+        using var world = new RetireRunnerVolumesWorld();
+        world.Rules.Add(new System.Text.Json.Nodes.JsonObject
+        {
+            ["name"] = "ssh", ["stdout"] = new System.Text.Json.Nodes.JsonArray(stdout.Select(l => (System.Text.Json.Nodes.JsonNode)l).ToArray()),
+            ["stderr"] = new System.Text.Json.Nodes.JsonArray(stderr.Select(l => (System.Text.Json.Nodes.JsonNode)l).ToArray()), ["exit"] = exit,
+        });
+        using var output = new StringWriter();
+        using var error = new StringWriter();
         try
         {
-            var ssh = Path.Combine(root, "ssh");
-            await File.WriteAllTextAsync(ssh, "#!/bin/bash\ncat >/dev/null\n" + sshBody + "\n");
-            File.SetUnixFileMode(ssh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1");
-            var psi = new ProcessStartInfo("pwsh")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-NonInteractive");
-            psi.ArgumentList.Add("-Command");
-            psi.ArgumentList.Add(". " + VolumeRetirementFixture.Quote(script) + "; Invoke-Server2Bash -Script 'printf hi' -TimeoutMs 15000");
-            psi.Environment["PATH"] = root + ":" + Environment.GetEnvironmentVariable("PATH");
-            return await Wait(psi, TimeSpan.FromSeconds(30));
+            output.WriteLine(Antiphon.Nightly.RetireRunnerVolumes.Server2Bash(world, error, "printf hi", 15000));
+            return Task.FromResult((0, output.ToString() + error));
         }
-        finally
+        catch (Antiphon.Nightly.C590Exit e)
         {
-            Directory.Delete(root, recursive: true);
+            return Task.FromResult((e.Code, output.ToString() + error));
         }
     }
 

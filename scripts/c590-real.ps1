@@ -1,11 +1,9 @@
 # CARD-0590. What is left of the live server2 bridge after unit 66 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md
 # (W10 part 1) moved its live cases, the retirement coordinator and the desktop origin proof to the verify-docker-stack command
-# (scripts/lib/Antiphon.Nightly/C590Bridge.cs, C1609Coordinator.cs, C1609HostProof.cs). Two parts stay, each for a W10 file that
-# still uses them:
-# - Assert-C994RawManifest and ConvertTo-C994RetiredInstant, which scripts/c1609-manual.ps1 (the CARD-1609 manual retirement
-#   entry of retire-runner-volumes.ps1) dot-sources this file for;
-# - executing this file with -Cp, which runs one CARD-0590 plan checkpoint (a finished card proof, kept as PowerShell by the
-#   owner's 2026-11-26 decision) through scripts/verify-docker-stack.ps1.
+# (scripts/lib/Antiphon.Nightly/C590Bridge.cs, C1609Coordinator.cs, C1609HostProof.cs). Executing this file with -Cp runs one
+# CARD-0590 plan checkpoint (a finished card proof, kept as PowerShell by the owner's 2026-11-26 decision) through
+# scripts/verify-docker-stack.ps1. Unit 67 removed the two C994 functions scripts/c1609-manual.ps1 dot-sourced this file for
+# (that entry is the retire-runner-volumes command now, RollingPs.AssertC994RawManifest and ConvertToC994RetiredInstant).
 # ASCII only.
 param(
     [string]$Cp = '',
@@ -104,49 +102,6 @@ function Get-C590PlanRow {
         MinMinutes = $minMinutes
         MinExecuted = $minExecuted
     }
-}
-
-function Assert-C994RawManifest {
-    param([string]$Json)
-    try {
-        $document = [System.Text.Json.JsonDocument]::Parse($Json)
-        function Assert-UniqueJsonObject($Element) {
-            if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
-                $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-                foreach ($property in $Element.EnumerateObject()) {
-                    if (-not $names.Add($property.Name)) { throw 'TempContainerContextInvalid' }
-                    Assert-UniqueJsonObject $property.Value
-                }
-            } elseif ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
-                foreach ($item in $Element.EnumerateArray()) { Assert-UniqueJsonObject $item }
-            }
-        }
-        Assert-UniqueJsonObject $document.RootElement
-        if ($document.RootElement.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
-            foreach ($property in $document.RootElement.EnumerateObject()) {
-                if ($property.Name -ceq 'tempContainerCleanup') {
-                    # Validate the raw string before ConvertFrom-Json turns an unzoned
-                    # timestamp into DateTime and normalization invents a UTC offset.
-                    $stamp = $property.Value.GetProperty('retiredAt')
-                    if ($stamp.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { throw 'TempContainerContextInvalid' }
-                    [void](ConvertTo-C994RetiredInstant $stamp.GetString())
-                }
-            }
-        }
-    } catch { throw 'TempContainerContextInvalid' }
-    finally { if ($null -ne $document) { $document.Dispose() } }
-}
-
-function ConvertTo-C994RetiredInstant {
-    param($Value)
-    $text = if ($Value -is [datetime]) { $Value.ToUniversalTime().ToString('o') }
-        elseif ($Value -is [datetimeoffset]) { $Value.ToUniversalTime().ToString('o') }
-        elseif ($Value -is [string]) { $Value } else { throw 'TempContainerContextInvalid' }
-    if ($text -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$') { throw 'TempContainerContextInvalid' }
-    $instant = [datetimeoffset]::MinValue
-    if (-not [datetimeoffset]::TryParse($text, [cultureinfo]::InvariantCulture,
-        [Globalization.DateTimeStyles]::None, [ref]$instant)) { throw 'TempContainerContextInvalid' }
-    return $instant.ToUniversalTime().ToString('o')
 }
 
 function Invoke-C590PlanCheckpoint {

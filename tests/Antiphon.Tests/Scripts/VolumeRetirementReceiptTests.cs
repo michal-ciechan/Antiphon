@@ -1046,12 +1046,11 @@ public sealed class VolumeRetirementReceiptTests
         preview["consumed"]!.GetValue<bool>().ShouldBeFalse();
         (await CheckPreview(f.Host!)).Exit.ShouldNotBe(0, "low-level Apply admission refuses the invalidated receipt");
         var packet = Path.Combine(f.Root, "read-packet.sh");
-        var makePacket = await f.Run("pwsh", ["-NoProfile", "-NonInteractive", "-Command",
-            ". " + VolumeRetirementPublicationFixture.Ps(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1609-read-packet.ps1")) +
-            "; $packet=New-C1609RetirementReadPacket -Operation '" + VolumeRetirementFixture.Operation +
-            "'; [IO.File]::WriteAllText(" + VolumeRetirementPublicationFixture.Ps(packet) +
-            ", $packet.Replace('/home/mc/antiphon-server2'," + VolumeRetirementPublicationFixture.Ps(Path.Combine(f.Root, "server")) + "))"]);
-        makePacket.Exit.ShouldBe(0, makePacket.Output);
+        // Unit 67: the read packet is RollingPs.NewC1609RetirementReadPacket (scripts/c1609-read-packet.ps1 before, run in pwsh).
+        var readPacket0 = Antiphon.Nightly.RollingPs.NewC1609RetirementReadPacket(
+            await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh")),
+            await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh")), VolumeRetirementFixture.Operation, clearable: false);
+        await File.WriteAllTextAsync(packet, readPacket0.Replace("/home/mc/antiphon-server2", Path.Combine(f.Root, "server"), StringComparison.Ordinal));
         var readPacket = await f.Run("bash", [packet]);
         readPacket.Exit.ShouldNotBe(0, "the public wrapper must also refuse admission; " + readPacket.Output);
         readPacket.Output.ShouldNotContain("\"state\":\"Ready\"");

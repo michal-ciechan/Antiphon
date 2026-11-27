@@ -8,8 +8,9 @@ param(
 # verify-docker-stack command (scripts/lib/Antiphon.Nightly/DockerStackVerify.cs), which since then holds this script's head (the
 # manifest checks and the C994 and C1008 context guards) and the live server2 bridge of scripts/c590-real.ps1 (C590Bridge.cs), as
 # well as the literal checkpoints and guards it took in unit 47. The deploy-server2 command runs the verifier in its own process.
-# This file stays because c1609-manual.ps1, verify-card0849-caches.ps1 and the CARD-0590 checkpoint entry of c590-real.ps1 (W10)
-# start it by path. Exit 9: the CLI could not be built or started (one stderr line).
+# Since unit 67 the verify-card0849-caches and retire-runner-volumes commands run the verifier in process too. This file stays
+# because a one-off starts it by path: the finished CARD-0590 checkpoint entry of c590-real.ps1 (-Cp), kept as PowerShell.
+# Exit 9: the CLI could not be built or started (one stderr line).
 $ErrorActionPreference = 'Continue'
 . (Join-Path (Join-Path $PSScriptRoot 'lib') 'antiphon-cli.ps1')
 $arguments = @('--case', $Case, '--manifest', $Manifest)

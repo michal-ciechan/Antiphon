@@ -1,7 +1,7 @@
 // The W8 verifiers (unit 47 of docs/superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md, W8 slice B), with the scripts'
 // parameters in kebab case: verify-docker-stack (the stub boundaries and literal guards of scripts/verify-docker-stack.ps1 and,
-// since unit 66, its head and the live server2 bridge of scripts/c590-real.ps1; the .ps1 is a thin launcher for the W10 scripts
-// that still start it by path), test-docker (scripts/test-docker.ps1), test-docker-container (scripts/test-docker-container.ps1)
+// since unit 66, its head and the live server2 bridge of scripts/c590-real.ps1; the .ps1 is a thin launcher for the one-off that
+// still starts it by path, c590-real.ps1's CARD-0590 entry), test-docker (scripts/test-docker.ps1), test-docker-container (scripts/test-docker-container.ps1)
 // and verify-card0604-dind-runner (scripts/verify-card0604-dind-runner.ps1); nothing started the last three by path, so none keeps
 // a launcher. Unit 48 added verify-card0660-codex-image (scripts/verify-card0660-codex-image.ps1, with the owner's approval to
 // delete its fixture scripts/fixtures/c913-image-wrapper.ps1; nothing else started it by path, so no launcher either). The

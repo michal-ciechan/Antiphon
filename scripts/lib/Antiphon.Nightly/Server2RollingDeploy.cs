@@ -18,8 +18,8 @@
 //
 // ANTIPHON_API is required (CARD-1777: no localhost default; an unset or blank value exits 2 before any operator-token read or
 // docker call). The operator token is read from the owner-only file (ANTIPHON_OPERATOR_TOKEN_FILE, else
-// %LOCALAPPDATA%\Antiphon\operator-token; OperatorApi.ReadToken, the logic of scripts/lib/runner-operator-token.ps1, which stays
-// for its W10 callers) and is never printed. The task token (ANTIPHON_TASK_TOKEN) is sent when set.
+// %LOCALAPPDATA%\Antiphon\operator-token; OperatorApi.ReadToken, the logic of scripts/lib/runner-operator-token.ps1, which unit 67
+// deleted with its last W10 loaders) and is never printed. The task token (ANTIPHON_TASK_TOKEN) is sent when set.
 //
 // Every external action goes through IServer2RollingWorld: the runner and census HTTP, ssh mc@server2 (the host jq helper, the
 // FD8 rollout lock, the recycle receipt discovery, the temp retirement census and the temp container census), the

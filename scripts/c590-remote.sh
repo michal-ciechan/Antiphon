@@ -2370,7 +2370,7 @@ c849_seed() {
         write_result true '' 0
     fi
     if [ -z "$donor" ] && [ -z "$saved" ]; then
-        write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
+        write_result false 'CacheSeedRequired: run scripts/antiphon verify-card0849-caches --case Seed --saved-donor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
     fi
     if [ -n "$saved" ]; then
         [ -z "$donor" ] || write_result false CacheDonorSourceConflict 2
@@ -2534,7 +2534,7 @@ c849_require_ready() {
     local context="${1:-full-required}" marker image name role item
     C849_KIND=full
     [ -e "$C849_READY" ] || [ -L "$C849_READY" ] \
-        || write_result false 'CacheSeedRequired: run pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
+        || write_result false 'CacheSeedRequired: run scripts/antiphon verify-card0849-caches --case Seed --saved-donor /home/mc/runner-cache-donor/temp-runner-cache.tar' 2
     [ -f "$C849_READY" ] && [ ! -L "$C849_READY" ] && [ -s "$C849_READY" ] \
         || write_result false CacheSeedMarkerInvalid 2
     C849_SCHEMA=legacy; C849_DIGEST_TYPE=payload-sha256; C849_DIGEST=''

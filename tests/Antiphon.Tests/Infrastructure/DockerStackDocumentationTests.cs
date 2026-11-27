@@ -81,7 +81,7 @@ public sealed class DockerStackDocumentationTests
         loop.ShouldContain("need no land freeze", Case.Sensitive, "c1353-docs: the rolling phases need no land freeze");
         loop.ShouldContain("never pull while a land runs", Case.Sensitive, "c1353-docs: the AppHost pull wait stays");
         loop.ShouldContain("retained temp volume blocks deploy-temp", Case.Sensitive, "c1609-docs: retained volumes block deploy-temp");
-        loop.ShouldContain("retire-runner-volumes.ps1 -Close", Case.Sensitive, "c1609-docs: Close is the audited journal command");
+        loop.ShouldContain("retire-runner-volumes --close", Case.Sensitive, "c1609-docs: Close is the audited journal command");
         loop.ShouldContain("tempPrivateVolumes=0", Case.Sensitive, "c1609-docs: Retired still requires zero temp-private volumes");
 
         var plan = Read("docs/superpowers/plans/2026-10-03-card-1008-rolling-volume-recycle-and-retire-temp-plan.md");
@@ -97,7 +97,7 @@ public sealed class DockerStackDocumentationTests
             "TempContainerExitTimeout", "exited retired temp", "normal shutdown", "pending confirmed absence",
             "never starts new container cleanup", "Docker prune, other volumes, markers and donor archives remain human-gated",
             "Assert-TempRetirementClearable", "before `/drain/clear`", "TempVolumesRetained", "tempPrivateVolumes=0",
-            "-Close -OperationId", "journal transition, not a delete",
+            "--close --operation-id", "journal transition, not a delete",
             "Apply is off by default", "--phase retire-temp --dry-run", "apply-gate-off", "exit 2",
             "ANTIPHON_VOLUME_RETIREMENT_APPLY", "enabled-<operation-id>", "--retirement-proof <operation-id>" })
             text.ShouldContain(expected, Case.Sensitive, "c994-runbook: " + expected);

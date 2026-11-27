@@ -70,7 +70,8 @@ public sealed class VolumeRetirementApplyGateTests
         bridge.ShouldContain("^enabled-c1008[0-9a-f]{32}$", Case.Sensitive);
         bridge.ShouldContain("\"export ANTIPHON_VOLUME_RETIREMENT_APPLY='\" + applyGate + \"'\"", Case.Sensitive);
         Read("scripts/lib/Antiphon.Nightly/Server2RollingDeploy.cs").ShouldContain("InvokeHostCase(\"retire-temp-runner\"", Case.Sensitive);
-        Read("scripts/c1609-manual.ps1").ShouldContain("-Case retire-temp-runner", Case.Sensitive);
+        // Unit 67: the public manual entry is RetireRunnerVolumes (scripts/c1609-manual.ps1 before); it hands the same case to the verifier.
+        Read("scripts/lib/Antiphon.Nightly/RetireRunnerVolumes.cs").ShouldContain("_world.Verify(\"retire-temp-runner\", manifestPath)", Case.Sensitive);
 
         var runbook = Read("docs/docker-stack.md");
         var upgrade = runbook.Split('\n').Single(line => line.StartsWith("| 6. Upgrade old |", StringComparison.Ordinal));

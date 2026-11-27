@@ -81,11 +81,11 @@ if($Case -in @('retire-temp-runner','retire-temp-containers')) {
   exit $LASTEXITCODE
 }
 if($Case -eq 'retirement-proof-read') {
+  # Unit 67: the c1609-read-packet command builds the proof read and sends it through the Close transport (Invoke-Server2Bash), where
+  # this dot-sourced scripts/retire-runner-volumes.ps1 and scripts/c1609-read-packet.ps1. Not run on server2.
   $r=Get-Content -Raw -LiteralPath $Manifest|ConvertFrom-Json
-  . '${repo}/scripts/retire-runner-volumes.ps1'
-  . '${repo}/scripts/c1609-read-packet.ps1'
-  Invoke-Server2Bash -Script (New-C1609RetirementReadPacket -Operation $r.operationId)
-  exit 0
+  & '${repo}/scripts/antiphon' c1609-read-packet --operation ([string]$r.operationId) --send
+  exit $LASTEXITCODE
 }
 & '${repo}/scripts/fixtures/c727-fake-verify.ps1' -Case $Case -Manifest $Manifest
 exit $LASTEXITCODE

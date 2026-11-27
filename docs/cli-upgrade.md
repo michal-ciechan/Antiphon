@@ -208,8 +208,8 @@ command-by-command example is the post-cut activation runbook
    `server2-temp`), `scripts\antiphon.cmd runner-slots list --runner-id server2`.
 2. `scripts\antiphon.cmd deploy-server2 --rolling --sha <sha> --phase check-census`
 3. `… --phase check-host-jq` (on `HostJqMissing` only: `--phase provision-host-jq`, as the runbook says).
-4. Cache prep: `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha <sha>`,
-   then `-Case Inventory -Sha <sha>`.
+4. Cache prep: `scripts\antiphon.cmd verify-card0849-caches --case Fixture --sha <sha>`,
+   then `--case Inventory --sha <sha>`.
 5. Record `ssh mc@server2 'docker inspect -f "{{.Id}} {{.State.StartedAt}}" antiphon-runner-session-runner-1'`,
    run `… --phase deploy-temp`, re-run the inspect: id and start time unchanged.
 6. Smoke temp as uid 1654, never root:
@@ -224,11 +224,11 @@ command-by-command example is the post-cut activation runbook
    (`scripts\antiphon.cmd runner-slots release`, see the gate table).
 8. `… --phase redeploy-old` only when server2 `sessions`, `runnerSessions`, `queuedTasks` are zero.
 9. Smoke server2 the same way (project `antiphon-runner`), a Plan canary `--runner server2 --no-commit`,
-   then `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`.
+   then `scripts\antiphon.cmd verify-card0849-caches --case Both --sha <sha>`.
 10. `… --phase drain-temp --wait-idle-minutes 240`.
 11. `… --phase retire-temp --dry-run`, then immediately the enabled apply with that preview's token
     (`$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'`, `--retirement-proof
-    <operation-id>`, unset the variable after). Verify with `-Case Retired`.
+    <operation-id>`, unset the variable after). Verify with `verify-card0849-caches --case Retired`.
 
 Keep dispatching through the whole rollout: one of server2 and server2-temp is always accepting
 ([continuous dispatch](docker-stack.md#continuous-dispatch-during-rollout)).
@@ -243,7 +243,7 @@ Gotchas from the 0.170 rollout:
   `docs/investigations/2026-11-21-stale-needsresolution-land-blocks-redeploy.md` (commit
   `308665b4b`, `origin/feat/card-task-cb7670b0`).
 - **`retire-temp` refuses on an unclosed retirement journal.** `deploy-temp` and retire refuse
-  while a journal is unresolved; recovery is Resume or `scripts/retire-runner-volumes.ps1 -Close`
+  while a journal is unresolved; recovery is Resume or `scripts\antiphon.cmd retire-runner-volumes --close`
   ([docker-stack.md](docker-stack.md), the Close paragraph under the gate table). A receipt-less
   never-Ready preview no longer blocks Close since the fix series ending `328eafa3d`
   (`a57d46776 fix(retirement): exempt receipt-less previews in Close`).

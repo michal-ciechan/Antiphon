@@ -91,9 +91,9 @@ from this host helper. These phases do not deploy or restart anything.
 Give the host receipt reference to the [CARD-1040 image qualification owner](superpowers/plans/2026-10-04-card-1040-jq-prerequisites-and-unit-timing-plan.md);
 host qualification does not qualify the image or its activation.
 
-Run `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture -Sha <sha>` and
-`-Case Inventory -Sha <sha>` and retain their receipts. For empty cache volumes use
-`pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold -Sha <sha>`;
+Run `scripts/antiphon verify-card0849-caches --case Fixture --sha <sha>` and
+`--case Inventory --sha <sha>` and retain their receipts. For empty cache volumes use
+`scripts/antiphon verify-card0849-caches --case Seed --cold --sha <sha>`;
 otherwise use the [documented Seed source](#legacy-full-seed-and-maintenance). Stop if Seed or
 the inventory refuses; `Reset` is not an automatic recovery.
 
@@ -125,7 +125,7 @@ Keep dispatching through every gate under [Continuous dispatch](#continuous-disp
 | 4. Drain old | Run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase drain-old --wait-idle-minutes 240`; check `server2` status shows `draining=true`, `redirectTo=server2-temp`, and temp still accepts new work. A new unpinned canary should resolve to temp. | If the phase refuses before drain, keep old accepting. If it refuses after drain, stop and report the code. To roll back while old is healthy, `scripts\antiphon.cmd runner-drain clear --runner-id server2 --reason 'rolling rollback'`, then verify it accepts; only then consider draining temp. |
 | 5. Wait up to four hours | `drain-old --wait-idle-minutes 240` performs this wait. Check `scripts\antiphon.cmd runner-slots list --runner-id server2` and old status at the deadline. Proceed to `redeploy-old` only when all three counters are zero. | `OldRunnerStillBusy` at 240 minutes is a reportable cap, not permission to redeploy a busy runner. The operator explicitly authorizes stopping the remaining **server2** sessions at this cap: prefer a resumable owner/session stop; for each exact remaining seat, use `scripts\antiphon.cmd runner-slots release --runner-id server2 --session-id <guid> --reason 'CARD-0934 four-hour drain cap'`. Record the IDs and effects, recheck all counters, and rerun `drain-old`; if anything remains or a stop refuses, stop and report. Do not kill sessions on other runners. |
 | 6. Upgrade old | Run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase redeploy-old` only after step 5's zero gate. The phase runs `deploy-parent`, verifies mounts/cache and `buildVersion`, then clears old's drain. It accepts the running container's own generation and requires the new one after recreate. Its task census, and the host census of a recycle, compare only rows bound to `server2` across the two passes (CARD-1697): off-runner work moving between the passes does not refuse `cause=Unstable`, while a task or pending land bound to `server2` still refuses `RecycleBoundTasks` or `RecycleLandInFlight` before any comparison. Default redeploy-old keeps main `work`, `runner-tmp` and `dind-data`. It prints `C1008_RECYCLE skipped=redeploy-old reason=not-requested`, does not stop the runner for a recycle, and needs no token. `--recycle-volumes` is the explicit volume recycle. A recycle without `enabled-<operation-id>` in `ANTIPHON_VOLUME_RETIREMENT_APPLY` refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. `--dry-run` only previews. | If it refuses, keep temp accepting and old drained; use the retained rollback image and the [rollback procedure](#shared-server2-runner-caches-card-0849) only through a reviewed recovery. Do not clear an unverified old runner. |
-| 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `--runner server2`, and `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both -Sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `scripts\antiphon.cmd runner-drain drain --runner-id server2 --redirect-to server2-temp --reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
+| 7. Smoke upgraded old | Run the command block below for `server2`, a sanctioned `Plan` canary pinned with `--runner server2`, and `scripts/antiphon verify-card0849-caches --case Both --sha <sha>`. | `redeploy-old` already clears old's drain after its own host checks, before this separate canary. If this gate fails, immediately drain old toward accepting temp with `scripts\antiphon.cmd runner-drain drain --runner-id server2 --redirect-to server2-temp --reason 'post-upgrade smoke failed'`; stop and report. CARD-0935 tracks a separate canary-before-promotion gate. |
 | 8. Return scheduling and drain temp | Once old passes step 7 and accepts work, run `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase drain-temp --wait-idle-minutes 240`. This sets temp `redirectTo=server2` and `retireWhenIdle=true`; automatic placement uses old again. Verify old accepting and temp drained/retired/offline, then prove temp container absence. The phase observes exit and removes only proven owned exited runner/state-init IDs without volumes. Retirement and exit share one deadline from `WaitIdleMinutes`; `TempContainerExitTimeout` removes nothing live. | If the phase refuses, leave old accepting and temp in its observed state; report the code. If a rollback is needed before temp retires, clear temp's drain only after verifying old remains accepting; do not start two drains. |
 | 9. Retire temp | Apply is off by default in the command, and the orchestrator always runs gate 9 itself, automatically and without asking a human (operator direction, 2026-11-03): the preview, then at once the enabled apply with that preview's token. Prerequisite: the operator-written host trust registry `/home/mc/antiphon-server2/retirement-origins.json` ([Temp retirement trusted origins](#temp-retirement-trusted-origins-card-1689)); without it every preview of a non-empty temp work volume refuses `RecycleGitAuditUnknown reason=registry-missing`. First, preview only: `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase retire-temp --dry-run` immediately after successful gate 8, including already-absent cleanup. The preview reports `would delete:` and its operation id (`C1609_RETIREMENT state=Ready operation=<operation-id>`), and removes nothing. The Ready preview expires after 900 s, so the second rollout needs a fresh `--dry-run` and then an apply within 15 minutes. A following apply without the matching token refuses `apply-gate-off` and exit 2 before any stop, remove, journal write, or preview consume. Immediately after a Ready preview the orchestrator sets `$env:ANTIPHON_VOLUME_RETIREMENT_APPLY = 'enabled-<operation-id>'` and runs `scripts/antiphon deploy-server2 --rolling --sha <sha> --phase retire-temp --retirement-proof <operation-id>`. Unset, `1`, `true`, `enabled`, or another operation's token does not enable deletion. Reclaim its volumes under [Volume recycling and disk reclaim](#volume-recycling-and-disk-reclaim-card-1008). Retain the rollout receipts. | The retired, offline, absent placeholder may have null live inventory only with the complete host proof. Stop and report only on `RecycleUnpublishedWork` or `RecycleWorktreeDirty` (protected work on the temp volume). A missing registry (`RecycleGitAuditUnknown reason=registry-missing`) is also stop-and-report: only the operator writes that file, so neither a retry nor a Debug task can fix it. Any other refusal (a census `RecycleTaskCensusUnknown`, any other `RecycleGitAuditUnknown`, an expired preview) gets one fresh preview and apply, then a Debug task; it is never a question for the operator. Other refusals stop the rollout until then. A preview that is not followed by the enabled apply leaves the temp volumes; the next `deploy-temp` refuses `TempVolumesRetained` while any of them exists. |
 
@@ -139,7 +139,7 @@ volumes and the retirement journal. That read is before `/drain/clear`, `/drain`
 `TempVolumesRetained` and names it. An unresolved journal (Applying, Partial,
 PartialRefused, or any record that still has effects or intents) also refuses while
 the four volumes are absent. Recovery is Resume of that operation, or
-`pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <id> -ExpectedJournalDigest <sha256> -ReasonFile <file>`.
+`scripts/antiphon retire-runner-volumes --close --operation-id <id> --expected-journal-digest <sha256> --reason-file <file>`.
 Close is a journal transition, not a delete, and it does not clear `retiredAt`.
 The current Close implementation takes the same rollout/cache locks, validates
 the protected receipt and lifecycle records, and requires complete stable Docker
@@ -385,7 +385,7 @@ before the coordinator acknowledges persistence.
 Main keeps the v1 collector: three attempts, a 30s sleep between Drift retries, and
 after the journal records container removal the third attempt may keep those rows.
 A content or census refusal at gate 9 returns nonzero and leaves the rollout incomplete.
-Do not run the C849 Retired check as if that gate passed. `-Case Retired` still
+Do not run the C849 Retired check as if that gate passed. `--case Retired` still
 requires `tempPrivateVolumes=0` together with `externalVolumes=3` and
 `mainTmpRetained=true`. Retained private volumes are not a successful retired state.
 
@@ -567,17 +567,17 @@ a census-only DryRun is not a completed content preview. The first live action
 remains a read-only preview after reviewed tooling activation, with findings and
 unknown denominators retained. No apply follows an incomplete or refused preview.
 
-The public manual interface is `scripts/retire-runner-volumes.ps1`. From a
-PowerShell session, supply `-Manual -RetiredRunnerId server2-temp -ProjectId <id>
--OperationId <c1008-id> -VolumeName $names`, where `$names` contains exactly the
-four temp-private names. `-Preview -Template` writes an unsigned
+The public manual interface is `scripts/antiphon retire-runner-volumes` (C# since unit 67 of the
+remaining-ps1 plan). Supply `--manual --retired-runner-id server2-temp --project-id <id>
+--operation-id <c1008-id> --volume-name <names>`, where `<names>` is exactly the
+four temp-private names, comma separated. `--preview --template` writes an unsigned
 `attestation-template.json` and never creates Ready. After explicit human authority,
 fill actor, authority reference, reason and UTC; delegated authority also needs
 `--authority-file` with the exact operation, actor and authority reference. The
 existing operator credential is required for both operator and delegate calls.
-`-Preview -AttestationFile <file>` (or `-DryRun`) runs the full read-only gate.
-For `-Apply`, use an Apply attestation bound to the completed Preview digest and
-pass `-ExpectedProofDigest <sha256>`. `-Apply -Resume` additionally pins the current
+`--preview --attestation-file <file>` (or `--dry-run`) runs the full read-only gate.
+For `--apply`, use an Apply attestation bound to the completed Preview digest and
+pass `--expected-proof-digest <sha256>`. `--apply --resume` additionally pins the current
 journal digest while its fresh attestation still binds the immutable Preview.
 Results are copied to a distinct ignored
 `.antiphon/rolling-server2/manual-retire-<UTC>-<nonce>/` directory. A failed copy is
@@ -754,14 +754,14 @@ It does not consume a new preview in place of the old operation.
 A SIGKILLed **Preview** is never resumed: start a new operation and preview. An
 unconsumed Ready receipt is not an Apply recovery. When resume refuses a consumed
 `Applying` or `PartialRefused` receipt it prints `recovery=-Close` (otherwise
-`recovery=new-operation`); resolve that operation with audited `-Close`, once Close's
+`recovery=new-operation`); resolve that operation with audited `--close`, once Close's
 existing absence, census and custody checks pass:
 
 ```powershell
-pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close -OperationId <operation-id> -ExpectedJournalDigest <current-receipt-sha256> -ReasonFile <reason-file>
+scripts/antiphon retire-runner-volumes --close --operation-id <operation-id> --expected-journal-digest <current-receipt-sha256> --reason-file <reason-file>
 ```
 
-[retire-runner-volumes.ps1](../scripts/retire-runner-volumes.ps1) and
+`retire-runner-volumes` ([RetireRunnerVolumes.cs](../scripts/lib/Antiphon.Nightly/RetireRunnerVolumes.cs)) and
 `c1609_close_host` own Close. It records an audited journal transition after all
 four targets are absent; it neither removes a volume nor bypasses a live owner.
 A receipt-less preview is exempt in Close and the clearable check when its lifecycle
@@ -967,7 +967,7 @@ never use `down -v`, prune or a name-pattern sweep. The fallback leaves the prot
 `retirement/<operation-id>/receipt.json` in the state the failed attempt wrote.
 Confirm it is `Refused` with zero effects and zero intents, or `Completed` with one
 recorded effect per target. If it remains `Applying`, `Partial`, `PartialRefused`,
-or `Refused` with any effect or intent, use audited `-Close` after absence is proved,
+or `Refused` with any effect or intent, use audited `--close` after absence is proved,
 rather than rewriting it. The fallback itself does not mark a sanctioned Apply Completed.
 
 The next `deploy-temp` still runs its admission gate:
@@ -1717,12 +1717,12 @@ When the three external volumes have not been populated, the operator can seed t
 while the standing `server2` runner remains accepting work:
 
 ```powershell
-pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -Cold
+scripts/antiphon verify-card0849-caches --case Seed --cold
 ```
 
 Run this only from the trusted desktop checkout at the reviewed full
-`C849_DEPLOY_SHA`. `-Cold` is valid only for Seed and cannot be combined with
-`-SavedDonor`. The host maintenance lock protects this supported lane. Before
+`C849_DEPLOY_SHA`. `--cold` is valid only for Seed and cannot be combined with
+`--saved-donor`. The host maintenance lock protects this supported lane. Before
 any volume is created, it checks the retired temp status, one identified main
 container, every container's mounts including stopped containers and bind
 ancestors, and all three volume roots. Existing roots must be correctly
@@ -1774,10 +1774,10 @@ archive explicitly. From the reviewed, landed desktop checkout, set `C849_DEPLOY
 to that checkout's full SHA and run:
 
 ```powershell
-pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar
+scripts/antiphon verify-card0849-caches --case Seed --saved-donor /home/mc/runner-cache-donor/temp-runner-cache.tar
 ```
 
-`-SavedDonor` is an absolute path on server2, never a desktop file. A directory is also
+`--saved-donor` is an absolute path on server2, never a desktop file. A directory is also
 accepted. Its cache roots may be `packages` and `npm`, `.nuget/packages` and
 `.npm/_cacache`, or `home/app/.nuget/packages` and `home/app/.npm/_cacache`. The
 archive is inspected before extraction; links, traversal, other entries and oversized
@@ -1804,7 +1804,7 @@ leased ordinary refill, budget check and image-based smoke. It does not refill n
 framework packages merely to make native smoke work. Legacy Prune retains its bounded
 framework recovery. Admission stays held on success and failure.
 
-If the archive lives elsewhere on server2, replace the example `-SavedDonor` value
+If the archive lives elsewhere on server2, replace the example `--saved-donor` value
 with its actual absolute, canonical host path; the host user must be able to read it.
 Do not copy the archive into the checkout. A successful seed keeps a recovery tree sized to the accepted donor at the `recovery=` path in
 `/home/mc/antiphon-server2/cache/seed-accepted`. Retain this tree while its full marker is accepted: removing it invalidates readiness.
@@ -1823,7 +1823,7 @@ after its cache mount and apphost smoke checks pass. An older image without bake
 needs a separately qualified compatible rollback path and its own private cache pair;
 otherwise keep the verified runner serving. When there is no saved donor, warm
 a temporary runner in its private cache, drain it to zero, then use Seed without
-`-SavedDonor` before deploying either runner against the shared volumes.
+`--saved-donor` before deploying either runner against the shared volumes.
 After temp retirement, an accepted full ready marker and its verified recovery allow the
 next `deploy-temp` to reuse the caches when the status is retired or cleared offline,
 its bound sessions and queue are zero, and the host confirms the temp project has no
@@ -1838,12 +1838,12 @@ containers, from all three cache volumes. From the trusted desktop checkout at t
 reviewed SHA, run exactly:
 
 ```powershell
-pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Reset -Sha <landed-sha>
+scripts/antiphon verify-card0849-caches --case Reset --sha <landed-sha>
 ```
 
 Reset holds the cache maintenance lock, validates all three volume names, labels,
 drivers, root owners and modes, rechecks that no container uses them, and clears only
-their contents. It refuses an accepted marker. Re-run `-Case Seed` after Reset. A
+their contents. It refuses an accepted marker. Re-run `--case Seed` after Reset. A
 failed Seed removes its temporary staging directory; retained recovery generations
 remain for operator inspection.
 
@@ -1865,13 +1865,13 @@ a rolling phase or clear admission on its own.
 
 | Gate | Command | Required receipt summary |
 |---|---|---|
-| Before seed/deploy, CP-3 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Fixture` | `C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=60 expectedRedVariants=60 inventories=2 failures=0 productionMutations=0` |
-| Drained temp donor, before recreation | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed` | `C849_SEED donor=server2-temp ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
-| Retired temp, saved donor available | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar` | `C849_SEED donor=saved ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
-| After redeploy-old, before drain-temp, CP-4 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Both` | `C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0` |
-| After retire-temp, CP-5 | `pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case Retired` | `C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0` |
+| Before seed/deploy, CP-3 | `scripts/antiphon verify-card0849-caches --case Fixture` | `C849_FIXTURE groups=9 controls=32 expectedRed=32 variants=60 expectedRedVariants=60 inventories=2 failures=0 productionMutations=0` |
+| Drained temp donor, before recreation | `scripts/antiphon verify-card0849-caches --case Seed` | `C849_SEED donor=server2-temp ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
+| Retired temp, saved donor available | `scripts/antiphon verify-card0849-caches --case Seed --saved-donor /home/mc/runner-cache-donor/temp-runner-cache.tar` | `C849_SEED donor=saved ready=true schema=3 digestType=manifest-sha256 smoke=passed recovery=retained` |
+| After redeploy-old, before drain-temp, CP-4 | `scripts/antiphon verify-card0849-caches --case Both` | `C849_BOTH runners=2 smokes=2 sharedVolumes=3 privateTmpVolumes=2 tmpMode=1777 failures=0` |
+| After retire-temp, CP-5 | `scripts/antiphon verify-card0849-caches --case Retired` | `C849_RETIRED externalVolumes=3 tempPrivateVolumes=0 mainTmpRetained=true smokes=1 rollback=retained failures=0` |
 
-`-Case Inventory` refreshes two read-only status and mount receipts. The Fixture case
+`--case Inventory` refreshes two read-only status and mount receipts. The Fixture case
 uses run-scoped Docker resources and records `PASS F-1` through `PASS F-9` and all
 32 control families (`PC-01` through `PC-32`), with exactly 60 negative variants.
 Both shell and front door check the full roster, including duplicates. Fixture generates
@@ -1923,7 +1923,7 @@ No fixture payload cleanup depends on host sudo or mixed file ownership.
 
 S1-S7 repo-contract evidence does not establish native Docker/UID/archive/NuGet-lock
 acceptance. W-1 remains pending with the rollout owner after Review and land, using
-`verify-card0849-caches.ps1 -Case Fixture -Sha <landed-sha>` and the unchanged
+`scripts/antiphon verify-card0849-caches --case Fixture --sha <landed-sha>` and the unchanged
 9-group/32-family/47-variant/two-inventory receipt above. SIGKILL, host loss or an
 unavailable Docker daemon can leave attributable residue; this storage contract
 does not authorize removing earlier failed runs.
@@ -1939,8 +1939,8 @@ The initial size budgets are 10 GiB packages, 2 GiB npm content and 256 MiB scra
 Review `du -s -B1` for each at every deployment, before retirement and at least weekly;
 warn at 80%, and require maintenance above a budget or below 20 GiB backing-space
 headroom. These are review limits, not Docker quotas. Cleanup starts with
-`pwsh -NoProfile -File scripts/verify-card0849-caches.ps1 -Case PrunePreview` and only
-then `-Case Prune -Preview <receipt-path>`. Both runners must remain drained with zero
+`scripts/antiphon verify-card0849-caches --case PrunePreview` and only
+then `--case Prune --preview <receipt-path>`. Both runners must remain drained with zero
 counters, no cache consumers and no active host build leases. Preserve volume roots and
 one bounded recovery generation. Refill required packages under a build lease and pass
 the disconnected smoke before admission; never clear all NuGet locals, prune Docker
@@ -2140,7 +2140,7 @@ The runner's repository (`PhoneHome__RunnerRepository`, default `/work/repos/ant
 
 Base `docker-compose.yml` publishes only the server, on `127.0.0.1:5000` unless `ANTIPHON_BIND_ADDRESS` is set. The runner and Postgres have no published ports. `docker-compose.test.yml` is nested-only: it is composed inside a session on the nested daemon, never on the server2 host daemon.
 
-`scripts/antiphon test-docker --group small|backend|all --manifest <path>` is the foreground test entry, and `scripts/antiphon test-docker --throwaway-stack` the live session entry (it runs `scripts/c590-remote.sh` with `C590_CASE=throwaway-all`; on Windows `scripts\antiphon.cmd`). Its preflight refuses a daemon that is not the runner's own: `docker info` `Name` must equal the process's `hostname`, or the run is `SiblingDaemonRefused`; an unreachable daemon is `NestedDaemonUnavailable`. `scripts/antiphon verify-docker-stack --case <literal> --manifest <path> [--refresh-claude-token]` runs one checkpoint: without `ANTIPHON_C590_STUB` its live cases go to server2 through the live bridge (`scripts/lib/Antiphon.Nightly/C590Bridge.cs`, unit 66), and everything else (stub mode, and a case the bridge does not route) answers locally. `scripts/verify-docker-stack.ps1` (`-Case`, `-Manifest`, `-RefreshClaudeToken`) is a thin launcher of it for the W10 scripts that still start it by path. `scripts/antiphon verify-card0604-dind-runner --image <tag>` (`--build`, `--containment`, `--port`, `--evidence-root`) boots the same image on Docker Desktop and grades the nested daemon, egress, loopback, launch, key custody, restart and the three exit-3 refusals without server2 or GitHub.
+`scripts/antiphon test-docker --group small|backend|all --manifest <path>` is the foreground test entry, and `scripts/antiphon test-docker --throwaway-stack` the live session entry (it runs `scripts/c590-remote.sh` with `C590_CASE=throwaway-all`; on Windows `scripts\antiphon.cmd`). Its preflight refuses a daemon that is not the runner's own: `docker info` `Name` must equal the process's `hostname`, or the run is `SiblingDaemonRefused`; an unreachable daemon is `NestedDaemonUnavailable`. `scripts/antiphon verify-docker-stack --case <literal> --manifest <path> [--refresh-claude-token]` runs one checkpoint: without `ANTIPHON_C590_STUB` its live cases go to server2 through the live bridge (`scripts/lib/Antiphon.Nightly/C590Bridge.cs`, unit 66), and everything else (stub mode, and a case the bridge does not route) answers locally. `scripts/verify-docker-stack.ps1` (`-Case`, `-Manifest`, `-RefreshClaudeToken`) is a thin launcher of it for the one-off that still starts it by path (the finished CARD-0590 checkpoint entry of `scripts/c590-real.ps1`); since unit 67 the `verify-card0849-caches` and `retire-runner-volumes` commands run the verifier in process. `scripts/antiphon verify-card0604-dind-runner --image <tag>` (`--build`, `--containment`, `--port`, `--evidence-root`) boots the same image on Docker Desktop and grades the nested daemon, egress, loopback, launch, key custody, restart and the three exit-3 refusals without server2 or GitHub.
 
 SourceLanding Mutation uses `windows-job-v1` on Windows or `linux-cgroup-v1` on a qualified Linux runner. For a new tracked v1 launch, the root-owned `antiphon-custody-enter` helper claims the container GUID, enters the pids and freezer trees, and execs the image-owned placement stage in its own PID. The stage proves placement to the original PtyHost over an authenticated Unix socket. After GO it clears supplementary groups, drops to uid and gid 1654, sets `no_new_privs`, and execs the payload. The container's sudo policy grants uid 1654 only the enter and kill helpers. The non-setuid placement stage ships in `session-testing` and is outside that policy. The runner advertises Linux custody after explicit qualification and successful `--probe-placement-v1` and kill probes. Roll the matching runner, PtyHost and helper image together with qualification off until native v1 acceptance. The legacy containment-only syntax remains available to the direct helper harness.
 

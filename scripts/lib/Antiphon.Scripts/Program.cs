@@ -312,6 +312,13 @@ namespace Antiphon.Scripts
             [DockerVerifierCommands.VerifyCodexImage] = DockerVerifierCommands.RunVerifyCodexImage,
             // The CARD-1609 desktop origin proof's verbs (unit 66): exit 0 proven, 1 refused (one stderr line). Usage is 2.
             [DockerVerifierCommands.HostProof] = DockerVerifierCommands.RunHostProof,
+            // The W10 retirement and cache-check entries (unit 67). verify-card0849-caches: exit 0 accepted, 1 refused (one stderr
+            // line). retire-runner-volumes: 0 closed or the manual phase done, 2 refused (one TempRetirementCloseRefused or
+            // TempRetirementManualRefused line), 1 a thrown error. c1609-read-packet: 0 printed, 1 a refused packet, 2 a refused send.
+            // Usage is 2 for each.
+            [RetirementCommands.VerifyCaches] = RetirementCommands.RunVerifyCaches,
+            [RetirementCommands.RetireVolumes] = RetirementCommands.RunRetireVolumes,
+            [RetirementCommands.ReadPacket] = RetirementCommands.RunReadPacket,
             // The desktop deploy answers every input itself (unit 49). deploy-local: exit 0 DEPLOY VERDICT: ok, 1 failed (a step's
             // failure, the restart and the verification included), 3 refused (a linked or unverifiable worktree; nothing touched).
             // Usage is 2.
@@ -418,7 +425,7 @@ namespace Antiphon.Scripts
                 + " | " + RunnerDaemonCommands.Usage + " | " + ClientCommands.Usage + " | " + VerificationToolCommands.Usage + " | " + BuildSlotCommands.Usage
                 + " | " + CheckpointsCommand.Usage
                 + " | " + AppHostCommands.Usage + " | " + PhoneHomeCommands.Usage + " | " + DevStackCommands.Usage + " | " + ReviewEngineCommands.Usage
-                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + DeployCommands.Usage
+                + " | " + InfrastructureToolCommands.Usage + " | " + DockerVerifierCommands.Usage + " | " + RetirementCommands.Usage + " | " + DeployCommands.Usage
                 + " | " + Server2RepositoryMirrorsCommand.Usage + " | " + PostgresSnapshotCommands.Usage
                 + " | " + OperatorToolCommands.Usage + " | " + LiveLaneCommands.Usage);
             return Usage;

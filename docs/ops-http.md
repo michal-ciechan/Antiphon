@@ -1052,8 +1052,8 @@ optional `extendMinutes`, with no `origin`, `message` or `round`. The decision
 is recorded and the session continues; nothing is typed into it. A moved episode
 is 409 `ceiling_episode_stale`: run `status` again. At the final 720-minute hold,
 Continue and Extend refuse. An operator may add `--operator-extend --extend-minutes
-1..240 --ceiling-reason "..."`. That reads the owner-only token through
-`scripts/lib/runner-operator-token.ps1` (`ANTIPHON_OPERATOR_TOKEN_FILE`) for that
+1..240 --ceiling-reason "..."`. That reads the owner-only operator token file
+(`ANTIPHON_OPERATOR_TOKEN_FILE`, else where the server creates it) for that
 one request and fails closed with `operator_token_unavailable:` before any
 request. Otherwise use `POST /api/agent-tasks/{id}/cancel`. A hold is never
 killed or parked automatically.

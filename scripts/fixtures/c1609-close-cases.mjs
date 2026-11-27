@@ -87,6 +87,8 @@ const r=cp.spawnSync('bash',[root+'/close-request.sh'],{encoding:'utf8',timeout:
 process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??2);
 `, {mode:0o755});
 let vectors = 0;
+// The command's first call may publish the CLI; take that before the bounded Close calls.
+cp.spawnSync(repo+'/scripts/antiphon',['retire-runner-volumes','--force'],{encoding:'utf8',timeout:600000});
 function close(fault = '', digest = hash(bytes), authority = true, request={}) {
   const env = {...process.env, PATH:bin+':'+process.env.PATH,
     C1609_CLOSE_FIXTURE:root, C1609_CLOSE_FIXTURE_FAULT:fault, C1609_CLOSE_OP:request.op||op,
@@ -94,11 +96,11 @@ function close(fault = '', digest = hash(bytes), authority = true, request={}) {
     ANTIPHON_OPERATOR_TOKEN_FILE:authority?token:root+'/missing-token', ANTIPHON_TASK_TOKEN:''};
   delete env.C1609_RETIREMENT_ROOT;delete env.C1609_VOLUME_CENSUS_FILE;
   const started=performance.now();
-  const args=['-NoProfile','-NonInteractive','-File',repo+'/scripts/retire-runner-volumes.ps1',
-    '-Close','-OperationId',request.op||op,'-ExpectedJournalDigest',digest,'-ReasonFile',reason];
-  if(request.authorityFile)args.push('-AuthorityFile',request.authorityFile);
-  if(request.defer)return cp.spawn('pwsh',args,{env,stdio:['ignore','pipe','pipe']});
-  const r=cp.spawnSync('pwsh',args,{env,encoding:'utf8',timeout:30000,maxBuffer:2*1024*1024});
+  // Unit 67: the public Close is the retire-runner-volumes command (scripts/retire-runner-volumes.ps1 before); not run on server2.
+  const args=['retire-runner-volumes','--close','--operation-id',request.op||op,'--expected-journal-digest',digest,'--reason-file',reason];
+  if(request.authorityFile)args.push('--authority-file',request.authorityFile);
+  if(request.defer)return cp.spawn(repo+'/scripts/antiphon',args,{env,stdio:['ignore','pipe','pipe']});
+  const r=cp.spawnSync(repo+'/scripts/antiphon',args,{env,encoding:'utf8',timeout:30000,maxBuffer:2*1024*1024});
   trace.push({fault,exit:r.status,milliseconds:performance.now()-started});
   assert(!r.error, 'Close driver/fixture failure: '+r.error);
   assert(!(r.stdout+r.stderr).includes('C1609_CLOSE_OPERATOR_SENTINEL'),'operator credential never transported/logged');

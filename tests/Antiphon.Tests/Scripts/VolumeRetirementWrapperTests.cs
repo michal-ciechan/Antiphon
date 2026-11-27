@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using Antiphon.Nightly;
 using Antiphon.Tests.Application;
 using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
@@ -114,61 +115,57 @@ public sealed class VolumeRetirementWrapperTests
         real.Output.ShouldContain("C1609_WRAPPER passed");
     }
 
+    // Unit 67: retire-runner-volumes is the command (RetireRunnerVolumes); these ran scripts/retire-runner-volumes.ps1 in pwsh and now
+    // run it in process on RetireRunnerVolumesWorld. Get-CloseAuthority's admitted grant is read where it lands: the actor and
+    // authority reference of the Close packet's c1609_close_host line.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Manual_parameters_require_operator_attestation()
     {
-        var root = Directory.CreateTempSubdirectory("c1609-w2-").FullName;
-        try
+        using var world = new RetireRunnerVolumesWorld();
+        var root = world.Root;
+        var reason = WriteReason(root, "observed absent after content recovery");
+        world.WriteToken("operator-secret-token");
+        var valid = new[] { "--close", "--operation-id", Operation, "--expected-journal-digest", new string('a', 64), "--reason-file", reason };
+        foreach (var (args, expected) in new[]
         {
-            var reason = WriteReason(root, "observed absent after content recovery");
-            await File.WriteAllTextAsync(Path.Combine(root, "operator-token"), "operator-secret-token");
-            var valid = new[] { "-Close", "-OperationId", Operation, "-ExpectedJournalDigest", new string('a', 64), "-ReasonFile", reason };
-            foreach (var (args, expected) in new[]
-            {
-                (valid.Concat(new[] { "-Apply" }).ToArray(), "ModeExclusive"),
-                (valid.Concat(new[] { "-Force" }).ToArray(), "ForceRefused"),
-                (new[] { "-Close", "-OperationId", Operation, "-ReasonFile", reason }, "Digest"),
-                (new[] { "-Close", "-OperationId", "foreign", "-ExpectedJournalDigest", new string('a',64), "-ReasonFile",reason }, "OperationId"),
-                (new[] { "-Preview" }, "ManualRequired")
-            })
-            {
-                var refused = await Close(root, args);
-                refused.Exit.ShouldBe(2, refused.Output);
-                refused.Output.ShouldContain(expected);
-            }
-            var taskOnly = await Close(root, false, "task-secret-token", valid);
-            taskOnly.Exit.ShouldBe(2, taskOnly.Output);
-            taskOnly.Output.ShouldContain("Authority");
-            var authority = Path.Combine(root, "authority.json");
-            await File.WriteAllTextAsync(authority, "delegated for CARD-1609");
-            var malformed = await Close(root, valid.Concat(new[] { "-AuthorityFile", authority }).ToArray());
-            malformed.Exit.ShouldBe(2, malformed.Output);
-            malformed.Output.ShouldContain("Authority");
-            await File.WriteAllTextAsync(authority,
-                "{\"schema\":1,\"actor\":\"commissioned-delegate\",\"authorityRef\":\"fixture-task-J8\",\"operationId\":\"" + Operation + "\"}");
-            var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1");
-            // Portable authority/transport logic remains here. Machine Close
-            // refusals, append-only history, delegation and the real lock/census
-            // now execute through the public command in Linux J8.
-            var admitted = await Pwsh("-NoProfile", "-NonInteractive", "-Command",
-                ". " + VolumeRetirementFixture.Quote(script) + "; $OperationId='" + Operation +
-                "'; $AuthorityFile=" + VolumeRetirementFixture.Quote(authority) +
-                "; $env:ANTIPHON_OPERATOR_TOKEN_FILE=" + VolumeRetirementFixture.Quote(Path.Combine(root,"operator-token")) +
-                "; Get-CloseAuthority | ConvertTo-Json -Compress");
-            admitted.Exit.ShouldBe(0, admitted.Output);
-            var auth = JsonNode.Parse(admitted.Output)!;
-            auth["Actor"]!.GetValue<string>().ShouldBe("commissioned-delegate");
-            auth["Authority"]!.GetValue<string>().ShouldBe("fixture-task-J8");
-            admitted.Output.ShouldNotContain("operator-secret-token");
-            admitted.Output.ShouldNotContain("task-secret-token");
-            var noLocalOverride = await Pwsh("-NoProfile", "-NonInteractive", "-Command",
-                "$env:C1609_RETIREMENT_ROOT=" + VolumeRetirementFixture.Quote(root) + "; & " +
-                VolumeRetirementFixture.Quote(script) + " -Close; exit $LASTEXITCODE");
-            noLocalOverride.Exit.ShouldBe(2, noLocalOverride.Output);
-            noLocalOverride.Output.ShouldContain("LocalJournalOverrideRefused");
+            (valid.Concat(new[] { "--apply" }).ToArray(), "ModeExclusive"),
+            (valid.Concat(new[] { "--force" }).ToArray(), "ForceRefused"),
+            (new[] { "--close", "--operation-id", Operation, "--reason-file", reason }, "Digest"),
+            (new[] { "--close", "--operation-id", "foreign", "--expected-journal-digest", new string('a',64), "--reason-file",reason }, "OperationId"),
+            (new[] { "--preview" }, "ManualRequired")
+        })
+        {
+            var refused = Close(world, args);
+            refused.Exit.ShouldBe(2, refused.Output);
+            refused.Output.ShouldContain(expected);
         }
-        finally { Directory.Delete(root, recursive: true); }
+        world.Variables["ANTIPHON_OPERATOR_TOKEN_FILE"] = Path.Combine(root, "missing-operator-token");
+        world.Variables["ANTIPHON_TASK_TOKEN"] = "task-secret-token";
+        var taskOnly = Close(world, valid);
+        taskOnly.Exit.ShouldBe(2, taskOnly.Output);
+        taskOnly.Output.ShouldContain("Authority");
+        world.Variables["ANTIPHON_OPERATOR_TOKEN_FILE"] = Path.Combine(root, "operator-token");
+        var authority = Path.Combine(root, "authority.json");
+        await File.WriteAllTextAsync(authority, "delegated for CARD-1609");
+        var malformed = Close(world, valid.Concat(new[] { "--authority-file", authority }).ToArray());
+        malformed.Exit.ShouldBe(2, malformed.Output);
+        malformed.Output.ShouldContain("Authority");
+        world.Calls.ShouldBeEmpty("no refusal reaches server2");
+        await File.WriteAllTextAsync(authority,
+            "{\"schema\":1,\"actor\":\"commissioned-delegate\",\"authorityRef\":\"fixture-task-J8\",\"operationId\":\"" + Operation + "\"}");
+        world.Rules.Add(new JsonObject { ["name"] = "ssh", ["stdout"] = new JsonArray("TempRetirementClosed operation=" + Operation + " idempotent=false") });
+        // Portable authority/transport logic remains here. Machine Close
+        // refusals, append-only history, delegation and the real lock/census
+        // now execute through the public command in Linux J8.
+        var admitted = Close(world, valid.Concat(new[] { "--authority-file", authority }).ToArray());
+        admitted.Exit.ShouldBe(0, admitted.Output);
+        world.Inputs().Single().ShouldContain("c1609_close_host '" + new string('a', 64) + "' 'commissioned-delegate' 'fixture-task-J8' ");
+        (admitted.Output + string.Join("\n", world.Inputs())).ShouldNotContain("operator-secret-token");
+        (admitted.Output + string.Join("\n", world.Inputs())).ShouldNotContain("task-secret-token");
+        world.Variables["C1609_RETIREMENT_ROOT"] = root;
+        var noLocalOverride = Close(world, ["--close"]);
+        noLocalOverride.Exit.ShouldBe(2, noLocalOverride.Output);
+        noLocalOverride.Output.ShouldContain("LocalJournalOverrideRefused");
     }
 
     // Unit 65: deploy-temp reads the temp container census, then the retirement census, before the retired placeholder's clear (the
@@ -192,32 +189,27 @@ public sealed class VolumeRetirementWrapperTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public async Task Bridge_validates_and_preserves_receipt_fields()
     {
-        var scriptPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1");
-        var script = await File.ReadAllTextAsync(scriptPath);
-        script.Contains('\r').ShouldBeFalse("c1609-w3: close script is LF");
-        Encoding.UTF8.GetBytes(script).Any(b => b > 127).ShouldBeFalse("c1609-w3: close script is ASCII");
+        // Unit 67: the Close packet is RetireRunnerVolumes.CloseScript (scripts/retire-runner-volumes.ps1's New-C1609CloseScript): the
+        // wire it builds is LF and ASCII, as the script's here-string was.
+        var source = await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/Antiphon.Nightly/RetireRunnerVolumes.cs"));
+        Encoding.UTF8.GetBytes(source).Any(b => b > 127).ShouldBeFalse("c1609-w3: close source is ASCII");
         await AssertCensusBeforeClear();
-        var root = Directory.CreateTempSubdirectory("c1609-w3-").FullName;
-        try
-        {
-            var reason = WriteReason(root, "line one\npath C:\\temp\\note \"quoted\"");
-            var literal = await Pwsh("-NoProfile", "-NonInteractive", "-Command", ". " +
-                VolumeRetirementFixture.Quote(scriptPath) + "; $reason=[IO.File]::ReadAllText(" + VolumeRetirementFixture.Quote(reason) +
-                "); $wire=New-C1609CloseScript -OperationId '" + Operation + "' -ExpectedProofDigest '" + new string('a',64) +
-                "' -Reason $reason -Actor operator -Authority operator-token; " +
-                "$encoded=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($reason.Trim())); " +
-                "if(-not $wire.Contains($encoded)){throw 'literal reason lost'}; " +
-                "if(-not $wire.Contains('C1609_CLOSE_TOOLING_DIGEST=')){throw 'tooling provenance missing'}; " +
-                "if(-not $wire.Contains('c1008_lock')){throw 'same-lock call missing'}; Write-Output 'PASS literal request'");
-            literal.Exit.ShouldBe(0, literal.Output);
-            literal.Output.ShouldContain("PASS literal request");
-            var huge = WriteReason(root, new string('x',4097));
-            var refused = await Close(root, "-Close", "-OperationId", Operation,
-                "-ExpectedJournalDigest", new string('a',64), "-ReasonFile", huge);
-            refused.Exit.ShouldBe(2, refused.Output);
-            refused.Output.ShouldContain("ReasonFile");
-        }
-        finally { Directory.Delete(root, recursive: true); }
+        using var world = new RetireRunnerVolumesWorld();
+        var reason = WriteReason(world.Root, "line one\npath C:\\temp\\note \"quoted\"");
+        var text = await File.ReadAllTextAsync(reason);
+        var packet = RetireRunnerVolumes.Packet(await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c1008-retirement.sh")),
+            await File.ReadAllTextAsync(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/c590-remote.sh")));
+        packet.ShouldNotBeNull("c1609-w3: the four tooling functions are found");
+        var wire = RetireRunnerVolumes.CloseScript(Operation, new string('a', 64), text.Trim(), "operator", "operator-token", packet);
+        wire.Contains('\r').ShouldBeFalse("c1609-w3: close script is LF");
+        Encoding.UTF8.GetBytes(wire).Any(b => b > 127).ShouldBeFalse("c1609-w3: close script is ASCII");
+        wire.ShouldContain(Convert.ToBase64String(Encoding.UTF8.GetBytes(text.Trim())), customMessage: "literal reason lost");
+        wire.ShouldContain("C1609_CLOSE_TOOLING_DIGEST=", customMessage: "tooling provenance missing");
+        wire.ShouldContain("c1008_lock", customMessage: "same-lock call missing");
+        var huge = WriteReason(world.Root, new string('x',4097));
+        var refused = Close(world, ["--close", "--operation-id", Operation, "--expected-journal-digest", new string('a',64), "--reason-file", huge]);
+        refused.Exit.ShouldBe(2, refused.Output);
+        refused.Output.ShouldContain("ReasonFile");
     }
 
     [Test]
@@ -489,33 +481,11 @@ public sealed class VolumeRetirementWrapperTests
         return path;
     }
 
-    private static Task<(int Exit, string Output)> Close(string root, params string[] args) =>
-        Close(root, true, null, args);
-
-    private static async Task<(int Exit, string Output)> Close(string root, bool token, string? taskToken, string[] args)
+    // retire-runner-volumes in process on the world (its token file, variables and fakes); stderr then stdout, as the refusals read.
+    private static (int Exit, string Output) Close(RetireRunnerVolumesWorld world, string[] args)
     {
-        var script = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/retire-runner-volumes.ps1");
-        var psi = new ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
-            WorkingDirectory = DelegateScriptRunner.RepoRoot
-        };
-        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-File", script }.Concat(args)) psi.ArgumentList.Add(arg);
-        psi.Environment["C1609_RETIREMENT_ROOT"] = "";
-        psi.Environment["C1609_VOLUME_CENSUS_FILE"] = "";
-        psi.Environment["ANTIPHON_OPERATOR_TOKEN_FILE"] = token ? Path.Combine(root, "operator-token") : Path.Combine(root,"missing-operator-token");
-        psi.Environment["ANTIPHON_TASK_TOKEN"] = taskToken ?? "";
-        return await Wait(psi, TimeSpan.FromSeconds(30));
-    }
-
-    private static async Task<(int Exit, string Output)> Pwsh(params string[] args)
-    {
-        var psi = new ProcessStartInfo("pwsh")
-        {
-            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
-        };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
-        return await Wait(psi, TimeSpan.FromSeconds(30));
+        var run = world.Run(RetireRunnerVolumesOptions.Parse(args, world.Checkout));
+        return (run.Exit, run.Output + run.Error);
     }
 
     private static async Task<string> Bash(string script, params (string Key, string Value)[] env)

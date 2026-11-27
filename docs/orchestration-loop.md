@@ -67,9 +67,9 @@ A retained temp volume blocks deploy-temp before `/drain/clear`.
 four temp-private volumes is present, and an unresolved retirement journal blocks
 even when they are absent. Gate 9 stays incomplete until that journal is Completed
 with the volumes absent, or an audited Close is recorded. Close is
-`pwsh -NoProfile -File scripts/retire-runner-volumes.ps1 -Close` with the operation
+`scripts/antiphon retire-runner-volumes --close` with the operation
 id, the expected journal digest, and a reason file. It is a journal transition,
-not a delete. `verify-card0849-caches.ps1 -Case Retired` still requires
+not a delete. `scripts/antiphon verify-card0849-caches --case Retired` still requires
 `tempPrivateVolumes=0`. The publication audit is the content proof. The helper
 image is the tooling that runs that audit, not a substitute for it.
 Temp retirement deletes exact names in state, dind, tmp, work order, with a durable

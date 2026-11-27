@@ -403,8 +403,10 @@ if($Case -eq 'retire-temp-containers'){
  & bash $file
  $code=$LASTEXITCODE
 }elseif($Case -in @('retirement-proof-read','temp-retirement-clearable')){
- . '${process.cwd()}/scripts/c1609-read-packet.ps1'
- $packet=New-C1609RetirementReadPacket -Operation $m.operationId -Clearable:($Case -eq 'temp-retirement-clearable')
+ # Unit 67: the c1609-read-packet command prints the packet scripts/c1609-read-packet.ps1 built. Not run on server2.
+ $readArgs=@('--operation',[string]$m.operationId); if($Case -eq 'temp-retirement-clearable'){$readArgs+='--clearable'}
+ $packet=((& '${process.cwd()}/scripts/antiphon' c1609-read-packet @readArgs) -join "\`n")+"\`n"
+ if($LASTEXITCODE -ne 0){throw 'Fixture read packet refused'}
  $encoded=[regex]::Matches($packet,'[A-Za-z0-9+/]{512,}={0,2}')
  if($encoded.Count -ne 1){throw 'Fixture read packet changed'}
  $payload=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded[0].Value))

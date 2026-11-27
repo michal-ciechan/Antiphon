@@ -4,9 +4,10 @@
 //
 //   antiphon-scripts verify-docker-stack --case <name> --manifest <path> [--refresh-claude-token]
 //
-// The deploy-server2 command (Server2RollingOs.HostCase) runs it in its own process. scripts/verify-docker-stack.ps1 is a thin
-// launcher with its parameters (-Case, -Manifest, -RefreshClaudeToken) for the W10 scripts that still start it by path
-// (c1609-manual.ps1, verify-card0849-caches.ps1 and the kept CARD-0590 checkpoint entry of c590-real.ps1).
+// The deploy-server2 command (Server2RollingOs.HostCase) runs it in its own process, and since unit 67 so do the
+// verify-card0849-caches and retire-runner-volumes commands (RunInProcess). scripts/verify-docker-stack.ps1 is a thin launcher with
+// its parameters (-Case, -Manifest, -RefreshClaudeToken), kept for the one-off that still starts it by path (the finished CARD-0590
+// checkpoint entry of scripts/c590-real.ps1).
 //
 // The head runs for every case, in the launcher's order: the raw manifest's names and C994 retirement instant
 // (Assert-C994RawManifest), its ConvertFrom-Json reading, the C994 cleanup context (retire-temp-containers, or any manifest that has
@@ -134,6 +135,24 @@ namespace Antiphon.Nightly
             {
                 host.Error.WriteLine("verify-docker-stack: " + e.Message);
                 return 1;
+            }
+        }
+
+        /// <summary>
+        /// Unit 67: one case in the caller's process, as a W10 entry started pwsh -File scripts/verify-docker-stack.ps1 -Case &lt;case&gt;
+        /// -Manifest &lt;path&gt; (verify-card0849-caches, retire-runner-volumes): Run, and a usage error is the CLI's line and exit 2.
+        /// </summary>
+        public static int RunInProcess(string hostCase, string manifest, string checkout, NightlyHost host, IFileSystem files, C590BridgeSeams bridge)
+        {
+            if (host == null) throw new ArgumentNullException(nameof(host));
+            try
+            {
+                return Run(new DockerStackVerifyOptions { Case = hostCase ?? "", Manifest = manifest ?? "", Checkout = checkout ?? "" }, host, files, bridge);
+            }
+            catch (NightlyUsageException e)
+            {
+                host.Error.WriteLine("usage: antiphon-scripts verify-docker-stack: " + e.Message);
+                return 2;
             }
         }
 

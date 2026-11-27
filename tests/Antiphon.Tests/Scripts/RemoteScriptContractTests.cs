@@ -1898,29 +1898,73 @@ public sealed class RemoteScriptContractTests
     public void C913_Fixture_uses_owned_payloads_and_proven_absent_temp() =>
         C913Run("inventory", "absent-temp-accepted");
 
+    // Unit 67: scripts/fixtures/c913-receipts.ps1 ran scripts/verify-card0849-caches.ps1 in pwsh with a function fake of its verifier;
+    // the same receipts (C913Receipts, its fake ported) now go through the verify-card0849-caches command in process, with the
+    // fixture's labels and witnesses.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
     public void C913_Receipts_reject_mixed_digest_types_and_false_smoke_claims()
     {
-        var start = new ProcessStartInfo("pwsh")
+        var output = new List<string>();
+        void Check(bool value, string label, string fault = "none")
         {
-            ArgumentList = { "-NoProfile", "-File", Path.Combine(DelegateScriptRunner.RepoRoot,
-                "scripts", "fixtures", "c913-receipts.ps1"), "-Repo", DelegateScriptRunner.RepoRoot },
-            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false
-        };
-        using var process = Process.Start(start)!;
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
-        if (!process.WaitForExit(60_000))
-        {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException("the receipt harness did not finish in 60s");
+            var witness = label;
+            if (label.StartsWith("tuple-", StringComparison.Ordinal)) witness = "both-schema-refused";
+            else if (label == "reuse-not-run") witness = "reuse-smoke-not-run";
+            else if (label.EndsWith("-refused", StringComparison.Ordinal))
+                witness = fault switch
+                {
+                    "type" => "both-digest-type-refused",
+                    "digest" => "both-digest-value-refused",
+                    "duplicate" or "missing" => "receipt-shape-refused",
+                    "smoke" or "smoke-evidence" => "full-smoke-evidence-required",
+                    "toxic" => "toxic-receipt-refused",
+                    "mount" => "wrong-mount-refused",
+                    "group-duplicate" or "family-duplicate" or "variant-duplicate" or "variant-missing" => "fixture-roster-refused",
+                    _ => label,
+                };
+            output.Add((value ? "PASS " : "FAIL " + witness + " [case=") + label + (value ? "" : "]"));
         }
-        var output = stdout.Result + stderr.Result;
-        output.ShouldContain("PASS schema3-receipt-accepted", customMessage: "schema3-receipt-accepted");
-        process.ExitCode.ShouldBe(0, output);
-        output.ShouldContain("PASS receipts-complete");
-        output.ShouldNotContain("FAIL ");
+        var (accepted, text) = C913Receipts.Front("Both");
+        Check(accepted && text.Contains("schema=3", StringComparison.Ordinal) && text.Contains("digestType=manifest-sha256", StringComparison.Ordinal), "schema3-receipt-accepted");
+        foreach (var left in new[] { "legacy", "2", "3" })
+            foreach (var right in new[] { "legacy", "2", "3" })
+            {
+                (accepted, text) = C913Receipts.Front("Both", left, right);
+                Check(accepted == (left == right), "tuple-" + left + "-" + right);
+                Check(!text.Contains("DO_NOT_EXPORT_C913", StringComparison.Ordinal), "privacy");
+            }
+        foreach (var fault in new[] { "duplicate", "missing", "type", "digest", "smoke", "toxic", "mount", "smoke-evidence" })
+        {
+            (accepted, text) = C913Receipts.Front("Both", fault: fault);
+            Check(!accepted, fault + "-refused", fault);
+            Check(!text.Contains("DO_NOT_EXPORT_C913", StringComparison.Ordinal), "privacy");
+        }
+        foreach (var front in new[] { "Seed", "Retired" })
+        {
+            (accepted, text) = C913Receipts.Front(front);
+            Check(accepted && text.Contains("schema=3", StringComparison.Ordinal), front + "-valid");
+            foreach (var fault in new[] { "duplicate", "missing", "type", "smoke", "toxic", "smoke-evidence" })
+            {
+                (accepted, text) = C913Receipts.Front(front, fault: fault);
+                Check(!accepted, front + "-" + fault + "-refused", fault);
+                Check(!text.Contains("DO_NOT_EXPORT_C913", StringComparison.Ordinal), "privacy");
+            }
+        }
+        (accepted, text) = C913Receipts.Front("Seed", reuse: true);
+        Check(accepted && text.Contains("smoke=not-run", StringComparison.Ordinal), "reuse-not-run");
+        (accepted, _) = C913Receipts.Front("Seed", fault: "false-smoke", reuse: true);
+        Check(!accepted, "reuse-smoke-not-claimed");
+        (accepted, text) = C913Receipts.Front("Fixture");
+        Check(accepted && text.Contains("controls=32 expectedRed=32 variants=60", StringComparison.Ordinal), "fixture-exact-roster");
+        foreach (var fault in new[] { "group-duplicate", "family-duplicate", "variant-duplicate", "variant-missing", "toxic" })
+        {
+            (accepted, text) = C913Receipts.Front("Fixture", fault: fault);
+            Check(!accepted, "fixture-" + fault + "-refused", fault);
+            Check(!text.Contains("DO_NOT_EXPORT_C913", StringComparison.Ordinal), "privacy");
+        }
+        var report = string.Join("\n", output);
+        report.ShouldContain("PASS schema3-receipt-accepted", customMessage: "schema3-receipt-accepted");
+        report.ShouldNotContain("FAIL ");
     }
 
     private static void C913Run(string mode, string witness)
@@ -4701,197 +4745,65 @@ public sealed class RemoteScriptContractTests
         HasLinuxPwsh().ShouldBeTrue("the real shell probe must find pwsh on this Linux host");
     }
 
+    // Unit 67: the front door is the verify-card0849-caches command (C849CacheFrontDoor); this ran scripts/verify-card0849-caches.ps1
+    // in pwsh with a function fake of its verifier. The same probe now runs in process on C849FrontDoorWorld.
     [Test]
-    [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_front_door_passes_every_full_case_name_to_the_invoker()
     {
-        var repo = DelegateScriptRunner.RepoRoot;
-        var front = Path.Combine(repo, "scripts/verify-card0849-caches.ps1");
-        var source = File.ReadAllText(front);
-        var mapBody = Regex.Match(source, @"(?s)\$map\s*=\s*@\{(?<body>.*?)\r?\n\}")
-            .Groups["body"].Value;
-        var entries = Regex.Matches(mapBody, @"(?m)^\s*(?<name>\w+)\s*=\s*'(?<remote>[^']+)'\s*$")
-            .Select(match => new { Name = match.Groups["name"].Value, Remote = match.Groups["remote"].Value })
-            .ToArray();
+        var entries = Antiphon.Nightly.C849CacheFrontDoor.RemoteCases.Select(entry => new { Name = entry.Key, Remote = entry.Value }).ToArray();
         entries.Length.ShouldBeGreaterThan(0, "the front door case map is found");
-        var accepted = Regex.Matches(Regex.Match(source, @"\[ValidateSet\((?<values>[^)]*)\)\]")
-                .Groups["values"].Value, @"'([^']+)'")
-            .Select(match => match.Groups[1].Value)
-            .OrderBy(value => value, StringComparer.Ordinal).ToArray();
-        accepted.ShouldBe(entries.Select(entry => entry.Name).Append("Both")
-            .OrderBy(value => value, StringComparer.Ordinal).ToArray(),
-            "every accepted case has an invoker assertion");
-
-        var scratch = Path.Combine(repo, ".antiphon", "c849-front-door-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(scratch);
-        try
+        Antiphon.Nightly.C849CacheFrontDoorOptions.Cases.Order(StringComparer.Ordinal).ToArray().ShouldBe(entries.Select(entry => entry.Name).Append("Both")
+            .Order(StringComparer.Ordinal).ToArray(), "every accepted case has an invoker assertion");
+        var sha = C849FrontDoorWorld.Head;
+        string WritePreview(C849FrontDoorWorld world, string text, string name = "preview.txt")
         {
-            var mapPath = Path.Combine(scratch, "cases.json");
-            var harnessPath = Path.Combine(scratch, "probe.ps1");
-            File.WriteAllText(mapPath, JsonSerializer.Serialize(entries) + "\n");
-            File.WriteAllText(harnessPath, """
-                param([string]$Front, [string]$MapPath, [string]$Scratch)
-                $ErrorActionPreference = 'Stop'
-                $repo = Split-Path -Parent (Split-Path -Parent $Front)
-                $sha = (& git -C $repo rev-parse HEAD).Trim()
-                $entries = @(Get-Content -Raw -LiteralPath $MapPath | ConvertFrom-Json)
-                $global:ownedEvidence = @()
-                function global:C849WriteLfFixture([string]$Path, [string]$Value) {
-                    [IO.File]::WriteAllText($Path, $Value + "`n", [Text.Encoding]::ASCII)
-                }
-                function global:C849AssertLfFixture([string]$Path) {
-                    if ([IO.File]::ReadAllBytes($Path) -contains [byte]13) {
-                        throw "FAIL C849 fixture LF-only $([IO.Path]::GetFileName($Path))"
-                    }
-                }
-                function global:pwsh {
-                    param([switch]$NoProfile, [string]$File, [string]$Case, [string]$Manifest)
-                    $global:seen += $Case
-                    $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
-                    $evidence = Split-Path -Parent $m.evidenceRoot
-                    $global:ownedEvidence += $evidence
-                    if ($global:requested -ne 'Both') { throw 'C849_STUB_STOP' }
-                    $caseDir = Join-Path $m.evidenceRoot $Case
-                    New-Item -ItemType Directory -Path $caseDir -Force | Out-Null
-                    C849WriteLfFixture (Join-Path $caseDir 'c590-result.json') '{"accepted":true,"exit":0}'
-                    C849WriteLfFixture (Join-Path $caseDir 'status.json') (
-                        @{ sessions=0; runnerSessions=0; queuedTasks=0; buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false } | ConvertTo-Json -Compress)
-                    C849WriteLfFixture (Join-Path $caseDir 'smoke-summary.txt') "C849_SMOKE runner=$($m.runnerId) uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK"
-                    $private = if ($m.runnerId -eq 'server2') { 'antiphon-runner_runner-tmp' } else { 'antiphon-runner-temp_runner-tmp' }
-                    C849WriteLfFixture (Join-Path $caseDir 'runner-mounts.txt') (
-                        "volume antiphon-runner-cache-nuget-packages /home/app/.nuget/packages true`nvolume antiphon-runner-cache-nuget-scratch /var/cache/antiphon/nuget-scratch true`nvolume antiphon-runner-cache-npm-content /home/app/.npm/_cacache true`nvolume $private /tmp true")
-                    C849WriteLfFixture (Join-Path $caseDir 'seed-hash.txt') ('a' * 64)
-                    C849WriteLfFixture (Join-Path $caseDir 'seed-kind.txt') 'full'
-                    C849WriteLfFixture (Join-Path $caseDir 'seed-contract.txt') "schema=legacy`nkind=full`ndigest-type=payload-sha256`ndigest=$('a' * 64)`nsmoke=passed"
-                    foreach ($name in @('c590-result.json', 'status.json', 'smoke-summary.txt', 'runner-mounts.txt', 'seed-hash.txt', 'seed-kind.txt')) {
-                        C849AssertLfFixture (Join-Path $caseDir $name)
-                    }
-                }
-                function global:C849ExpectCachePreviewInvalid([string]$Label, [hashtable]$Arguments) {
-                    $global:seen = @()
-                    $failed = $false
-                    $detail = ''
-                    try { & $Front @Arguments | Out-Null }
-                    catch {
-                        $failed = $true
-                        $detail = [string]$_.Exception.Message
-                    }
-                    if (-not $failed -or $detail -notlike '*CachePreviewInvalid*') {
-                        throw "FAIL $Label expected CachePreviewInvalid, got failed=$failed detail=$detail"
-                    }
-                    if (@($global:seen).Count -ne 0) {
-                        throw "FAIL $Label reached the invoker: $($global:seen -join ',')"
-                    }
-                    Write-Output "PASS $Label"
-                }
-                try {
-                    foreach ($entry in $entries) {
-                        $global:requested = $entry.Name
-                        $global:seen = @()
-                        $arguments = @{ Case = $entry.Name; Sha = $sha }
-                        if ($entry.Name -eq 'Prune') {
-                            $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
-                            New-Item -ItemType Directory -Path $previewDir -Force | Out-Null
-                            $preview = Join-Path $previewDir 'preview.txt'
-                            C849WriteLfFixture $preview "run=c849$('a' * 16)0`nsource-sha=$sha"
-                            C849AssertLfFixture $preview
-                            $arguments.Preview = $preview
-                        }
-                        try { & $Front @arguments | Out-Null }
-                        catch {
-                            if ($_.Exception.Message -ne 'C849_STUB_STOP') { throw }
-                        }
-                        if ($global:seen.Count -ne 1 -or $global:seen[0] -cne $entry.Remote) {
-                            throw "FAIL $($entry.Name) full remote case: expected $($entry.Remote), got $($global:seen -join ',')"
-                        }
-                        Write-Output "PASS $($entry.Name) full remote case"
-                    }
-                    $global:requested = 'Prune'
-                    $global:seen = @()
-                    $previewDir = Join-Path $Scratch 'runner-cache-prune-preview'
-                    New-Item -ItemType Directory -Path $previewDir -Force | Out-Null
-                    $preview = Join-Path $previewDir 'preview.txt'
-                    $crlfRun = "c849$('b' * 16)0"
-                    [IO.File]::WriteAllText($preview, "run=$crlfRun`r`nsource-sha=$sha`r`n", [Text.Encoding]::ASCII)
-                    if (-not ([IO.File]::ReadAllBytes($preview) -contains [byte]13)) {
-                        throw 'FAIL Prune CRLF preview fixture has no CR'
-                    }
-                    try { & $Front -Case Prune -Sha $sha -Preview $preview | Out-Null }
-                    catch {
-                        if ($_.Exception.Message -ne 'C849_STUB_STOP') {
-                            throw "FAIL Prune CRLF preview: $($_.Exception.Message)"
-                        }
-                    }
-                    if ($global:seen.Count -ne 1 -or $global:seen[0] -cne 'runner-cache-prune') {
-                        throw "FAIL Prune CRLF preview: expected runner-cache-prune, got $($global:seen -join ',')"
-                    }
-                    Write-Output 'PASS Prune CRLF preview'
-                    $wrongSha = 'b' * 40
-                    if ($wrongSha -ceq $sha) { throw 'FAIL Prune CRLF wrong source-sha fixture collided with HEAD' }
-                    [IO.File]::WriteAllText($preview, "run=$crlfRun`r`nsource-sha=$wrongSha`r`n", [Text.Encoding]::ASCII)
-                    C849ExpectCachePreviewInvalid 'Prune CRLF wrong source-sha' @{ Case = 'Prune'; Sha = $sha; Preview = $preview }
-                    [IO.File]::WriteAllText($preview, "run=not-a-run`r`nsource-sha=$sha`r`n", [Text.Encoding]::ASCII)
-                    C849ExpectCachePreviewInvalid 'Prune CRLF wrong run id' @{ Case = 'Prune'; Sha = $sha; Preview = $preview }
-                    $wrongPath = Join-Path $previewDir 'other.txt'
-                    [IO.File]::WriteAllText($wrongPath, "run=$crlfRun`r`nsource-sha=$sha`r`n", [Text.Encoding]::ASCII)
-                    C849ExpectCachePreviewInvalid 'Prune CRLF wrong path' @{ Case = 'Prune'; Sha = $sha; Preview = $wrongPath }
-                    $global:requested = 'Both'
-                    $global:seen = @()
-                    & $Front -Case Both -Sha $sha | Out-Null
-                    if (($global:seen -join ',') -cne 'verify-runner-caches,verify-runner-caches') {
-                        throw "FAIL Both ordered remote cases: got $($global:seen -join ',')"
-                    }
-                    Write-Output 'PASS Both ordered remote cases'
-                }
-                finally {
-                    foreach ($path in ($global:ownedEvidence | Select-Object -Unique)) {
-                        if ((Split-Path -Leaf $path) -match '^c849-c849[0-9a-f]{16}$' -and
-                            (Split-Path -Parent $path) -eq (Join-Path $repo '.antiphon')) {
-                            Remove-Item -LiteralPath $path -Recurse -Force
-                        }
-                    }
-                    Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
-                    Remove-Item Function:\C849WriteLfFixture -ErrorAction SilentlyContinue
-                    Remove-Item Function:\C849AssertLfFixture -ErrorAction SilentlyContinue
-                    Remove-Item Function:\C849ExpectCachePreviewInvalid -ErrorAction SilentlyContinue
-                }
-                """.ReplaceLineEndings("\n") + "\n");
-
-            foreach (var path in new[] { mapPath, harnessPath })
-                File.ReadAllBytes(path).ShouldNotContain((byte)'\r', $"FAIL C849 fixture LF-only {Path.GetFileName(path)}");
-
-            var start = new ProcessStartInfo("pwsh")
-            {
-                WorkingDirectory = repo,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false
-            };
-            foreach (var arg in new[] { "-NoProfile", "-File", harnessPath, "-Front", front,
-                         "-MapPath", mapPath, "-Scratch", scratch })
-                start.ArgumentList.Add(arg);
-            using var process = Process.Start(start)!;
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(60_000))
-            {
-                process.Kill(entireProcessTree: true);
-                throw new TimeoutException("C849 front door probe timed out");
-            }
-            var output = stdout.Result + stderr.Result;
-            process.ExitCode.ShouldBe(0, output);
-            foreach (var entry in entries)
-                output.ShouldContain("PASS " + entry.Name + " full remote case");
-            output.ShouldContain("PASS Prune CRLF preview");
-            output.ShouldContain("PASS Prune CRLF wrong source-sha");
-            output.ShouldContain("PASS Prune CRLF wrong run id");
-            output.ShouldContain("PASS Prune CRLF wrong path");
-            output.ShouldContain("PASS Both ordered remote cases");
+            var dir = Path.Combine(world.Checkout, ".antiphon", "c849-front-door", "runner-cache-prune-preview");
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, name);
+            File.WriteAllText(path, text, System.Text.Encoding.ASCII);
+            return path;
         }
-        finally
+        foreach (var entry in entries)
         {
-            Directory.Delete(scratch, recursive: true);
+            using var world = new C849FrontDoorWorld();
+            // The invoker stops each single case after recording it (the probe's C849_STUB_STOP).
+            world.OnVerify = (_, _, _) => 1;
+            var preview = entry.Name == "Prune" ? WritePreview(world, "run=c849" + new string('a', 16) + "0\nsource-sha=" + sha + "\n") : "";
+            if (preview.Length > 0) File.ReadAllBytes(preview).ShouldNotContain((byte)'\r', "FAIL C849 fixture LF-only preview.txt");
+            var run = world.Run(entry.Name, sha, preview);
+            world.Cases().ShouldBe([entry.Remote], "FAIL " + entry.Name + " full remote case: " + run.Error);
         }
+        using (var crlf = new C849FrontDoorWorld())
+        {
+            crlf.OnVerify = (_, _, _) => 1;
+            var preview = WritePreview(crlf, "run=c849" + new string('b', 16) + "0\r\nsource-sha=" + sha + "\r\n");
+            File.ReadAllBytes(preview).ShouldContain((byte)'\r', "FAIL Prune CRLF preview fixture has no CR");
+            crlf.Run("Prune", sha, preview);
+            crlf.Cases().ShouldBe(["runner-cache-prune"], "FAIL Prune CRLF preview");
+            crlf.Manifests()[0]["previewRunId"]!.GetValue<string>().ShouldBe("c849" + new string('b', 16) + "0");
+        }
+        var wrongSha = new string('b', 40);
+        wrongSha.ShouldNotBe(sha, "FAIL Prune CRLF wrong source-sha fixture collided with HEAD");
+        foreach (var (label, text, name) in new[]
+                 {
+                     ("Prune CRLF wrong source-sha", "run=c849" + new string('b', 16) + "0\r\nsource-sha=" + wrongSha + "\r\n", "preview.txt"),
+                     ("Prune CRLF wrong run id", "run=not-a-run\r\nsource-sha=" + sha + "\r\n", "preview.txt"),
+                     ("Prune CRLF wrong path", "run=c849" + new string('b', 16) + "0\r\nsource-sha=" + sha + "\r\n", "other.txt"),
+                 })
+        {
+            using var world = new C849FrontDoorWorld();
+            var refused = world.Run("Prune", sha, WritePreview(world, text, name));
+            refused.Exit.ShouldBe(1, "FAIL " + label + " expected CachePreviewInvalid");
+            refused.Error.ShouldContain("CachePreviewInvalid", customMessage: "FAIL " + label);
+            world.Cases().ShouldBeEmpty("FAIL " + label + " reached the invoker");
+        }
+        using var both = new C849FrontDoorWorld();
+        both.Verifies.Add(C913Receipts.Call("verify-runner-caches", "server2", sha, "legacy", "legacy"));
+        both.Verifies.Add(C913Receipts.Call("verify-runner-caches", "server2-temp", sha, "legacy", "legacy"));
+        var ordered = both.Run("Both", sha);
+        ordered.Exit.ShouldBe(0, ordered.Error);
+        string.Join(",", both.Cases()).ShouldBe("verify-runner-caches,verify-runner-caches", "FAIL Both ordered remote cases");
+        both.Manifests().Select(m => m["runnerId"]!.GetValue<string>()).ShouldBe(["server2", "server2-temp"]);
     }
 
     [Test]
@@ -5994,10 +5906,12 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C849_Cache_cases_use_only_the_validated_host_lane()
     {
+        // Unit 67: the front door is the verify-card0849-caches command (C849CacheFrontDoor) and its refusal runs in process; the gate
+        // stays because C905 pins this case among the five that skip without Linux pwsh.
         RequireLinuxPwsh();
         var remote = Remote();
         var bridge = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/Antiphon.Nightly/C590Bridge.cs"));
-        var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/verify-card0849-caches.ps1"));
+        var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts/lib/Antiphon.Nightly/C849CacheFrontDoor.cs"));
         foreach (var name in new[] { "runner-cache-inventory", "runner-cache-fixture", "runner-cache-seed", "runner-cache-reset",
                      "verify-runner-caches", "verify-runner-caches-retired", "runner-cache-prune-preview", "runner-cache-prune" })
         {
@@ -6010,9 +5924,11 @@ public sealed class RemoteScriptContractTests
         bridge.ShouldContain("CachePreviewInvalid");
         front.ShouldContain("C849_DEPLOY_SHA");
         front.ShouldContain("CachePreviewInvalid");
-        var result = LinuxShell(
-            "pwsh -NoProfile -File \"$root/scripts/verify-card0849-caches.ps1\" -Case Inventory -Sha bad 2>&1 || true\n", "root");
-        result.ShouldContain("C849_DEPLOY_SHA must be the reviewed full lowercase SHA");
+        using var world = new C849FrontDoorWorld();
+        var result = world.Run("Inventory", "bad");
+        result.Exit.ShouldBe(1);
+        result.Error.ShouldContain("C849_DEPLOY_SHA must be the reviewed full lowercase SHA");
+        world.Calls.ShouldBeEmpty();
     }
 
     [Test]
@@ -7083,7 +6999,7 @@ public sealed class RemoteScriptContractTests
             printf 'exit=%s verdict=%s\n' "$?" "$(cat "$root/out")"
             """, "repo");
         output.ShouldContain("exit=2 verdict=deploy=CacheSeedRequired:");
-        output.ShouldContain("scripts/verify-card0849-caches.ps1 -Case Seed -SavedDonor /home/mc/runner-cache-donor/temp-runner-cache.tar");
+        output.ShouldContain("scripts/antiphon verify-card0849-caches --case Seed --saved-donor /home/mc/runner-cache-donor/temp-runner-cache.tar");
     }
 
     [Test]
@@ -8046,46 +7962,31 @@ public sealed class RemoteScriptContractTests
         var invalidCount = Regex.Matches(output, "RESULT accepted=false diagnosis=CacheSeedMarkerInvalid").Count;
         invalidCount.ShouldBeGreaterThanOrEqualTo(3, "malformed-marker-refused mixed, duplicate, symlink");
         var repo = DelegateScriptRunner.RepoRoot;
-        var front = Path.Combine(repo, "scripts", "verify-card0849-caches.ps1");
-        var script = "$Front='" + front.Replace("'", "''") + "';" + """
-            $sha = (& git -C (Split-Path -Parent (Split-Path -Parent $Front)) rev-parse HEAD).Trim()
-            $global:seen = $false; $global:owned = ''
-            function global:pwsh {
-                param([switch]$NoProfile,[string]$File,[string]$Case,[string]$Manifest)
-                $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
-                $global:owned = Split-Path -Parent $m.evidenceRoot
-                if ($Case -eq 'runner-cache-seed' -and $m.coldSeed -is [bool] -and $m.coldSeed) {
-                    $global:seen = $true
-                    Write-Output 'cold-transport'
-                }
-                throw 'C912_STUB_STOP'
-            }
-            try {
-                try { & $Front -Case Seed -Cold -Sha $sha } catch { if ($_.Exception.Message -ne 'C912_STUB_STOP') { throw } }
-                if (-not $global:seen) { throw 'cold-transport missing' }
-                try { & $Front -Case Reset -Cold -Sha $sha | Out-Null; throw 'bad-case-accepted' }
-                catch { if ($_.Exception.Message -ne 'CacheColdModeInvalid') { throw } }
-                try { & $Front -Case Seed -Cold -SavedDonor /tmp/donor -Sha $sha | Out-Null; throw 'conflict-accepted' }
-                catch { if ($_.Exception.Message -ne 'CacheDonorSourceConflict') { throw } }
-                Write-Output 'cold-conflict-refused'
-            }
-            finally {
-                if ($global:owned -and (Split-Path -Leaf $global:owned) -match '^c849-c849[0-9a-f]{16}$') {
-                    Remove-Item -LiteralPath $global:owned -Recurse -Force
-                }
-                Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
-            }
-            """;
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(script);
-        using var process = Process.Start(start)!;
-        var frontOutput = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        process.ExitCode.ShouldBe(0, "cold-transport " + frontOutput);
-        frontOutput.Contains("cold-transport").ShouldBeTrue("cold-transport");
-        frontOutput.Contains("cold-conflict-refused").ShouldBeTrue("refusal-CacheDonorSourceConflict");
+        // Unit 67: the front door is the verify-card0849-caches command (C849CacheFrontDoor), run in process where this started
+        // scripts/verify-card0849-caches.ps1 in pwsh with a function fake of its verifier.
+        using (var cold = new C849FrontDoorWorld())
+        {
+            cold.OnVerify = (hostCase, manifest, output) =>
+            {
+                if (hostCase == "runner-cache-seed" && JsonNode.Parse(File.ReadAllText(manifest))!["coldSeed"] is JsonValue flag
+                    && flag.GetValueKind() == System.Text.Json.JsonValueKind.True)
+                    output.WriteLine("cold-transport");
+                return 1;
+            };
+            cold.Run("Seed", cold: true).Output.Contains("cold-transport").ShouldBeTrue("cold-transport");
+        }
+        using (var reset = new C849FrontDoorWorld())
+        {
+            var refused = reset.Run("Reset", cold: true);
+            refused.Error.ShouldContain("verify-card0849-caches: CacheColdModeInvalid", customMessage: "bad-case-accepted");
+            reset.Cases().ShouldBeEmpty();
+        }
+        using (var conflict = new C849FrontDoorWorld())
+        {
+            var refused = conflict.Run("Seed", savedDonor: "/tmp/donor", cold: true);
+            refused.Error.ShouldContain("verify-card0849-caches: CacheDonorSourceConflict", customMessage: "refusal-CacheDonorSourceConflict");
+            conflict.Cases().ShouldBeEmpty();
+        }
         var bridge = File.ReadAllText(Path.Combine(repo, "scripts", "lib", "Antiphon.Nightly", "C590Bridge.cs"));
         bridge.Contains("if (!(M(\"coldSeed\") is bool)").ShouldBeTrue("cold-bridge-boolean-only");
         bridge.Contains("export C590_COLD_SEED=").ShouldBeTrue("cold-bridge-host-flag");
@@ -8106,67 +8007,50 @@ public sealed class RemoteScriptContractTests
         Block(remote, "case_retire_temp_runner").ShouldNotContain("c849_require_ready");
         Block(remote, "case_verify_runner_caches").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("cold-no-smoke");
         Block(remote, "case_verify_runner_caches_retired").Contains("if [ \"$C849_KIND\" = full ]; then c849_smoke").ShouldBeTrue("full-smoke-retained");
-        var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1"));
+        // Unit 67: the front door is the verify-card0849-caches command (C849CacheFrontDoor), run in process where this started
+        // scripts/verify-card0849-caches.ps1 in pwsh with a function fake of its verifier.
+        var front = File.ReadAllText(Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "lib", "Antiphon.Nightly", "C849CacheFrontDoor.cs"));
         front.Contains("C849 mixed marker kinds").ShouldBeTrue("mixed-kind-refused");
-        var frontPath = Path.Combine(DelegateScriptRunner.RepoRoot, "scripts", "verify-card0849-caches.ps1");
-        var script = "$Front='" + frontPath.Replace("'", "''") + "';" + """
-            $repo = Split-Path -Parent (Split-Path -Parent $Front)
-            $sha = (& git -C $repo rev-parse HEAD).Trim()
-            $global:owned = @(); $global:kind2 = 'cold'
-            function global:pwsh {
-                param([switch]$NoProfile,[string]$File,[string]$Case,[string]$Manifest)
-                $m = Get-Content -Raw -LiteralPath $Manifest | ConvertFrom-Json
-                $global:owned += Split-Path -Parent $m.evidenceRoot
-                $dir = Join-Path $m.evidenceRoot $Case
-                New-Item -ItemType Directory -Path $dir -Force | Out-Null
-                [IO.File]::WriteAllText((Join-Path $dir 'c590-result.json'), '{"accepted":true,"exit":0}' + "`n")
-                $status = @{ buildVersion=$sha; dispatchEligible=$true; acceptingNewWork=$true; draining=$false;
-                    sessions=0; runnerSessions=0; queuedTasks=0; credential='TOKEN_SENTINEL_C912' } | ConvertTo-Json -Compress
-                [IO.File]::WriteAllText((Join-Path $dir 'status.json'), $status + "`n")
-                $private = if ($m.runnerId -eq 'server2-temp') { 'antiphon-runner-temp_runner-tmp' } else { 'antiphon-runner_runner-tmp' }
-                $mounts = "volume antiphon-runner-cache-nuget-packages /home/app/.nuget/packages true`nvolume antiphon-runner-cache-nuget-scratch /var/cache/antiphon/nuget-scratch true`nvolume antiphon-runner-cache-npm-content /home/app/.npm/_cacache true`nvolume $private /tmp true`n"
-                [IO.File]::WriteAllText((Join-Path $dir 'runner-mounts.txt'), $mounts)
-                $kind = if ($m.runnerId -eq 'server2-temp') { $global:kind2 } else { 'cold' }
-                [IO.File]::WriteAllText((Join-Path $dir 'seed-kind.txt'), $kind + "`n")
-                $contract = if ($kind -eq 'cold') { "schema=2`nkind=cold`ndigest-type=none`ndigest=none`nsmoke=not-run`n" } else { "schema=legacy`nkind=full`ndigest-type=payload-sha256`ndigest=$('a' * 64)`nsmoke=passed`n" }
-                [IO.File]::WriteAllText((Join-Path $dir 'seed-contract.txt'), $contract)
-                if ($Case -eq 'verify-runner-caches-retired') {
-                    [IO.File]::WriteAllText((Join-Path $dir 'rollback.txt'), 'rollback-image=sha256:' + ('0' * 64) + "`n")
-                }
-            }
-            try {
-                $both = & $Front -Case Both -Sha $sha | Out-String
-                if ($both -notmatch 'C849_BOTH kind=cold') { throw 'cold-verify-empty-cache' }
-                Write-Output 'cold-verify-empty-cache'
-                $retired = & $Front -Case Retired -Sha $sha | Out-String
-                if ($retired -notmatch 'C849_RETIRED kind=cold') { throw 'cold-retired-without-smoke' }
-                Write-Output 'cold-no-smoke'
-                $global:kind2 = 'full'
-                try { & $Front -Case Both -Sha $sha | Out-Null; throw 'mixed-kind-accepted' }
-                catch { if ($_.Exception.Message -ne 'C849 mixed seed contracts') { throw } }
-                Write-Output 'mixed-kind-refused'
-            }
-            finally {
-                foreach ($path in ($global:owned | Select-Object -Unique)) {
-                    if ((Split-Path -Leaf $path) -match '^c849-c849[0-9a-f]{16}$') {
-                        Remove-Item -LiteralPath $path -Recurse -Force
-                    }
-                }
-                Remove-Item Function:\pwsh -ErrorAction SilentlyContinue
-            }
-            """;
-        var start = new ProcessStartInfo("pwsh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(script);
-        using var process = Process.Start(start)!;
-        var output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        process.ExitCode.ShouldBe(0, output);
-        output.Contains("cold-verify-empty-cache").ShouldBeTrue("cold-verify-empty-cache");
-        output.Contains("cold-no-smoke").ShouldBeTrue("cold-no-smoke");
-        output.Contains("mixed-kind-refused").ShouldBeTrue("mixed-kind-refused");
-        output.Contains("TOKEN_SENTINEL_C912").ShouldBeFalse("cold-toxic-sentinel-absent");
+        var kind2 = "cold";
+        int Receipts(string hostCase, string manifest, TextWriter _)
+        {
+            var m = JsonNode.Parse(File.ReadAllText(manifest))!;
+            var runner = m["runnerId"]?.GetValue<string>() ?? "";
+            var dir = Path.Combine(m["evidenceRoot"]!.GetValue<string>(), hostCase);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "c590-result.json"), "{\"accepted\":true,\"exit\":0}\n");
+            File.WriteAllText(Path.Combine(dir, "status.json"), "{\"buildVersion\":\"" + C849FrontDoorWorld.Head
+                + "\",\"dispatchEligible\":true,\"acceptingNewWork\":true,\"draining\":false,\"sessions\":0,\"runnerSessions\":0,\"queuedTasks\":0,\"credential\":\"TOKEN_SENTINEL_C912\"}\n");
+            File.WriteAllText(Path.Combine(dir, "runner-mounts.txt"), C913Receipts.Mounts(runner == "server2-temp" ? "antiphon-runner-temp" : "antiphon-runner"));
+            var kind = runner == "server2-temp" ? kind2 : "cold";
+            File.WriteAllText(Path.Combine(dir, "seed-kind.txt"), kind + "\n");
+            File.WriteAllText(Path.Combine(dir, "seed-contract.txt"), C913Receipts.Contract(kind == "cold" ? "2" : "legacy"));
+            if (hostCase == "verify-runner-caches-retired")
+                File.WriteAllText(Path.Combine(dir, "rollback.txt"), "rollback-image=sha256:" + new string('0', 64) + "\n");
+            return 0;
+        }
+        var output = new System.Text.StringBuilder();
+        using (var both = new C849FrontDoorWorld { OnVerify = Receipts })
+        {
+            var run = both.Run("Both");
+            run.Output.ShouldContain("C849_BOTH kind=cold", customMessage: "cold-verify-empty-cache " + run.Error);
+            output.Append(run.Output).Append(run.Error);
+        }
+        using (var retired = new C849FrontDoorWorld { OnVerify = Receipts })
+        {
+            var run = retired.Run("Retired");
+            run.Output.ShouldContain("C849_RETIRED kind=cold", customMessage: "cold-retired-without-smoke " + run.Error);
+            output.Append(run.Output).Append(run.Error);
+        }
+        kind2 = "full";
+        using (var mixed = new C849FrontDoorWorld { OnVerify = Receipts })
+        {
+            var run = mixed.Run("Both");
+            run.Exit.ShouldBe(1, "mixed-kind-accepted");
+            run.Error.ShouldContain("verify-card0849-caches: C849 mixed seed contracts", customMessage: "mixed-kind-refused");
+            output.Append(run.Output).Append(run.Error);
+        }
+        output.ToString().Contains("TOKEN_SENTINEL_C912").ShouldBeFalse("cold-toxic-sentinel-absent");
     }
 
     [Test]

@@ -31,35 +31,49 @@ fs.writeFileSync(bin+'/docker','#!/bin/bash\nexec bash '+q(repo+'/scripts/fixtur
 for(const mode of ['ssh','scp'])fs.writeFileSync(bin+'/'+mode,'#!/bin/bash\nexec node '+q(repo+'/scripts/fixtures/c1609-manual-transport.cjs')+' '+mode+' "$@"\n',{mode:0o755});
 // The real manual entry reads exactly one status endpoint. The host independently
 // verifies all counters, retirement, routing, task/land and reference observations.
-const launcher=root+'/manual-launch.ps1';
-fs.writeFileSync(launcher,`
-param([string]$Request)
-$ErrorActionPreference='Stop'
-function Invoke-RestMethod { param($Uri,$Headers,$TimeoutSec,$Method)
-  if($Uri -notmatch '/api/session-runners/server2-temp/status$'){throw 'unexpected API path'}
-  return ([IO.File]::ReadAllText($env:C1609_MANUAL_FIXTURE+'/statuses.json')|ConvertFrom-Json).'server2-temp'
-}
-$a=[IO.File]::ReadAllText($Request)|ConvertFrom-Json -AsHashtable
-& '${repo.replaceAll("'","''")}/scripts/retire-runner-volumes.ps1' @a
-exit $LASTEXITCODE
+// Unit 67: the entry is the retire-runner-volumes command (scripts/retire-runner-volumes.ps1 with c1609-manual.ps1 before, whose
+// Invoke-RestMethod a PowerShell launcher replaced); the status endpoint is a local fixture server child that answers
+// statuses.json's server2-temp row and 404 for any other path. Not run on server2.
+const statusServer=root+'/manual-status-server.cjs',statusPort=root+'/manual-status-port';
+fs.writeFileSync(statusServer,`
+const fs=require('node:fs'),http=require('node:http');
+const server=http.createServer((req,res)=>{
+  if(req.method!=='GET'||!/\\/api\\/session-runners\\/server2-temp\\/status$/.test(req.url)){res.writeHead(404);res.end();return;}
+  const status=JSON.parse(fs.readFileSync(process.argv[2]+'/statuses.json','utf8'))['server2-temp'];
+  res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(status));
+});
+server.listen(0,'127.0.0.1',()=>fs.writeFileSync(process.argv[3],String(server.address().port)));
 `);
+const statusChild=cp.spawn(process.execPath,[statusServer,root,statusPort],{stdio:'ignore'});
+process.once('exit',()=>statusChild.kill());
+for(let n=0;n<500&&!fs.existsSync(statusPort);n++)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,20);
+assert(fs.existsSync(statusPort),'fixture status server started');
 const env={...process.env,PATH:bin+':'+process.env.PATH,C1609_MANUAL_FIXTURE:root,
- C1008_FIXTURE_ROOT:root,ANTIPHON_OPERATOR_TOKEN_FILE:token,ANTIPHON_TASK_TOKEN:''};
+ C1008_FIXTURE_ROOT:root,ANTIPHON_OPERATOR_TOKEN_FILE:token,ANTIPHON_TASK_TOKEN:'',
+ ANTIPHON_API:'http://127.0.0.1:'+fs.readFileSync(statusPort,'utf8').trim()};
 delete env.C1609_RETIREMENT_ROOT;delete env.C1609_VOLUME_CENSUS_FILE;
-const source=fs.readFileSync(repo+'/scripts/retire-runner-volumes.ps1','utf8');
-const supportsManual=/\[switch\]\$Manual\b/.test(source);
+// The command's first call may publish the CLI; take that before the bounded calls.
+cp.spawnSync(repo+'/scripts/antiphon',['retire-runner-volumes','--force'],{encoding:'utf8',timeout:600000});
+// The script's parameters as the command's flags: a switch, a value, or a list joined by commas.
+function flags(a){
+ const out=[];
+ for(const [key,value] of Object.entries(a)){
+  const flag='--'+key.replace(/([a-z])([A-Z])/g,'$1-$2').toLowerCase();
+  if(value===true)out.push(flag);
+  else if(value===false||value===undefined||value===null)continue;
+  else out.push(flag,Array.isArray(value)?value.join(','):String(value));
+ }
+ return out;
+}
 function run(extra,authority=true){
  const a={Preview:true,OperationId:op};
- // Baseline reaches its existing explicit public Preview refusal. It must not
- // earn red credit from unknown parameters introduced by the repair.
- if(supportsManual)Object.assign(a,{Manual:true,ProjectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
+ Object.assign(a,{Manual:true,ProjectId:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1',
    RetiredRunnerId:'server2-temp',VolumeName:initial.targets,EvidenceDirectory:root+'/manual-evidence'},extra);
- const file=root+'/manual-request.json';fs.writeFileSync(file,JSON.stringify(a));
  const started=performance.now();
  // CARD-1609 phase measurement: Apply 86.203s, Resume 42.894s, Preview 42.456s.
  // Bounded collection limits are rounded 2x single samples, not population p95.
  const timeout=extra.Apply&&!extra.Resume?180000:extra.Apply||extra.AttestationFile?90000:15000;
- const r=cp.spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',launcher,'-Request',file],
+ const r=cp.spawnSync(repo+'/scripts/antiphon',['retire-runner-volumes',...flags(a)],
   {env:{...env,ANTIPHON_OPERATOR_TOKEN_FILE:authority?token:root+'/missing-token'},encoding:'utf8',timeout,maxBuffer:4*1024*1024});
  trace.push({request:Object.keys(extra),exit:r.status,milliseconds:performance.now()-started});
  assert(!r.error,'public manual driver failed: '+r.error);
