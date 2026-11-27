@@ -14,7 +14,7 @@ public sealed record WorkflowDiagnostic(
     WorkflowDiagnosticSeverity Severity,
     string Message,
     IReadOnlyList<string> NodeIds,
-    (string From, string To)? Edge = null);
+    WorkflowEdge? Edge = null);
 
 public sealed record WorkflowValidation(IReadOnlyList<WorkflowDiagnostic> Diagnostics)
 {
@@ -47,9 +47,84 @@ public static class ReviewWorkflowValidator
         public const string FanOutPolicy = "fan-out-policy";
         public const string MissingDescription = "missing-description";
         public const string OnFailure = "on-failure";
+        public const string InvalidNodeId = "invalid-node-id";
+        public const string InvalidKind = "invalid-kind";
+        public const string UnknownStep = "unknown-step";
+        public const string KindMismatch = "kind-mismatch";
+        public const string ChildOnly = "child-only";
+        public const string InvalidParameter = "invalid-parameter";
+        public const string InvalidInput = "invalid-input";
+        public const string UnsupportedInput = "unsupported-input";
+        public const string UnavailableInput = "unavailable-input";
+        public const string UnknownChain = "unknown-chain";
+        public const string UnsupportedOutput = "unsupported-output";
+        public const string AmbiguousRoute = "ambiguous-route";
     }
 
-    public static WorkflowValidation Validate(WorkflowDefinition workflow)
+    public static WorkflowValidation Validate(WorkflowDefinition workflow) =>
+        Validate(workflow, name => ReviewWorkflowSteps.Find(name)?.Contract);
+
+    internal static WorkflowValidation Validate(
+        WorkflowDefinition workflow,
+        Func<string?, ReviewStepContract?> findStep,
+        ReviewWorkflowChainNames? chains = null,
+        Func<WorkflowNode, bool>? continuesOnFailure = null)
+    {
+        var diagnostics = ValidateStructure(workflow).Diagnostics.ToList();
+        var childIds = workflow.Nodes.Where(node => node.Kind == ReviewNodeKind.FanOut)
+            .Select(node => node.StringParam("node")).OfType<string>().ToHashSet(StringComparer.Ordinal);
+
+        foreach (var node in workflow.Nodes)
+        {
+            if (!ValidNodeId(node.Id))
+                diagnostics.Add(Error(Codes.InvalidNodeId, "Use a letter followed by letters, digits, dashes or underscores for a node ID.", [node.Id]));
+
+            if (!Enum.IsDefined(node.Kind))
+            {
+                diagnostics.Add(Error(Codes.InvalidKind, $"Node '{node.Id}' has an unknown kind.", [node.Id]));
+                continue;
+            }
+
+            var contract = findStep(node.Run);
+            switch (node.Kind)
+            {
+                case ReviewNodeKind.Agent when childIds.Contains(node.Id) && node.Run is null:
+                    break;
+                case ReviewNodeKind.Gate or ReviewNodeKind.Wait or ReviewNodeKind.FanOut:
+                    if (node.Run is not null)
+                        diagnostics.Add(Error(Codes.KindMismatch, $"Node '{node.Id}' is handled by its kind and cannot name a step.", [node.Id]));
+                    ValidateControlNode(workflow, node, diagnostics);
+                    break;
+                default:
+                    if (contract is null)
+                        diagnostics.Add(Error(Codes.UnknownStep, $"Node '{node.Id}' has no registered step '{node.Run}'.", [node.Id]));
+                    else if (node.Kind != contract.Kind)
+                        diagnostics.Add(Error(Codes.KindMismatch, $"Step '{node.Run}' requires kind {contract.Kind}.", [node.Id]));
+                    break;
+            }
+
+            ValidateParameters(workflow, node, contract, chains, continuesOnFailure, diagnostics);
+        }
+
+        var routes = new HashSet<(string NodeId, string? Label)>();
+        foreach (var edge in workflow.Edges)
+        {
+            if (childIds.Contains(edge.To) || childIds.Contains(edge.From) || (edge.Overflow is { } overflow && childIds.Contains(overflow)))
+                diagnostics.Add(Error(Codes.ChildOnly, "Fan-out child nodes must run through their parent fan-out.", [edge.From, edge.To], edge));
+
+            IReadOnlyList<string?> labels = edge.Labels.Count == 0 ? [null] : edge.Labels;
+            foreach (var label in labels.Distinct(StringComparer.Ordinal))
+            {
+                if (!routes.Add((edge.From, label)))
+                    diagnostics.Add(Error(Codes.AmbiguousRoute, $"Node '{edge.From}' has more than one route for '{label ?? "the default outcome"}'.",
+                        [edge.From, edge.To], edge));
+            }
+        }
+        return new WorkflowValidation(diagnostics);
+    }
+
+    // Structural checks are also exercised in isolation on the small cycle and gate fixtures.
+    internal static WorkflowValidation ValidateStructure(WorkflowDefinition workflow)
     {
         var diagnostics = new List<WorkflowDiagnostic>();
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -80,6 +155,130 @@ public static class ReviewWorkflowValidator
         ValidateSections(workflow, ids, diagnostics);
         ValidateCycles(workflow, ids, bounded, diagnostics);
         return new WorkflowValidation(diagnostics);
+    }
+
+    private static bool ValidNodeId(string? id) => !string.IsNullOrEmpty(id) && char.IsAsciiLetter(id[0])
+        && id.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
+
+    private static void ValidateControlNode(WorkflowDefinition workflow, WorkflowNode node, List<WorkflowDiagnostic> diagnostics)
+    {
+        var invalid = node.Kind switch
+        {
+            ReviewNodeKind.Gate => node.Decisions.Any(decision => decision is not ("approve" or "another-round" or "close"))
+                || (node.Params.ContainsKey("optional") && !bool.TryParse(node.StringParam("optional"), out _))
+                || (node.Params.ContainsKey("gateKind") && (!Enum.TryParse<ReviewGateKind>(node.StringParam("gateKind"), true, out var kind)
+                    || !Enum.IsDefined(kind))),
+            ReviewNodeKind.Wait => node.ListParam("on") is var events && (events.Count == 0
+                || events.Any(evt => evt is not ("push" or "merge" or "close" or "base-moved" or "recheck" or "update-requested"))),
+            ReviewNodeKind.FanOut => (node.StringParam("over") is { } over && over != "groups")
+                || (workflow.Node(node.StringParam("node") ?? "") is { } child && (child.Kind != ReviewNodeKind.Agent || child.Run is not null)),
+            _ => false,
+        };
+        if (invalid)
+            diagnostics.Add(Error(Codes.InvalidParameter, $"Node '{node.Id}' has unsupported {node.Kind} parameters.", [node.Id]));
+    }
+
+    private static void ValidateParameters(
+        WorkflowDefinition workflow,
+        WorkflowNode node,
+        ReviewStepContract? contract,
+        ReviewWorkflowChainNames? chains,
+        Func<WorkflowNode, bool>? continuesOnFailure,
+        List<WorkflowDiagnostic> diagnostics)
+    {
+        if (node.Kind == ReviewNodeKind.Join && workflow.Node(node.StringParam("from") ?? "review") is { } joined
+            && joined.Kind != ReviewNodeKind.FanOut)
+            diagnostics.Add(Error(Codes.InvalidParameter, $"Join '{node.Id}' must gather a fan-out.", [node.Id]));
+
+        if (node.Params.TryGetValue("chain", out var authoredChain) && authoredChain is not (null or string))
+            diagnostics.Add(Error(Codes.InvalidParameter, $"Node '{node.Id}' needs a text chain name.", [node.Id]));
+        else if (contract?.Chain is { } chain && chains is not null && !chains.Contains(chain.Family, chain.Resolve(node).Value))
+            diagnostics.Add(Error(Codes.UnknownChain, $"Node '{node.Id}' needs a registered {chain.Family.ToString().ToLowerInvariant()} chain.", [node.Id]));
+        else if (contract?.Chain is null && authoredChain is not null)
+            diagnostics.Add(Error(Codes.InvalidParameter, $"Step '{node.Run}' does not use a model chain.", [node.Id]));
+
+        var fallback = node.StringParam("fallback");
+        if (node.Params.ContainsKey("fallback") && (node.Params["fallback"] is not string || string.IsNullOrWhiteSpace(fallback)))
+            diagnostics.Add(Error(Codes.InvalidParameter, $"Node '{node.Id}' needs a nonempty fallback label.", [node.Id]));
+
+        if (contract is not null)
+        {
+            foreach (var output in node.ListParam("outputs").Distinct(StringComparer.Ordinal))
+            {
+                if (!contract.Outputs.Contains(output, StringComparer.Ordinal) && output != fallback)
+                    diagnostics.Add(Error(Codes.UnsupportedOutput, $"Step '{node.Run}' cannot emit '{output}'.", [node.Id]));
+            }
+            foreach (var edge in workflow.Edges.Where(edge => edge.From == node.Id))
+            {
+                foreach (var label in edge.Labels.Where(label => !contract.Outputs.Contains(label, StringComparer.Ordinal) && label != fallback))
+                    diagnostics.Add(Error(Codes.UnsupportedOutput, $"Step '{node.Run}' cannot take an edge for '{label}'.", [node.Id], edge));
+            }
+        }
+
+        if (!node.Params.TryGetValue("inputs", out var raw))
+            return;
+        if (raw is not IEnumerable<object?> inputs || inputs.Any(input => input is not string id || !ValidNodeId(id)))
+        {
+            diagnostics.Add(Error(Codes.InvalidInput, $"Node '{node.Id}' inputs must be an array of node IDs.", [node.Id]));
+            return;
+        }
+        if (contract?.AcceptsInputs != true)
+        {
+            diagnostics.Add(Error(Codes.UnsupportedInput, $"Node '{node.Id}' does not support declared inputs.", [node.Id]));
+            return;
+        }
+        foreach (var id in inputs.Cast<string>().Distinct(StringComparer.Ordinal))
+        {
+            var producer = workflow.Node(id);
+            if (producer is null || !ProducerAvailable(workflow, producer, node, continuesOnFailure))
+                diagnostics.Add(Error(Codes.UnavailableInput, $"Input '{id}' is not available on every path to '{node.Id}'.", [node.Id]));
+        }
+    }
+
+    private static bool ProducerAvailable(
+        WorkflowDefinition workflow, WorkflowNode producer, WorkflowNode consumer, Func<WorkflowNode, bool>? continuesOnFailure)
+    {
+        if (producer.Id == consumer.Id || workflow.Nodes.FirstOrDefault() is not { } first)
+            return false;
+
+        var entry = workflow.Nodes.FirstOrDefault(node => node.Run == "Intake")?.Id ?? first.Id;
+        var routes = workflow.Edges.ToLookup(edge => edge.From, StringComparer.Ordinal);
+        var producerCanFail = continuesOnFailure?.Invoke(producer) ?? producer.StringParam("onFailure") == "continue";
+        var fallback = producer.StringParam("fallback");
+        var failedExit = producerCanFail
+            ? routes[producer.Id].FirstOrDefault(edge => fallback is not null && edge.Labels.Contains(fallback, StringComparer.Ordinal))
+                ?? routes[producer.Id].FirstOrDefault(edge => edge.Labels.Count == 0)
+            : null;
+        var visited = new HashSet<(string Id, bool Produced)>();
+        var pending = new Stack<(string Id, bool Produced)>();
+        pending.Push((entry, false));
+        var reached = false;
+        while (pending.TryPop(out var state))
+        {
+            if (!visited.Add(state))
+                continue;
+            if (state.Id == consumer.Id)
+            {
+                if (!state.Produced)
+                    return false;
+                reached = true;
+                continue;
+            }
+            foreach (var edge in routes[state.Id])
+            {
+                Push(edge, state.Produced || state.Id == producer.Id);
+                if (ReferenceEquals(edge, failedExit))
+                    Push(edge, state.Produced);
+            }
+        }
+        return reached;
+
+        void Push(WorkflowEdge edge, bool produced)
+        {
+            pending.Push((edge.To, edge.To != entry && produced));
+            if (edge.Overflow is { } overflow)
+                pending.Push((overflow, overflow != entry && produced));
+        }
     }
 
     private static void ValidateNode(WorkflowNode node, HashSet<string> ids, List<WorkflowDiagnostic> diagnostics)
@@ -301,7 +500,7 @@ public static class ReviewWorkflowValidator
         policy.StartsWith("quorum:", StringComparison.Ordinal) && int.TryParse(policy["quorum:".Length..], out var n) && n > 0;
 
     private static WorkflowDiagnostic Error(string code, string message, IReadOnlyList<string> nodeIds, WorkflowEdge? edge = null) =>
-        new(code, WorkflowDiagnosticSeverity.Error, message, nodeIds, edge is null ? null : (edge.From, edge.To));
+        new(code, WorkflowDiagnosticSeverity.Error, message, nodeIds, edge);
 
     private static WorkflowDiagnostic Warning(string code, string message, IReadOnlyList<string> nodeIds) =>
         new(code, WorkflowDiagnosticSeverity.Warning, message, nodeIds);

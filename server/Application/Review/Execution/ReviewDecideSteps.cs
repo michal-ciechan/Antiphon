@@ -140,7 +140,7 @@ public static class ReviewDecideSteps
     public static async Task<NodeResult> GateAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
         var repo = walk.Run.Subject.Repo;
-        if (IsOptional(node) && walk.Policy.GateOff(node.Id, repo))
+        if (ReviewWorkflowPolicy.GatesOff(walk.Policy, node, repo).Value)
             return NodeResult.Ok("approve", $"Gate off for {repo} (Review:Policy:GatesOff:{node.Id}): passed without a person", new GateSkipped(node.Id, repo));
 
         var kind = GateKindOf(node);

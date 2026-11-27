@@ -66,7 +66,7 @@ public static class ReviewIntakeSteps
                     $"Is finding {f.Key} ({f.Title}, at {f.FilePath}: `{f.Anchor.Trim()}`) still present after the change below?")).ToList();
                 var state = StillPresentState(asked, diff);
                 var decided = await walk.Services.GetRequiredService<DecisionChain>()
-                    .DecideAsync(node.StringParam("chain") ?? ReviewCategorisation.DefaultChain, new DecisionRequest(state, questions), ct);
+                    .DecideAsync(ReviewWorkflowSteps.ChainName(node), new DecisionRequest(state, questions), ct);
                 usage = NodeUsage.From(decided);
                 foreach (var finding in asked)
                 {
@@ -98,7 +98,7 @@ public static class ReviewIntakeSteps
         var diff = await walk.DiffAsync(scope.Range, ct);
         var diffNote = diff is null ? "The code host will not render this diff (too large); judge from the file list." : null;
         var state = ReviewCategorisation.BuildState(walk.Run.Subject.Title, pr.Description, scope.Description, scope.Files, diff, diffNote);
-        var chain = node.StringParam("chain") is { Length: > 0 } named ? named : ReviewCategorisation.DefaultChain;
+        var chain = ReviewWorkflowSteps.ChainName(node);
         var decided = await walk.Services.GetRequiredService<DecisionChain>()
             .DecideAsync(chain, new DecisionRequest(state, ReviewCategorisation.Questions), ct);
         var usage = NodeUsage.From(decided);

@@ -247,7 +247,7 @@ public static class ReviewReviewSteps
         var all = candidates.Select(c => c.Cid).ToList();
         if (candidates.Count == 0)
             return NodeResult.Ok(null, "Nothing to verify", new VerifyOutput([], [], false));
-        var chain = node.StringParam("chain") ?? "completions-cheap";
+        var chain = ReviewWorkflowSteps.ChainName(node);
         var completions = walk.Services.GetRequiredService<CompletionChain>();
         if (!completions.IsConfigured(chain))
         {

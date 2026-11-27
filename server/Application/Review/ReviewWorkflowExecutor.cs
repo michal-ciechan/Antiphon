@@ -50,32 +50,8 @@ public sealed class ReviewWorkflowExecutor(
     private const int MaxRunsPerPass = 20;
     private const int MaxStepsPerWalk = 64;
 
-    private delegate Task<NodeResult> Step(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct);
-
-    /// <summary>The code and decision steps by yaml <c>run</c> name (design 3.3).</summary>
-    private static readonly IReadOnlyDictionary<string, Step> Steps = new Dictionary<string, Step>(StringComparer.Ordinal)
-    {
-        ["Intake"] = ReviewIntakeSteps.IntakeAsync,
-        ["Delta"] = ReviewIntakeSteps.DeltaAsync,
-        ["Categorise"] = ReviewIntakeSteps.CategoriseAsync,
-        ["SelectChecks"] = ReviewSelectionSteps.SelectChecksAsync,
-        ["GroupChecks"] = ReviewSelectionSteps.GroupChecksAsync,
-        ["BuildPacks"] = ReviewSelectionSteps.BuildPacksAsync,
-        ["CollateFindings"] = ReviewReviewSteps.CollateAsync,
-        ["VerifyFindings"] = ReviewReviewSteps.VerifyAsync,
-        ["Publish"] = ReviewReviewSteps.PublishAsync,
-        ["RouteAfterRound"] = ReviewDecideSteps.RouteAsync,
-        ["NeedsHumanApproval"] = ReviewDecideSteps.NeedsHumanApprovalAsync,
-        ["BotApprove"] = ReviewDecideSteps.BotApproveAsync,
-        ["RecordBaseDrift"] = ReviewDecideSteps.RecordBaseDriftAsync,
-        ["CheckBaseMoved"] = ReviewBranchSteps.CheckBaseMovedAsync,
-        ["BaseDriftCheck"] = ReviewBranchSteps.BaseDriftAsync,
-        ["UpdateBranch"] = ReviewBranchSteps.UpdateBranchAsync,
-        ["Merge"] = ReviewBranchSteps.MergeAsync,
-    };
-
     /// <summary>The steps this executor implements, for diagnostics and tests.</summary>
-    public static IReadOnlyCollection<string> StepNames => Steps.Keys.ToList();
+    public static IReadOnlyCollection<string> StepNames => ReviewWorkflowSteps.Names;
 
     private TimeSpan Lease => TimeSpan.FromSeconds(Math.Max(30, options.Value.LeaseSeconds));
 
@@ -385,7 +361,7 @@ public sealed class ReviewWorkflowExecutor(
             ReviewNodeKind.Gate => ReviewDecideSteps.GateAsync(walk, node, execution, ct),
             ReviewNodeKind.Wait => ReviewDecideSteps.WaitAsync(walk, node, execution, ct),
             ReviewNodeKind.FanOut => ReviewReviewSteps.FanOutAsync(walk, node, execution, ct),
-            _ when node.Run is { } name && Steps.TryGetValue(name, out var step) => step(walk, node, execution, ct),
+            _ when node.Run is { } name && ReviewWorkflowSteps.Find(name) is { } step => step.Run(walk, node, execution, ct),
             _ => Task.FromResult(NodeResult.Fail($"The executor has no step for '{node.Run ?? node.Id}' ({node.Kind}).")),
         };
 

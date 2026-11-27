@@ -83,7 +83,7 @@ public static class ReviewSelectionSteps
         {
             try
             {
-            var chain = node.StringParam("chain") is { Length: > 0 } named ? named : ReviewCategorisation.DefaultChain;
+            var chain = ReviewWorkflowSteps.ChainName(node);
             var state = ReviewCategorisation.BuildState(walk.Run.Subject.Title, null, scope.Description, scope.Files, diff, null)
                 + $"\nCategories: {string.Join(", ", walk.Run.Categories)}\n";
             var decisions = walk.Services.GetRequiredService<DecisionChain>();

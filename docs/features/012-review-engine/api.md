@@ -161,7 +161,25 @@ interface ReviewPollingPassDto {
            error: string | null /* the last error the pass hit for this repo: rate limit, 403, network */ }[]
 }
 
-interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
+interface WorkflowValidationDto {
+  valid: boolean
+  diagnostics: {
+    severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]
+    edge: { from: string; to: string; index: number /* zero-based in the submitted edge list */ } | null
+  }[]
+}
+
+type PolicySource = 'InstanceOverride' | 'RepoRule' | 'WorkflowRevision' | 'StepDefault'
+type PolicyValue<T> = { value: T; source: PolicySource }
+interface WorkflowPolicyDto {
+  runId: string; revisionId: string | null; name: string; hash: string
+  nodes: {
+    nodeId: string
+    onFailure: PolicyValue<'stop' | 'continue'> | null
+    gatesOff: PolicyValue<boolean> | null
+    chain: PolicyValue<string> | null
+  }[]
+}
 ```
 
 ## Routes
@@ -184,7 +202,8 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | POST | `/api/review-gates/{id}/decision` | `GateDecisionRequest` | `ReviewRunDetailDto` |
 | GET | `/api/review-workflows/default` | | `WorkflowGraphDto` |
 | GET | `/api/review-workflows/revisions/{id}` | | `WorkflowGraphDto` (the snapshot a run used) |
-| POST | `/api/review-workflows/validate` | `WorkflowGraphDto` | `WorkflowValidationDto` |
+| POST | `/api/review-workflows/validate` | Raw `WorkflowGraphDto` | `WorkflowValidationDto` (200 for semantic errors, including unknown textual and numeric node kinds; 400 for malformed JSON) |
+| GET | `/api/review-runs/{id}/workflow-policy` | `?revisionId=` (optional; defaults to the run's pin or the embedded workflow for a legacy unpinned run) | `WorkflowPolicyDto`; 404 for a missing run or revision |
 | GET | `/api/review-polling` | | `ReviewPollingDto` (design 8.5 Polling). |
 | POST | `/api/review-polling/poll` | | `ReviewPollingDto` after one pass over every configured repo, run now even when the timer is off. Waits for a pass already running instead of overlapping it; a pass cut short at 90 s records the repos it reached. A repo's failure is in its `error`, not the status code. |
 | GET | `/api/review-me` | | `ReviewViewerDto`. With sign-in on (`Review:Auth:Mode` GitHub), the signed-in GitHub login. With it off, the server resolves the viewer from `Review:DefaultViewerLogin`, overridable by the `X-Review-Viewer` header when `Review:AllowViewerHeader` is true (dev only). Mutations record this viewer as the actor. |
@@ -194,6 +213,17 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | POST | `/api/review-auth/logout` | | Clears the session; answers with a "Signed out" page. |
 
 With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 'sign_in_required', signInUrl }` without a session; the client sends the browser to `signInUrl` with `returnUrl` set to the current page. A gate on a repo where the viewer lacks `Review:Auth:RequiredRepoPermission` has `viewerCanDecide: false` and says why, and deciding it is a 403.
+
+Validation checks the submitted graph against the server's registered work and chain capabilities.
+It adds located errors for invalid kinds, unknown steps, kind mismatches, child-only reviewer routes,
+invalid or unsupported input bindings, unavailable producers, unknown chains, unsupported outputs,
+and ambiguous routes. Warnings such as a missing description leave `valid` true.
+
+The policy read resolves values under current server settings for the repository recorded on the run
+and the specified graph revision. A nonblank instance failure override wins over the revision,
+followed by the step default. A configured repository rule can switch off an optional gate.
+The chain comes from the revision or the registered handler's default. The response carries policy
+values and their sources only. Validation and policy reads perform no writes or provider requests.
 
 ## SignalR
 

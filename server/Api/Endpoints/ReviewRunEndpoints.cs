@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
@@ -88,7 +89,8 @@ public static class ReviewRunEndpoints
         workflows.MapGet("/default", (ReviewWorkflowService service) => Results.Ok(service.GetDefault()));
         workflows.MapGet("/revisions/{id:guid}", async (Guid id, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.GetWorkflowRevisionAsync(id, ct)));
-        workflows.MapPost("/validate", (WorkflowGraphDto graph, ReviewWorkflowService service) => Results.Ok(service.Validate(graph)));
+        workflows.MapPost("/validate", (JsonElement graph, ReviewWorkflowService service) =>
+            Results.Ok(service.Validate(ReviewWorkflowService.ReadCandidate(graph))));
 
         // Code host polling (design 8.5): the settings and the last pass; a pass on demand, even with the timer off.
         var polling = app.MapGroup("/api/review-polling").WithTags("Review engine");

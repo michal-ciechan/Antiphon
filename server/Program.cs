@@ -1043,6 +1043,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     builder.Services.AddHttpClient<IGitHubService, GitHubService>();
     // Review engine: runs, findings, gates, workflow graph and decision chains.
     builder.Services.AddSingleton<ReviewWorkflowService>();
+    builder.Services.AddScoped<ReviewWorkflowPolicyService>();
     builder.Services.AddScoped(sp =>
     {
         var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext;
@@ -1474,6 +1475,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     app.MapFileSystemEndpoints();
     app.MapReviewEndpoints();
     app.MapReviewRunEndpoints();
+    app.MapReviewWorkflowEditorEndpoints();
     app.MapReviewAuthEndpoints();
 
     // SignalR hub

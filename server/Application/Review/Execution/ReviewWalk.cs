@@ -136,9 +136,7 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
     public bool ContinuesOnFailure(WorkflowNode node) => OnFailure(Policy, node) == "continue";
 
     public static string OnFailure(ReviewPolicySettings policy, WorkflowNode node) =>
-        (policy.OnFailure.TryGetValue(node.Id, out var configured) && !string.IsNullOrWhiteSpace(configured)
-            ? configured
-            : node.StringParam("onFailure") ?? "stop").Trim().ToLowerInvariant();
+        ReviewWorkflowPolicy.OnFailure(policy, node).Value;
 
     public string EntryNodeId => Workflow.Nodes.FirstOrDefault(n => n.Run == EntryRun)?.Id ?? Workflow.Nodes[0].Id;
 

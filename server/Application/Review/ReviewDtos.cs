@@ -218,12 +218,35 @@ public sealed record WorkflowEdgeDto(
     string? Overflow = null,
     string? Description = null);
 
-public sealed record WorkflowEdgeRefDto(string From, string To);
+public sealed record WorkflowEdgeRefDto(string From, string To, int Index);
 
 /// <summary><c>Severity</c> is <c>Error</c> or <c>Warning</c>; a missing description is a warning (design 3.3).</summary>
 public sealed record WorkflowDiagnosticDto(string Code, string Severity, string Message, IReadOnlyList<string> NodeIds, WorkflowEdgeRefDto? Edge);
 
 public sealed record WorkflowValidationDto(bool Valid, IReadOnlyList<WorkflowDiagnosticDto> Diagnostics);
+
+public enum WorkflowPolicySource
+{
+    InstanceOverride,
+    RepoRule,
+    WorkflowRevision,
+    StepDefault,
+}
+
+public sealed record WorkflowPolicyValue<T>(T Value, WorkflowPolicySource Source);
+
+public sealed record WorkflowNodePolicyDto(
+    string NodeId,
+    WorkflowPolicyValue<string>? OnFailure,
+    WorkflowPolicyValue<bool>? GatesOff,
+    WorkflowPolicyValue<string>? Chain);
+
+public sealed record WorkflowPolicyDto(
+    Guid RunId,
+    Guid? RevisionId,
+    string Name,
+    string Hash,
+    IReadOnlyList<WorkflowNodePolicyDto> Nodes);
 
 /// <summary>The SignalR payload of <c>ReviewRunChanged</c>.</summary>
 public sealed record ReviewRunChangedEvent(Guid RunId);

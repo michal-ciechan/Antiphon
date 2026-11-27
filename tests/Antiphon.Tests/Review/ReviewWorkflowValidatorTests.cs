@@ -1,4 +1,6 @@
+using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Review.Workflows;
+using Antiphon.Server.Domain.Enums;
 using Shouldly;
 using TUnit.Core;
 
@@ -26,6 +28,144 @@ public class ReviewWorkflowValidatorTests
         matching.Length.ShouldBe(1);
         matching[0].Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
         matching[0].NodeIds.ShouldBe(["categorise"]);
+    }
+
+    [Test]
+    public void C2109_S1_Registered_step_requires_its_kind()
+    {
+        var graph = WithNode(ReviewWorkflowYaml.LoadDefault(), "categorise", node => node with { Kind = ReviewNodeKind.Code });
+        AssertNodeError(graph, ReviewWorkflowValidator.Codes.KindMismatch, "categorise");
+    }
+
+    [Test]
+    public void C2109_S1_Fan_out_child_cannot_be_a_frontier()
+    {
+        var embedded = ReviewWorkflowYaml.LoadDefault();
+        ReviewWorkflowValidator.Validate(embedded).Valid.ShouldBeTrue();
+        var graph = embedded with
+        {
+            Edges = embedded.Edges.Select(edge => edge.From == "review" ? edge with { To = "reviewer" } : edge).ToArray(),
+        };
+        var violation = ReviewWorkflowValidator.Validate(graph).Diagnostics.Single(d => d.Code == ReviewWorkflowValidator.Codes.ChildOnly);
+        violation.Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+        violation.Edge!.To.ShouldBe("reviewer");
+        violation.Edge.From.ShouldBe("review");
+    }
+
+    [Test]
+    public void C2109_S1_Unsupported_declared_input_is_diagnosed()
+    {
+        var embedded = ReviewWorkflowYaml.LoadDefault();
+        AssertNodeError(WithParam(embedded, "categorise", "inputs", new[] { "intake" }),
+            ReviewWorkflowValidator.Codes.UnsupportedInput, "categorise");
+        foreach (var value in new object[] { "intake", new object[] { "intake", 42 } })
+            AssertNodeError(WithParam(embedded, "categorise", "inputs", value),
+                ReviewWorkflowValidator.Codes.InvalidInput, "categorise");
+    }
+
+    [Test]
+    public void C2109_S1_Missing_and_bypassed_producers_are_diagnosed()
+    {
+        var graph = ReviewWorkflowYaml.Parse(Header + """
+            nodes:
+              intake: { kind: code, run: Intake, description: d }
+              route: { kind: code, run: RouteAfterRound, outputs: [findings, clean], onFailure: continue, fallback: clean, description: d }
+              delta: { kind: code, run: Delta, description: d }
+              packs: { kind: code, run: BuildPacks, description: d }
+            edges:
+              - intake -> route
+              - route[findings] -> delta
+              - route[clean] -> packs
+              - delta -> packs
+            """);
+        ReviewStepContract? FindStep(string? name) => name == "BuildPacks"
+            ? new ReviewStepContract(ReviewNodeKind.Code, [], AcceptsInputs: true)
+            : ReviewWorkflowSteps.Find(name)?.Contract;
+
+        foreach (var (producer, expected) in new[] { ("intake", 0), ("missing", 1), ("delta", 1) })
+        {
+            var result = ReviewWorkflowValidator.Validate(WithParam(graph, "packs", "inputs", new[] { producer }), FindStep);
+            var errors = result.Diagnostics.Where(d => d.Code == ReviewWorkflowValidator.Codes.UnavailableInput).ToArray();
+            errors.Length.ShouldBe(expected, producer);
+            result.Diagnostics.ShouldNotContain(d => d.Code == ReviewWorkflowValidator.Codes.UnsupportedInput);
+            if (expected > 0)
+            {
+                errors[0].NodeIds.ShouldBe(["packs"]);
+                errors[0].Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+            }
+        }
+    }
+
+    [Test]
+    public void C2109_S1_Chain_must_exist_in_the_handlers_registry()
+    {
+        var embedded = ReviewWorkflowYaml.LoadDefault();
+        var decision = new HashSet<string> { ReviewCategorisation.DefaultChain, "only-decision" };
+        var completion = new HashSet<string> { "completions-cheap", "only-completion" };
+        WorkflowValidation Validate(WorkflowDefinition graph) => ReviewWorkflowValidator.Validate(graph,
+            name => ReviewWorkflowSteps.Find(name)?.Contract,
+            new ReviewWorkflowChainNames(decision, completion));
+
+        foreach (var (id, chain) in new[] { ("categorise", "only-completion"), ("verify", "only-decision") })
+        {
+            var error = Validate(WithParam(embedded, id, "chain", chain)).Diagnostics
+                .Single(d => d.Code == ReviewWorkflowValidator.Codes.UnknownChain);
+            error.NodeIds.ShouldBe([id]);
+            error.Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+            Validate(WithParam(embedded, id, "chain", null)).Valid.ShouldBeTrue();
+        }
+    }
+
+    [Test]
+    public void C2109_S1_Authored_output_must_be_emittable()
+    {
+        var graph = WithParam(ReviewWorkflowYaml.LoadDefault(), "route", "outputs",
+            new[] { "bot-round-limit", "findings", "clean", "made-up" });
+        AssertNodeError(graph, ReviewWorkflowValidator.Codes.UnsupportedOutput, "route");
+    }
+
+    [Test]
+    public void C2109_S1_Duplicate_route_has_a_located_error()
+    {
+        var graph = ReviewWorkflowYaml.LoadDefault();
+        var duplicate = new WorkflowEdge("route", "human-review", "findings", null, null, null);
+        var result = ReviewWorkflowValidator.Validate(graph with { Edges = [.. graph.Edges, duplicate] });
+        var error = result.Diagnostics.Single(d => d.Code == ReviewWorkflowValidator.Codes.AmbiguousRoute);
+        error.Edge.ShouldBeSameAs(duplicate);
+        error.Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+    }
+
+    [Test]
+    public void C2109_S1_Wait_bounds_a_cycle_but_plain_cycle_fails()
+    {
+        var graph = ReviewWorkflowYaml.Parse(Header + """
+            nodes:
+              intake: { kind: code, run: Intake, description: d }
+              park: { kind: wait, on: [push], description: d }
+            edges:
+              - intake -> park
+              - park -> intake
+            """);
+        ReviewWorkflowValidator.Validate(graph).Valid.ShouldBeTrue();
+        var plain = WithNode(graph, "park", node => node with { Kind = ReviewNodeKind.Code, Run = "RecordBaseDrift" });
+        var cycle = ReviewWorkflowValidator.Validate(plain).Diagnostics.ShouldHaveSingleItem();
+        cycle.Code.ShouldBe(ReviewWorkflowValidator.Codes.UnboundedCycle);
+        cycle.Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+        cycle.NodeIds.ShouldBe(["intake", "park"], ignoreOrder: true);
+        cycle.Edge.ShouldNotBeNull();
+    }
+
+    private static WorkflowDefinition WithNode(WorkflowDefinition graph, string id, Func<WorkflowNode, WorkflowNode> edit) =>
+        graph with { Nodes = graph.Nodes.Select(node => node.Id == id ? edit(node) : node).ToArray() };
+
+    private static WorkflowDefinition WithParam(WorkflowDefinition graph, string id, string key, object? value) =>
+        WithNode(graph, id, node => node with { Params = new Dictionary<string, object?>(node.Params) { [key] = value } });
+
+    private static void AssertNodeError(WorkflowDefinition graph, string code, string id)
+    {
+        var error = ReviewWorkflowValidator.Validate(graph).Diagnostics.Single(d => d.Code == code);
+        error.Severity.ShouldBe(WorkflowDiagnosticSeverity.Error);
+        error.NodeIds.ShouldBe([id]);
     }
 
     [Test]
@@ -59,7 +199,7 @@ public class ReviewWorkflowValidatorTests
               - verify[disputed] -> packs
             """);
 
-        var validation = ReviewWorkflowValidator.Validate(workflow);
+        var validation = ReviewWorkflowValidator.ValidateStructure(workflow);
 
         validation.Valid.ShouldBeFalse();
         var cycle = validation.Diagnostics.ShouldHaveSingleItem();
@@ -88,7 +228,7 @@ public class ReviewWorkflowValidatorTests
               - disputed-findings[re-review] -> packs
             """);
 
-        var validation = ReviewWorkflowValidator.Validate(workflow);
+        var validation = ReviewWorkflowValidator.ValidateStructure(workflow);
 
         validation.Valid.ShouldBe(valid);
         if (!valid)
@@ -114,7 +254,7 @@ public class ReviewWorkflowValidatorTests
               - drift[unaffected] -> intake
             """);
 
-        var codes = ReviewWorkflowValidator.Validate(workflow).Diagnostics.Select(d => d.Code).ToList();
+        var codes = ReviewWorkflowValidator.ValidateStructure(workflow).Diagnostics.Select(d => d.Code).ToList();
 
         codes.ShouldContain(ReviewWorkflowValidator.Codes.OverflowNotGate);
         codes.ShouldContain(ReviewWorkflowValidator.Codes.UnknownNode);

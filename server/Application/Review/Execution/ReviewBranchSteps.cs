@@ -95,7 +95,7 @@ public static class ReviewBranchSteps
             .AppendLine("All files the base commits change:").AppendLine(string.Join('\n', baseFiles))
             .ToString();
         var decided = await walk.Services.GetRequiredService<DecisionChain>().DecideAsync(
-            node.StringParam("chain") ?? ReviewCategorisation.DefaultChain,
+            ReviewWorkflowSteps.ChainName(node),
             new DecisionRequest(stateText, [DecisionQuestion.Noul(BaseDriftQuestion, "Could these base changes affect this PR?")]), ct);
         var usage = NodeUsage.From(decided);
         if (!decided.Answers.TryGetValue(BaseDriftQuestion, out var answer) || answer.Refused)
