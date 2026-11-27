@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Nightly;
 using Antiphon.Tests.TestHelpers;
+using LibGit2Sharp;
 using Shouldly;
 using P2 = Antiphon.Nightly.ReleaseImpactAdmission;
 
@@ -15,7 +16,46 @@ public sealed partial class ReleaseImpactEnvelopeTests
 {
     private enum ContractChange { None, Selector, Policy, Catalog, Runtime }
 
-    private sealed class P2World : IAsyncDisposable
+    private static readonly Signature P2Author = new("Fixture", "fixture@example.invalid",
+        new DateTimeOffset(2026, 11, 26, 8, 0, 0, TimeSpan.Zero));
+
+    private static Repository OpenP2Repository(string root)
+    {
+        var git = new Repository(Repository.Init(root));
+        try
+        {
+            git.Config.Set("core.autocrlf", false);
+            git.Config.Set("commit.gpgsign", false);
+            return git;
+        }
+        catch
+        {
+            git.Dispose();
+            throw;
+        }
+    }
+
+    private static P2.Installation CreateP2Installation(RcInputFixtureRepository repository)
+    {
+        using var setup = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "p2-fixture-setup");
+        using var git = OpenP2Repository(repository.Root);
+        var files = new List<P2.ToolFile>();
+        foreach (var path in AlgorithmFiles)
+        {
+            var bytes = ImpactedClasses.RunningSource(path);
+            var destination = Path.Combine(repository.Root, path);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.WriteAllBytes(destination, bytes);
+            files.Add(new P2.ToolFile(path, "100644", ReleaseImpactEvidence.BlobId(bytes, 40), (ulong)bytes.Length, IndependentDigest(bytes)));
+        }
+        repository.Put(".gitattributes", "* -text\n");
+        Commands.Stage(git, AlgorithmFiles.Append(".gitattributes"));
+        var sha = git.Commit("installed selector source", P2Author, P2Author).Sha;
+        return new P2.Installation(repository.Root, sha, "p2-fixture-evaluator", "p2-fixture-extractor", files,
+            IndependentDigest(File.ReadAllBytes(typeof(P2).Assembly.Location)), path => File.OpenRead(Path.Combine(repository.Root, path)));
+    }
+
+    private sealed class P2World(P2.Installation tool) : IDisposable
     {
         internal const string HotProject = "tests/Hot/Hot.csproj";
         internal const string QuietProject = "tests/Quiet/Quiet.csproj";
@@ -34,24 +74,26 @@ public sealed partial class ReleaseImpactEnvelopeTests
         internal static readonly DateTimeOffset Clock = new(2026, 11, 26, 8, 0, 0, TimeSpan.Zero);
 
         private readonly RcInputFixtureRepository _repo = new("p2-admission-");
-        private Fixture? _toolRepo;
-        internal P2.Installation Tool { get; private set; } = null!;
+        private readonly Dictionary<string, P2.ToolFile[]> _treeFiles = new(StringComparer.Ordinal);
+        private Repository _git = null!;
+        private string? _sibling;
         internal P2.Request Request { get; private set; } = null!;
         internal string OriginBase { get; private set; } = "";
         internal string OriginParent { get; private set; } = "";
         internal P2.Chunk[] Chunks { get; private set; } = [];
         internal string Root => _repo.Root;
-        internal string Sibling => _repo.Git("commit-tree", _repo.Git("rev-parse", Request.BaselineSha + "^{tree}"),
-            "-m", "the same tree outside the baseline history");
+        internal string Sibling => _sibling ??= _git.ObjectDatabase.CreateCommit(P2Author, P2Author,
+            "the same tree outside the baseline history", _git.Lookup<Commit>(Request.BaselineSha).Tree, [], prettifyMessage: true).Sha;
 
         internal string RewriteOriginRef()
         {
             const string originRef = "refs/heads/original-execution";
-            _repo.Git("update-ref", originRef, OriginParent);
-            var rewritten = _repo.Git("commit-tree", _repo.Git("rev-parse", originRef + "^{tree}"),
-                "-p", OriginBase, "-m", "force-rewritten execution with the same tree");
-            _repo.Git("update-ref", originRef, rewritten, OriginParent);
-            return _repo.Git("rev-parse", originRef);
+            var original = _git.Lookup<Commit>(OriginParent);
+            var reference = _git.Refs.Add(originRef, original.Id);
+            var rewritten = _git.ObjectDatabase.CreateCommit(P2Author, P2Author, "force-rewritten execution with the same tree",
+                original.Tree, [_git.Lookup<Commit>(OriginBase)], prettifyMessage: true);
+            _git.Refs.UpdateTarget(reference, rewritten.Id);
+            return _git.Lookup<Commit>(originRef).Sha;
         }
         private static string Hash(string text) => IndependentDigest(Encoding.UTF8.GetBytes(text));
         internal P2.Target Target { get; } = new(RcReceiptScope.CurrentPlatform(), "x64", "rc", "net9.0",
@@ -59,31 +101,29 @@ public sealed partial class ReleaseImpactEnvelopeTests
             new Dictionary<string, string> { ["UseAppHost"] = "false", ["ContinuousIntegrationBuild"] = "true" },
             ["dotnet", "run", "--no-build"]);
 
-        internal static async Task<P2World> Create(bool trust = false, bool candidateOnlyTrust = false,
+        internal static P2World Create(P2.Installation tool, bool trust = false, bool candidateOnlyTrust = false,
             bool directHit = false, string? historicalSide = null, bool brokenIndex = false, bool staleCatalog = false,
             bool duplicateSimpleName = false, bool bypass = false, ContractChange contractChange = ContractChange.None)
         {
             using var setup = TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "p2-fixture-setup");
-            var world = new P2World();
+            var world = new P2World(tool);
             try
             {
-                await world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog,
+                world.Seed(trust, candidateOnlyTrust, directHit, historicalSide, brokenIndex, staleCatalog,
                     duplicateSimpleName, bypass, contractChange);
                 return world;
             }
             catch
             {
-                await world.DisposeAsync();
+                world.Dispose();
                 throw;
             }
         }
 
-        private async Task Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide,
+        private void Seed(bool trust, bool candidateOnlyTrust, bool directHit, string? historicalSide,
             bool brokenIndex, bool staleCatalog, bool duplicateSimpleName, bool bypass, ContractChange contractChange)
         {
-            _repo.Init();
-            _repo.Git("config", "core.autocrlf", "false");
-            _repo.Git("config", "commit.gpgsign", "false");
+            _git = OpenP2Repository(Root);
             var survivor = trust ? "Probe.OwnTests" : "Probe.HotTests";
             var quietClass = duplicateSimpleName ? "Other.HotTests" : "Probe.QuietTests";
             Chunks =
@@ -154,29 +194,37 @@ public sealed partial class ReleaseImpactEnvelopeTests
             _repo.Put(Readers, readers);
             _repo.Put(RcChunkSelection.IndexPath, brokenIndex ? BuildIndex("[]") : BuildIndex(readers));
             if (historicalSide == "B") _repo.Put(OldReader, "old reader\n");
-            OriginBase = _repo.Commit();
-            OriginParent = _repo.Commit(allowEmpty: true);
-            var comparison = _repo.Commit(allowEmpty: true);
+            Commands.Stage(_git, "*");
+            OriginBase = _git.Commit("fixture origin", P2Author, P2Author).Sha;
+            var allowEmpty = new CommitOptions { AllowEmptyCommit = true };
+            OriginParent = _git.Commit("fixture origin parent", P2Author, P2Author, allowEmpty).Sha;
+            var comparison = _git.Commit("fixture comparison", P2Author, P2Author, allowEmpty).Sha;
+            var changedPaths = contractPaths.ToList();
             if (contractChange != ContractChange.None) ChangeContract(contractChange);
-            else if (historicalSide == "B") _repo.Remove(OldReader);
-            else if (historicalSide == "A") _repo.Put(NewReader, "new reader\n");
-            else _repo.Put(trust ? ProducerInput : HotInput, "candidate\n");
-            if (candidateOnlyTrust) _repo.Put(RcTrustedProjectGate.PolicyPath, trusted);
-            if (brokenIndex) _repo.Put(RcChunkSelection.IndexPath, BuildIndex(readers));
-            var candidate = _repo.Commit();
-            Request = new P2.Request("p2-fixture", "rc/2026-11-26", comparison, candidate, "run-c", 3, 7, P2.TargetIntentDigest(Target));
-
-            _toolRepo = await Fixture.CreateSourceAsync();
-            var toolSha = (await _toolRepo.GitAsync("rev-parse", "HEAD")).Trim();
-            var toolFiles = new List<P2.ToolFile>();
-            foreach (var path in AlgorithmFiles)
+            else if (historicalSide == "B")
             {
-                var bytes = File.ReadAllBytes(Path.Combine(_toolRepo.Root, path));
-                toolFiles.Add(new P2.ToolFile(path, "100644", ReleaseImpactEvidence.BlobId(bytes, 40), (ulong)bytes.Length, IndependentDigest(bytes)));
+                _repo.Remove(OldReader);
+                changedPaths.Add(OldReader);
             }
-            var installationRoot = _toolRepo.Root;
-            Tool = new P2.Installation(installationRoot, toolSha, "p2-fixture-evaluator", "p2-fixture-extractor", toolFiles,
-                IndependentDigest(File.ReadAllBytes(typeof(P2).Assembly.Location)), path => File.OpenRead(Path.Combine(installationRoot, path)));
+            else
+            {
+                var path = historicalSide == "A" ? NewReader : trust ? ProducerInput : HotInput;
+                _repo.Put(path, historicalSide == "A" ? "new reader\n" : "candidate\n");
+                changedPaths.Add(path);
+            }
+            if (candidateOnlyTrust)
+            {
+                _repo.Put(RcTrustedProjectGate.PolicyPath, trusted);
+                changedPaths.Add(RcTrustedProjectGate.PolicyPath);
+            }
+            if (brokenIndex)
+            {
+                _repo.Put(RcChunkSelection.IndexPath, BuildIndex(readers));
+                changedPaths.Add(RcChunkSelection.IndexPath);
+            }
+            Commands.Stage(_git, changedPaths);
+            var candidate = _git.Commit("fixture candidate", P2Author, P2Author).Sha;
+            Request = new P2.Request("p2-fixture", "rc/2026-11-26", comparison, candidate, "run-c", 3, 7, P2.TargetIntentDigest(Target));
         }
 
         private string WriteChangedCatalog()
@@ -270,12 +318,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
         private string InputDigest(string sha, P2.Chunk chunk, string side, IEnumerable<P2.ObservedInput> observations)
         {
-            var records = _repo.Git("ls-tree", "-r", sha).Split('\n').Select(line =>
-            {
-                var record = line.Split([' ', '\t'], 4);
-                return new P2.ToolFile(record[3].TrimEnd('\r'), record[0], record[2], 0, "");
-            }).ToArray();
-            var source = BuildInputs(sha, _repo.Git("rev-parse", sha + "^{tree}"), records);
+            var tree = _git.Lookup<Commit>(sha).Tree;
+            var treeId = tree.Id.Sha;
+            if (!_treeFiles.TryGetValue(treeId, out var records))
+                _treeFiles.Add(treeId, records = ReadTree(tree, "").ToArray());
+            var source = BuildInputs(sha, treeId, records);
             var cases = chunk.Cases.Select(c => new RcChunkCase
             {
                 ClassName = c.Class, Method = c.Method, Suite = chunk.Suite, CaseKey = c.CaseUid, Stable = true,
@@ -289,6 +336,27 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 Kind = r.Role, Digest = r.Digest, ProvenanceDigest = r.ProvenanceDigest, SourceSha = sha,
             }).ToArray();
             return RcChunkDigest.NewManifest(source, chunk.Id, boundary, cases, receipts).Digest;
+        }
+
+        private static IEnumerable<P2.ToolFile> ReadTree(Tree tree, string directory)
+        {
+            foreach (var entry in tree)
+            {
+                var path = directory + entry.Name;
+                if (entry.Target is Tree child)
+                {
+                    foreach (var file in ReadTree(child, path + "/"))
+                        yield return file;
+                    continue;
+                }
+                var mode = entry.Mode switch
+                {
+                    Mode.NonExecutableFile => "100644",
+                    Mode.ExecutableFile => "100755",
+                    _ => throw new InvalidOperationException("unexpected fixture tree entry: " + path),
+                };
+                yield return new P2.ToolFile(path, mode, entry.Target.Id.Sha, 0, "");
+            }
         }
 
         internal P2.Authority Authority(P2.Request? pins = null, bool dirtyQuiet = false, bool omitQuietRow = false,
@@ -340,11 +408,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
             }
             P2.TrustContract[] contracts =
             [
-                new(ProducerProject, "B", b, Tool.Extractor, Hash("surface"), Hash("baseline-contract")),
-                new(ProducerProject, "A", request.CandidateSha, Tool.Extractor, Hash(contractDrift ? "different" : "surface"),
+                new(ProducerProject, "B", b, tool.Extractor, Hash("surface"), Hash("baseline-contract")),
+                new(ProducerProject, "A", request.CandidateSha, tool.Extractor, Hash(contractDrift ? "different" : "surface"),
                     Hash("candidate-contract")),
             ];
-            return new P2.Authority(Root, Target, Tool, new P2.Approval(request, Clock, Clock.AddHours(1), "history-at-" + request.Revision, false),
+            return new P2.Authority(Root, Target, tool, new P2.Approval(request, Clock, Clock.AddHours(1), "history-at-" + request.Revision, false),
                 Chunks, [], observations, endpoint => Evaluate(endpoint, unresolved ? "unbounded-residual" : null),
                 inventory, origins, own, contracts);
         }
@@ -385,11 +453,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
             return Encoding.UTF8.GetBytes("<TestRun><TestDefinitions>" + units + "</TestDefinitions><Results>" + results + "</Results></TestRun>");
         }
 
-        public async ValueTask DisposeAsync()
+        public void Dispose()
         {
             using var teardown = TestTiming.BeginPhase(TestPhaseKind.FixtureTeardown, "p2-fixture-teardown");
             var watch = Stopwatch.StartNew();
-            if (_toolRepo is not null) await _toolRepo.DisposeAsync();
+            _git?.Dispose();
             _repo.Dispose();
             Console.WriteLine($"C2069 phase=teardown elapsedMs={watch.ElapsedMilliseconds}");
         }
