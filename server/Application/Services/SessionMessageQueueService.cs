@@ -1903,12 +1903,12 @@ public sealed partial class SessionMessageQueueService
         await using (var scope = _scopeFactory.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var candidates = await db.SessionQueuedMessages.AsNoTracking()
+            var resumeNoteSessions = await db.SessionQueuedMessages.AsNoTracking()
                 .Where(m => m.Status == QueuedMessageStatus.Pending && m.Origin == QueuedMessageOrigin.System
                     && m.RuntimeActionKey != null && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix)
                     && m.CreatedAt < m.AgentSession.StartedAt)
                 .Select(m => new { m.AgentSessionId, m.AgentSession.StartedAt }).Distinct().ToListAsync(ct);
-            foreach (var session in candidates)
+            foreach (var session in resumeNoteSessions)
                 if (await RetirePriorResumeNotesAsync(db, session.AgentSessionId, session.StartedAt, UtcNow(), ct) > 0)
                     await PublishQueueChangedAsync(await GetQueueAsync(session.AgentSessionId, ct), ct);
         }
