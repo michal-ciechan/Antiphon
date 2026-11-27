@@ -55,6 +55,8 @@ builder.Services.AddAntiphonGateway(builder.Configuration, "Kafka");
 builder.Services.PostConfigure<AntiphonGatewayOptions>(o => o.RequireExpectedAntiphonConsumerGroup = true);
 builder.Services.AddSingleton<EfInboxReceiptStore>();
 builder.Services.AddSingleton<IInboxReceiptStore>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
+builder.Services.AddSingleton<IOutboundAnswerReceiptSink>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
+builder.Services.AddHostedService<InboxAnswerReconciler>();
 builder.Services.AddSingleton<IInboundReceiptSink>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
 builder.Services.AddHostedService<InboxConsumerService>();
 
@@ -127,7 +129,7 @@ app.MapGet("/api/channels/messages/{id:guid}", async (
     });
 });
 
-// Reply to a message: enqueue on the outbound topic and mark answered.
+// Queue the reply. The accepted provider send marks the inbox item answered.
 app.MapPost("/api/channels/messages/{id:guid}/reply", async (
     Guid id, ReplyRequest body, MessagingDbContext db, IProducer<string, string> producer,
     IOptions<AntiphonGatewayOptions> kafka, JsonSerializerOptions json, CancellationToken ct) =>
@@ -142,6 +144,7 @@ app.MapPost("/api/channels/messages/{id:guid}/reply", async (
         ReplyHandle = item.ReplyHandle,
         ConversationId = item.ConversationId,
         ReplyToMessageId = body.ReplyToMessageId,
+        AnsweredMessageIds = [item.ChannelMessageId],
         Text = body.Text,
         RawOverrides = body.RawOverrides,
     };
@@ -150,10 +153,6 @@ app.MapPost("/api/channels/messages/{id:guid}/reply", async (
         kafka.Value.ResolveOutboundTopic(),
         new Message<string, string> { Key = item.ConversationId, Value = JsonSerializer.Serialize(reply, json) },
         ct);
-
-    item.Status = InboxStatus.Answered;
-    item.AnsweredAt = DateTimeOffset.UtcNow;
-    await db.SaveChangesAsync(ct);
 
     return Results.Accepted();
 });

@@ -83,6 +83,7 @@ public sealed partial class ChannelInputWithheldIncidentTests
         reply.ConversationId.ShouldBe(chat);
         reply.Kind.ShouldBe(ChannelReplyKind.Answer);
         reply.Text.ShouldBe("fixture answer");
+        reply.AnsweredMessageIds.ShouldBe([inbound.ChannelMessageId]);
         (await db.SessionQueuedMessages.SingleAsync(m => m.Id == row.Id, ct)).DeliveryAttempts.ShouldBe(1);
     }
 

@@ -40,6 +40,11 @@ public interface IInboundReceiptSink
     Task RecordAsync(ChannelMessage message, string envelopeJson, string topic, int partition, long offset, CancellationToken cancellationToken);
 }
 
+public interface IOutboundAnswerReceiptSink
+{
+    Task RecordAnswerAsync(ChannelReply reply, SendResult accepted, CancellationToken ct);
+}
+
 public interface IInboundUnconsumedEventPublisher
 {
     Task PublishAsync(InboundUnconsumedEvent evt, CancellationToken cancellationToken);

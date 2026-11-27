@@ -711,8 +711,13 @@ public sealed class ChannelReplyDispatcher
                 var (targetBody, targetAttachments) = outbound.UnifiedRecoveryEnabled && !captureReply
                     ? PrepareReplyBody(responseText, sessionId) : (bodyText, attachments);
                 var targetText = Truncate(targetBody);
+                var answeredIds = await db.ChannelInbounds.AsNoTracking()
+                    .Where(i => i.QueueMessageId != null && target.CorrelationIds.Contains(i.QueueMessageId.Value)
+                        && i.Provider == target.Provider && i.ConversationId == target.ConversationId)
+                    .OrderBy(i => i.AcceptanceSequence).Select(i => i.NativeMessageId).ToListAsync(ct);
                 var reply = new ChannelReply
                 {
+                    AnsweredMessageIds = answeredIds,
                     Channel = target.Provider,
                     ReplyHandle = target.ReplyHandle,
                     ConversationId = target.ConversationId,

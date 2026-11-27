@@ -27,6 +27,9 @@ public sealed record ChannelReply
     /// <summary>If set, sent as a reply to / quote of this channel-native message id.</summary>
     public string? ReplyToMessageId { get; init; }
 
+    /// <summary>Exact native inbounds answered by this delivery, scoped to Channel and ConversationId. Independent of quoting.</summary>
+    public IReadOnlyList<string> AnsweredMessageIds { get; init; } = [];
+
     public string? Text { get; init; }
 
     public IReadOnlyList<OutboundAttachment> Attachments { get; init; } = [];

@@ -22,6 +22,17 @@ namespace Antiphon.Messaging.Service.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Antiphon.Messaging.Service.InboxAnswerReceipt", b =>
+                {
+                    b.Property<string>("Channel").HasColumnType("text");
+                    b.Property<string>("ConversationId").HasColumnType("text");
+                    b.Property<string>("ChannelMessageId").HasColumnType("text");
+                    b.Property<DateTimeOffset>("AnsweredAt").HasColumnType("timestamp with time zone");
+                    b.Property<string>("OutboundMessageId").HasColumnType("text");
+                    b.HasKey("Channel", "ConversationId", "ChannelMessageId");
+                    b.ToTable("InboxAnswerReceipts");
+                });
+
             modelBuilder.Entity("Antiphon.Messaging.Service.InboxMessage", b =>
                 {
                     b.Property<Guid>("Id")

@@ -10,7 +10,8 @@ namespace Antiphon.Messaging.Gateway;
 public sealed class GatewayOutboundService(
     IEnumerable<IChannelAdapter> adapters,
     IOptions<AntiphonGatewayOptions> options,
-    ILogger<GatewayOutboundService> logger) : BackgroundService
+    ILogger<GatewayOutboundService> logger,
+    IOutboundAnswerReceiptSink? receipts = null) : BackgroundService
 {
     private readonly AntiphonGatewayOptions _options = options.Value;
     private readonly Dictionary<string, IChannelAdapter> _byChannel =
@@ -94,7 +95,25 @@ public sealed class GatewayOutboundService(
 
         var send = await adapter.SendAsync(reply, ct);
         if (send.Ok)
+        {
             logger.LogInformation("[outbound] sent via {Channel} -> {MessageId}", reply.Channel, send.ChannelMessageId);
+            if (receipts != null && reply.Kind == ChannelReplyKind.Answer && reply.ConversationId is { Length: > 0 }
+                && reply.AnsweredMessageIds is { Count: > 0 })
+            {
+                // The provider has accepted the send. Retry only the idempotent receipt write.
+                var delay = TimeSpan.FromSeconds(1);
+                while (true)
+                {
+                    try { await receipts.RecordAnswerAsync(reply, send, ct); break; }
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
+                    {
+                        logger.LogError(ex, "Recording provider acceptance for {Channel} {MessageId} failed", reply.Channel, send.ChannelMessageId);
+                        await Task.Delay(delay, ct);
+                        delay = TimeSpan.FromSeconds(Math.Min(30, delay.TotalSeconds * 2));
+                    }
+                }
+            }
+        }
         else
             logger.LogError("[outbound] send failed via {Channel}: {Error}", reply.Channel, send.Error);
     }

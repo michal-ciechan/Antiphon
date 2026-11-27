@@ -113,7 +113,7 @@ public sealed class GatewayTests
         await store.Store.RecordAsync(EfInboxReceiptStoreTests.Sample("1904", "group-B"), "{}", "in", 0, 2, ct);
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddSingleton<IInboxReceiptStore>(store.Store);
+        services.AddSingleton<IOutboundAnswerReceiptSink>(store.Store);
         services.AddSingleton<IChannelAdapter>(new FaultingAdapter());
         services.AddSingleton(Options.Create(new AntiphonGatewayOptions()));
         await using var provider = services.BuildServiceProvider();

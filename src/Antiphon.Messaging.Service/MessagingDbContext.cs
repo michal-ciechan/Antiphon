@@ -6,8 +6,11 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
 {
     public DbSet<InboxMessage> Inbox => Set<InboxMessage>();
 
+    public DbSet<InboxAnswerReceipt> InboxAnswerReceipts => Set<InboxAnswerReceipt>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<InboxAnswerReceipt>().HasKey(a => new { a.Channel, a.ConversationId, a.ChannelMessageId });
         var inbox = modelBuilder.Entity<InboxMessage>();
         inbox.ToTable("Inbox");
         inbox.HasKey(x => x.Id);
