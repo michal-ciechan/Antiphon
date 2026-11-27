@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Antiphon.Messaging;
 
@@ -13,5 +14,11 @@ public static class MessagingJson
     {
         Converters = { new TolerantStringEnumConverterFactory() },
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver().WithAddedModifier(type =>
+        {
+            if (type.Type == typeof(ChannelReply))
+                type.Properties.Single(p => p.Name == "answeredMessageIds").ShouldSerialize =
+                    static (_, ids) => ids is IReadOnlyList<string> { Count: > 0 };
+        }),
     };
 }
