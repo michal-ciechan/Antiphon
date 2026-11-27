@@ -87,6 +87,38 @@ public class DecisionChainTests
     }
 
     [Test]
+    [Arguments("Closes a single defect", "Changes a subsystem", "Touches the whole system",
+        """["Closes a single defect", "Changes a subsystem", "Touches the whole system"]""")]
+    [Arguments(null, "Changes a subsystem", "  ",
+        """["One place", "Changes a subsystem", "System-wide"]""")]
+    public async Task System_one_posts_score_descriptions_in_rubric_order_and_decodes_original_labels(
+        string? lowDescription, string middleDescription, string? highDescription, string expectedCriteria)
+    {
+        var reach = SystemOneRequest.Questions[2] with
+        {
+            Options = [new("One place", lowDescription), new("A few", middleDescription), new("System-wide", highDescription)],
+        };
+        var request = SystemOneRequest with { Questions = [reach] };
+        using var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, """
+            { "answers": { "reach": { "type": "score", "score": 1,
+                                     "legend": { "1": "Changes a subsystem" },
+                                     "probabilities": { "0": 0.1, "1": 0.8, "2": 0.1 } } } }
+            """));
+        using var http = new HttpClient(handler);
+        var client = new JevSystemOneClient(http, Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example")));
+
+        var result = await client.DecideAsync(request, new DecisionOptions("jev"), CancellationToken.None);
+
+        var criteria = JsonNode.Parse(handler.Requests.ShouldHaveSingleItem().Body)!["questions"]!["reach"]!["criteria"];
+        criteria!.AsArray().Select(level => level!.GetValue<string>())
+            .ShouldBe(JsonNode.Parse(expectedCriteria)!.AsArray().Select(level => level!.GetValue<string>()));
+        var answer = result.Answers["reach"];
+        answer.Value.ShouldBe("A few");
+        answer.Probabilities!.Keys.ShouldBe(new[] { "One place", "A few", "System-wide" }, ignoreOrder: true);
+        answer.Probabilities["A few"].ShouldBe(0.8);
+    }
+
+    [Test]
     public async Task System_one_reads_the_live_answers_and_records_model_tokens_and_cost()
     {
         using var handler = new FakeHandler(_ => Json(HttpStatusCode.OK, SystemOneAnswers, cost: "0.0123"));
@@ -140,6 +172,47 @@ public class DecisionChainTests
     }
 
     [Test]
+    public async Task System_one_rounds_a_score_tie_up()
+    {
+        var answer = await ReadSystemOneScoreAsync("0.5");
+
+        answer.Value.ShouldBe("A few");
+    }
+
+    [Test]
+    public async Task System_one_rejects_a_score_just_below_zero()
+    {
+        var failure = await Should.ThrowAsync<DecisionProviderException>(() => ReadSystemOneScoreAsync("-0.1"));
+
+        failure.Kind.ShouldBe(DecisionFailureKind.SchemaFailure);
+        failure.Message.ShouldBe("Answer 'reach' has a score outside its levels.");
+    }
+
+    [Test]
+    [Arguments("1e999")]
+    [Arguments("-1e999")]
+    [Arguments("\"NaN\"")]
+    public async Task System_one_rejects_nonfinite_scores(string score)
+    {
+        var failure = await Should.ThrowAsync<DecisionProviderException>(() => ReadSystemOneScoreAsync(score));
+
+        failure.Kind.ShouldBe(DecisionFailureKind.SchemaFailure);
+        failure.Message.ShouldBe("Answer 'reach' has a score outside its levels.");
+    }
+
+    private static async Task<DecisionAnswer> ReadSystemOneScoreAsync(string score)
+    {
+        var request = SystemOneRequest with { Questions = [SystemOneRequest.Questions[2]] };
+        var body = $$"""
+            { "answers": { "reach": { "type": "score", "score": {{score}} } } }
+            """;
+        using var http = new HttpClient(new FakeHandler(_ => Json(HttpStatusCode.OK, body)));
+        var client = new JevSystemOneClient(http, Settings(("jev", JevDialects.LiteLlmSystemOne, "https://proxy.example")));
+        var result = await client.DecideAsync(request, new DecisionOptions("jev"), CancellationToken.None);
+        return result.Answers["reach"];
+    }
+
+    [Test]
     [Arguments("change_kind", """{ "type": "choice", "choice": {}, "probabilities": { "docs": 1.0 } }""")]
     [Arguments("change_kind", """{ "type": "choice", "choice": "other" }""")]
     [Arguments("change_kind", """{ "type": "choice", "choice": "docs", "confidence": {} }""")]
@@ -179,6 +252,57 @@ public class DecisionChainTests
         failure.Message.Length.ShouldBeLessThanOrEqualTo(prefix.Length + 300);
         failure.Calls.ShouldHaveSingleItem().Outcome.ShouldBe("rejected");
         handler.Requests.ShouldHaveSingleItem().Uri.ShouldBe("https://primary.example/v1/systemone");
+    }
+
+    [Test]
+    [Arguments("""{"detail":"Invalid score question"}""", "Invalid score question")]
+    [Arguments("""{"detail":{"message":"Rubric is invalid"}}""", "Rubric is invalid")]
+    [Arguments("""
+        {"detail":[{"loc":["body","questions","reach","criteria",0],"msg":"Field required","type":"missing","input":"discard this preview"},
+                   {"loc":["body","state"],"msg":"Expected text","type":"string_type"}]}
+        """, "body.questions.reach.criteria.0: Field required; body.state: Expected text")]
+    [Arguments("""
+        {"detail":{"errors":{"detail":[{"loc":["body","questions"],"msg":"Expected a question map","ctx":{"msg":"discard this context"}}]}}}
+        """, "body.questions: Expected a question map")]
+    [Arguments("""{"status":"bad request"}""", "The provider returned no error message.")]
+    [Arguments("Proxy refused the request", "Proxy refused the request")]
+    [Arguments("""
+        {"detail":{"loc":["body","sk-fakecredential1234"],"msg":"Invalid key-primary under Bearer fixture-only-credential"}}
+        """, "body.sk-***: Invalid *** under Bearer ***")]
+    public async Task A_system_one_400_surfaces_detail_and_rejects_without_fallback(string body, string expected)
+    {
+        var failure = await RejectSystemOneRequestAsync(body);
+
+        failure.Message.ShouldBe(Rejected400Prefix + expected);
+    }
+
+    [Test]
+    public async Task A_system_one_400_redacts_a_token_crossing_the_diagnostic_limit()
+    {
+        var padding = new string('x', 290);
+        var body = $$"""
+            {"detail":{"message":"{{padding}} sk-fixturetoken1234 tail"}}
+            """;
+        var failure = await RejectSystemOneRequestAsync(body);
+
+        failure.Message.ShouldBe(Rejected400Prefix + padding + " sk-*** ta");
+    }
+
+    private const string Rejected400Prefix = "Provider 'primary' rejected the request (400): HTTP 400: ";
+
+    private static async Task<DecisionChainException> RejectSystemOneRequestAsync(string body)
+    {
+        var settings = Settings(("primary", JevDialects.TypeSafeNative, "https://primary.example"),
+            ("secondary", JevDialects.LiteLlmSystemOne, "https://secondary.example"));
+        using var handler = new FakeHandler(_ => Json(HttpStatusCode.BadRequest, body));
+
+        var failure = await Should.ThrowAsync<DecisionChainException>(() =>
+            Chain(handler, settings).DecideAsync("test", SystemOneRequest, CancellationToken.None));
+
+        failure.Kind.ShouldBe(DecisionFailureKind.Rejected);
+        failure.Calls.ShouldHaveSingleItem().Outcome.ShouldBe("rejected");
+        handler.Requests.ShouldHaveSingleItem().Uri.ShouldBe("https://primary.example/v1/systemone");
+        return failure;
     }
 
     [Test]
