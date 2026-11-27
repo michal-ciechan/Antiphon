@@ -750,9 +750,12 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 {
                     await CloseHandshakeAsync(stopping, handshake.Token);
                 }
-                catch (Exception ex) when (IsBenignClose(ex, stopping || handshake.IsCancellationRequested))
+                catch (Exception ex) when (IsBenignClose(ex, stopping || handshake.IsCancellationRequested)
+                    || (ex is WebSocketException { WebSocketErrorCode: WebSocketError.InvalidState }
+                        && _socket.State is WebSocketState.Aborted or WebSocketState.Closed))
                 {
-                    // Peer disconnected or the handshake was canceled.
+                    // The peer may disconnect, the handshake may be canceled, or the receive
+                    // loop may abort the socket after cleanup observed it open.
                 }
                 catch (Exception ex)
                 {
