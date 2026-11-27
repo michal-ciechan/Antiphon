@@ -194,6 +194,43 @@ public sealed class InboxConsumerServiceTests
         reader.QueryWatermarkOffsets(new TopicPartition(feed, 0), TimeSpan.FromSeconds(5)).High.Value.ShouldBe(1L);
     }
 
+    [Test]
+    public async Task Producer_identity_deduplicates_distinct_offsets_and_holds_ambiguous_legacy_receipts()
+    {
+        if (_broker is null) Skip.Test("set ANTIPHON_BROKER_TESTS=1 with Docker running");
+        var bootstrap = _broker!.GetBootstrapAddress();
+        var topic = "identity-" + Guid.NewGuid().ToString("N");
+        using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build();
+        await admin.CreateTopicsAsync([new TopicSpecification { Name = topic, NumPartitions = 1, ReplicationFactor = 1 }]);
+        var reply = new ChannelReply { Channel = "telegram", ConversationId = "11", AnsweredMessageIds = ["12"] };
+        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync();
+        var ct = CancellationToken.None;
+        await store.Store.RecordAnswerAsync(reply, SendResult.Sent("21"), ct);
+        using var old = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrap }).Build();
+        await old.ProduceAsync(topic, new Message<string, string> { Key = "11", Value = JsonSerializer.Serialize(reply, MessagingJson.Options) });
+        using var producer = new Antiphon.Messaging.Client.KafkaAntiphonMessagingProducer(
+            Options.Create(new Antiphon.Messaging.Client.AntiphonMessagingOptions { BootstrapServers = bootstrap, OutboundTopic = topic }));
+        var next = reply with { OutboundOperationId = Guid.NewGuid() };
+        await producer.SendAsync(next, ct);
+        await producer.SendAsync(next, ct);
+        await producer.SendAsync(reply with { OutboundOperationId = Guid.NewGuid() }, ct);
+        await producer.SendAsync(reply with { AnsweredMessageIds = ["13"] }, ct);
+        var adapter = new AcceptanceProbe(false);
+        using var gateway = new GatewayOutboundService([adapter], Options.Create(new AntiphonGatewayOptions
+        {
+            BootstrapServers = bootstrap, ConsumerGroup = Guid.NewGuid().ToString("N"), OutboundTopic = topic,
+        }), Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayOutboundService>.Instance, store.Store);
+        await gateway.StartAsync(ct);
+        try { await adapter.Barrier.Task.WaitAsync(TimeSpan.FromSeconds(45)); }
+        finally { await gateway.StopAsync(ct); }
+        adapter.Calls.ShouldBe(2);
+        using var scope = store.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MessagingDbContext>();
+        db.GatewayOutboundOperations.Single(o => o.Id == topic + "/0/0").AcceptedAt.ShouldBeNull();
+        db.GatewayOutboundOperations.Single(o => o.Id == topic + "/id/" + next.OutboundOperationId!.Value.ToString("N"))
+            .ProviderMessageId.ShouldBe("14");
+    }
+
     private sealed class AcceptanceProbe(bool loseFirstResponse) : IChannelAdapter
     {
         public int Calls;

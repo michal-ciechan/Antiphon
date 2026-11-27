@@ -1,4 +1,7 @@
 #nullable enable
+const Antiphon.Messaging.ChannelReply.OperationIdHeader = "antiphon-outbound-operation" -> string!
+Antiphon.Messaging.ChannelReply.OutboundOperationId.get -> System.Guid?
+Antiphon.Messaging.ChannelReply.OutboundOperationId.init -> void
 Antiphon.Messaging.ProviderAnswerReceipt
 Antiphon.Messaging.ProviderAnswerReceipt.Channel.get -> string!
 Antiphon.Messaging.ProviderAnswerReceipt.Channel.init -> void

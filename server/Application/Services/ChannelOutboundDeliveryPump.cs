@@ -467,6 +467,7 @@ public sealed class ChannelOutboundDeliveryPump
             await _db.SaveChangesAsync(ct);
             return;
         }
+        reply = reply with { OutboundOperationId = delivery.Id };
         if (_outboundSettings.UnifiedRecoveryEnabled)
         {
             await PublishWithRecoveryAsync(delivery, reply, ct);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Antiphon.Messaging;
 
@@ -8,6 +9,13 @@ namespace Antiphon.Messaging;
 /// </summary>
 public sealed record ChannelReply
 {
+    /// <summary>Kafka header containing the 16 network-order UUID bytes for one outbound operation.</summary>
+    public const string OperationIdHeader = "antiphon-outbound-operation";
+
+    /// <summary>Stable across publication attempts of the same durable delivery. Carried in Kafka headers.</summary>
+    [JsonIgnore]
+    public Guid? OutboundOperationId { get; init; }
+
     public required string Channel { get; init; }
 
     /// <summary>

@@ -12,11 +12,16 @@ public sealed partial class EfInboxReceiptStore
         var ids = reply.Kind == ChannelReplyKind.Answer && !string.IsNullOrEmpty(reply.ConversationId)
             ? reply.AnsweredMessageIds : null;
         var json = JsonSerializer.Serialize(ids ?? []);
-        return await db.Database.ExecuteSqlInterpolatedAsync($"""
+        var claimed = await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO "GatewayOutboundOperations" ("Id", "Channel", "ConversationId", "AnsweredMessageIdsJson", "StartedAt")
             VALUES ({operationId}, {reply.Channel}, {reply.ConversationId}, {json}, {DateTimeOffset.UtcNow})
             ON CONFLICT ("Id") DO NOTHING
             """, ct) == 1;
+        if (!claimed || reply.OutboundOperationId != null || ids is not { Count: > 0 }) return claimed;
+        // An older producer supplied no operation ID. A pre-upgrade journal entry could belong
+        // to this exact record or a different reply to the same inbound. Hold it for verification.
+        return !await db.InboxAnswerReceipts.AnyAsync(r => r.Channel == reply.Channel && r.ConversationId == reply.ConversationId
+            && ids.Contains(r.ChannelMessageId), ct);
     }
 
     public async Task<bool> ConfirmSendAsync(string operationId, SendResult accepted, CancellationToken ct)

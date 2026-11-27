@@ -84,10 +84,13 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 // Telegram and other adapters may be unable to look up a lost send response by client ID.
 // An operator can bind independently verified native acceptance without calling the provider.
 app.MapGet("/api/channels/outbound-operations/unconfirmed", async (MessagingDbContext db, string? after, CancellationToken ct) =>
-    Results.Ok(await db.GatewayOutboundOperations.AsNoTracking()
+{
+    var page = await db.GatewayOutboundOperations.AsNoTracking()
         .Where(o => o.AcceptedAt == null && (after == null || string.Compare(o.Id, after) > 0))
-        .OrderBy(o => o.Id).Take(100)
-        .Select(o => new { o.Id, o.Channel, o.ConversationId, o.StartedAt }).ToListAsync(ct)));
+        .OrderBy(o => o.Id).Take(100).ToListAsync(ct);
+    return Results.Ok(page.Select(o => new { o.Id, o.Channel, o.ConversationId, o.StartedAt,
+        answeredMessageIds = JsonSerializer.Deserialize<string[]>(o.AnsweredMessageIdsJson) }));
+});
 app.MapPost("/api/channels/outbound-operations/confirm", async (ConfirmOperation request, MessagingDbContext db,
     EfInboxReceiptStore store, CancellationToken ct) =>
 {
@@ -171,7 +174,11 @@ app.MapPost("/api/channels/messages/{id:guid}/reply", async (
 
     await producer.ProduceAsync(
         kafka.Value.ResolveOutboundTopic(),
-        new Message<string, string> { Key = item.ConversationId, Value = JsonSerializer.Serialize(reply, json) },
+        new Message<string, string>
+        {
+            Key = item.ConversationId, Value = JsonSerializer.Serialize(reply, json),
+            Headers = new Headers { { ChannelReply.OperationIdHeader, Guid.NewGuid().ToByteArray(bigEndian: true) } },
+        },
         ct);
 
     return Results.Accepted();

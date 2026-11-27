@@ -29,7 +29,11 @@ public sealed class KafkaAntiphonMessagingProducer : IAntiphonMessagingProducer,
         var key = reply.ConversationId ?? reply.ReplyHandle ?? string.Empty;
         await _producer.ProduceAsync(
             _options.OutboundTopic,
-            new Message<string, string> { Key = key, Value = value },
+            new Message<string, string>
+            {
+                Key = key, Value = value,
+                Headers = new Headers { { ChannelReply.OperationIdHeader, (reply.OutboundOperationId ?? Guid.NewGuid()).ToByteArray(bigEndian: true) } },
+            },
             cancellationToken);
     }
 

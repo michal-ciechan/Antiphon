@@ -78,7 +78,17 @@ public sealed class GatewayOutboundService(
                 }
 
                 if (reply is not null)
-                    await DispatchAsync(reply, $"{result.Topic}/{result.Partition.Value}/{result.Offset.Value}", ct);
+                {
+                    var operationId = $"{result.Topic}/{result.Partition.Value}/{result.Offset.Value}";
+                    if (result.Message.Headers is { } headers && headers.TryGetLastBytes(ChannelReply.OperationIdHeader, out var bytes)
+                        && bytes is { Length: 16 })
+                    {
+                        var id = new Guid(bytes, bigEndian: true);
+                        reply = reply with { OutboundOperationId = id };
+                        operationId = $"{result.Topic}/id/{id:N}";
+                    }
+                    await DispatchAsync(reply, operationId, ct);
+                }
                 // Includes explicitly discarded tombstones and malformed records. A journal
                 // or commit failure exits this loop so a later record cannot skip this offset.
                 consumer.Commit(result);
