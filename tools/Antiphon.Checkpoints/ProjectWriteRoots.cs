@@ -32,6 +32,9 @@ public static class ProjectWriteRoots
     {
         directories = [];
         var projectFull = Path.GetFullPath(Path.IsPathRooted(project) ? project : Path.Combine(workingDirectory, project));
+        if (CheckpointBuildPlacement.IsEvidencePath(Path.GetFullPath(workingDirectory))
+            || CheckpointBuildPlacement.IsEvidencePath(projectFull))
+            return CheckpointBuildPlacement.Refusal;
         if (!TryFindProjectFile(projectFull, out var entry, out var failed))
         {
             if (failed)
@@ -48,6 +51,8 @@ public static class ProjectWriteRoots
             var current = Path.GetFullPath(queue.Dequeue());
             if (!seen.Add(current))
                 continue;
+            if (CheckpointBuildPlacement.IsEvidencePath(current))
+                return CheckpointBuildPlacement.Refusal;
             AddPair(directories, DirectoryOf(current), outputPath);
             List<string> references;
             try

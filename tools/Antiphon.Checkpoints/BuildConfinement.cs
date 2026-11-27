@@ -11,12 +11,6 @@ namespace Antiphon.Checkpoints;
 public static class BuildConfinement
 {
     public const int WalkCap = 500;
-    private static readonly HashSet<string> IsolationKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "OutputPath", "OutDir", "BaseOutputPath", "BaseIntermediateOutputPath",
-        "MSBuildProjectExtensionsPath", "ArtifactsPath", "UseArtifactsOutput",
-    };
-
     // Covered holds the ledger stamps taken before the build slot; those paths are checked at admission
     // and after release, so Settle does not re-stamp them or report them as new.
     public sealed record Baseline(
@@ -267,6 +261,12 @@ public static class BuildConfinement
         var projectDir = ProjectWriteRoots.DirectoryOf(projectFull);
         if (string.IsNullOrEmpty(projectDir))
             return Refuse("graph-unevaluated", "project directory missing");
+        var layout = LayoutFor(workingDirectory, project, outputValue);
+        foreach (var path in new[] { workingDirectory, projectDir, layout.Owned, layout.Artifacts })
+        {
+            if (CheckpointBuildPlacement.IsEvidencePath(path))
+                return Refuse(CheckpointBuildPlacement.Refusal, path);
+        }
 
         string repository;
         CaptureResult captured;
@@ -290,15 +290,14 @@ public static class BuildConfinement
             return Refuse("tracked-snapshot", captured.Error ?? "git-ls-files");
         var baseline = captured.Value;
 
-        var layout = LayoutFor(workingDirectory, project, outputValue);
         var fresh = SafeWrite.WasCreated(layout.Owned) ? null : SafeWrite.CreateFreshDirectory(layout.Owned, SafeWrite.Under(layout.Owned));
         if (fresh is not null) return Refuse(fresh, layout.Owned);
         var rewritten = Rewrite(arguments, layout.Owned, layout.Artifacts);
-        var forwarded = Forwarded(arguments);
+        var properties = rewritten.Where(token => TryReadProperty(token, out _, out _)).ToArray();
         WalkResult walked;
         try
         {
-            walked = Walk(projectFull, layout.Owned, layout.Artifacts, forwarded, workingDirectory, environment,
+            walked = Walk(projectFull, properties, workingDirectory, environment,
                 cancellationToken, Math.Max(1, graphEvaluationParallelism));
         }
         catch (OperationCanceledException)
@@ -313,6 +312,8 @@ public static class BuildConfinement
             return PreferSettlement(baseline, Refuse("graph-unevaluated", ex.GetType().Name));
         }
 
+        if (walked.PlacementRefusal is not null)
+            return PreferSettlement(baseline, Refuse(CheckpointBuildPlacement.Refusal, walked.PlacementRefusal));
         if (walked.Error is not null)
             return PreferSettlement(baseline, Refuse("graph-unevaluated", walked.Error));
         return new Prepared(null, "", rewritten, baseline);
@@ -578,19 +579,6 @@ public static class BuildConfinement
             args.Add("--property:UseAppHost=false");
     }
 
-    private static List<string> Forwarded(IReadOnlyList<string> arguments)
-    {
-        var forwarded = new List<string>();
-        foreach (var token in arguments)
-        {
-            if (!TryReadProperty(token, out var key, out var value) || IsolationKeys.Contains(key))
-                continue;
-            forwarded.Add("--property:" + key + "=" + value);
-        }
-
-        return forwarded;
-    }
-
     private static string AbsoluteOutput(string projectDir, string outputValue)
     {
         var full = Path.IsPathRooted(outputValue)
@@ -600,13 +588,11 @@ public static class BuildConfinement
         return slash.EndsWith('/') ? slash : slash + "/";
     }
 
-    private readonly record struct WalkResult(List<string> Projects, string? Error);
+    private readonly record struct WalkResult(List<string> Projects, string? Error, string? PlacementRefusal = null);
 
     private static WalkResult Walk(
         string projectFull,
-        string owned,
-        string artifacts,
-        IReadOnlyList<string> forwarded,
+        IReadOnlyList<string> properties,
         string workingDirectory,
         IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken,
@@ -632,14 +618,27 @@ public static class BuildConfinement
             }
             // These probes evaluate projects without running targets. Keep them within the
             // slot's CPU grant and join every probe before the actual build can start.
-            EvalResult Probe(string project) =>
-                Evaluate(project, owned, artifacts, forwarded, workingDirectory, environment, cancellationToken);
+            EvalResult Probe(string project)
+            {
+                var result = Evaluate(project, properties, workingDirectory, environment, cancellationToken);
+                foreach (var framework in result.Frameworks ?? [])
+                {
+                    var inner = Evaluate(project, [.. properties, "--property:TargetFramework=" + framework],
+                        workingDirectory, environment, cancellationToken);
+                    if (inner.Error is not null || inner.PlacementRefusal is not null)
+                        return inner;
+                    result.References.AddRange(inner.References);
+                }
+                return result;
+            }
             var evaluated = batch.Count == 1
                 ? [Probe(batch[0])]
                 : Task.WhenAll(batch.Select(project => Task.Run(() => Probe(project), cancellationToken)))
                     .GetAwaiter().GetResult();
             foreach (var eval in evaluated)
             {
+                if (eval.PlacementRefusal is not null)
+                    return new WalkResult([], null, eval.PlacementRefusal);
                 if (eval.Error is not null)
                     return new WalkResult([], eval.Error);
                 foreach (var reference in eval.References)
@@ -654,13 +653,12 @@ public static class BuildConfinement
         return new WalkResult(projects, null);
     }
 
-    private readonly record struct EvalResult(List<string> References, string? Error);
+    private readonly record struct EvalResult(List<string> References, string? Error, string? PlacementRefusal = null,
+        string[]? Frameworks = null);
 
     private static EvalResult Evaluate(
         string project,
-        string owned,
-        string artifacts,
-        IReadOnlyList<string> forwarded,
+        IReadOnlyList<string> properties,
         string workingDirectory,
         IReadOnlyDictionary<string, string>? environment,
         CancellationToken cancellationToken)
@@ -668,12 +666,11 @@ public static class BuildConfinement
         var args = new List<string>
         {
             "msbuild", project, "-getItem:ProjectReference", "-nologo", "-nodeReuse:false",
-            "--property:OutputPath=" + owned,
-            "--property:ArtifactsPath=" + artifacts,
-            "--property:UseArtifactsOutput=true",
         };
-        args.AddRange(forwarded);
-        AddConfinedUseAppHost(args, forwarded.Any(token => token.StartsWith("--property:UseAppHost=", StringComparison.OrdinalIgnoreCase)));
+        if (OperatingSystem.IsLinux())
+            args.Add("-getProperty:" + string.Join(',', CheckpointBuildPlacement.EvaluatedPaths)
+                + ",TargetFramework,TargetFrameworks");
+        args.AddRange(properties);
 
         var psi = new ProcessStartInfo("dotnet")
         {
@@ -700,10 +697,10 @@ public static class BuildConfinement
         { return new EvalResult([], ex.GetType().Name); }
         if (result.TimedOut) return new EvalResult([], "msbuild evaluation timed out");
         if (result.Exit != 0) return new EvalResult([], "msbuild exit " + result.Exit);
-        return ParseReferences(result.Stdout, result.Stderr);
+        return ParseEvaluation(result.Stdout, Path.GetDirectoryName(project)!);
     }
 
-    private static EvalResult ParseReferences(string stdout, string stderr)
+    private static EvalResult ParseEvaluation(string stdout, string projectDirectory)
     {
         var start = stdout.IndexOf('{');
         if (start < 0)
@@ -720,10 +717,27 @@ public static class BuildConfinement
 
         using (doc)
         {
+            string[]? frameworks = null;
+            if (OperatingSystem.IsLinux())
+            {
+                if (!doc.RootElement.TryGetProperty("Properties", out var properties) || properties.ValueKind != JsonValueKind.Object)
+                    return new EvalResult([], "msbuild write destinations missing");
+                foreach (var property in CheckpointBuildPlacement.EvaluatedPaths)
+                {
+                    if (!properties.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.String)
+                        return new EvalResult([], "msbuild write destination missing: " + property);
+                    if (value.GetString() is { Length: > 0 } path
+                        && CheckpointBuildPlacement.IsEvidencePath(Path.GetFullPath(path, projectDirectory)))
+                        return new EvalResult([], null, $"{property}={path}");
+                }
+                if (properties.GetProperty("TargetFramework").GetString() is not { Length: > 0 })
+                    frameworks = properties.GetProperty("TargetFrameworks").GetString()?
+                        .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            }
             if (!doc.RootElement.TryGetProperty("Items", out var items) || items.ValueKind != JsonValueKind.Object)
                 return new EvalResult([], "msbuild items missing");
             if (!items.TryGetProperty("ProjectReference", out var references))
-                return new EvalResult([], null);
+                return new EvalResult([], null, Frameworks: frameworks);
             var paths = new List<string>();
             if (references.ValueKind == JsonValueKind.Object)
             {
@@ -741,8 +755,7 @@ public static class BuildConfinement
             else
                 return new EvalResult([], "project reference json unusable");
 
-            _ = stderr;
-            return new EvalResult(paths, null);
+            return new EvalResult(paths, null, Frameworks: frameworks);
         }
     }
 
