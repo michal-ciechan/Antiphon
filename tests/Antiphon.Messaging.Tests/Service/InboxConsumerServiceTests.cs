@@ -161,6 +161,39 @@ public sealed class InboxConsumerServiceTests
         }
     }
 
+    [Test]
+    public async Task Provider_receipt_feed_exports_only_accepted_answers_and_survives_replay()
+    {
+        if (_broker is null) Skip.Test("set ANTIPHON_BROKER_TESTS=1 with Docker running");
+        var bootstrap = _broker!.GetBootstrapAddress();
+        var topic = "outbound-" + Guid.NewGuid().ToString("N");
+        var options = Options.Create(new AntiphonGatewayOptions { BootstrapServers = bootstrap, OutboundTopic = topic });
+        var feed = ProviderAnswerReceipt.Topic(topic);
+        using var admin = new AdminClientBuilder(new AdminClientConfig { BootstrapServers = bootstrap }).Build();
+        await admin.CreateTopicsAsync([new TopicSpecification { Name = feed, NumPartitions = 1, ReplicationFactor = 1 }]);
+        using var producer = new ProducerBuilder<string, string>(new ProducerConfig { BootstrapServers = bootstrap }).Build();
+        await using var store = await EfInboxReceiptStoreTests.StoreHarness.CreateAsync();
+        var adapter = new AcceptanceProbe(false);
+        using var gateway = new GatewayOutboundService([adapter], options,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayOutboundService>.Instance, store.Store);
+        var reply = new ChannelReply { Channel = "telegram", ConversationId = "11", AnsweredMessageIds = ["12"] };
+        await gateway.DispatchAsync(reply with { AnsweredMessageIds = ["refused"] }, CancellationToken.None);
+        await gateway.DispatchAsync(reply, CancellationToken.None);
+        var exporter = new ProviderAnswerPublisher(store.Services.GetRequiredService<IServiceScopeFactory>(), producer, options,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ProviderAnswerPublisher>.Instance);
+        (await exporter.PublishPageAsync(CancellationToken.None)).ShouldBe(1);
+        (await exporter.PublishPageAsync(CancellationToken.None)).ShouldBe(0);
+        using var reader = new ConsumerBuilder<string, string>(new ConsumerConfig
+        {
+            BootstrapServers = bootstrap, GroupId = Guid.NewGuid().ToString("N"), EnableAutoCommit = false,
+        }).Build();
+        reader.Assign(new TopicPartitionOffset(feed, 0, Offset.Beginning));
+        var record = reader.Consume(TimeSpan.FromSeconds(10));
+        var acceptance = JsonSerializer.Deserialize<ProviderAnswerReceipt>(record.Message.Value, MessagingJson.Options)!;
+        acceptance.ChannelMessageId.ShouldBe("12");
+        reader.QueryWatermarkOffsets(new TopicPartition(feed, 0), TimeSpan.FromSeconds(5)).High.Value.ShouldBe(1L);
+    }
+
     private sealed class AcceptanceProbe(bool loseFirstResponse) : IChannelAdapter
     {
         public int Calls;
@@ -171,6 +204,7 @@ public sealed class InboxConsumerServiceTests
         public IAsyncEnumerable<ChannelMessage> ReceiveAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public async Task<SendResult> SendAsync(ChannelReply reply, CancellationToken cancellationToken)
         {
+            if (reply.AnsweredMessageIds.Single() == "refused") return SendResult.Failed("synthetic refusal");
             if (reply.AnsweredMessageIds.Single() == "13") Barrier.TrySetResult();
             else
             {

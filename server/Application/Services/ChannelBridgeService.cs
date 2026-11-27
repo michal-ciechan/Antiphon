@@ -66,6 +66,8 @@ public sealed partial class ChannelBridgeService : BackgroundService
     // A restart rediscovers durable queue ownership. Only the bounded retry delay is local.
     private readonly ConcurrentDictionary<Guid, DateTime> _withheldRetryAfter = new();
     private readonly DateTimeOffset _createdAt;
+    private readonly long _createdTimestamp;
+    private readonly Guid _replyClockId = Guid.NewGuid();
     private DateTimeOffset? _stallRaisedSince;
 
     internal int CompletedDrainIterations => Volatile.Read(ref _completedDrainIterations);
@@ -91,6 +93,7 @@ public sealed partial class ChannelBridgeService : BackgroundService
         _logger = logger;
         _wakeSignal = wakeSignal ?? new ChannelInboundWakeSignal();
         _createdAt = timeProvider.GetUtcNow();
+        _createdTimestamp = timeProvider.GetTimestamp();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -165,7 +168,7 @@ public sealed partial class ChannelBridgeService : BackgroundService
             await ProcessInboundAsync(id, ct);
     }
 
-    private async Task<Guid?> AcceptInboundAsync(ChannelMessage message, CancellationToken ct)
+    internal async Task<Guid?> AcceptInboundAsync(ChannelMessage message, CancellationToken ct)
     {
         if (message.Author.IsSelf)
             return null;
@@ -193,6 +196,8 @@ public sealed partial class ChannelBridgeService : BackgroundService
             AgentId = deliverable ? channel.AgentId : null,
             ChatChannelId = deliverable ? channel.Id : null,
             AcceptedAt = _timeProvider.GetUtcNow().UtcDateTime,
+            ReplyClockId = _replyClockId,
+            ReplyClockTimestamp = _timeProvider.GetTimestamp(),
         };
         db.ChannelInbounds.Add(inbound);
         await db.SaveChangesAsync(ct);

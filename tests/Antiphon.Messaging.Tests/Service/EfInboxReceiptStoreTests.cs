@@ -198,7 +198,7 @@ public sealed class EfInboxReceiptStoreTests
             Connection = connection;
         }
 
-        private ServiceProvider Services { get; }
+        internal ServiceProvider Services { get; }
         private SqliteConnection Connection { get; }
         public EfInboxReceiptStore Store => Services.GetRequiredService<EfInboxReceiptStore>();
 

@@ -1,4 +1,14 @@
 #nullable enable
+Antiphon.Messaging.ProviderAnswerReceipt
+Antiphon.Messaging.ProviderAnswerReceipt.Channel.get -> string!
+Antiphon.Messaging.ProviderAnswerReceipt.Channel.init -> void
+Antiphon.Messaging.ProviderAnswerReceipt.ConversationId.get -> string!
+Antiphon.Messaging.ProviderAnswerReceipt.ConversationId.init -> void
+Antiphon.Messaging.ProviderAnswerReceipt.ChannelMessageId.get -> string!
+Antiphon.Messaging.ProviderAnswerReceipt.ChannelMessageId.init -> void
+Antiphon.Messaging.ProviderAnswerReceipt.AnsweredAt.get -> System.DateTimeOffset
+Antiphon.Messaging.ProviderAnswerReceipt.AnsweredAt.init -> void
+static Antiphon.Messaging.ProviderAnswerReceipt.Topic(string! outboundTopic) -> string!
 Antiphon.Messaging.InboundUnconsumedEvent
 Antiphon.Messaging.InboundUnconsumedEvent.Acknowledged.get -> bool
 Antiphon.Messaging.InboundUnconsumedEvent.Acknowledged.init -> void

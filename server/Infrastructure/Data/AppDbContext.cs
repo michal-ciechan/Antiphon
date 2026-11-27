@@ -60,6 +60,7 @@ public partial class AppDbContext : DbContext
     public DbSet<ChatChannel> ChatChannels => Set<ChatChannel>();
     public DbSet<ChannelOutboundDelivery> ChannelOutboundDeliveries => Set<ChannelOutboundDelivery>();
     public DbSet<ChannelInbound> ChannelInbounds => Set<ChannelInbound>();
+    public DbSet<ChannelProviderAnswer> ChannelProviderAnswers => Set<ChannelProviderAnswer>();
     public DbSet<ChannelIngressIncident> ChannelIngressIncidents => Set<ChannelIngressIncident>();
     public DbSet<AgentSupervisionState> AgentSupervisionStates => Set<AgentSupervisionState>();
     public DbSet<CheckCompactionRecovery> CheckCompactionRecoveries => Set<CheckCompactionRecovery>();
@@ -709,6 +710,7 @@ public partial class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<ChannelProviderAnswer>().HasKey(a => new { a.Provider, a.ConversationId, a.NativeMessageId });
         modelBuilder.Entity<ChannelInbound>(entity =>
         {
             entity.ToTable("ChannelInbounds");

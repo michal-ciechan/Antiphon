@@ -995,6 +995,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     if (builder.Configuration.GetValue<bool>($"{ChannelBridgeSettings.SectionName}:Enabled"))
     {
         builder.Services.AddHostedService<ChannelBridgeService>();
+        builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Messaging.ProviderAnswerConsumer>();
         builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Messaging.InboundUnconsumedEventConsumer>();
     }
     builder.Services.AddScoped<AuditService>();

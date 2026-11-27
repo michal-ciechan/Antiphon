@@ -13,10 +13,14 @@ namespace Antiphon.Messaging.Tests.Service;
 [Category("Slow")]
 public sealed class InboxConversationMigrationTests
 {
-    private static readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
+    private static PostgreSqlContainer Postgres = null!;
 
     [Before(Class)]
-    public static Task StartDatabaseAsync() => Postgres.StartAsync();
+    public static Task StartDatabaseAsync()
+    {
+        Postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
+        return Postgres.StartAsync();
+    }
 
     [After(Class)]
     public static async Task StopDatabaseAsync() => await Postgres.DisposeAsync();
@@ -47,7 +51,7 @@ public sealed class InboxConversationMigrationTests
         var refused = await Should.ThrowAsync<PostgresException>(() => migrator.MigrateAsync(previous));
         refused.MessageText.ShouldContain("InboxAnswerReceipts");
         (await db.Database.GetAppliedMigrationsAsync()).ShouldContain(receiptMigration);
-        (await db.InboxAnswerReceipts.SingleAsync()).OutboundMessageId.ShouldBe("3");
+        (await db.InboxAnswerReceipts.Select(r => r.OutboundMessageId).SingleAsync()).ShouldBe("3");
         await db.InboxAnswerReceipts.ExecuteDeleteAsync();
         await migrator.MigrateAsync(previous);
         (await db.Database.GetAppliedMigrationsAsync()).ShouldNotContain(receiptMigration);

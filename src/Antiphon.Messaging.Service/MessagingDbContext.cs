@@ -12,6 +12,7 @@ public sealed class MessagingDbContext(DbContextOptions<MessagingDbContext> opti
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<InboxAnswerReceipt>().HasKey(a => new { a.Channel, a.ConversationId, a.ChannelMessageId });
+        modelBuilder.Entity<InboxAnswerReceipt>().HasIndex(a => a.PublishedAt).HasFilter("\"PublishedAt\" IS NULL");
         var inbox = modelBuilder.Entity<InboxMessage>();
         inbox.ToTable("Inbox");
         inbox.HasKey(x => x.Id);

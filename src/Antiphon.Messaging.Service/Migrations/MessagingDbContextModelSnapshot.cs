@@ -69,7 +69,13 @@ namespace Antiphon.Messaging.Service.Migrations
                     b.Property<string>("OutboundMessageId")
                         .HasColumnType("text");
 
+                    b.Property<DateTimeOffset?>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.HasKey("Channel", "ConversationId", "ChannelMessageId");
+
+                    b.HasIndex("PublishedAt")
+                        .HasFilter("\"PublishedAt\" IS NULL");
 
                     b.ToTable("InboxAnswerReceipts");
                 });

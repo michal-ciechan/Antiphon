@@ -14,6 +14,9 @@ public sealed class ChannelInbound
     /// <summary>Database assigned FIFO order; timestamps and GUIDs may tie or sort differently.</summary>
     public long AcceptanceSequence { get; set; }
     public DateTime AcceptedAt { get; set; }
+    // Monotonic timestamps are comparable only within this bridge clock epoch.
+    public Guid? ReplyClockId { get; set; }
+    public long? ReplyClockTimestamp { get; set; }
     public DateTime? TransferredAt { get; set; }
     public DateTime? WakeTimeoutIncidentAt { get; set; }
     public DateTime? ContinuityHoldIncidentAt { get; set; }

@@ -71,8 +71,9 @@ public sealed partial class ChannelBridgeService
               AND (a."SessionId" IS NULL OR a."SessionId" = q."AgentSessionId")
               AND ((a."FailureReason" = {WithheldReason} AND q."Status" = 0 AND q."DeliveryAttempts" = 0)
                 OR (a."FailureReason" = {NoOutboundReason} AND c."Enabled" AND c."AgentId" = i."AgentId" AND
-                    q."DirectReplyThroughSequence" IS NULL AND (d."State" IS NULL OR d."State" NOT IN
-                    ({(int)ChannelOutboundDeliveryState.Published},{(int)ChannelOutboundDeliveryState.Suppressed}))))
+                    d."State" IS DISTINCT FROM {(int)ChannelOutboundDeliveryState.Suppressed} AND NOT EXISTS (
+                        SELECT 1 FROM "ChannelProviderAnswers" AS receipt WHERE receipt."Provider" = i."Provider"
+                        AND receipt."ConversationId" = i."ConversationId" AND receipt."NativeMessageId" = i."NativeMessageId")))
             ORDER BY a."CreatedAt", a."Id" LIMIT {WithheldIncidentPageSize}
             """).ToListAsync(ct);
         foreach (var page in pending)
@@ -87,18 +88,30 @@ public sealed partial class ChannelBridgeService
             }
             // AlertRaised displays the operator toast and, for a hidden tab, a desktop notification.
             // The append-only incident owns persistence. Chat alert routers do not participate.
-            await _eventBus.PublishToAllAsync("AlertRaised", new
+            var alert = new
             {
                 id = page.Id, severity = nameof(AlertSeverity.Critical), source = "ChannelBridge",
                 title = page.FailureReason == WithheldReason ? "Channel input withheld" : "Channel reply overdue",
                 detail, agentId = page.AgentId, createdAt = page.CreatedAt,
-            }, ct);
-            // The attention client subscribes to AgentChanged. A crash after publishing may
-            // repeat the invalidation. Clients refetch the same durable incident ID.
-            await _eventBus.PublishToAllAsync("AgentChanged",
-                new { agentId = page.AgentId, sessionId = page.SessionId, incidentId = page.Id }, ct);
-            await db.AgentIncidents.Where(i => i.Id == page.Id && i.HumanNotifiedAt == null)
-                .ExecuteUpdateAsync(s => s.SetProperty(i => i.HumanNotifiedAt, now), ct);
+            };
+            var open = db.AgentIncidents.Where(i => i.Id == page.Id && i.HumanNotifiedAt == null);
+            if (await open.Where(i => i.OperatorToastClaimedAt == null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(i => i.OperatorToastClaimedAt, now), ct) == 1)
+            {
+                try { await _eventBus.PublishToAllAsync("AlertRaised", alert, ct); }
+                catch
+                {
+                    await open.ExecuteUpdateAsync(s => s.SetProperty(i => i.OperatorToastClaimedAt, (DateTime?)null), ct);
+                    throw;
+                }
+            }
+            // A stopped publisher can leave a durable claim before the toast reaches the bus.
+            // The attention invalidation also carries that toast, keyed by the same incident ID.
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            if (await open.ExecuteUpdateAsync(s => s.SetProperty(i => i.HumanNotifiedAt, now), ct) == 1)
+                await _eventBus.PublishToAllAsync("AgentChanged",
+                    new { agentId = page.AgentId, sessionId = page.SessionId, incidentId = page.Id, operatorAlert = alert }, ct);
+            await tx.CommitAsync(ct);
         }
     }
 
@@ -118,7 +131,12 @@ public sealed partial class ChannelBridgeService
 
     private async Task RecordOverdueGroupsAsync(AppDbContext db, DateTime now, CancellationToken ct)
     {
-        var cutoff = now.AddMinutes(-_settings.GroupReplyDeadlineMinutes);
+        var duration = TimeSpan.FromMinutes(_settings.GroupReplyDeadlineMinutes);
+        var timestamp = _timeProvider.GetTimestamp();
+        var cutoffStamp = timestamp - (long)(duration.TotalSeconds * _timeProvider.TimestampFrequency);
+        // Across process epochs, bootstrap age from the durable acceptance time once against
+        // the start-of-process UTC clock. Elapsed time drives both cutoffs thereafter.
+        var cutoff = (_createdAt + _timeProvider.GetElapsedTime(_createdTimestamp, timestamp) - duration).UtcDateTime;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync(
             "SET LOCAL lock_timeout = '100ms'; SET LOCAL statement_timeout = '2s'", ct);
@@ -134,9 +152,10 @@ public sealed partial class ChannelBridgeService
                 WHERE r."Provider" = c."Provider" AND r."ConversationId" = c."ExternalId"
                   AND r."AgentId" = c."AgentId" AND r."ChatChannelId" = c."Id"
                   AND (r."QueueMessageId" IS NULL OR source."Id" IS NOT NULL)
-                  AND source."DirectReplyThroughSequence" IS NULL
-                  AND (delivery."State" IS NULL OR delivery."State" NOT IN
-                      ({(int)ChannelOutboundDeliveryState.Published},{(int)ChannelOutboundDeliveryState.Suppressed}))
+                  AND delivery."State" IS DISTINCT FROM {(int)ChannelOutboundDeliveryState.Suppressed}
+                  AND NOT EXISTS (SELECT 1 FROM "ChannelProviderAnswers" AS receipt
+                      WHERE receipt."Provider" = r."Provider" AND receipt."ConversationId" = r."ConversationId"
+                      AND receipt."NativeMessageId" = r."NativeMessageId")
                 ORDER BY r."AcceptanceSequence" LIMIT 1
             ) AS head ON true
             JOIN "ChannelInbounds" AS i ON i."Id" = head."Id"
@@ -144,7 +163,8 @@ public sealed partial class ChannelBridgeService
             CROSS JOIN LATERAL (SELECT CASE WHEN i."InputWithheldIncidentAt" IS NULL THEN i."Id"
                 ELSE md5('channel-no-outbound/' || i."Id"::text)::uuid END AS "Id") AS identity
             WHERE c."Enabled" AND c."Provider" = 'telegram' AND c."Kind" = {(int)ChatChannelKind.Group}
-              AND i."AcceptedAt" <= {cutoff}
+              AND CASE WHEN i."ReplyClockId" = {_replyClockId} AND i."ReplyClockTimestamp" IS NOT NULL
+                  THEN i."ReplyClockTimestamp" <= {cutoffStamp} ELSE i."AcceptedAt" <= {cutoff} END
               AND (i."InputWithheldIncidentAt" IS NULL OR (q."Status" = {(int)QueuedMessageStatus.Sent}
                   AND q."DeliveryVerdict" IN ({(int)DeliveryVerdict.Delivered},{(int)DeliveryVerdict.LateConfirmed})))
               AND NOT EXISTS (SELECT 1 FROM "AgentIncidents" AS a WHERE a."Id" = identity."Id")

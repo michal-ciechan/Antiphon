@@ -59,6 +59,7 @@ builder.Services.AddSingleton<EfInboxReceiptStore>();
 builder.Services.AddSingleton<IInboxReceiptStore>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
 builder.Services.AddSingleton<IOutboundAnswerReceiptSink>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
 builder.Services.AddHostedService<InboxAnswerReconciler>();
+builder.Services.AddHostedService<ProviderAnswerPublisher>();
 builder.Services.AddSingleton<IInboundReceiptSink>(sp => sp.GetRequiredService<EfInboxReceiptStore>());
 builder.Services.AddHostedService<InboxConsumerService>();
 

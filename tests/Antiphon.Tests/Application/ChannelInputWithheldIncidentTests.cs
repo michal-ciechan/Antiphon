@@ -926,43 +926,66 @@ public sealed partial class ChannelInputWithheldIncidentTests
         });
 
     [Test]
-    public async Task Partial_operator_page_resumes_once_across_concurrent_scans(CancellationToken ct)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Partial_operator_page_resumes_once_across_concurrent_scans(bool failStamp, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
-        await using var h = await OpenAsync(schema.ConnectionString, Clock());
+        var commands = new ScanCommands();
+        await using var h = await OpenAsync(schema.ConnectionString, Clock(), o => o.AddInterceptors(commands));
         await SeedAsync(h, h.Now.AddHours(-1), h.Now.AddMinutes(-20), 1);
         using var first = Bridge(h);
         using var second = Bridge(h);
         await first.ScanWithheldChannelIncidentsAsync(ct);
-        h.EventBus.ThrowOnceOnEvent = "AgentChanged";
+        if (failStamp)
+        {
+            commands.Fault = sql => sql.Contains("SET \"HumanNotifiedAt\" =", StringComparison.Ordinal)
+                ? new InvalidOperationException("synthetic stamp failure") : null;
+            commands.Armed = true;
+        }
+        else h.EventBus.ThrowOnceOnEvent = "AgentChanged";
         await Should.ThrowAsync<InvalidOperationException>(() => first.ScanChannelReplyAlertsAsync(ct));
+        commands.Armed = false;
         await Task.WhenAll(first.ScanChannelReplyAlertsAsync(ct), second.ScanChannelReplyAlertsAsync(ct));
         h.EventBus.PublishedEvents.Count(e => e.EventName == "AlertRaised").ShouldBe(1);
         await using var db = Db(schema.ConnectionString);
-        (await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelInputWithheld", ct))
-            .HumanNotifiedAt.ShouldNotBeNull();
+        var incident = await db.AgentIncidents.SingleAsync(i => i.FailureReason == "ChannelInputWithheld", ct);
+        incident.HumanNotifiedAt.ShouldNotBeNull();
+        var refresh = h.EventBus.PublishedEvents.Where(e => e.EventName == "AgentChanged")
+            .Select(e => JsonSerializer.SerializeToElement(e.Payload))
+            .Single(p => p.TryGetProperty("operatorAlert", out _));
+        refresh.GetProperty("operatorAlert").GetProperty("id").GetGuid().ShouldBe(incident.Id);
         h.Messaging.SentReplies.ShouldBeEmpty();
     }
 
     [Test]
-    [Arguments(120)]
-    [Arguments(-120)]
-    public async Task Group_deadline_uses_elapsed_time_despite_a_wall_clock_step(int minutes, CancellationToken ct)
+    [Arguments(120, false)]
+    [Arguments(-120, false)]
+    [Arguments(120, true)]
+    [Arguments(-120, true)]
+    public async Task Group_deadline_uses_elapsed_time_despite_a_wall_clock_step(int minutes, bool currentEpoch, CancellationToken ct)
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         var timer = Clock();
         var clock = new CorrectedClock(timer);
         await using var h = await OpenAsync(schema.ConnectionString, clock);
         using var bridge = Bridge(h);
-        var seed = await SeedUnansweredGroupAsync(h, ct);
+        Guid inboundId;
+        if (currentEpoch)
+        {
+            clock.Correction = TimeSpan.FromMinutes(-minutes);
+            var chat = await h.BindChannelAsync();
+            inboundId = (await bridge.AcceptInboundAsync(Message(chat, "11", "fixture"), ct))!.Value;
+        }
+        else inboundId = (await SeedUnansweredGroupAsync(h, ct)).InboundId;
         clock.Correction = TimeSpan.FromMinutes(minutes);
         timer.Advance(TimeSpan.FromMinutes(9));
         await bridge.ScanChannelReplyAlertsAsync(ct);
         await using var db = Db(schema.ConnectionString);
-        (await db.AgentIncidents.AnyAsync(i => i.Id == seed.InboundId, ct)).ShouldBeFalse();
+        (await db.AgentIncidents.AnyAsync(i => i.Id == inboundId, ct)).ShouldBeFalse();
         timer.Advance(TimeSpan.FromMinutes(1));
         await bridge.ScanChannelReplyAlertsAsync(ct);
-        (await db.AgentIncidents.AnyAsync(i => i.Id == seed.InboundId, ct)).ShouldBeTrue();
+        (await db.AgentIncidents.AnyAsync(i => i.Id == inboundId, ct)).ShouldBeTrue();
     }
 
     [Test]
@@ -974,11 +997,34 @@ public sealed partial class ChannelInputWithheldIncidentTests
         using var bridge = Bridge(h);
         var seed = await SeedUnansweredGroupAsync(h, ct);
         await using var db = Db(schema.ConnectionString);
+        var published = await SeedUnansweredGroupAsync(h, ct);
+        var chat = await db.ChatChannels.SingleAsync(c => c.ExternalId == published.ConversationId, ct);
+        var delivery = new ChannelOutboundDelivery
+        {
+            Id = Guid.NewGuid(), SourceKey = Guid.NewGuid().ToString("N"), ChannelId = chat.Id,
+            SourceSessionId = h.SessionId, InboundAgentId = h.AgentId, State = ChannelOutboundDeliveryState.Published,
+            CreatedAt = h.Now, PublishedAt = h.Now, DeadlineAt = h.Now.AddMinutes(10),
+        };
+        db.ChannelOutboundDeliveries.Add(delivery);
+        await db.SaveChangesAsync(ct);
+        await db.SessionQueuedMessages.Where(q => q.Id == published.QueueId)
+            .ExecuteUpdateAsync(s => s.SetProperty(q => q.ChannelOutboundDeliveryId, delivery.Id), ct);
+        var confirmed = await SeedUnansweredGroupAsync(h, ct);
+        var receipt = new ProviderAnswerReceipt
+        {
+            Channel = "telegram", ConversationId = confirmed.ConversationId, ChannelMessageId = confirmed.NativeMessageId,
+            AnsweredAt = clock.GetUtcNow(),
+        };
+        await Antiphon.Server.Infrastructure.Messaging.ProviderAnswerConsumer.RecordAsync(db, receipt, ct);
+        await Antiphon.Server.Infrastructure.Messaging.ProviderAnswerConsumer.RecordAsync(db, receipt, ct);
         await db.SessionQueuedMessages.Where(q => q.Id == seed.QueueId)
             .ExecuteUpdateAsync(s => s.SetProperty(q => q.DirectReplyThroughSequence, 5L), ct);
         clock.Advance(TimeSpan.FromMinutes(10));
         await bridge.ScanChannelReplyAlertsAsync(ct);
         (await db.AgentIncidents.CountAsync(i => i.Id == seed.InboundId, ct)).ShouldBe(1);
+        (await db.AgentIncidents.AnyAsync(i => i.Id == published.InboundId && i.HumanNotifiedAt != null, ct)).ShouldBeTrue();
+        (await db.AgentIncidents.AnyAsync(i => i.Id == confirmed.InboundId, ct)).ShouldBeFalse();
+        (await db.ChannelProviderAnswers.CountAsync(ct)).ShouldBe(1);
         h.Messaging.SentReplies.ShouldBeEmpty();
     }
 

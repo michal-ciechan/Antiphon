@@ -7,6 +7,7 @@ public sealed class InboxAnswerReceipt
     public string ChannelMessageId { get; set; } = "";
     public DateTimeOffset AnsweredAt { get; set; }
     public string? OutboundMessageId { get; set; }
+    public DateTimeOffset? PublishedAt { get; set; }
 }
 
 internal sealed class InboxAnswerReconciler(IServiceScopeFactory scopes, ILogger<InboxAnswerReconciler> logger) : BackgroundService

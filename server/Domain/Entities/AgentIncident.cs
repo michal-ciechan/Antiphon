@@ -36,6 +36,7 @@ public class AgentIncident
     /// <see cref="CreatedAt"/> on migrate so a deploy never pages history.
     /// </summary>
     public DateTime? HumanNotifiedAt { get; set; }
+    public DateTime? OperatorToastClaimedAt { get; set; }
 
     public Agent? Agent { get; set; }
 }

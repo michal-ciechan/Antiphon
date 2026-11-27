@@ -266,6 +266,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
 
+                    b.Property<DateTime?>("OperatorToastClaimedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid?>("SessionId")
                         .HasColumnType("uuid");
 
@@ -4934,6 +4937,12 @@ namespace Antiphon.Server.Migrations
                     b.Property<Guid?>("QueueMessageId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("ReplyClockId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("ReplyClockTimestamp")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("SuspensionHoldIncidentAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -5199,6 +5208,25 @@ namespace Antiphon.Server.Migrations
                         .HasFilter("\"CaptureJson\" IS NOT NULL AND \"RootDeliveryId\" IS NULL AND \"SendKind\" IN ('main', 'machine')");
 
                     b.ToTable("ChannelOutboundDeliveries", (string)null);
+                });
+
+            modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChannelProviderAnswer", b =>
+                {
+                    b.Property<string>("Provider")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ConversationId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("NativeMessageId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("AnsweredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Provider", "ConversationId", "NativeMessageId");
+
+                    b.ToTable("ChannelProviderAnswers");
                 });
 
             modelBuilder.Entity("Antiphon.Server.Domain.Entities.ChatChannel", b =>
