@@ -12,7 +12,7 @@ public sealed class CheckpointDiskAdmissionTests : CheckpointTestBase
     {
         var root = TempDir();
         Directory.CreateDirectory(Path.Combine(root, "sample"));
-        var driver = new FakeDriver();
+        var driver = RecordingDriver();
         var slot = new DiskDropsAtGrant();
         using var output = new StringWriter();
         var exit = await Antiphon.Checkpoints.Program.RunAsync([
@@ -26,10 +26,10 @@ public sealed class CheckpointDiskAdmissionTests : CheckpointTestBase
             SourceCapture = _ => CheckpointFixtures.CleanSource(),
             DiskFreeBytes = slot.FreeBytes,
         });
+        driver.Calls.ShouldBeEmpty("disk refusal precedes the build and the test host");
         exit.ShouldBe(ExitCodes.DiskLow, output.ToString());
         output.ToString().ShouldContain("reason=workspace_disk_low");
         output.ToString().ShouldContain("slot=granted waited=840s");
-        driver.Calls.ShouldBeEmpty();
         slot.Released.ShouldBe(1);
     }
 
@@ -46,7 +46,7 @@ public sealed class CheckpointDiskAdmissionTests : CheckpointTestBase
         manifest.Checkpoints.Add(command
             ? new CheckpointSpec { Id = "CP-1", Command = "fixture-command" }
             : new CheckpointSpec { Id = "CP-1", Build = "bin-disk", Filter = "/*/*/Test/*" });
-        var driver = new FakeDriver();
+        var driver = RecordingDriver();
         var slot = new DiskDropsAtGrant();
         var result = await new RunScheduler(driver, new FakePlatform()).RunAsync(new SchedulerRequest
         {
@@ -59,12 +59,23 @@ public sealed class CheckpointDiskAdmissionTests : CheckpointTestBase
             DiskFreeBytes = slot.FreeBytes,
         }, CancellationToken.None);
         var row = result.Rows.ShouldHaveSingleItem();
+        driver.Calls.ShouldBeEmpty("disk refusal precedes the scheduled driver");
         result.ExitCode.ShouldBe(ExitCodes.DiskLow, row.Line);
         row.TerminalReason.ShouldBe("workspace_disk_low");
         row.Slot.ShouldBe("granted");
         row.WaitedSeconds.ShouldBe(840);
-        driver.Calls.ShouldBeEmpty();
         slot.Released.ShouldBe(1);
+    }
+
+    private static FakeDriver RecordingDriver()
+    {
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), ("Antiphon.Tests.Sample.alpha", "Passed"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        return driver;
     }
 
     private sealed class DiskDropsAtGrant : IBuildSlotClient

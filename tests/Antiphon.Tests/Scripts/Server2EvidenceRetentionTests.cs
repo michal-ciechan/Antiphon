@@ -23,7 +23,7 @@ public sealed class Server2EvidenceRetentionTests
             using var holder = Process.Start(start)!;
             try
             {
-                new FileInfo($"/proc/{holder.Id}/cwd").LinkTarget.ShouldBe(folder.FullName);
+                new FileInfo(Path.Combine("/proc", holder.Id.ToString(), "cwd")).LinkTarget.ShouldBe(folder.FullName);
                 (await RunAsync(folder.FullName, "Get-AntiphonRetentionHolder $env:RETENTION_FIXTURE"))
                     .Trim().ShouldBe("live-holder", "the process has no file open inside the directory");
             }
@@ -51,10 +51,9 @@ public sealed class Server2EvidenceRetentionTests
             foreach (var path in new[] { protectedPath.FullName, protectedPath.Parent!.FullName, folder.FullName })
                 Directory.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(-25));
 
-            (await RunAsync(folder.FullName, """
-                Get-AntiphonRetentionRefusal -Path $env:RETENTION_FIXTURE -Parent ([IO.Path]::GetTempPath().TrimEnd('/')) `
-                    -LeafPattern '^retention-tree-' -MinAgeHours 24
-                """)).Trim().ShouldBe("unsafe-or-recent-descendant", component);
+            const string command = "Get-AntiphonRetentionRefusal -Path $env:RETENTION_FIXTURE " +
+                "-Parent ([IO.Path]::GetTempPath().TrimEnd('/')) -LeafPattern '^retention-tree-' -MinAgeHours 24";
+            (await RunAsync(folder.FullName, command)).Trim().ShouldBe("unsafe-or-recent-descendant", component);
         }
         finally { folder.Delete(recursive: true); }
     }

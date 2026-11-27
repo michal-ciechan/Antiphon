@@ -80,9 +80,10 @@ function Get-AntiphonRetentionHolder {
                 }
             }
         }
-        catch [IO.IOException], [UnauthorizedAccessException] {
+        catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] {
             if ([IO.Directory]::Exists($process)) { $incomplete = $true }
         }
+        catch [IO.IOException], [UnauthorizedAccessException] { $incomplete = $true }
     }
     if ($incomplete) { return 'holder-scan-incomplete' }
 }

@@ -98,6 +98,7 @@ function Get-ReferenceRefusal($Candidate) {
 # Each release binds the full owner ID and the device/inode at the exact path.
 $roots = @('/work/evidence', '/work/code-evidence', '/work/review-evidence', '/work/merge-evidence', '/work/test-evidence')
 $release = Get-Content -LiteralPath $ReleaseList -Raw | ConvertFrom-Json -NoEnumerate
+if ($release -isnot [array]) { throw 'The release list must be a JSON array.' }
 $listed = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $candidates = foreach ($row in $release) {
     $path = [string]$row.path
@@ -176,7 +177,7 @@ try {
                 # Never clobber a directory a writer created since the move.
                 & mv --no-clobber --no-target-directory -- $detached $path
             }
-            if ([IO.Directory]::EnumerateFileSystemEntries($graveyard).GetEnumerator().MoveNext()) {
+            if ([IO.Directory]::GetFileSystemEntries($graveyard).Length -gt 0) {
                 Write-Output "quarantined $detached original=$path owner=$($candidate.TaskId)"
             } else {
                 [IO.Directory]::Delete($graveyard)
