@@ -17,7 +17,7 @@ public sealed class ScriptedCodeHost : ICodeHost
 
     public bool Serves(ReviewHost kind) => kind == ReviewHost.GitHub;
 
-    public CodeHostCapabilities Capabilities { get; } = new(
+    public CodeHostCapabilities Capabilities { get; set; } = new(
         SupportsCheckRuns: false, CanResolveThreads: true, ApprovalCountsForMerge: true, SupportsAutoMerge: true,
         CanPostReviews: true, CanReplyToThreads: true, SupportsCommitStatuses: true, CanApprove: true, CanUpdateBranch: true,
         CanReadFiles: false, CanListPullRequests: true, CanPostConversation: true, CanMerge: true);
@@ -26,6 +26,8 @@ public sealed class ScriptedCodeHost : ICodeHost
         _prs[number] = new ScriptedPr(number, title, author, baseSha, headSha, files, diff);
 
     public ScriptedPr Pr(int number) => _prs[number];
+
+    public ConcurrentQueue<CodeHostTarget> ReviewPostAttempts { get; } = new();
 
     /// <summary>A conversation comment on PR <paramref name="pr"/>, created now; the polling listing returns it.</summary>
     public CodeHostConversationComment Comment(int pr, string id, string author, string association, string body)
@@ -93,6 +95,7 @@ public sealed class ScriptedCodeHost : ICodeHost
 
     public Task<CodeHostPostedReview> PostReviewAsync(CodeHostTarget target, CodeHostReview review, CancellationToken ct)
     {
+        ReviewPostAttempts.Enqueue(target);
         var pr = Of(target);
         lock (pr)
         {

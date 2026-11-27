@@ -707,6 +707,7 @@ Params that work today:
 | `outputs` | code, decision | The outcomes the step can take. The validator checks that edge labels match them. |
 | `onFailure` (`stop`), `fallback` | work nodes | `continue` goes on, taking `fallback` as the step's outcome if one is set |
 | `chain` | decision, completion | The model chain to use |
+| `inputs`, `summaryTemplate` | Publish | Declared outputs and optional Markdown for the PR summary |
 | `decisions` | gate | Any of `approve`, `another-round`, `close` |
 | `gateKind` | gate | `ReviewGate`, `ApprovalGate` or `MergeGate` |
 | `optional` | gate | Lets `Review:Policy:GatesOff` switch the gate off |
@@ -762,6 +763,59 @@ A new decision name, such as "approve with conditions", or a new gate kind needs
 
 `POST /api/review-workflows/validate` validates a graph, given as the JSON the run page's Workflow tab
 uses.
+
+### Configuring the PR review summary
+
+Add the following parameters to the existing **Publish** node in the embedded workflow. Keep the
+existing edges and the other nodes.
+
+```yaml
+  publish:
+    kind: code
+    run: Publish
+    description: Post findings with review context.
+    inputs: [collate, verify, categorise, select]
+    summaryTemplate: |
+      {{defaultBody}}
+
+      {{blastRadius}}
+
+      {{categories}}
+
+      {{selectedChecks}}
+```
+
+The input list uses case-sensitive node IDs. Supply exactly one node running `CollateFindings` and
+one running `VerifyFindings`. Both must precede Publish on every path in the same iteration, and
+Verify must use the same Collate result. Publish fails before saving or posting findings if either
+required output is unusable or Verify kept an ID outside that Collate result. A skipped or degraded
+Verify can still supply a usable result. Omitting `inputs` preserves the original lookup for pinned
+workflows.
+
+A `Categorise` or `SelectChecks` node is optional. Their sections use the latest preceding
+top-level output of that named node in the current iteration, or show **Unavailable** if the node
+was bypassed or produced no usable output. Trigger-based selections from a degraded Select are
+included. `blastRadius` and `categories` show the cumulative scores and category union from the
+run page. `categorisation` shows the declared Categorise node's change kind, scores and categories
+for this iteration.
+
+| Slot | What it inserts |
+|---|---|
+| `{{run.title}}`, `{{run.subject}}` | PR title and repository/PR label |
+| `{{round}}`, `{{iteration}}` | Current numbers |
+| `{{defaultBody}}` | Standard heading and finding sections, with the below-bar count and verification note when present |
+| `{{findings}}` | Inline and summary-only finding lists |
+| `{{verification}}`, `{{belowBar}}` | Verification note and below-bar count, when present |
+| `{{categorisation}}`, `{{selectedChecks}}` | Context from the corresponding declared producer |
+| `{{blastRadius}}`, `{{categories}}` | Cumulative blast radius and categories |
+
+Put each section slot on its own line. Use exactly one `{{defaultBody}}` or `{{findings}}`. The
+template is limited to 8 KiB in UTF-8 and the rendered body to 48 KiB. Publish uses the standard
+body when a stored template is invalid or its render exceeds the limit, and records a warning
+on the execution. Values supplied by the review are rendered as literal text in custom summaries.
+The engine still decides which findings are posted and where. A summary is posted only if at
+least one finding qualifies and the code host accepts reviews on the PR. A configured public run
+URL is added once after rendering and is also appended to each inline comment.
 
 ## 11. Check that it works
 

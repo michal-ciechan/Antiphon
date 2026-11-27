@@ -83,6 +83,7 @@ public partial class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory facto
         factory.Decisions.Reset();
         factory.Reviewer.Reset();
         factory.Host.RefuseStatuses = false;
+        factory.Host.ReviewPostAttempts.Clear();
     }
 
     [Test]

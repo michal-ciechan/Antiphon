@@ -161,8 +161,15 @@ interface ReviewPollingPassDto {
            error: string | null /* the last error the pass hit for this repo: rate limit, 403, network */ }[]
 }
 
-interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
+interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null; field?: string }[] }
 ```
+
+The `Publish` node accepts `params.inputs` as an array of case-sensitive producer node IDs. An
+explicit list requires one `CollateFindings` and one `VerifyFindings` producer and accepts one
+`Categorise` and one `SelectChecks` producer each. `params.summaryTemplate` is an optional string
+with bounded, named slots. Validation uses `invalid-input`, `unavailable-input`, or
+`invalid-summary-template` with the affected Publish node and its `field`. See the
+[worked Publish example](getting-started.md#configuring-the-pr-review-summary).
 
 ## Routes
 

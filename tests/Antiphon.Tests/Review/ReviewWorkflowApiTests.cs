@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Antiphon.Server.Application.Review;
 using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
@@ -103,6 +104,40 @@ public class ReviewWorkflowApiTests(AntiphonWebAppFactory factory)
         again.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         var queue = await client.GetFromJsonAsync<JsonElement>("/api/review-queue?scope=All");
         queue.GetProperty("items").EnumerateArray().ShouldNotContain(i => i.GetProperty("gate").GetProperty("id").GetString() == gateId);
+    }
+
+    [Test]
+    public async Task C2110_S1_pg_validate_attaches_publish_field()
+    {
+        using var client = factory.CreateClient();
+        var graph = await client.GetFromJsonAsync<WorkflowGraphDto>("/api/review-workflows/default", ReviewWorkflowService.GraphJsonOptions);
+        graph.ShouldNotBeNull();
+        var publish = graph.Nodes.Single(n => n.Id == "publish");
+        var parameters = new Dictionary<string, object?>
+        {
+            ["inputs"] = new[] { "collate", "verify", "categorise" },
+            ["summaryTemplate"] = "{{defaultBody}}\n\n{{categorisation}}",
+        };
+        var valid = await ValidateAsync(parameters);
+        parameters["inputs"] = "verify";
+        var invalid = await ValidateAsync(parameters);
+
+        valid.GetProperty("valid").GetBoolean().ShouldBeTrue(valid.ToString());
+        invalid.GetProperty("valid").GetBoolean().ShouldBeFalse();
+        var diagnostic = invalid.GetProperty("diagnostics").EnumerateArray()
+            .Single(d => d.GetProperty("code").GetString() == "invalid-input");
+        diagnostic.GetProperty("severity").GetString().ShouldBe("Error");
+        diagnostic.GetProperty("nodeIds").EnumerateArray().Select(id => id.GetString()).ShouldBe(["publish"]);
+        diagnostic.GetProperty("field").GetString().ShouldBe("inputs");
+
+        async Task<JsonElement> ValidateAsync(IReadOnlyDictionary<string, object?> values)
+        {
+            var edited = graph with { Nodes = graph.Nodes.Select(n => n.Id == publish.Id ? n with { Params = values } : n).ToList() };
+            using var response = await client.PostAsJsonAsync("/api/review-workflows/validate", edited,
+                ReviewWorkflowService.GraphJsonOptions);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+            return await response.Content.ReadFromJsonAsync<JsonElement>();
+        }
     }
 
     [Test]
