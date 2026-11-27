@@ -41,12 +41,8 @@ public sealed class AgentTaskLandActiveSourceClaimTests
     [Arguments("CleanupRetry", "alias", "merge-helper")]
     public async Task C448_V29_ActiveSourceClaimHoldsEveryMode(string mode, string spelling, string claimant)
     {
-        await using var h = new LandingSafetyHarness();
-        ConfigureDispatcher(h);
-        await h.InitializeAsync();
+        await using var h = await CreateClaimHarnessAsync(mode);
         h.Services.GetServices<IHostedService>().ShouldBeEmpty();
-        var source = mode == "AlreadyPresent" ? h.Fixture.SeedSha : await h.AddSourceAsync();
-        await h.RequestAsync(filter: "/*/*/Fixture/Pass", expectedSourceSha: source);
         if (mode == "ResumePublication")
         {
             h.Fault.Phase = LandPhase.PushStarted;
@@ -56,13 +52,9 @@ public sealed class AgentTaskLandActiveSourceClaimTests
         }
         if (mode == "CleanupRetry")
         {
-            var residue = Path.Combine(h.Fixture.Source, ".antiphon", "report.md");
-            Directory.CreateDirectory(Path.GetDirectoryName(residue)!);
-            await File.WriteAllTextAsync(residue, "owned receipt residue\n");
-            await h.RunAsync();
             (await h.OperationAsync()).ShouldNotBeNull().Cleanup.ShouldBe(LandCleanupStatus.Refused);
             await h.RepostAsync();
-            File.Delete(residue);
+            File.Delete(CleanupResidue(h));
         }
 
         string? alias = null;
@@ -207,6 +199,45 @@ public sealed class AgentTaskLandActiveSourceClaimTests
 
         await AssertLandFirstAdmissionAsync(claimant);
     }
+
+    private static async Task<LandingSafetyHarness> CreateClaimHarnessAsync(string mode)
+    {
+        async Task PrepareAsync(LandingSafetyHarness harness)
+        {
+            await harness.InitializeAsync();
+            var source = mode == "AlreadyPresent" ? harness.Fixture.SeedSha : await harness.AddSourceAsync();
+            await harness.RequestAsync(filter: "/*/*/Fixture/Pass", expectedSourceSha: source);
+            if (mode == "CleanupRetry")
+            {
+                var residue = CleanupResidue(harness);
+                Directory.CreateDirectory(Path.GetDirectoryName(residue)!);
+                await File.WriteAllTextAsync(residue, "owned receipt residue\n");
+                await harness.RunAsync();
+            }
+        }
+
+        // The first publication depends only on the mode. Each copied world checks the refusal,
+        // then reposts and runs the claim and retry against its own repository and database.
+        if (mode == "CleanupRetry" && !LandingEvidence.Enabled)
+            return await LandingHarnessSnapshot.CreateAsync("active-source-claim-cleanup-refused",
+                ConfigureDispatcher, PrepareAsync);
+
+        var harness = new LandingSafetyHarness();
+        try
+        {
+            ConfigureDispatcher(harness);
+            await PrepareAsync(harness);
+            return harness;
+        }
+        catch
+        {
+            await harness.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static string CleanupResidue(LandingSafetyHarness harness) =>
+        Path.Combine(harness.Fixture.Source, ".antiphon", "report.md");
 
     private static void ConfigureDispatcher(LandingSafetyHarness h)
     {
