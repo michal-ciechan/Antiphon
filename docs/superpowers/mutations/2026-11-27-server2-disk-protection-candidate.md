@@ -16,7 +16,7 @@ method filters. PC-1 through PC-6 moved with the evidence sweep to CARD-2095.
 | PC-9e | Skip the baseline test post-lease check. | BaselineComparerTests.BaselineRechecksSpaceAfterGrantAndReleasesTheLease |
 | PC-10a | Omit IntermediateOutputPath in checkpoint graph evaluation. | CheckpointEvidencePlacementTests.HistoricalProjectEvidenceDestinationsAreRefusedBeforeRestore |
 | PC-10b | Omit MSBuildProjectExtensionsPath in checkpoint graph evaluation. | CheckpointEvidencePlacementTests.HistoricalProjectEvidenceDestinationsAreRefusedBeforeRestore |
-| PC-10c | Validate only the first evaluated node for each project path. | CheckpointEvidencePlacementTests.ReferenceSpecificPropertiesAreCheckedForEveryOccurrenceOfTheSameProject |
+| PC-10c | Evaluate each child only with the parent properties and omit its reference metadata. | CheckpointEvidencePlacementTests.ReferenceSpecificPropertiesAreCheckedForEveryOccurrenceOfTheSameProject |
 | PC-10d | Remove the leased direct build's trusted import. | R-5 historical build refusal |
 | PC-11a | Bypass the POSIX entry's guard. | checkpoint launch refuses low disk before starting dotnet |
 | PC-11b | Bypass the Windows cmd guard. | Test-WindowsCheckpointBootstrap |

@@ -18,7 +18,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="BuildPlacementGraph.proj" LogicalName="Antiphon.Checkpoints.BuildPlacementGraph.proj" />
+    <EmbeddedResource Include="BuildPlacementGraph.targets" LogicalName="Antiphon.Checkpoints.BuildPlacementGraph.proj" />
     <Compile Include="../../scripts/lib/BuildDriverEnvironment.cs" Link="BuildDriverEnvironment.cs" />
     <Compile Include="../../scripts/lib/LeaseTempDirectory.cs" Link="LeaseTempDirectory.cs" />
     <Compile Include="../../scripts/lib/PhaseJournalDiagnostic.cs" Link="PhaseJournalDiagnostic.cs" />

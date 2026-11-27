@@ -10,36 +10,44 @@
       <Destinations ParameterType="Microsoft.Build.Framework.ITaskItem[]" Output="true" />
     </ParameterGroup>
     <Task>
-      <Reference Include="$(MSBuildToolsPath)/Microsoft.Build.dll" />
-      <Reference Include="$(MSBuildToolsPath)/../../shared/Microsoft.NETCore.App/$([System.Environment]::Version)/System.Runtime.dll" />
-      <Using Namespace="Microsoft.Build.Evaluation" />
-      <Using Namespace="Microsoft.Build.Graph" />
-      <Using Namespace="System.Collections.Generic" />
+      <Using Namespace="System.Reflection" />
       <Using Namespace="System.Threading" />
       <Code Type="Fragment" Language="cs"><![CDATA[
         var globals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in ((IBuildEngine6)BuildEngine).GetGlobalProperties())
             globals.Add(pair.Key, pair.Value);
 
-        using (var collection = new ProjectCollection())
+        // RoslynCodeTaskFactory compiles against netstandard. Bind the actual SDK's
+        // graph types in the running MSBuild instance, whose runtime can differ from the tool's.
+        var build = Assembly.Load("Microsoft.Build");
+        var entryType = build.GetType("Microsoft.Build.Graph.ProjectGraphEntryPoint", true);
+        var entries = Array.CreateInstance(entryType, 1);
+        entries.SetValue(Activator.CreateInstance(entryType, EntryProject, globals), 0);
+        var graphType = build.GetType("Microsoft.Build.Graph.ProjectGraph", true);
+        using (var collection = (IDisposable)Activator.CreateInstance(build.GetType("Microsoft.Build.Evaluation.ProjectCollection", true)))
         {
-            var graph = new ProjectGraph(new[] { new ProjectGraphEntryPoint(EntryProject, globals) },
-                collection, null, Parallelism, CancellationToken.None);
-            if (graph.ProjectNodes.Count > 500)
-            {
-                Log.LogError("project graph exceeds 500 project/property combinations");
-                return false;
-            }
+            var graph = Activator.CreateInstance(graphType, entries, collection, null, Parallelism, CancellationToken.None);
+            var nodes = (IEnumerable)graphType.GetProperty("ProjectNodes").GetValue(graph);
             var destinations = new List<ITaskItem>();
-            foreach (var node in graph.ProjectNodes)
+            var count = 0;
+            foreach (var node in nodes)
             {
+                if (++count > 500)
+                {
+                    Log.LogError("project graph exceeds 500 project/property combinations");
+                    return false;
+                }
+                var project = node.GetType().GetProperty("ProjectInstance").GetValue(node);
+                var projectType = project.GetType();
+                var directory = (string)projectType.GetProperty("Directory").GetValue(project);
+                var getProperty = projectType.GetMethod("GetPropertyValue", new[] { typeof(string) });
                 foreach (var property in PropertyNames)
                 {
-                    var value = node.ProjectInstance.GetPropertyValue(property);
+                    var value = (string)getProperty.Invoke(project, new object[] { property });
                     if (value.Length == 0)
                         continue;
                     var destination = new TaskItem(property);
-                    destination.SetMetadata("ProjectDirectory", node.ProjectInstance.Directory);
+                    destination.SetMetadata("ProjectDirectory", directory);
                     destination.SetMetadata("Destination", value);
                     destinations.Add(destination);
                 }
@@ -49,7 +57,7 @@
       ]]></Code>
     </Task>
   </UsingTask>
-  <Target Name="AntiphonEvaluateBuildGraph" Returns="@(_AntiphonEvaluatedDestination)">
+  <Target Name="AntiphonEvaluateBuildGraph" Returns="@(_AntiphonEvaluatedDestination)" KeepDuplicateOutputs="true">
     <EvaluateAntiphonBuildGraph EntryProject="$(_AntiphonGraphEntryProject)"
                                PropertyNames="$(_AntiphonGraphPropertyNames)"
                                Parallelism="$(_AntiphonGraphParallelism)">
