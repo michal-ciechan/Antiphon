@@ -3111,6 +3111,7 @@ public class AgentSessionLaunchFailureTests
 
             await using (var db = CreateContext())
             {
+                await db.SessionRuntimeActions.Where(a => a.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.SessionQueuedMessages.Where(m => m.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.TranscriptEntries.Where(t => t.AgentSessionId == SessionId).ExecuteDeleteAsync();
                 await db.AgentIncidents.Where(i => i.SessionId == SessionId).ExecuteDeleteAsync();
