@@ -36,13 +36,18 @@ by CARD-1801 in `d3451d20e25c014df27a715cf1d7e7d3e2ef527b`.
 
 ## Approving reviews
 
-The [CARD-2069 verification appendix](../superpowers/plans/2026-11-26-card-2069-p2-integrity-test-design.md)
-selects `/*/*/ReleaseImpactEnvelopeTests/P2CanonicalBytes` and
-`/*/*/ReleaseImpactEnvelopeTests/TamperedBindingsRefuse` for the new behavior.
-The [round-two supplement](2026-11-26-card-2069-code.md) records the prior review
-`fdfb4a55` and the extended admission witness in CP-2. The planned rows omit the
-selector class. A replay of the entire landed diff through the ordinary selector can
-yield the class, which does not establish that an individual subject's Review ran it.
+CARD-2069 Review `801d2b17-cc9f-4a2c-aff7-297937b9c269` approved Final/Full at
+`1d788ccd82febd9de97cd91514ce3e6a89564027`. It ran the four P2 methods
+`P2CanonicalBytes`, `TamperedBindingsRefuse`, `GlobalContractChangesRefuse` and
+`GraphAndTrustBindingsRefuse` in `ReleaseImpactEnvelopeTests`, plus the v1 envelope
+methods, two guard rows and the nine-class CP-Compat filter. Runs
+`20261126-102614-5508` and `20261126-104422-a6c3` show the named selection;
+none of its rows selected `ImpactedClassesSelectorTests`. The ordinary selector can
+include the class on the entire landed five-card diff. The Review's named rows covered
+the CARD-2069 subject.
+[CARD-2069 verification appendix](../superpowers/plans/2026-11-26-card-2069-p2-integrity-test-design.md) ·
+[Round-two supplement](2026-11-26-card-2069-code.md)
+
 The unit 58 and 62 plan entries list focused live-lane and nightly fixture checks.
 Review scope and exact executed Review rosters were unavailable for these commits.
 [Remaining PowerShell conversion plan](../superpowers/plans/2026-11-22-remaining-ps1-to-csharp.md)
@@ -51,11 +56,17 @@ Review scope and exact executed Review rosters were unavailable for these commit
 
 The short Merge contract verifies the subjects' narrow witness rows, policy pins and
 regeneration. The Merge selector uses the fixed and hand-table subsets. It does not
-use derived reverse edges to add tests. Replaying `--merge-subset --range
-27f8ede0c^..27f8ede0c` produced eight Linux rows without this class. The rc cut's seven-class
-guard row also omitted it. `DerivedImpactIndexTests` verifies index behavior and freshness.
-The Linux `Unit` method depends on the resulting repository-wide selection even though
-none of those guards asserts that selection against the old literal.
+use derived reverse edges to add tests. Merge task `9de06cf1` recorded the exact
+integrated SHA in `master-observations.txt`. Its ten batch rows and thirteen subject
+rows in `selections.tsv` and `individual-selections.tsv` omitted the class. The
+earlier batch candidate `eb6f5da97bdb8cede6c4112a48f18a7d40ab638f` omitted it in
+all 27 rows from task `b8aaa188`. Replaying `--merge-subset --range
+27f8ede0c^..27f8ede0c` produced eight Linux rows without the class.
+
+The rc cut's seven-class guard row also omitted it. `DerivedImpactIndexTests`
+verifies index behavior and freshness. The Linux `Unit` method depends on the
+resulting repository-wide selection even though none of those guards asserts that
+selection against the old literal.
 [Merge verification](../orchestration-loop.md#merge-verification-is-short-2026-11-18) ·
 [Cut receipts](2026-11-26-rc-cut-gates-pass3-bdb2790af.md)
 
@@ -73,7 +84,7 @@ was not part of the active six-guard union plus the class-selection guard.
 after index regeneration. This is a proposed CARD-1782 mapping for the shipped-input
 witness. The repair retains the named why-missed coverage, mirror routing, ordinal filter
 shape, JSON/text agreement, and the missing-Windows-class control while allowing legitimate
-reverse-edge membership changes. The separate single-path load and notification filter
+reverse-edge membership changes. The separate single-path land-notification filter
 assertion keeps its own exact list.
 
 ## Exemption
