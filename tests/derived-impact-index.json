@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 369,
+      "classes": 367,
       "reason": "allowlist"
     },
     {
@@ -2133,18 +2133,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 144,
+      "classes": 142,
       "reason": "cap",
-      "owed": 119,
+      "owed": 117,
       "first": [
-        "DelegateScriptKindTests",
-        "DelegateScriptLandApprovalTests",
         "DelegateScriptVerificationRoundTests",
         "NightlyVerificationContractTests",
         "PerTaskFinalUnitLaneWitnessTests",
         "QualificationSupervisorTests",
         "RunnerLinuxCompilerPolicyTests",
-        "Server2RollingDriverTests"
+        "Server2RollingDriverTests",
+        "VolumeRetirementApplyGateTests",
+        "AntiphonLogsTests"
       ]
     },
     {
@@ -3736,30 +3736,6 @@
       ]
     },
     {
-      "path": "scripts/c1008-host-proof.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1008HostFixtureSetupInsertionTests",
-        "C1008PlatformContractTests",
-        "C1364BoundLandWaitProofTests",
-        "CheckpointImportTests",
-        "HostJqPrerequisiteScriptTests",
-        "ProcessSpawnLimitTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
-        "RollingProductionMountTests",
-        "RollingVolumeRecycleCensusChurnTests",
-        "RollingVolumeRecycleScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementHostProofTests",
-        "VolumeRetirementPublicationTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
       "path": "scripts/c1008-retirement.sh",
       "classes": [
         "DockerStackDocumentationTests",
@@ -3769,13 +3745,6 @@
         "VolumeRetirementPublicationTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
-      "path": "scripts/c1609-host-proof.ps1",
-      "classes": [
-        "DockerStackDocumentationTests",
-        "VolumeRetirementHostProofTests"
       ]
     },
     {
@@ -3794,43 +3763,6 @@
       "path": "scripts/c1893-runner-hold.sh",
       "classes": [
         "DockerStackContractTests"
-      ]
-    },
-    {
-      "path": "scripts/c590-command.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1364BoundLandWaitProofTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RollingVolumeRecycleScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementCloseExemptionTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementHostProofTests",
-        "VolumeRetirementPublicationTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
-      ]
-    },
-    {
-      "path": "scripts/c590-real.ps1",
-      "classes": [
-        "C0824BranchDeletionRecycleAuditTests",
-        "C1364BoundLandWaitProofTests",
-        "ClaudeTokenRefreshOptInTests",
-        "DockerStackContractTests",
-        "RemoteScriptContractTests",
-        "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
-        "RollingVolumeRecycleScriptTests",
-        "VolumeRetirementApplyGateTests",
-        "VolumeRetirementCloseExemptionTests",
-        "VolumeRetirementContentTests",
-        "VolumeRetirementHostProofTests",
-        "VolumeRetirementPublicationTests",
-        "VolumeRetirementReceiptTests",
-        "VolumeRetirementWrapperTests"
       ]
     },
     {
@@ -4007,12 +3939,6 @@
       ]
     },
     {
-      "path": "scripts/fixtures/cache-bridge-diagnostics.ps1",
-      "classes": [
-        "CacheFixtureCompletionTests"
-      ]
-    },
-    {
       "path": "scripts/fixtures/nightly/c1375-probe/Probe.csproj",
       "classes": [
         "TestSelectionCatalogTests"
@@ -4089,6 +4015,31 @@
       ]
     },
     {
+      "path": "scripts/lib/Antiphon.Nightly/C1609HostProof.cs",
+      "classes": [
+        "DockerStackDocumentationTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/C590Bridge.cs",
+      "classes": [
+        "ClaudeTokenRefreshOptInTests",
+        "DockerStackContractTests",
+        "RemoteScriptContractTests",
+        "RetiredTempContainerHostTests",
+        "RetiredTempContainerScriptTests",
+        "VolumeRetirementApplyGateTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/C590BridgeOs.cs",
+      "classes": [
+        "DockerStackContractTests",
+        "RetiredTempContainerHostTests",
+        "RetiredTempContainerScriptTests"
+      ]
+    },
+    {
       "path": "scripts/lib/Antiphon.Nightly/CapabilityCli.cs",
       "classes": [
         "ImpactedClassesSelectorTests"
@@ -4141,6 +4092,12 @@
       "path": "scripts/lib/Antiphon.Nightly/DispatchSchedule.cs",
       "classes": [
         "RcDirtyLaunchOrderTests"
+      ]
+    },
+    {
+      "path": "scripts/lib/Antiphon.Nightly/DockerStackVerify.cs",
+      "classes": [
+        "ClaudeTokenRefreshOptInTests"
       ]
     },
     {
@@ -15312,6 +15269,7 @@
     {
       "path": "server/Domain/Entities/Stage.cs",
       "classes": [
+        "C590BridgeCaptureTests",
         "CommitOnSettleMigrationTests",
         "HerdrSupervisionFailureEvidenceTests",
         "PhoneHomeRunnerStartTests",
@@ -22845,6 +22803,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.SessionRunner.Tests/SessionRunnerCpuTests.cs",
+      "classes": [
+        "ReleaseImpactEnvelopeTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.SessionRunner.Tests/TestHelpers/PhoneHomeTestWebSocket.cs",
       "classes": [
         "Card1619RunnerExitTests",
@@ -24212,6 +24176,8 @@
         "DelegatePlatformScriptTests",
         "DelegateScriptAdoptTests",
         "DelegateScriptCapabilityTests",
+        "DelegateScriptKindTests",
+        "DelegateScriptLandApprovalTests",
         "DelegateScriptLandCompatibilityTests",
         "DelegateScriptLandStatusTests",
         "DelegateScriptStartRefTests",
@@ -24221,11 +24187,9 @@
         "NightlyScriptsTests",
         "PostLandEarlyWarningTests",
         "RemoteScriptContractTests",
-        "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "RoutingPinScriptTests",
         "VolumeRetirementContentTests",
-        "VolumeRetirementHostProofTests",
         "VolumeRetirementReceiptTests",
         "VolumeRetirementWrapperTests",
         "WindowsUnitPlatformAdmissionTests"
@@ -25883,6 +25847,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/C1609MappedGit.cs",
+      "classes": [
+        "VolumeRetirementHostProofTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/C1744G3PhoneHomeSupervisionTests.cs",
       "classes": [
         "HerdrPaneDisposalGuardedLiveTests",
@@ -25892,15 +25862,33 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/Scripts/C590BridgeCaptures.cs",
+      "classes": [
+        "C590BridgeCaptureTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Scripts/C590BridgeWorld.cs",
+      "classes": [
+        "C590BridgeCaptureTests",
+        "C590BridgeTests",
+        "CacheFixtureCompletionTests",
+        "ClaudeTokenRefreshOptInTests",
+        "RemoteScriptContractTests",
+        "RetireTempRunnerTimestampTests",
+        "RetiredTempContainerScriptTests",
+        "VolumeRetirementHostProofTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/Scripts/C590Harness.cs",
       "classes": [
-        "ClaudeTokenRefreshOptInTests",
+        "C590BridgeTests",
         "DockerDeliveryRecoveryCommandTests",
         "DockerStackSmokeCommandTests",
         "DockerStackVerifyTests",
         "DockerTestCommandTests",
-        "LinuxTestRosterTests",
-        "RetireTempRunnerTimestampTests"
+        "LinuxTestRosterTests"
       ]
     },
     {
@@ -25915,7 +25903,6 @@
       "classes": [
         "C0824BranchDeletionRecycleAuditTests",
         "RetiredTempContainerHostTests",
-        "RetiredTempContainerScriptTests",
         "RollingVolumeRecycleScriptTests",
         "VolumeRetirementPublicationTests"
       ]
@@ -27403,6 +27390,7 @@
         "ControlledLandingRemovalReadTests",
         "ExpectationObservationAdapterTests",
         "InterimVerificationReadinessTests",
+        "ReleaseImpactEnvelopeTests",
         "StaleWorkingTranscriptWatchdogTests"
       ]
     },
@@ -29142,6 +29130,7 @@
         "AgentTaskLandRecoveryTests",
         "DelegateScriptKindTests",
         "ReceiptScanDestinationIntegrationTests",
+        "ReleaseImpactEnvelopeTests",
         "TestDbFixtureLazyInitializationTests",
         "TestDbFixtureLifecycleTests",
         "WorktreeResidueRecoveryTests"
