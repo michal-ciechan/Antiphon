@@ -1886,8 +1886,12 @@ Automated Claude bodies, Enter, retries and maintenance keys use a fresh runner
 snapshot and `claudeDialogGuardV1`. The conditional backend boundary compares the
 accepted generation, session object, runtime epoch, output sequence and input
 revision under the launch gate and screen monitor, after asynchronous reads.
-Visible dialogs refuse; absent, unsupported, adopted or uncertain input history
-holds as Unknown. Each backend write attempt advances input revision before I/O,
+Visible dialogs refuse. An adopted PtyHost starts with unknown input history. Its
+Claude reader can establish a new boundary when it owns the current file, has
+parsed through EOF without a partial or malformed record, and has seen a genuine
+user prompt followed by idle in that binding. This requires two settled, literally
+empty composers at least 500 ms apart. A binding or generation change invalidates
+that proof. Missing, unsupported or uncertain evidence holds as Unknown. Each backend write attempt advances input revision before I/O,
 including explicit interactive input and a failed write. No raw-input fallback is
 permitted for an unsupported guarded peer.
 

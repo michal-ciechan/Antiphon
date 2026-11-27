@@ -77,6 +77,14 @@ scan inspects at most 64 indexed queue heads per pass and advances a wrapping cu
 it never takes the session semaphore or writes input. No-charge dialog, remote-control
 menu and missing-snapshot holds remain outside this incident. Herdr, capacity and wake-timeout
 paths keep their existing incident policies.
+The bridge pushes aged withheld incidents to operator attention through `AgentChanged`.
+Each incident includes the guarded retry and bound-session resume routes. For enabled,
+agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinutes` (10 by default,
+zero disables) starts with the first accepted inbound after the last outbound. A missed
+deadline uses the same operator feed. The incident pager excludes both reasons from
+digest-chat delivery. The wake worker retries withheld input after 10 seconds, then
+at 30-second intervals after one minute and two-minute intervals after five minutes.
+
 The inbound wake worker (CARD-1716) waits at most 1 s for one session's queue lock; a busy session's rows
 are skipped unchanged, in order, and retried 5 s later, so one held lock cannot stall every agent. Each
 pass records its completion (`GET /api/channels/wake-worker`) and logs a summary at Information when it

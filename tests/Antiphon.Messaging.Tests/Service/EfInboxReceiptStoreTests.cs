@@ -155,7 +155,7 @@ public sealed class EfInboxReceiptStoreTests
     internal static DbUpdateException DuplicateInboxException()
     {
         var postgres = new PostgresException(
-            "duplicate key value violates unique constraint \"IX_Inbox_Channel_ChannelMessageId\"",
+            $"duplicate key value violates unique constraint \"{InboxUniqueConstraint.ChannelMessageIndex}\"",
             "ERROR",
             "ERROR",
             PostgresErrorCodes.UniqueViolation, constraintName: InboxUniqueConstraint.ChannelMessageIndex);

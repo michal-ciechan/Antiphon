@@ -194,6 +194,33 @@ public class ResumeReceiptReadinessTests
         unsafeVariants.ShouldBeEmpty("neither lost history nor replacement-decoded input can certify a complete current transcript");
     }
 
+    [Test]
+    public async Task AdoptedInputBoundaryRequiresAnOwnedFullyReadIdleTurn()
+    {
+        await using var world = new World(Prompt("fixture-prompt", "fixture"));
+        world.Tailer.Start();
+        await Ready(world.Tailer);
+        world.Tailer.ReadIdleClaudeBinding().ShouldBeNull();
+        var end = JsonSerializer.Serialize(new
+        {
+            type = "assistant", uuid = "fixture-answer", message = new
+            {
+                role = "assistant", stop_reason = "end_turn", content = new[] { new { type = "text", text = "fixture" } },
+            }
+        }) + "\n";
+        await world.Tailer.TerminalObservation.ReadGate.WaitAsync();
+        try
+        {
+            await File.AppendAllTextAsync(world.Path, end);
+            world.Tailer.ReadIdleClaudeBinding().ShouldBeNull("unread suffix");
+        }
+        finally { world.Tailer.TerminalObservation.ReadGate.Release(); }
+        await Ready(world.Tailer);
+        world.Tailer.ReadIdleClaudeBinding().ShouldNotBeNullOrEmpty();
+        await File.AppendAllTextAsync(world.Path, "{");
+        world.Tailer.ReadIdleClaudeBinding().ShouldBeNull("partial record");
+    }
+
     private static async Task Ready(TranscriptTailer tailer) =>
         await Until(() => tailer.Snapshot().Readiness?.Status == "Ready");
 

@@ -135,6 +135,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
     private int _pendingBytes;
     private bool _reading = true;
     private bool _readinessParseFailed;
+    private bool _boundHasUserPrompt;
     private bool _readinessBindingInvalidated;
     private readonly UTF8Encoding _readinessUtf8 = new(false, true);
 
@@ -302,6 +303,17 @@ internal sealed class TranscriptTailer : ITranscriptTailer
 
     /// <summary>Invoked after a read-to-end and before the binding is accepted. Production leaves it unset.</summary>
     internal Func<CancellationToken, Task>? CompactionObserveAfterRead { get; set; }
+
+    public string? ReadIdleClaudeBinding()
+    {
+        lock (_gate)
+        {
+            if (!_boundHasUserPrompt || _working.Verdict != TranscriptWorkingState.WorkingVerdict.Idle
+                || ObserveReadiness().Status != "Ready")
+                return null;
+            return CaptureBinding()?.Identity;
+        }
+    }
 
     internal string? BindingIdentity => CaptureBinding()?.Identity;
     string? ITranscriptTailer.NativeBindingIdentity => !_claimRevoked
@@ -722,6 +734,12 @@ internal sealed class TranscriptTailer : ITranscriptTailer
                     p.ApiErrorTimeZoneId);
                 _entries.Add(evt);
                 _working.Observe(evt);
+                if (!_boundHasUserPrompt && evt.Kind == TranscriptKinds.UserPrompt
+                    && !string.IsNullOrWhiteSpace(evt.Text)
+                    && !TranscriptKinds.IsInterruptPrompt(evt.Kind, evt.Text)
+                    && !TranscriptKinds.IsLocalCommandRecord(evt.Kind, evt.Text)
+                    && !TranscriptKinds.IsCompactionContinuationPrompt(evt.Kind, evt.Text))
+                    _boundHasUserPrompt = true;
             }
             _events.Publish(SessionRunnerEventNames.SessionTranscript, evt);
         }
@@ -926,6 +944,7 @@ internal sealed class TranscriptTailer : ITranscriptTailer
             _readinessBindingId = Guid.NewGuid().ToString("N");
             _parsedThrough = 0;
             _pendingBytes = 0;
+            _boundHasUserPrompt = false;
             _readinessParseFailed = false;
             _readinessBindingInvalidated = false;
             _reading = true;

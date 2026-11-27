@@ -2847,7 +2847,6 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
         private AdoptedComposerSample? _adoptedComposer;
         private sealed record AdoptedComposerSample(string Binding, DateTime Generation, string Screen, long Input);
         private DateTimeOffset _adoptedComposerAt;
-        private DateTimeOffset _nextAdoptedHistoryRead;
 
         private bool DialogInputHistoryKnown => !_terminalInputUncertain && _backend == SessionBackends.PtyHost
             && (!_adopted || (_verifiedAdoptedBinding is not null
@@ -2855,53 +2854,33 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
 
         // Establish the first input boundary of this runner epoch using the owned native transcript
         // and a stationary empty composer. Subsequent writes use the normal revision fence.
-        private async Task VerifyAdoptedDialogHistoryAsync(TimeProvider clock, CancellationToken ct)
+        private void VerifyAdoptedDialogHistory(TimeProvider clock)
         {
-            ITranscriptTailer tailer;
-            AdoptedComposerSample sample;
-            long outputSequence;
-            lock (_gate)
+            if (!_adopted || DialogInputHistoryKnown) return;
+            if (_backend != SessionBackends.PtyHost || _status != "Running" || _terminalInputUncertain
+                || _terminalInputWriters != 0 || _terminalComposerPending || _acceptedStartedAt is not { } generation
+                || _tailer?.NativeBindingIdentity is not { } binding || _screen?.GetScreenText() is not { } screen
+                || ClaudeDialogObservation.Observe(screen).State != ClaudeDialogState.Clear || ClaudeScreen.IsWorking(screen)
+                || !ClaudeScreen.TryReadComposer(screen, out var composer) || composer.Length != 0)
             {
-                if (!_adopted || DialogInputHistoryKnown) return;
-                if (_backend != SessionBackends.PtyHost || _status != "Running" || _terminalInputUncertain
-                    || _terminalInputWriters != 0 || _terminalComposerPending || _acceptedStartedAt is not { } generation
-                    || _tailer?.NativeBindingIdentity is not { } binding
-                    || _screen?.GetScreenText() is not { } screen
-                    || ClaudeDialogObservation.Observe(screen).State != ClaudeDialogState.Clear
-                    || ClaudeScreen.IsWorking(screen) || !ClaudeScreen.TryReadComposer(screen, out var composer) || composer.Length != 0)
-                {
-                    _adoptedComposer = null;
-                    return;
-                }
-
-                tailer = _tailer;
-                sample = new(binding, generation, ClaudeScreen.Stable(screen), _inputRevision);
-                var now = clock.GetUtcNow();
-                if (sample != _adoptedComposer)
-                {
-                    _adoptedComposer = sample;
-                    _adoptedComposerAt = now;
-                    return;
-                }
-                if (now - _adoptedComposerAt < TimeSpan.FromMilliseconds(500) || now < _nextAdoptedHistoryRead) return;
-                _nextAdoptedHistoryRead = now.AddSeconds(5);
-                outputSequence = _lastSequence;
+                _adoptedComposer = null;
+                return;
             }
-
-            var history = await tailer.ObserveTerminalSeatAsync(ct);
-            if (history.Status != TerminalTranscriptReadStatus.Success || history.Verdict != TerminalTranscriptVerdict.Idle
-                || string.IsNullOrEmpty(history.FileRevision) || string.IsNullOrEmpty(history.BindingIdentity)
-                || history.LastPromptRevision is not > 0 || history.LastEndRevision is not { } end
-                || end <= history.LastPromptRevision || history.TranscriptRevision < end) return;
-            lock (_gate)
+            var sample = new AdoptedComposerSample(binding, generation, ClaudeScreen.Stable(screen), _inputRevision);
+            var now = clock.GetUtcNow();
+            if (sample != _adoptedComposer)
             {
-                if (_adoptedComposer == sample && ReferenceEquals(tailer, _tailer)
-                    && _acceptedStartedAt == sample.Generation && tailer.NativeBindingIdentity == sample.Binding
-                    && _lastSequence == outputSequence && _inputRevision == sample.Input && _status == "Running"
-                    && !_terminalInputUncertain && _terminalInputWriters == 0 && !_terminalComposerPending)
-                    _verifiedAdoptedBinding = sample.Binding;
+                _adoptedComposer = sample;
+                _adoptedComposerAt = now;
+            }
+            else if (now - _adoptedComposerAt >= TimeSpan.FromMilliseconds(500)
+                && _tailer.ReadIdleClaudeBinding() == binding)
+            {
+                _verifiedAdoptedBinding = binding;
+                _adoptedComposer = null;
             }
         }
+
         private string _backend = SessionBackends.PtyHost;
         public string Backend => _backend;
         private string? _pendingReason;
@@ -4620,9 +4599,9 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
                 }
             }
 
-            if (_adopted) await VerifyAdoptedDialogHistoryAsync(clock, ct);
             lock (_gate)
             {
+                VerifyAdoptedDialogHistory(clock);
                 var dialog = ObserveDialog(runtimeEpoch, clock);
                 var conditional = !herdrLane && CanConditionalPtyRead();
                 var etag = conditional

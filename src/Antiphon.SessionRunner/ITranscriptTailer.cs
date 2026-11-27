@@ -57,6 +57,9 @@ internal interface ITranscriptTailer : IAsyncDisposable
     /// <summary>The transcript currently being tailed, or null while unbound.</summary>
     string? BoundTranscriptPath { get; }
 
+    /// <summary>The current Claude binding only when the owned reader is at EOF after an idle turn.</summary>
+    string? ReadIdleClaudeBinding() => null;
+
     /// <summary>Opaque current native file/conversation identity; unsupported tailers return null.</summary>
     string? NativeBindingIdentity => null;
 

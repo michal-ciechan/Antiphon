@@ -336,8 +336,9 @@ public class ClaudeDialogInputGuardTests
         var tailer = new Tailer(f.Id);
         f.Session.AttachTailerForTest(tailer);
         (await f.SendAsync("early")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
-        tailer.Observation = new(TerminalTranscriptReadStatus.Success, TerminalTranscriptVerdict.Idle,
-            "owned", "file-revision", 200, 3, 3, 1);
+        f.Clock.Now += TimeSpan.FromSeconds(1);
+        (await f.SendAsync("still behind")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        tailer.HistoryReady = true;
         f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ existing draft"));
         (await f.SendAsync("draft")).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
         f.Session.RenderDialogScreenForTest(Clear);
@@ -393,13 +394,13 @@ public class ClaudeDialogInputGuardTests
 
     private sealed class Tailer(Guid id) : ITranscriptTailer
     {
-        public TerminalTranscriptObservation Observation { get; set; } =
-            new(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown);
+        public bool HistoryReady { get; set; }
+        public string? ReadIdleClaudeBinding() => HistoryReady ? NativeBindingIdentity : null;
         public Action? BeforeObservation { get; init; }
         public Task<TerminalTranscriptObservation> ObserveTerminalSeatAsync(CancellationToken ct)
         {
             BeforeObservation?.Invoke();
-            return Task.FromResult(Observation);
+            return Task.FromResult(new TerminalTranscriptObservation(TerminalTranscriptReadStatus.Unbound, TerminalTranscriptVerdict.Unknown));
         }
         private RunnerTranscriptDto _snapshot = new(id, [], 0);
         public string? BoundTranscriptPath => "/owned/conversation.jsonl";

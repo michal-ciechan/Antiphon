@@ -4,7 +4,7 @@ Telegram inbound `1904` reached session `fb38e751-dfbd-4b8d-9ce5-ef84d1828461` a
 
 ## Recovery
 
-An adopted PtyHost session can establish a new input boundary from its owned native transcript. The runner requires a complete bounded read, a real prompt followed by an idle boundary, and two observations of a clear, empty composer at least 500 ms apart. The session generation, binding and input revision fence the proof. Every subsequent guarded write still checks the current dialog. An unavailable transcript, draft or modal keeps the input pending.
+An adopted PtyHost session can establish a new input boundary from its owned native transcript. The runner requires the current native reader to have parsed through EOF, a real prompt followed by an idle boundary in that binding, and two observations of a clear, empty composer at least 500 ms apart. The session generation, binding and input revision fence the proof. Every subsequent guarded write still checks the current dialog. An unavailable transcript, draft or modal keeps the input pending.
 
 The channel wake worker revisits durable queue ownership. Its retry schedule for withheld rows starts after 10 seconds, backs off to 30 seconds after one minute, and reaches two minutes after five minutes. The original queue row owns the reply correlation. The persisted UserPrompt supplies delivery evidence.
 
