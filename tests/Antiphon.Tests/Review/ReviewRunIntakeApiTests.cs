@@ -592,7 +592,6 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
             await recipient.EnableClaudeDialogObservationAsync(connection, launch.SessionId);
             await dispatch.ServiceProvider.GetRequiredService<AgentSessionService>()
                 .ResumeInterruptedLaunchAsync(launch.SessionId, launch.AgentId, ct);
-            await server.Queue.FlushSessionAsync(launch.SessionId, ct);
 
             var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.ExecutionTaskId == taskId, ct);
             row.Status.ShouldBe(QueuedMessageStatus.Sent);
