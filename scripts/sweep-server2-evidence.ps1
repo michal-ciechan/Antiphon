@@ -102,8 +102,7 @@ try {
             $owner.summary.status -notin @('Succeeded', 'Failed', 'Canceled') -or
             -not $owner.summary.completedAt -or
             [DateTime]$owner.summary.completedAt -ge [DateTime]::UtcNow.AddHours(-$MinAgeHours) -or
-            ($owner.session -and $owner.session.status -notin @('Stopped', 'Failed')) -or
-            ($owner.summary.cardId -and (Read-Antiphon "/api/cards/$($owner.summary.cardId)").status -notin @('Done', 'Canceled'))) {
+            ($owner.session -and $owner.session.status -notin @('Stopped', 'Failed'))) {
             Write-Output "kept owner-not-settled $path"
             continue
         }

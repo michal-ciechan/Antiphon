@@ -640,6 +640,9 @@ public static class CheckpointApp
         }
 
         var resultsPreview = Path.GetFullPath(Path.IsPathRooted(manifest.ResultsRoot) ? manifest.ResultsRoot : Path.Combine(repo, manifest.ResultsRoot));
+        if (CheckpointDiskSpace.Refuse(output, resultsPreview))
+            return new StartResult(ExitCodes.DiskLow, "");
+
         var writeRoots = new List<string> { resultsPreview };
         foreach (var build in manifest.Builds)
         {

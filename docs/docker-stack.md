@@ -1283,7 +1283,7 @@ container as its app user. The caller maintains a release list off the task bran
 names the exact task evidence directory and the full owning task ID, for example
 `[{"path":"/work/review-evidence/task-12345678","taskId":"12345678-1234-1234-1234-123456789abc"}]`.
 Release a directory only after its durable receipts have been retained and its references have been
-cleared, including card discussions. The sweep itself checks settlement, the owner's card,
+cleared, including card discussions. The sweep itself checks task settlement,
 open task records, board search, Git references and the file tree. It keeps evidence for at least
 72 hours after both the task's completion and the newest write in the tree.
 
