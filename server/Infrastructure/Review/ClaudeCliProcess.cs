@@ -223,10 +223,11 @@ public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> setti
         """, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace | RegexOptions.NonBacktracking)]
     private static partial Regex SensitiveDiagnosticText();
 
-    [GeneratedRegex("""
-        \b(?:(?<overload>(?:529|overloaded))|(?<rateLimit>(?:429|rate[ -]limit(?:ed)?))|
-        (?<network>(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|connection (?:refused|reset)))|(?<unknownOption>unknown option))\b
-        """, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(
+        @"\b(?:(?<overload>(?:529|overloaded))|(?<rateLimit>(?:429|rate[ -]limit(?:ed)?))|"
+        + @"(?<network>(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|connection (?:refused|reset)))|"
+        + @"(?<unknownOption>unknown option))\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PublicDiagnosticReason();
 
     public static string Excerpt(string? text)
