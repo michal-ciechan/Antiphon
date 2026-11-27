@@ -26,7 +26,7 @@ public static class SharedApp
         {
             if (_fixture is null)
             {
-                using var span = TestTrace.Span("SharedApp initialize", "antiphon.fixture", nameof(SharedApp));
+                using var span = TestTrace.ChunkSpan("SharedApp initialize", "antiphon.fixture", nameof(SharedApp));
                 var fixture = new AntiphonAppFixture
                 {
                     // One host serves every test that opts in, so its log cannot be per-test. Name
@@ -50,7 +50,7 @@ public static class SharedApp
         var fixture = Interlocked.Exchange(ref _fixture, null);
         if (fixture is not null)
         {
-            using var span = TestTrace.Span("SharedApp dispose", "antiphon.fixture", nameof(SharedApp));
+            using var span = TestTrace.ChunkSpan("SharedApp dispose", "antiphon.fixture", nameof(SharedApp));
             await fixture.DisposeAsync();
         }
     }

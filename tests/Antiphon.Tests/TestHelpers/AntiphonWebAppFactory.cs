@@ -246,6 +246,7 @@ public class AntiphonWebAppFactory : WebApplicationFactory<ServerProgram>
         }
         if (disposing && Directory.Exists(_workspacePath))
         {
+            using var span = TestTrace.ChunkSpan("AntiphonWebAppFactory delete workspace");
             try { Directory.Delete(_workspacePath, recursive: true); }
             catch (IOException) { /* best effort */ }
             catch (UnauthorizedAccessException) { /* best effort */ }

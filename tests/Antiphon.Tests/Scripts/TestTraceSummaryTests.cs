@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
@@ -197,6 +198,21 @@ public sealed class TestTraceSummaryTests
         TestTrace.HasFileDestination(" ", "").ShouldBeFalse();
         TestTrace.HasFileDestination("traces", null).ShouldBeTrue();
         TestTrace.HasFileDestination(null, "trace.jsonl").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Chunk_helper_spans_require_the_trace_directory_even_with_a_listener()
+    {
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => ReferenceEquals(source, TestTrace.Source),
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var span = TestTrace.ChunkSpan("chunk helper opt-in test");
+        var enabled = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(TestTrace.DirectoryVariable));
+        (span is not null).ShouldBe(enabled);
     }
 
     [Test]

@@ -52,7 +52,7 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
         builder.Services.AddBuildSlotBroker(builder.Configuration);
 
         WebApplication app;
-        using (TestTrace.Span("BuildSlotTestHost build"))
+        using (TestTrace.ChunkSpan("BuildSlotTestHost build"))
             app = builder.Build();
         if (observeRequest is not null)
             app.Use(async (context, next) =>
@@ -67,7 +67,7 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
                 await next();
             });
         app.MapBuildSlotRoutes();
-        using (TestTrace.Span("BuildSlotTestHost start"))
+        using (TestTrace.ChunkSpan("BuildSlotTestHost start"))
             await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single();
@@ -79,7 +79,7 @@ internal sealed class BuildSlotTestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        using var span = TestTrace.Span("BuildSlotTestHost dispose");
+        using var span = TestTrace.ChunkSpan("BuildSlotTestHost dispose");
         Http.Dispose();
         await _app.StopAsync();
         await _app.DisposeAsync();

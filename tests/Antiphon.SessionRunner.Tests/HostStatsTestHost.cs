@@ -43,10 +43,10 @@ internal sealed class HostStatsTestHost : IAsyncDisposable
         builder.Services.AddHostStats(builder.Configuration, startSampler: false);
 
         WebApplication app;
-        using (TestTrace.Span("HostStatsTestHost build"))
+        using (TestTrace.ChunkSpan("HostStatsTestHost build"))
             app = builder.Build();
         app.MapHostStatsRoutes();
-        using (TestTrace.Span("HostStatsTestHost start"))
+        using (TestTrace.ChunkSpan("HostStatsTestHost start"))
             await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single();
@@ -58,7 +58,7 @@ internal sealed class HostStatsTestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        using var span = TestTrace.Span("HostStatsTestHost dispose");
+        using var span = TestTrace.ChunkSpan("HostStatsTestHost dispose");
         Http.Dispose();
         await _app.StopAsync();
         await _app.DisposeAsync();

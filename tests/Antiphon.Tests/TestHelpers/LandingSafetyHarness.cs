@@ -44,6 +44,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async Task InitializeAsync(bool reversibleTip = false)
     {
+        using var span = TestTrace.ChunkSpan("LandingSafetyHarness initialize");
         await Fixture.InitializeAsync();
         Schema = reversibleTip
             ? await MigrationTestDatabase.CreateReversibleTipAsync()
@@ -65,6 +66,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     private void BuildServices()
     {
+        using var span = TestTrace.ChunkSpan("LandingSafetyHarness build services");
         Fixture.Git.Evidence = async arguments =>
         {
             // The read below only feeds the optional evidence file; without ANTIPHON_C448_EVIDENCE it is skipped.
@@ -465,6 +467,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var span = TestTrace.ChunkSpan("LandingSafetyHarness dispose");
         if (Services is not null) await Services.DisposeAsync();
         if (Schema is not null) await Schema.DisposeAsync();
         await Fixture.DisposeAsync();

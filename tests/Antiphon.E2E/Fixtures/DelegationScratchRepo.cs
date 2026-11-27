@@ -15,6 +15,7 @@ public sealed class DelegationScratchRepo : IDisposable
 
     public DelegationScratchRepo(string prefix = "antiphon-delegation-e2e")
     {
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("DelegationScratchRepo initialize");
         Path = Directory.CreateTempSubdirectory(prefix).FullName;
         var root = FindRepoRoot();
 
@@ -73,6 +74,7 @@ public sealed class DelegationScratchRepo : IDisposable
 
     private void Git(params string[] args)
     {
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("DelegationScratchRepo git process and wait");
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "git",

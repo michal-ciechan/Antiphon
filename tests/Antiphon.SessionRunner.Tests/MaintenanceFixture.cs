@@ -120,7 +120,7 @@ internal static class MaintenanceFixture
         using var process = Start(psi);
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        WaitForExit(process);
         if (process.ExitCode != 0)
             throw new InvalidOperationException("stat " + path + " -> " + stderr);
         return stdout.Trim();
@@ -153,9 +153,15 @@ internal static class MaintenanceFixture
         using var process = Start(psi);
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        WaitForExit(process);
         if (process.ExitCode != 0)
             throw new InvalidOperationException("mklink /J " + link + " -> " + stderr + stdout);
+    }
+
+    private static void WaitForExit(Process process)
+    {
+        using var span = TestTrace.ChunkSpan("MaintenanceFixture process wait");
+        process.WaitForExit();
     }
 
     private static ProcessStartInfo Redirect(string fileName) => new(fileName)
@@ -167,7 +173,7 @@ internal static class MaintenanceFixture
 
     private static Process Start(ProcessStartInfo psi)
     {
-        using var span = TestTrace.Span("MaintenanceFixture process launch");
+        using var span = TestTrace.ChunkSpan("MaintenanceFixture process launch");
         return Process.Start(psi) ?? throw new InvalidOperationException(psi.FileName + " did not start");
     }
 }

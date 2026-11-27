@@ -52,11 +52,11 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
         builder.Services.AddSingleton<IHostMemoryProbe>(new BuildSlotBrokerTests.FakeMemory { AvailableBytes = 64L * 1024 * 1024 * 1024 });
         builder.Services.AddSingleton<IHostLoadHistorySource>(_history);
         WebApplication app;
-        using (TestTrace.Span("C1514HostLoadFixture build"))
+        using (TestTrace.ChunkSpan("C1514HostLoadFixture build"))
             app = builder.Build();
         app.MapHostStatsRoutes(); app.MapBuildSlotRoutes();
         app.MapGet("/authority/{id}", async (string id, HttpContext context) => await _authorities[id](context));
-        using (TestTrace.Span("C1514HostLoadFixture start"))
+        using (TestTrace.ChunkSpan("C1514HostLoadFixture start"))
             await app.StartAsync();
         Settings = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<HostStatsSettings>>().Value;
         return app;
@@ -66,7 +66,7 @@ public sealed class C1514HostLoadFixture : IAsyncDisposable
         if (_app.IsValueCreated)
         {
             var app = await _app.Value;
-            using var span = TestTrace.Span("C1514HostLoadFixture dispose");
+            using var span = TestTrace.ChunkSpan("C1514HostLoadFixture dispose");
             await app.StopAsync();
             await app.DisposeAsync();
         }

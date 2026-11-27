@@ -257,7 +257,7 @@ internal sealed class TestOwnedPtyHost
 
     private async Task WaitNativeAsync(ProcessIdentity identity, TimeSpan remaining, CancellationToken ct)
     {
-        using var span = TestTrace.Span("TestOwnedPtyHost process wait");
+        using var span = TestTrace.ChunkSpan("TestOwnedPtyHost process wait");
         while (true)
         {
             var observation = Observe(identity);

@@ -55,6 +55,15 @@ public static partial class TestTrace
     private static ActivityListener? _listener;
     private static FileSink? _sink;
 
+    private static readonly bool ChunkTracingEnabled =
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(DirectoryVariable));
+
+    /// <summary>Starts an opt-in helper span for the chunk trace.</summary>
+    public static Activity? ChunkSpan(string name) => ChunkTracingEnabled ? Span(name) : null;
+
+    public static Activity? ChunkSpan(string name, string key, object? value) =>
+        ChunkTracingEnabled ? Span(name, key, value) : null;
+
     /// <summary>Starts a child span of whatever span is current (the test body, or an enclosing fixture span).</summary>
     public static Activity? Span(string name) => Source.StartActivity(name, ActivityKind.Internal);
 
@@ -269,7 +278,10 @@ public static partial class TestTrace
                 while (_pending.TryDequeue(out var line))
                     builder.Append(line).Append('\n');
                 try { File.AppendAllText(_path, builder.ToString()); }
-                catch (IOException) { /* a trace write never fails a test */ }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Losing access to the trace destination must not fail a test.
+                }
             }
         }
     }

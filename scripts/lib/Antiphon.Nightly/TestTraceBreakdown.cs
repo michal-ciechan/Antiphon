@@ -24,7 +24,10 @@ namespace Antiphon.Nightly
                     ? Directory.GetFiles(path, "test-trace-*.jsonl", SearchOption.AllDirectories)
                     : new[] { path };
                 if (files.Length == 0)
-                    throw new InvalidDataException("No test-trace JSONL files in " + path + ".");
+                {
+                    error.WriteLine("No test-trace JSONL files in " + path + ".");
+                    return 1;
+                }
                 foreach (var file in files.OrderBy(file => file, StringComparer.Ordinal))
                     output.Write(Text(TestTraceSummary.Read(file), file));
                 return 0;
@@ -51,7 +54,6 @@ namespace Antiphon.Nightly
             var start = lifetime?.Start ?? timed.Min(s => s.Start);
             var end = lifetime is null ? timed.Max(End) : End(lifetime);
             var byId = timed.ToLookup(s => (s.TraceId, s.SpanId));
-
 
             var children = timed.Where(s => s.ParentId != null).ToLookup(s => (s.TraceId, s.ParentId));
             // TUnit test cases have independent trace IDs; suite membership is carried by tags.
@@ -108,7 +110,7 @@ namespace Antiphon.Nightly
             }
             output.WriteLine($"    {"Idle/unaccounted",-22} {Math.Max(0, wall - accounted):F3}");
             output.WriteLine("    Per-test setup includes time inside the test case before its first body span.");
-            output.WriteLine("    - = no observed timing");
+            output.WriteLine("    - = no observed timing (TUnit 1.44 does not expose ParallelLimiter wait)");
             output.WriteLine("  Top 20 spans by inclusive time (ms)");
             foreach (var span in timed.Where(s => s != lifetime).OrderByDescending(s => s.DurationMs).Take(20))
                 output.WriteLine($"    {span.DurationMs,12:F3}  {span.Name}{TestLabel(span)}");

@@ -263,7 +263,8 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
         foreach (var arg in new[] { typeof(LandDeliveryFixture).Assembly.Location, "--treenode-filter", "/*/*/AgentTaskLandDeliveryE2ETests/C467_V22*" }) start.ArgumentList.Add(arg);
         start.Environment["ANTIPHON_C467_CONNECTION"] = _connection;
         start.Environment["ANTIPHON_C467_CHILD"] = JsonSerializer.Serialize(new[] { Root, _app.OwnedRunnerUrl, cut, ready });
-        _child = Process.Start(start)!;
+        using (Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("LandDeliveryFixture owned child launch"))
+            _child = Process.Start(start)!;
         _childOut = _child.StandardOutput.ReadToEndAsync(); _childError = _child.StandardError.ReadToEndAsync();
         await UntilAsync(() => Task.FromResult(File.Exists(ready) || _child.HasExited), "owned child startup", 120);
         _child.HasExited.ShouldBeFalse(_child.HasExited ? await _childError : "");
@@ -295,7 +296,8 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     {
         if (_child is null) return;
         if (!_child.HasExited) _child.Kill(entireProcessTree: false);
-        await _child.WaitForExitAsync();
+        using (Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("LandDeliveryFixture owned child wait"))
+            await _child.WaitForExitAsync();
         await File.WriteAllTextAsync(Path.Combine(Root, "child-" + _child.Id + ".stdout.log"), await _childOut!);
         await File.WriteAllTextAsync(Path.Combine(Root, "child-" + _child.Id + ".stderr.log"), await _childError!);
         _child.Dispose(); _child = null;
@@ -405,6 +407,7 @@ public sealed partial class LandDeliveryFixture : IAsyncDisposable
     }
     private async Task<string> GitAsync(string cwd, params string[] args)
     {
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("LandDeliveryFixture git process and wait");
         var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-c", "user.name=C467", "-c", "user.email=c467@example.invalid" }.Concat(args)) start.ArgumentList.Add(arg);

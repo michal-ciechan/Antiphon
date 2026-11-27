@@ -130,7 +130,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
 
     private Process StartProcess(int port)
     {
-        using var span = TestTrace.Span("E2E isolated runner process launch");
+        using var span = TestTrace.ChunkSpan("E2E isolated runner process launch");
         var runnerPath = TestAppHostPath.Resolve(
             "Antiphon.SessionRunner", AppContext.BaseDirectory,
             OperatingSystem.IsWindows(), siblingProducer: false);
@@ -211,7 +211,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
         {
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
-            using (TestTrace.Span("E2E isolated runner process wait"))
+            using (TestTrace.ChunkSpan("E2E isolated runner process wait"))
                 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
         }
         catch (InvalidOperationException)
