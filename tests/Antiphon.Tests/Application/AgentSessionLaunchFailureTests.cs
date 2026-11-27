@@ -2023,60 +2023,112 @@ public class AgentSessionLaunchFailureTests
     [Test]
     public async Task InterruptedChannelContinuationSurvivesCrashAfterBoundaryCommit()
     {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
         using var stop = new CancellationTokenSource();
-        var abandoned = new FakeAgentProtocolAdapter
+        var cut = new ChannelBoundaryCommitCut(stop);
+        var abandoned = new FakeAgentProtocolAdapter();
+        Guid sessionId;
+        Guid agentId;
+        Guid inboundId;
+        string workspace;
+
+        await using (var original = await OpenAsync([abandoned], configureDb: options => options.AddInterceptors(cut)))
         {
-            ThrowOnStartFactory = () =>
-            {
-                stop.Cancel();
-                return new OperationCanceledException(stop.Token);
-            },
-        };
+            sessionId = original.SessionId;
+            agentId = original.AgentId;
+            workspace = await db.AgentSessions.Where(s => s.Id == sessionId).Select(s => s.Cwd).SingleAsync();
+            var chat = await original.BindChannelAsync();
+            const string body = "synthetic interrupted channel prompt";
+            inboundId = await original.SeedChannelCorrelationAsync(body, $"telegram:{chat}");
+            await original.InsertTranscriptEntryAsync(TranscriptKinds.UserPrompt, body);
+            var store = original.Provider.GetRequiredService<SessionStateStore>();
+            var before = await store.ReadAsync(sessionId, CancellationToken.None);
+            before.Working.ShouldBeTrue();
+
+            await Should.ThrowAsync<OperationCanceledException>(() => LaunchAsync(original, stop.Token));
+            abandoned.Started.ShouldBeFalse();
+            (await store.ReadAsync(sessionId, CancellationToken.None)).LastSequence.ShouldBe(before.LastSequence);
+            (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == sessionId && m.Id != inboundId))
+                .ShouldBe(0);
+        }
+
+        // Use a separate observation connection after disposing the interrupted service.
+        var boundary = await db.TranscriptEntries.AsNoTracking().SingleAsync(t =>
+            t.AgentSessionId == sessionId && t.Kind == TranscriptKinds.SessionRestartBoundary);
+        boundary.Id.ShouldBe(cut.BoundaryId);
+        boundary.StopReason.ShouldBe(ChannelRestartContinuation.Due);
+
         var resumed = new FakeAgentProtocolAdapter();
         var duplicate = new FakeAgentProtocolAdapter();
-        await using var fixture = await LaunchFixture.CreateAsync(abandoned, resumed, duplicate);
-        await fixture.BindChannelAsync();
-        await using var db = LaunchFixture.CreateContext();
-        var now = DateTime.UtcNow;
-        db.TranscriptEntries.Add(new TranscriptEntry
-        {
-            AgentSessionId = fixture.SessionId, Sequence = 1, Uuid = Guid.NewGuid().ToString("D"),
-            Kind = TranscriptKinds.UserPrompt, Role = "user", Text = "synthetic interrupted prompt",
-            Timestamp = now, CreatedAt = now,
-        });
-        await db.SaveChangesAsync();
+        await using var recovered = await OpenAsync([resumed, duplicate], sessionId, agentId);
+        var startupSequence = await recovered.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText,
+            "synthetic startup output");
+        await recovered.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        (await TranscriptTurnWindow.FindActionBoundaryAsync(db, sessionId, startupSequence, CancellationToken.None))
+            .ShouldBeNull();
+        await recovered.Dispatcher.OnTurnEndAsync(sessionId, CancellationToken.None);
+        await recovered.DrainOutboundAsync();
+        recovered.Messaging.SentReplies.ShouldBeEmpty();
+        (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == inboundId))
+            .ChannelReplySettledAt.ShouldBeNull();
 
-        await Should.ThrowAsync<OperationCanceledException>(() =>
-            fixture.LaunchInteractiveAsync(resume: true, ct: stop.Token));
-        abandoned.Started.ShouldBeFalse();
-        var boundary = await db.TranscriptEntries.AsNoTracking().SingleAsync(t =>
-            t.AgentSessionId == fixture.SessionId && t.Kind == TranscriptKinds.SessionRestartBoundary);
-        (await db.SessionQueuedMessages.CountAsync(m => m.AgentSessionId == fixture.SessionId)).ShouldBe(0);
-
-        // The resumed generation can publish output before any new UserPrompt. Its output
-        // must be fenced even when the original process never reached continuation enqueue.
-        var startupSequence = boundary.Sequence + 1;
-        db.TranscriptEntries.Add(new TranscriptEntry
-        {
-            AgentSessionId = fixture.SessionId, Sequence = startupSequence, Uuid = Guid.NewGuid().ToString("D"),
-            Kind = TranscriptKinds.AssistantText, Role = "assistant", Text = "synthetic startup output",
-            Timestamp = now, CreatedAt = now,
-        });
-        await db.SaveChangesAsync();
-        (await TranscriptTurnWindow.FindActionBoundaryAsync(db, fixture.SessionId, startupSequence,
-            CancellationToken.None)).ShouldBeNull();
-
-        await fixture.LaunchInteractiveAsync(resume: true);
-        await fixture.LaunchInteractiveAsync(resume: true);
-        var settings = fixture.Services.GetRequiredService<IOptions<AgentSessionSettings>>().Value;
-        var continuations = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == fixture.SessionId
+        await LaunchAsync(recovered, CancellationToken.None);
+        await LaunchAsync(recovered, CancellationToken.None);
+        resumed.Started.ShouldBeTrue();
+        var settings = recovered.Provider.GetRequiredService<IOptions<AgentSessionSettings>>().Value;
+        var continuations = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
             && m.Origin == QueuedMessageOrigin.System && m.Body == settings.ResumeContinuePrompt).ToListAsync();
         var continued = continuations.ShouldHaveSingleItem();
         continued.RuntimeActionKey.ShouldBe($"channel-resume-continue/{boundary.Id:N}");
-        var replayed = await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.AgentSessionId == fixture.SessionId
+        var replayed = await db.TranscriptEntries.AsNoTracking().SingleAsync(t => t.AgentSessionId == sessionId
             && t.Kind == TranscriptKinds.SessionRestartBoundary);
         replayed.Id.ShouldBe(boundary.Id);
         replayed.StopReason.ShouldBe(ChannelRestartContinuation.Queued);
+
+        Task<BridgeQueueHarness> OpenAsync(FakeAgentProtocolAdapter[] adapters, Guid? session = null,
+            Guid? agent = null, Action<DbContextOptionsBuilder>? configureDb = null) =>
+            ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
+            {
+                AlwaysOn = false,
+                ConnectionString = schema.ConnectionString,
+                PreserveDatabaseOnDispose = session is null,
+                AttachSessionId = session,
+                AttachAgentId = agent,
+                ConfigureDbContext = configureDb,
+                ConfigureServices = services =>
+                    services.AddSingleton<IAgentProtocolAdapterFactory>(new QueueAdapterFactory(adapters)),
+            });
+
+        async Task LaunchAsync(BridgeQueueHarness harness, CancellationToken ct)
+        {
+            await using var scope = harness.Provider.CreateAsyncScope();
+            var spec = new AgentLaunchSpec("fake", AgentKind.ClaudeCode, "fake", [],
+                new Dictionary<string, string>(), workspace, 120, 30);
+            await scope.ServiceProvider.GetRequiredService<AgentSessionService>().LaunchInteractiveAsync(
+                sessionId, agentId, spec, remoteControlName: null, resume: true, notes: null, ct: ct);
+        }
+    }
+
+    private sealed class ChannelBoundaryCommitCut(CancellationTokenSource stop) : SaveChangesInterceptor
+    {
+        public Guid BoundaryId { get; private set; }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Context?.ChangeTracker.Entries<TranscriptEntry>().SingleOrDefault(entry =>
+                entry.Entity.Kind == TranscriptKinds.SessionRestartBoundary) is { } boundary)
+            {
+                // Ordinary synthetic appends have no outer transaction. At SavedChanges the
+                // row is durable, while PersistTranscriptCoreAsync has yet to return it to the store.
+                eventData.Context.Database.CurrentTransaction.ShouldBeNull();
+                BoundaryId = boundary.Entity.Id;
+                stop.Cancel();
+                stop.Token.ThrowIfCancellationRequested();
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 
     [Test]
