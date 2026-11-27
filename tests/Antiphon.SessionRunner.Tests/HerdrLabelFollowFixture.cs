@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -28,16 +30,39 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public Task<HerdrLabelObservation?> ReadAsync() => Child.ReadLabelObservationAsync(Clock, () => true, CancellationToken.None);
     public HerdrPaneSidecar Saved => TryReadSaved().ShouldNotBeNull("expected to acquire the Herdr snapshot mutex");
 
-    public HerdrPaneSidecar? TryReadSaved()
+    public HerdrPaneSidecar? TryReadSaved() => TryReadSaved(TimeSpan.FromMilliseconds(SnapshotMutexWaitMs));
+
+    public HerdrPaneSidecar? TryReadSaved(TimeSpan remaining)
     {
         // The timer can replace the snapshot while a test polls it. Read under the writer's path lock.
         var path = Path;
-        using var lease = HerdrSnapshotFile.TryAcquire(path, SnapshotMutexWaitMs);
-        if (lease is null) return null;
-        return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
+        var millisecondsTimeout = (int)Math.Clamp(remaining.TotalMilliseconds, 0, SnapshotMutexWaitMs);
+        using var mutex = new Mutex(false, SnapshotMutexName(path));
+        try
+        {
+            if (!mutex.WaitOne(millisecondsTimeout)) return null;
+        }
+        catch (AbandonedMutexException)
+        {
+            // This thread owns the mutex after the previous owner exited.
+        }
+
+        try
+        {
+            return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
+        }
+        finally
+        {
+            mutex.ReleaseMutex();
+        }
     }
 
-    public HerdrPaneSidecar? TryReadSaved(TimeSpan remaining) => TryReadSaved();
+    internal static string SnapshotMutexName(string destination)
+    {
+        var path = System.IO.Path.GetFullPath(destination);
+        if (OperatingSystem.IsWindows()) path = path.ToUpperInvariant();
+        return "Antiphon-HerdrSnapshot-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)));
+    }
 
     public async Task<SessionRunnerRuntime> AdoptRuntimeAsync()
     {
@@ -56,14 +81,19 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     {
         timeProvider ??= TimeProvider.System;
         var timeout = TimeSpan.FromSeconds(2);
+        var interval = TimeSpan.FromMilliseconds(5);
         var started = timeProvider.GetTimestamp();
-        using var limit = new CancellationTokenSource(timeout, timeProvider);
         while (true)
         {
-            limit.Token.ThrowIfCancellationRequested();
-            if (condition(timeout - timeProvider.GetElapsedTime(started))) return;
-            await Task.Delay(TimeSpan.FromMilliseconds(5), timeProvider, limit.Token);
+            var remaining = timeout - timeProvider.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) break;
+            var matched = condition(remaining);
+            remaining = timeout - timeProvider.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) break;
+            if (matched) return;
+            await Task.Delay(remaining < interval ? remaining : interval, timeProvider);
         }
+        throw new OperationCanceledException("The Herdr fixture poll reached its two-second deadline.");
     }
 
     public HerdrLabelFollowFixture(string? tabPin = "Old", string? workspacePin = "Old workspace",

@@ -32,7 +32,7 @@ public class HerdrLabelFollowSchedulingTests
         finally
         {
             gate.Release(); if (baseline is not null) await baseline;
-            await HerdrLabelFollowFixture.WaitAsync(() => f.TryReadSaved()?.TabLabel == "Later");
+            await HerdrLabelFollowFixture.WaitAsync(remaining => f.TryReadSaved(remaining)?.TabLabel == "Later");
             await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
         }
         f.GetterCount.ShouldBe(4); // One baseline batch and one timer batch, despite all three callers.
@@ -128,7 +128,7 @@ public class HerdrLabelFollowSchedulingTests
         var task = f.FollowAsync();
         try
         {
-            await HerdrLabelFollowFixture.WaitAsync(() => arm == "lease" ? f.TryReadSaved()?.LabelFollow!.Sequence == 1 : f.GetterCount == 1);
+            await HerdrLabelFollowFixture.WaitAsync(remaining => arm == "lease" ? f.TryReadSaved(remaining)?.LabelFollow!.Sequence == 1 : f.GetterCount == 1);
             f.Clock.Advance(TimeSpan.FromSeconds(10)); await task.WaitAsync(TimeSpan.FromSeconds(2));
             f.Saved.LabelFollow!.Observation!.ResultCode.ShouldBe("timeout"); f.Saved.TabLabel.ShouldBe("Old");
         }
@@ -254,6 +254,19 @@ public class HerdrLabelFollowSchedulingTests
     }
 
     [Test]
+    public async Task Saved_snapshot_mutex_name_matches_production_writer()
+    {
+        await using var f = new HerdrLabelFollowFixture();
+        var alias = Path.Combine(Path.GetDirectoryName(f.Path)!, ".", Path.GetFileName(f.Path));
+        using var writer = HerdrSnapshotFile.Acquire(f.Path);
+        var opened = Mutex.TryOpenExisting(HerdrLabelFollowFixture.SnapshotMutexName(alias), out var fixtureMutex);
+        using (fixtureMutex)
+        {
+            opened.ShouldBeTrue("the fixture name must identify the mutex created by the production writer");
+        }
+    }
+
+    [Test]
     public async Task Idle_healthy_stream_checks_without_turns_or_gets()
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await using var runtime = await f.AdoptRuntimeAsync();
@@ -265,7 +278,7 @@ public class HerdrLabelFollowSchedulingTests
             f.Saved.TabLabel.ShouldBe("New"); f.Tab.Label = "Later";
             f.Clock.Advance(TimeSpan.FromHours(1));
             HerdrPaneSidecar? saved = null;
-            await HerdrLabelFollowFixture.WaitAsync(() => (saved = f.TryReadSaved())?.TabLabel == "Later");
+            await HerdrLabelFollowFixture.WaitAsync(remaining => (saved = f.TryReadSaved(remaining))?.TabLabel == "Later");
             var follow = saved.ShouldNotBeNull().LabelFollow.ShouldNotBeNull();
             follow.Sequence.ShouldBe(2);
             follow.Observation.ShouldNotBeNull().ResultCode.ShouldBe("validated");
