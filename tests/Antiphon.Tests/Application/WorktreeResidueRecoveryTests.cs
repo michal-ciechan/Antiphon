@@ -19,7 +19,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
-[ParallelLimiter<ProcessSpawnLimit>]
+[ParallelLimiter<WorktreeRecoverySpawnLimit>]
 public sealed class WorktreeResidueRecoveryTests
 {
     [Test]
@@ -418,6 +418,7 @@ public sealed class WorktreeResidueRecoveryTests
             "/*/*/WorktreeResidueRecoveryTests/C459_WorkerDeathAtEveryRetirementHandoff",
             ready,
             cut));
+        prepared.Start.WorkingDirectory = h.Host.Fixture.Root;
         prepared.Start.Environment.Remove(WorktreeRetirementCrashWorker.CompiledModelVariable);
         if (useCompiledModel)
             prepared.Start.Environment[WorktreeRetirementCrashWorker.CompiledModelVariable] = "1";
