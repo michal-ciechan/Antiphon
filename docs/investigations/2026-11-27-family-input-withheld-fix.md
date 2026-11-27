@@ -19,3 +19,51 @@ For enabled, agent-bound Telegram groups, `ChannelBridge:GroupReplyDeadlineMinut
 ## Gateway receipt
 
 Gateway ingress and the Kafka inbox consumer both write the same native key. Both the successful receipt and the desktop queue row were observed for `1904`. The redacted 23505 log cannot establish which writer or key lost its race. The store now uses a single conflict-targeted insert, preserves original content and offsets, and can fill missing broker coordinates on an older receipt. A conflict on any other key remains an error.
+
+
+## Verification on server2
+
+At pre-fix commit `650c6766e0e0f7bb393ba52952406db2b55eb249`, the three server witnesses, the adopted-runner witness and the inbox constraint-classification witness each failed on their asserted behaviour. The server retried before backoff, omitted the overdue notification and paged the digest destination. The runner still withheld after verification. The messaging detector classified an unrelated primary-key violation as a duplicate.
+
+The corrected server witnesses passed on an isolated PostgreSQL schema. The synthetic photo produced one body write, one complete UserPrompt matching the queued body, one delivery attempt and one correlated answer across repeated drains. The clock-driven checks covered 9:59, 10:00, a failed push followed by a successful retry, and the digest pager with an enabled group and a pending incident. All three native-runner methods and all nine inbox cases passed. The inbox suite exercised the actual store on SQLite and classified structured Npgsql exceptions.
+
+| Temporary fault | Exact test method | Observed failure | After restoration |
+|---|---|---|---|
+| Retry suppressed | `AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory` | 0 bodies submitted after the guard cleared | 1 failed, then 1 passed |
+| Critical push suppressed | `UnansweredGroupInboundPushesAttentionAtTenMinutes` | The injected publication failure was never reached | 1 failed, then 1 passed |
+| Fake native reader reports ready before its history is verified | `AdoptedClaudeRequiresOwnedCompletedTurnAndEmptyComposer` | The simulated writer accepted input while the reader was behind | 1 failed, then 1 passed |
+
+The three controls ran in detached checkouts. Each restored checkout matched its committed tree. The retry and alert controls used `7d88eff54fa58a80b2f63abc85194402583c84e9`. The simulated native reader used `05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c`. The final server witness commit is `a0dd22b3c13dd50587d51a805ae871934047cf77`.
+
+### Plan-selection guard
+
+The six-class union passed all 57 executed cases. Adding `PlanCheckpointClassSelectionGuardTests` produced 58 passes and one failure. The same method at the assigned base, `561591c562f31dd4fe0fc8f940f2ea7e947ce965`, reported exactly the same three unresolved operands. The checkpoint validator rejected the combined receipt with `report_failed`.
+
+| Historical plan | Row | Missing class operand | Class deletion commit |
+|---|---|---|---|
+| 2026-11-05 CARD-1722 | CP-3 | `ScriptHarnessSharingTests*` | `c68e72ae5ba75d3b1ea11c51c45abaa202194841` |
+| 2026-11-14 CARD-1901 | CP-35 | `HostJqFixtureClosureTests` | `c0c33d51edba5e98e03b3462669410d00c68b24f` |
+| 2026-11-18 CARD-1984 | CP-25 | `HostJqFixtureClosureTests*` | `c0c33d51edba5e98e03b3462669410d00c68b24f` |
+
+### Checkpoint provenance
+
+Each passing row below was validated with `scripts/antiphon checkpoints validate --evidence <report.json> --expected-source-sha <commit> --rows <row>`. An early storage interruption and two runner filter selections executed zero tests. The individual runner methods supply the qualified receipts.
+
+<details><summary>Checkpoint output</summary>
+
+```text
+CHECKPOINT server-red commit=650c6766e0e0f7bb393ba52952406db2b55eb249 build=ok filter=/*/*/ChannelInputWithheldIncidentTests/(AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory)|(C1591_ProducerPathPagesOneAgedWithhold)|(UnansweredGroupInboundPushesAttentionAtTenMinutes) executed=3 passed=0 failed=3 skipped=0 trx=/tmp/de62cb52-red-verify/.antiphon/de62-evidence/server-red-20261127-083257-9967/run.trx slot=granted waited=0s dirty=0 source=650c6766e0e0f7bb393ba52952406db2b55eb249 sourceState=clean buildSource=verified
+CHECKPOINT runner-red2 commit=650c6766e0e0f7bb393ba52952406db2b55eb249 build=ok filter=/*/*/ClaudeDialogInputGuardTests/AdoptedClaudeRequiresOwnedCompletedTurnAndEmptyComposer executed=1 passed=0 failed=1 skipped=0 trx=/tmp/de62cb52-red-verify/.antiphon/de62-evidence/runner-red2-20261127-085246-3fb3/run.trx slot=granted waited=510s dirty=0 source=650c6766e0e0f7bb393ba52952406db2b55eb249 sourceState=clean buildSource=verified
+CHECKPOINT inbox-red commit=650c6766e0e0f7bb393ba52952406db2b55eb249 build=ok filter=/*/*/EfInboxReceiptStoreTests/Unique_violation_is_not_inferred_from_constraint_name_alone executed=1 passed=0 failed=1 skipped=0 trx=/tmp/de62cb52-inbox-red/.antiphon/de62-evidence/inbox-red-20261127-085944-a7b2/run.trx slot=granted waited=516s dirty=0 source=650c6766e0e0f7bb393ba52952406db2b55eb249 sourceState=clean buildSource=verified
+CHECKPOINT server-green3 commit=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c build=ok filter=/*/*/ChannelInputWithheldIncidentTests/(AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory)|(C1591_ProducerPathPagesOneAgedWithhold)|(UnansweredGroupInboundPushesAttentionAtTenMinutes) executed=3 passed=3 failed=0 skipped=0 trx=/tmp/de62cb52-server-green/.antiphon/de62-evidence/server-green3-20261127-090156-39db/run.trx slot=granted waited=651s dirty=0 source=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c sourceState=clean buildSource=verified
+CHECKPOINT server-final commit=a0dd22b3c13dd50587d51a805ae871934047cf77 build=ok filter=/*/*/ChannelInputWithheldIncidentTests/(AdoptedChannelPhotoRetriesOnceAfterVerifiedHistory)|(C1591_ProducerPathPagesOneAgedWithhold)|(UnansweredGroupInboundPushesAttentionAtTenMinutes) executed=3 passed=3 failed=0 skipped=0 trx=/work/worktrees/ws-07-d2/.antiphon/de62-evidence/server-final-20261127-094052-15b2/run.trx slot=granted waited=495s dirty=0 source=a0dd22b3c13dd50587d51a805ae871934047cf77 sourceState=clean buildSource=verified
+CHECKPOINT runner-boundary commit=7d88eff54fa58a80b2f63abc85194402583c84e9 build=reused filter=/*/*/ResumeReceiptReadinessTests/AdoptedInputBoundaryRequiresAnOwnedFullyReadIdleTurn executed=1 passed=1 failed=0 skipped=0 trx=/tmp/de62cb52-runner-green/.antiphon/de62-evidence/runner-boundary-20261127-092436-e6e7/run.trx slot=granted waited=255s dirty=0 source=7d88eff54fa58a80b2f63abc85194402583c84e9 sourceState=clean buildSource=verified
+CHECKPOINT runner-adoption commit=7d88eff54fa58a80b2f63abc85194402583c84e9 build=reused filter=/*/*/ClaudeDialogInputGuardTests/AdoptedClaudeRequiresOwnedCompletedTurnAndEmptyComposer executed=1 passed=1 failed=0 skipped=0 trx=/tmp/de62cb52-runner-green/.antiphon/de62-evidence/runner-adoption-20261127-092438-90af/run.trx slot=granted waited=255s dirty=0 source=7d88eff54fa58a80b2f63abc85194402583c84e9 sourceState=clean buildSource=verified
+CHECKPOINT runner-modal commit=7d88eff54fa58a80b2f63abc85194402583c84e9 build=reused filter=/*/*/ClaudeDialogInputGuardTests/C1591_AdoptedIdleDraftDialogAndWorkingWriteNothing executed=1 passed=1 failed=0 skipped=0 trx=/tmp/de62cb52-runner-green/.antiphon/de62-evidence/runner-modal-20261127-092439-612e/run.trx slot=granted waited=270s dirty=0 source=7d88eff54fa58a80b2f63abc85194402583c84e9 sourceState=clean buildSource=verified
+CHECKPOINT inbox-green commit=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c build=ok filter=/*/*/EfInboxReceiptStoreTests/* executed=9 passed=9 failed=0 skipped=0 trx=/work/worktrees/ws-07-d2/.antiphon/de62-evidence/inbox-green-20261127-090150-4ad4/run.trx slot=granted waited=642s dirty=0 source=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c sourceState=clean buildSource=verified
+CHECKPOINT guards-six commit=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c build=reused filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(TestLaneCategoryGuardTests*)/* executed=57 passed=57 failed=0 skipped=0 trx=/tmp/de62cb52-server-green/.antiphon/de62-evidence/guards-six-20261127-092746-b52b/run.trx slot=granted waited=736s dirty=0 source=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c sourceState=clean buildSource=verified
+CHECKPOINT guards commit=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c build=reused filter=/*/*/(TestClassificationPolicyTests*)|(TestClassificationGuardTests*)|(SlowTestRegistryMergeTests*)|(SlowTestTripwireTests*)|(NativeLinuxPolicyWitnessTests*)|(TestLaneCategoryGuardTests*)|(PlanCheckpointClassSelectionGuardTests*)/* executed=59 passed=58 failed=1 skipped=0 trx=/tmp/de62cb52-server-green/.antiphon/de62-evidence/guards-20261127-092223-9ccb/run.trx slot=granted waited=165s dirty=0 source=05cfcc784d2f37bea5f9aeb66146e6125b8e6f0c sourceState=clean buildSource=verified
+CHECKPOINT plan-guard-base commit=561591c562f31dd4fe0fc8f940f2ea7e947ce965 build=ok filter=/*/*/PlanCheckpointClassSelectionGuardTests/Plan_checkpoint_rows_select_declared_test_classes_or_are_retired executed=1 passed=0 failed=1 skipped=0 trx=/tmp/de62cb52-guard-base/.antiphon/de62-evidence/plan-guard-base-20261127-092709-bfaf/run.trx slot=granted waited=407s dirty=0 source=561591c562f31dd4fe0fc8f940f2ea7e947ce965 sourceState=clean buildSource=verified
+```
+
+</details>
