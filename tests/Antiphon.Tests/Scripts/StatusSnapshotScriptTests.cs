@@ -117,7 +117,7 @@ public sealed class StatusSnapshotScriptTests
     {
         var output = new StringWriter();
         var options = StatusSnapshotOptions.Parse(new[] { "--repository", repository, "--runner", "fixture-runner" }.Concat(args).ToArray(), api, "synthetic-task-token", null);
-        var exit = StatusSnapshot.Run(options, NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem(), http, StatusSnapshot.ReadGit);
+        var exit = StatusSnapshot.Run(options, NightlyHost.Production(output, output), new System.IO.Abstractions.FileSystem(), http, StatusSnapshot.ReadGit, operatorStatus: false);
         return (exit, output.ToString());
     }
 

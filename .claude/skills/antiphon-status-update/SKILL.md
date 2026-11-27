@@ -12,43 +12,56 @@ Run from the repository root. General operating rules and dispatch mechanics liv
 
 ## Gather directly
 
-1. Read `GET /api/orchestrator-instructions` for current directions and seat target.
-   Run `scripts/antiphon status-snapshot --project-id <id>` (`scripts\antiphon.cmd` on
-   Windows; add `--json` for machine output). Omit `--project-id` only when the pipeline
-   identifies one project; ambiguity requires an explicit id. API URL and authentication use
-   `ANTIPHON_API` and the task-token header, as the card command and scripts/antiphon delegate do.
-   The command is read-only, reads remote refs without fetching, and marks cached
-   history. Exit 2 means partial facts: preserve every `UNVERIFIED`/`errors` entry.
-2. Check `GET /api/agent-tasks/pipeline?projectId=<id>` for stages in flight,
-   queued, blocked, effective limits, hosts and remaining seats. Check
-   `GET /api/session-runners/<runner>/slots` for occupied seats and orphan ghosts.
-   Runner seats/hosts are fleet facts even on a project-scoped pipeline.
-3. Run `scripts/antiphon delegate status <8hex>` for every
-   relevant task, including finished/failed tasks known from the previous update.
-   Read state, session activity, and parsed `next=`/`next:` and `handoff:` lines.
-   Pull transcript progress before declaring healthy or stalled. Use
-   `scripts/antiphon card get <CARD-id> --board <board>` for actual card decisions;
-   read history when a decision or earlier statement needs correction.
-4. Run `git fetch origin master`, `git log <previous-update-sha>..origin/master
-   --oneline`, `git rev-parse origin/master`, and
-   `git ls-remote --heads origin 'rc/*'`. If the previous-update SHA is unknown,
-   say the landing interval is unverified. Attribute each landing from its receipt;
-   a changed tip alone does not identify who landed it.
-5. For live Windows rc qualification, obtain the owner's exact candidate id, cut
-   SHA, run id and paths. Follow
-   [antiphon-rc-qualification](../antiphon-rc-qualification/SKILL.md): run logs are
-   `C:\Antiphon\releases\candidates\rc-<date>-<sha12>\logs\<run>`, state is
-   `C:\Antiphon\releases\state-<id>\last-run.json`, and heartbeat is
-   `C:\Antiphon\releases\task-<id>\supervisor-heartbeat.json`.
-   Add `-RcRunLogDir <logs> -RcStateDir <state> -RcHeartbeatPath <heartbeat>` to
-   the snapshot on the host that can read them. Compare TRX file count with
-   `dispatch-schedule.json` entries; inspect `active-chunk.json` at the recorded
-   timing root, last-run fields, supervisor heartbeat (`observedAtUtc` or `utc`),
-   elapsed time and the failure watcher's output. File count is progress, not a
-   pass count. Check identities before combining records; shared last-run may
-   belong to a later run (use the task's `own-last-run.json` when appropriate).
-   If Windows paths cannot be read, obtain the owner's observation or mark the
-   rc facts unverified. Never infer completion from a watcher or a healthy signal.
+Run `scripts/antiphon status --project-id <id>` (`scripts\antiphon.cmd` on Windows)
+once. Add `--json` for structured output. The call reads operating instructions,
+project and fleet tasks, the land queue, merges, runner seats, remote refs, and rc
+progress, failures and ETA. Project scope requires an explicit id when the pipeline
+cannot identify one project. Treat runner seats and host limits as fleet facts.
+Use the live instructions for the seat target. The command uses `ANTIPHON_API`
+and the task-token header and reads Git refs without fetching. Exit 2 means
+partial facts. Keep every `UNVERIFIED` or JSON `errors` entry.
+
+On the desktop, omitted rc paths are discovered under `C:\Antiphon\releases`.
+Supply the owner's exact `--rc-run-log-dir`, `--rc-state-dir`, and
+`--rc-heartbeat-path` when discovery is ambiguous. Use `--rc-release-root` for a
+copied release layout and `--rc-previous-run-log-dir` to select a specific comparable
+baseline. Verify candidate, pin and run identity when reconciling with the owner.
+The shared last-run record can belong to a later run. The task's matching
+`own-last-run.json` is the fallback. TRX file count measures progress. Read the
+failures and fix positions separately, and keep unknown work and build/startup
+overhead with the sequential ETA. A missing previous run leaves the ETA
+unverified. If the host cannot read the Windows paths, obtain the owner's
+observation or preserve the rc caveat. Require a completion record before
+declaring the run complete. Follow [antiphon-rc-qualification](../antiphon-rc-qualification/SKILL.md).
+
+The call is bounded: API reads run concurrently, each with its own deadline (the
+attention feed a shorter one), inside one overall budget; a read that misses it is an
+`UNVERIFIED` line, never a stall. Unknown remaining chunks make the ETA a lower
+bound (`lowerBound`, an `UNVERIFIED` line naming them). The previous run is the
+newest earlier attempt whose TRX files cover its own `dispatch-schedule.json`.
+
+`--json` always carries every key below, `null` when the fact is unknown:
+- top level: `observedAtUtc`, `projectId`, `runner`, `counts`, `pipeline`,
+  `orchestratorInstructions`, `master` (`tip`, `cachedOriginMasterLog`,
+  `historyIsCached`), `rcRefs`, `rc`, `taskScope`, `tasks`, `mergeInFlight`,
+  `fleetHosts`, `fleetConcurrencyScopes`, `runnerDefaults`, `landQueue`,
+  `runnerCatalogue`, `runnerSlots`, `cardsAtRisk`, `errors`;
+- `rc`: `candidateId`, `pin`, `runId`, `phase`, `elapsedSeconds`, `lastRun`,
+  `runLogDir`, `stateDir`, `activeChunk`, `heartbeat`, `heartbeatAgeSeconds`,
+  `trxCount`, `finishedChunks`, `scheduledEntries`, `failures`, `eta`;
+- `rc.eta`: `status`, `previousRunLogDir`, `ratio`, `matchedFinished`,
+  `knownRemaining`, `unknownRemaining`, `unknownRemainingChunks`,
+  `finishedWithoutBaseline`, `baselineRemainingSeconds`,
+  `projectedRemainingSeconds`, `projectedFinishUtc`, `lowerBound`,
+  `observedStartupSeconds`, `startupOverheadNote`, `biggestRemaining`.
+
+Use a task's parsed next-stage and handoff fields. A task absent from the
+snapshot can still matter to an earlier update. Consult its status if needed.
+Confirm transcript progress before calling a task healthy or stalled. Use
+the card record and its history for actual decisions and corrections. Attribute
+landings from their receipts and mark the interval unverified when the previous
+update SHA or the receipts are unavailable. Cached master history cannot
+establish the landing interval.
 
 ## Classify what needs to happen
 
@@ -76,7 +89,8 @@ if that needs more lines. Use these sections in this order:
 2. **DECISIONS WAITING ON THE OPERATOR**: each question, options, recommendation.
 3. **MASTER**: tip SHA; one line per verified landing since the last update.
 4. **rc**: line, candidate id, cut SHA, run id, TRX/scheduled entries, elapsed time;
-   failures and each fix's position (landed on master / branch / Debug running);
+   ETA with unknown work and overhead; failures and each fix's position (landed
+   on master / branch / Debug running);
    explicitly state fixes the pinned run does not yet contain.
 5. **IN FLIGHT**: occupied seats against the standing target of 7 on server2,
    overridden by the live operating instructions; distinguish project tasks from
