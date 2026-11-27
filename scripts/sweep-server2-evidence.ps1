@@ -48,6 +48,7 @@ function Get-TaskClosure {
 
 function Test-OpenCardReference([string] $Leaf) {
     $page = $null
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     do {
         $route = '/api/cards/search?includeArchived=true&limit=100&q=' + [uri]::EscapeDataString($Leaf)
         if ($page) { $route += '&pageToken=' + [uri]::EscapeDataString($page) }
@@ -57,14 +58,47 @@ function Test-OpenCardReference([string] $Leaf) {
             if ($card.status -notin @('Done', 'Canceled')) { return $true }
         }
         $page = $result.nextPageToken
+        if ($page -and -not $seen.Add($page)) { throw 'The card search repeated a page.' }
     } while ($page)
     return $false
 }
 
-# Release records name a known owner and exact evidence path. Every sweep rechecks
-# open references, task settlement, the tree's age and process holders.
+function Get-DirectoryIdentity([string] $Path) {
+    $entry = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -eq $entry -or -not $entry.PSIsContainer -or ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return }
+    $identity = & stat --printf '%d:%i' -- $Path
+    if ($LASTEXITCODE -eq 0 -and $identity -cmatch '^\d+:\d+$') { $identity }
+}
+
+function Get-ReferenceRefusal($Candidate) {
+    $ownerId = $Candidate.TaskId.ToString('D')
+    $owner = Read-Antiphon "/api/agent-tasks/$ownerId"
+    if ($owner.summary.id -ne $Candidate.TaskId -or
+        $owner.summary.status -notin @('Succeeded', 'Failed', 'Canceled') -or
+        -not $owner.summary.completedAt -or
+        [DateTime]$owner.summary.completedAt -ge [DateTime]::UtcNow.AddHours(-$MinAgeHours) -or
+        ($owner.session -and $owner.session.status -notin @('Stopped', 'Failed'))) {
+        return 'owner-not-settled'
+    }
+    foreach ($task in @(Get-TaskClosure)) {
+        if ($task.id -eq $Candidate.TaskId) { return 'active-reference' }
+        $detail = Read-Antiphon "/api/agent-tasks/$($task.id)"
+        if ($detail.summary.id -ne $task.id) { throw 'An active task detail did not match the census.' }
+        $serialized = $detail | ConvertTo-Json -Depth 100 -Compress -WarningAction Stop
+        if ($serialized.Contains($Candidate.Leaf, [StringComparison]::OrdinalIgnoreCase) -or
+            $serialized.Contains($ownerId, [StringComparison]::OrdinalIgnoreCase)) { return 'active-reference' }
+    }
+    if ((Test-OpenCardReference $Candidate.Leaf) -or
+        ($Candidate.Leaf -cne $ownerId -and (Test-OpenCardReference $ownerId))) { return 'active-reference' }
+    & git -C $Repository grep -qiF -e $Candidate.Leaf -e $ownerId HEAD origin/master --
+    if ($LASTEXITCODE -eq 0) { return 'git-reference' }
+    if ($LASTEXITCODE -ne 1) { throw 'The Git reference check did not complete.' }
+}
+
+# Each release binds the full owner ID and the device/inode at the exact path.
 $roots = @('/work/evidence', '/work/code-evidence', '/work/review-evidence', '/work/merge-evidence', '/work/test-evidence')
 $release = Get-Content -LiteralPath $ReleaseList -Raw | ConvertFrom-Json -NoEnumerate
+$listed = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $candidates = foreach ($row in $release) {
     $path = [string]$row.path
     $taskId = [guid]$row.taskId
@@ -75,11 +109,15 @@ $candidates = foreach ($row in $release) {
     if ($parent -cnotin $roots -or $leaf -cnotmatch $leafPattern -or [IO.Path]::GetFullPath($path) -cne $path) {
         throw "Release entry is outside the task's evidence directory: $path"
     }
+    $identity = [string]$row.identity
+    if ($taskId -eq [guid]::Empty -or $identity -cnotmatch '^\d+:\d+$' -or -not $listed.Add($path)) {
+        throw "Release entry has invalid or duplicate authority: $path"
+    }
 
     $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
     if ($null -ne $item -and $item.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-$MinAgeHours)) {
         [pscustomobject]@{ Path = $path; Parent = $parent; Leaf = $leaf; Pattern = $leafPattern
-            TaskId = $taskId; LastWrite = $item.LastWriteTimeUtc }
+            TaskId = $taskId; Identity = $identity; LastWrite = $item.LastWriteTimeUtc }
     }
 }
 if (-not $candidates) { return }
@@ -91,47 +129,58 @@ if ($Apply) {
     $lock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 }
 try {
-    $openTasks = @(Get-TaskClosure)
-    $openIds = @($openTasks | ForEach-Object { $_.id })
-    $openDetails = @($openTasks | ForEach-Object { Read-Antiphon "/api/agent-tasks/$($_.id)" |
-        ConvertTo-Json -Depth 30 -Compress })
-    foreach ($candidate in $candidates | Sort-Object -Property LastWrite, Path -Unique | Select-Object -First $MaxCandidates) {
+    foreach ($candidate in $candidates | Sort-Object -Property LastWrite, Path | Select-Object -First $MaxCandidates) {
         $path = $candidate.Path
-        $owner = Read-Antiphon "/api/agent-tasks/$($candidate.TaskId)"
-        if ($owner.summary.id -ne $candidate.TaskId -or
-            $owner.summary.status -notin @('Succeeded', 'Failed', 'Canceled') -or
-            -not $owner.summary.completedAt -or
-            [DateTime]$owner.summary.completedAt -ge [DateTime]::UtcNow.AddHours(-$MinAgeHours) -or
-            ($owner.session -and $owner.session.status -notin @('Stopped', 'Failed'))) {
-            Write-Output "kept owner-not-settled $path"
+        if ((Get-DirectoryIdentity $path) -cne $candidate.Identity) {
+            Write-Output "kept directory-identity $path"
             continue
         }
-        if ($candidate.TaskId -in $openIds -or
-            ($openDetails | Where-Object { $_.Contains($candidate.Leaf, [StringComparison]::OrdinalIgnoreCase) }) -or
-            (Test-OpenCardReference $candidate.Leaf)) {
-            Write-Output "kept active-reference $path"
-            continue
-        }
-        & git -C $Repository grep -qiF -e $candidate.Leaf HEAD origin/master --
-        if ($LASTEXITCODE -eq 0) { Write-Output "kept git-reference $path"; continue }
-        if ($LASTEXITCODE -ne 1) { throw 'The Git reference check did not complete.' }
-
-        if ($Apply) {
-            $currentIds = @(Get-TaskClosure | ForEach-Object { $_.id })
-            if ($candidate.TaskId -in $currentIds -or ($currentIds -join '|') -cne ($openIds -join '|')) {
-                throw 'Active task membership changed during the retention sweep.'
-            }
-        }
+        $refusal = Get-ReferenceRefusal $candidate
+        if ($refusal) { Write-Output "kept $refusal $path"; continue }
         $size = & timeout 30 du -sx -B1 -- $path
         if ($LASTEXITCODE -ne 0) { Write-Output "kept size-unknown $path"; continue }
         $bytes = ($size -split '\s+', 2)[0]
         $refusal = Get-AntiphonRetentionRefusal -Path $path -Parent $candidate.Parent -LeafPattern $candidate.Pattern -MinAgeHours $MinAgeHours
         if ($refusal) { Write-Output "kept $refusal $path"; continue }
-        if ($Apply) {
-            Remove-Item -LiteralPath $path -Recurse -Force
-            Write-Output "removed $bytes $path"
-        } else {
+        if (-not $Apply) {
             Write-Output "would-remove $bytes $path"
+            continue
+        }
+
+        # Detach the released inode from its public name before the last reference and holder checks.
+        # A writer opening the old path now can only reach a new tree. Existing holders follow the inode.
+        $graveyard = & mktemp -d -- (Join-Path $candidate.Parent '.retention-XXXXXXXXXX')
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to reserve a private retention directory.' }
+        $detached = Join-Path $graveyard $candidate.Leaf
+        $moved = $false
+        $deleting = $false
+        try {
+            if ((Get-DirectoryIdentity $path) -cne $candidate.Identity) {
+                Write-Output "kept directory-identity $path"
+                continue
+            }
+            [IO.Directory]::Move($path, $detached)
+            $moved = $true
+            $refusal = Get-ReferenceRefusal $candidate
+            if (-not $refusal) {
+                $refusal = Get-AntiphonRetentionRefusal -Path $detached -Parent $graveyard -LeafPattern $candidate.Pattern -MinAgeHours $MinAgeHours
+            }
+            if (-not $refusal -and (Get-DirectoryIdentity $detached) -cne $candidate.Identity) { $refusal = 'directory-identity' }
+            if ($refusal) { Write-Output "kept $refusal $path"; continue }
+
+            $deleting = $true
+            Remove-Item -LiteralPath $detached -Recurse -Force
+            Write-Output "removed $bytes $path"
+        } finally {
+            if ($moved -and -not $deleting -and (Get-DirectoryIdentity $detached) -ceq $candidate.Identity) {
+                # Never clobber a directory a writer created since the move.
+                & mv --no-clobber --no-target-directory -- $detached $path
+            }
+            if ([IO.Directory]::EnumerateFileSystemEntries($graveyard).GetEnumerator().MoveNext()) {
+                Write-Output "quarantined $detached original=$path owner=$($candidate.TaskId)"
+            } else {
+                [IO.Directory]::Delete($graveyard)
+            }
         }
     }
 } finally {
