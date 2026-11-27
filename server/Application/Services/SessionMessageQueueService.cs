@@ -1699,6 +1699,9 @@ public sealed partial class SessionMessageQueueService
                 return queue;
             }
 
+            if ((await ApplyChannelAdmissionAsync(db, sessionId, [message], UtcNow(), ct)).Count == 0)
+                return await GetQueueAsync(sessionId, ct);
+
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
             if (!await CanWriteResumeInputAsync(db, sessionId, ct))
                 return await GetQueueAsync(sessionId, ct);
@@ -1714,6 +1717,8 @@ public sealed partial class SessionMessageQueueService
             {
                 if (sendNowWithhold.ChargeAttempt)
                     await ChargeDurableWithholdAsync(db, sessionId, sendNowWithhold.Text, ct);
+                if (message.Origin == QueuedMessageOrigin.Channel)
+                    await ScheduleChannelRetryAfterWithholdAsync(db, sessionId, ct);
                 return await GetQueueAsync(sessionId, ct) with
                 {
                     ModalBlocked = true,
@@ -1788,6 +1793,7 @@ public sealed partial class SessionMessageQueueService
                 BootPromptDeliveryHistory.DiscardUnwrittenAttempt(db, message);
                 db.Entry(message).CurrentValues.SetValues(beforeCall);
                 await db.SaveChangesAsync(CancellationToken.None);
+                await RecordChannelInputRefusalAsync(db, sessionId, outcome.RecordText, ct);
                 return await GetQueueAsync(sessionId, ct) with
                 {
                     ModalBlocked = true,
@@ -2710,17 +2716,11 @@ public sealed partial class SessionMessageQueueService
             || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
             pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
-        // CARD-0330: a completion note the distiller is still improving is not in the flush's
-        // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
+        // CARD-0330: keep completion notes that are still being distilled out of the flush.
+        // Channel deadlines and order are checked together after receipt reconciliation.
         var nowUtc = UtcNow();
-        if (pending.FirstOrDefault(m => ChannelRetryHeld(m, nowUtc)) is { } heldChannel)
-        {
-            // A wake for a newer inbound cannot submit the older row early or pass it.
-            pending.RemoveAll(m => m.Origin == QueuedMessageOrigin.Channel && m.Sequence >= heldChannel.Sequence);
-            if (pending.Count == 0)
-                return TemporaryBlock();
-        }
-        pending = pending.Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc
+        pending = pending.Where(m => m.Origin == QueuedMessageOrigin.Channel
+            || m.HoldUntil is null || m.HoldUntil <= nowUtc
             || (IsCodexPointer(rulesSession.AgentKind, m) && m.LastDeliveryStartedAt != null)).ToList();
         if (pending.Count == 0)
             return FlushResult.Nothing;
@@ -2747,7 +2747,7 @@ public sealed partial class SessionMessageQueueService
         // truncated park stays parked: identity-without-completeness is not Sent.
         var deliverable = pending
             .Where(m => m.DeliveryAttempts < MaxAttempts)
-            .Where(m => m.HoldUntil is null || m.HoldUntil <= nowUtc)
+            .Where(m => m.Origin == QueuedMessageOrigin.Channel || m.HoldUntil is null || m.HoldUntil <= nowUtc)
             .Where(m => m.MaintenanceKind != RemoteControlMaintenanceKind.LegacyUnclassified)
             .Where(m => m.DeferredFromRunAttemptId == null
                 || m.MaintenanceAcceptedStartedAt is not { } deferredG
@@ -2905,6 +2905,9 @@ public sealed partial class SessionMessageQueueService
         pending = await ApplyCapacityHoldAsync(db, sessionId, pending, ct);
         if (pending.Count == 0)
             return FlushResult.Nothing;
+        pending = await ApplyChannelAdmissionAsync(db, sessionId, pending, UtcNow(), ct);
+        if (pending.Count == 0)
+            return TemporaryBlock();
 
         if (_capacityRecovery is { IsEnabled: true }
             && pending[0].CapacityRecoveryActionKey is { } redeemKey
@@ -3149,10 +3152,7 @@ public sealed partial class SessionMessageQueueService
                 db.Entry(message).CurrentValues.SetValues(beforeChannelAttempt[message.Id]);
             }
             await db.SaveChangesAsync(CancellationToken.None);
-            if (outcome.RecordText is ConditionalInputOutcomes.ComposerMismatch
-                or ConditionalInputOutcomes.ObservationUnknown)
-                await ChargeDurableWithholdAsync(db, sessionId, outcome.RecordText, ct, channelOnly: true);
-            await ScheduleChannelRetryAfterWithholdAsync(db, sessionId, ct);
+            await RecordChannelInputRefusalAsync(db, sessionId, outcome.RecordText, ct);
             return TemporaryBlock();
         }
 

@@ -66,6 +66,14 @@ public sealed partial class SessionMessageQueueService
                 .SetProperty(m => m.LastWithholdReason, recorded), ct);
     }
 
+    private async Task RecordChannelInputRefusalAsync(
+        AppDbContext db, Guid sessionId, string? reason, CancellationToken ct)
+    {
+        if (reason is ConditionalInputOutcomes.ComposerMismatch or ConditionalInputOutcomes.ObservationUnknown)
+            await ChargeDurableWithholdAsync(db, sessionId, reason, ct, channelOnly: true);
+        await ScheduleChannelRetryAfterWithholdAsync(db, sessionId, ct);
+    }
+
     private Task ScheduleChannelRetryAfterWithholdAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
         var now = UtcNow();
@@ -80,9 +88,27 @@ public sealed partial class SessionMessageQueueService
                     : now.AddSeconds(ChannelInitialRetrySeconds)), ct);
     }
 
-    private static bool ChannelRetryHeld(SessionQueuedMessage row, DateTime now) =>
-        row.Origin == QueuedMessageOrigin.Channel && row.FirstWithheldAt is { } first
-        && (row.HoldUntil ?? first.AddSeconds(ChannelInitialRetrySeconds)) > now;
+    // Both manual and automatic writes admit only a ready prefix of the persisted channel
+    // queue. The caller's candidates can narrow that prefix (SendNow names only one row).
+    private static async Task<List<SessionQueuedMessage>> ApplyChannelAdmissionAsync(
+        AppDbContext db, Guid sessionId, List<SessionQueuedMessage> candidates, DateTime now, CancellationToken ct)
+    {
+        var channelCandidates = candidates.Where(row => row.Origin == QueuedMessageOrigin.Channel)
+            .Select(row => row.Id).ToHashSet();
+        if (channelCandidates.Count == 0) return candidates;
+
+        var ordered = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(row => row.AgentSessionId == sessionId && row.Origin == QueuedMessageOrigin.Channel
+                && row.Status == QueuedMessageStatus.Pending)
+            .OrderBy(row => row.Sequence)
+            .Select(row => new { row.Id, row.HoldUntil, row.FirstWithheldAt })
+            .ToListAsync(ct);
+        var admitted = ordered.TakeWhile(row => channelCandidates.Contains(row.Id)
+                && ((row.HoldUntil ?? row.FirstWithheldAt?.AddSeconds(ChannelInitialRetrySeconds)) is not { } due
+                    || due <= now))
+            .Select(row => row.Id).ToHashSet();
+        return candidates.Where(row => row.Origin != QueuedMessageOrigin.Channel || admitted.Contains(row.Id)).ToList();
+    }
 
     /// <summary>
     /// Pending notes for one destination, in sequence order, after <paramref name="since"/>.
