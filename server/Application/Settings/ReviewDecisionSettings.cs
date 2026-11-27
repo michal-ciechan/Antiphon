@@ -309,7 +309,7 @@ public sealed class ReviewSettings
     /// </summary>
     public string? InstanceChecksPath { get; set; }
 
-    /// <summary>The Antiphon web root that commit statuses link to (<c>{root}/reviews/{runId}</c>); absent, no link.</summary>
+    /// <summary>The Antiphon web root for run links in published reviews and commit statuses. An absent or unsafe URL omits the link.</summary>
     public string? PublicBaseUrl { get; set; }
 
     /// <summary>Sign-in (<c>Review:Auth</c>); off by default.</summary>

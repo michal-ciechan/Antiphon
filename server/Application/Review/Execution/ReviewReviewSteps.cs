@@ -410,9 +410,10 @@ public static class ReviewReviewSteps
         var canPost = walk.Host.Capabilities.CanPostReviews && run.Subject.PrNumber is not null;
         if (canPost && (inline.Count > 0 || summaryOnly.Count > 0))
         {
+            var runLink = walk.PublicRunUrl is { } url ? $"[View this review in Antiphon](<{url}>)" : null;
             var body = SummaryBody(walk, inline.Select(i => i.Finding).ToList(), summaryOnly, belowBar.Count,
-                ReviewWalk.Output<VerifyOutput>(verify), verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued);
-            var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding))).ToList();
+                ReviewWalk.Output<VerifyOutput>(verify), verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued, runLink);
+            var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding, runLink))).ToList();
             var posted = await walk.Host.PostReviewAsync(walk.Binding.Target, new CodeHostReview(walk.Iteration.HeadSha ?? walk.HeadSha, body, comments), ct);
             reviewId = posted.ReviewId;
             reviewUrl = posted.Url;
@@ -481,11 +482,13 @@ public static class ReviewReviewSteps
     }
 
     private static string SummaryBody(ReviewWalk walk, IReadOnlyList<ReviewFinding> inline, IReadOnlyList<ReviewFinding> summaryOnly, int belowBar,
-        VerifyOutput? verify, bool verifySkipped)
+        VerifyOutput? verify, bool verifySkipped, string? runLink)
     {
         var text = new StringBuilder()
             .Append("**Antiphon review**, round ").Append(walk.Run.Round).Append(" (iteration ").Append(walk.Iteration.Iteration).AppendLine(")")
             .AppendLine();
+        if (runLink is not null)
+            text.AppendLine(runLink).AppendLine();
         if (inline.Count > 0)
         {
             text.AppendLine("Findings:");
@@ -511,7 +514,7 @@ public static class ReviewReviewSteps
         return text.ToString();
     }
 
-    private static string CommentBody(ReviewFinding finding)
+    private static string CommentBody(ReviewFinding finding, string? runLink)
     {
         var text = new StringBuilder()
             .Append("**").Append(finding.Key).Append(" · ").Append(finding.Severity.ToString().ToLowerInvariant()).Append("** ")
@@ -522,6 +525,8 @@ public static class ReviewReviewSteps
             text.AppendLine().AppendLine("```suggestion").AppendLine(finding.Suggestion.TrimEnd()).AppendLine("```");
         if (finding.CheckId is { } check)
             text.AppendLine().Append("_Check ").Append(check).AppendLine("_");
+        if (runLink is not null)
+            text.AppendLine().AppendLine(runLink);
         return text.ToString();
     }
 

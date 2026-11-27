@@ -455,8 +455,7 @@ public sealed class ReviewService(
             var binding = router.Resolve(run.Subject);
             if (!binding.Host.Capabilities.SupportsCommitStatuses)
                 return;
-            var root = settings.Value.PublicBaseUrl;
-            var link = string.IsNullOrWhiteSpace(root) ? null : $"{root.TrimEnd('/')}/reviews/{run.Id}";
+            var link = ReviewRunUrl.Create(settings.Value.PublicBaseUrl, run.Id);
             await binding.Host.SetCommitStatusAsync(binding.Target, run.Subject.HeadSha,
                 new CodeHostCommitStatus(Execution.ReviewWalk.ApprovalStatusContext, CodeHostStatusState.Pending, $"Re-review requested by {who}", link), ct);
         }

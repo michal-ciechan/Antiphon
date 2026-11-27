@@ -146,6 +146,9 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
 
     public ICodeHost Host => Binding.Host;
 
+    public string? PublicRunUrl =>
+        ReviewRunUrl.Create(Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl, Run.Id);
+
     /// <summary>The head the run accepts now: the pinned head, moved forward by a base-only branch update.</summary>
     public string HeadSha => Run.Subject.HeadSha.Length > 0 ? Run.Subject.HeadSha : Iteration.HeadSha ?? "";
 
@@ -247,11 +250,9 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
     {
         if (!Host.Capabilities.SupportsCommitStatuses || Run.Subject.Host != ReviewHost.GitHub)
             return false;
-        var root = Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl;
-        var link = string.IsNullOrWhiteSpace(root) ? null : $"{root.TrimEnd('/')}/reviews/{Run.Id}";
         try
         {
-            await Host.SetCommitStatusAsync(Binding.Target, sha ?? HeadSha, new CodeHostCommitStatus(context, state, description, link), ct);
+            await Host.SetCommitStatusAsync(Binding.Target, sha ?? HeadSha, new CodeHostCommitStatus(context, state, description, PublicRunUrl), ct);
             return true;
         }
         catch (CodeHostException ex) when (!Policy.StatusesRequired)

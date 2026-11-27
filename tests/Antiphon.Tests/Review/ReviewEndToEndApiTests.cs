@@ -105,12 +105,14 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
 
         var url = $"{PublicBaseUrl}/review-ui/reviews/{id}";
         var first = pr.Read(p => p.Reviews.ShouldHaveSingleItem());
-        AssertRunLinks(first, 1, "src/Lease.cs", url);
+        AssertRunLinks(first, 1, url, ("src/Lease.cs", 13));
         pr.Status("antiphon/review", HeadSha).ShouldNotBeNull().TargetUrl.ShouldBe(url);
 
         factory.Reviewer.Script(number, 1, MixedGroup, leaseFinding,
             new ScriptedFinding("SEED-0006", "major", 0.9, "tests/LeaseTests.cs", TestsAnchor,
-                "Coverage is missing", "The lease release has no test."));
+                "Coverage is missing", "The lease release has no test."),
+            new ScriptedFinding("SEED-0006", "major", 0.9, "tests/LeaseTests.cs", "// covers the release",
+                "Coverage claim is incorrect", "The comment claims coverage that does not exist."));
         using var request = Request(HttpMethod.Post, $"/api/review-runs/{id}/rounds", "lee", new { });
         using var response = await client.SendAsync(request);
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
@@ -120,24 +122,23 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
 
         var reviews = pr.Read(p => p.Reviews.ToList());
         reviews.Count.ShouldBe(2);
-        AssertRunLinks(reviews[0], 1, "src/Lease.cs", url);
-        AssertRunLinks(reviews[1], 2, "tests/LeaseTests.cs", url);
+        AssertRunLinks(reviews[0], 1, url, ("src/Lease.cs", 13));
+        AssertRunLinks(reviews[1], 2, url, ("tests/LeaseTests.cs", 1), ("tests/LeaseTests.cs", 2));
     }
 
     [Test]
-    [Arguments((string?)null)]
-    [Arguments(" ")]
-    [Arguments("/review-ui")]
-    [Arguments("http://localhost:17203")]
-    [Arguments("https://127.0.0.1")]
-    [Arguments("ftp://antiphon.test")]
-    [Arguments("https://viewer:fixture-password@antiphon.test")]
-    [Arguments("https://antiphon.test?token=fixture-token")]
-    [Arguments("https://antiphon.test#fixture-fragment")]
-    public async Task Reviews_and_inline_comments_keep_the_original_bodies_without_a_safe_public_base(string? publicBaseUrl)
+    [Arguments(106, null)]
+    [Arguments(107, " ")]
+    [Arguments(108, "/review-ui")]
+    [Arguments(109, "http://localhost:17203")]
+    [Arguments(110, "https://127.0.0.1")]
+    [Arguments(111, "ftp://antiphon.test")]
+    [Arguments(112, "https://viewer:fixture-password@antiphon.test")]
+    [Arguments(113, "https://antiphon.test?token=fixture-token")]
+    [Arguments(114, "https://antiphon.test#fixture-fragment")]
+    public async Task Reviews_and_inline_comments_keep_the_original_bodies_without_a_safe_public_base(int number, string? publicBaseUrl)
     {
         factory.Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl = publicBaseUrl;
-        const int number = 106;
         var pr = factory.Host.Open(number, "Release the lease after the save", "dana", BaseSha, HeadSha, Files, Diff);
         factory.Decisions.Categorise(externalContract: 0.2);
         Applies(seed0001: 0.9, seed0002: 0.6, seed0004: 0.8, seed0006: 0.7);
@@ -156,17 +157,17 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
         pr.Status("antiphon/review", HeadSha).ShouldNotBeNull().TargetUrl.ShouldBeNull();
     }
 
-    private static void AssertRunLinks(CodeHostReview review, int iteration, string filePath, string url)
+    private static void AssertRunLinks(CodeHostReview review, int iteration, string url, params (string Path, int Line)[] expectedComments)
     {
         var link = $"[View this review in Antiphon](<{url}>)";
         var summary = review.Body.ReplaceLineEndings("\n");
         summary.ShouldStartWith($"**Antiphon review**, round 1 (iteration {iteration})\n\n{link}\n\n");
-        var comment = review.Comments.ShouldHaveSingleItem();
-        comment.Path.ShouldBe(filePath);
-        comment.Body.ReplaceLineEndings("\n").ShouldEndWith($"\n\n{link}\n");
-        foreach (var body in new[] { summary, comment.Body })
+        summary.Split(url, StringSplitOptions.None).Length.ShouldBe(2);
+        review.Comments.Select(comment => (comment.Path, comment.Line)).ShouldBe(expectedComments, ignoreOrder: true);
+        foreach (var comment in review.Comments)
         {
-            body.IndexOf(url, StringComparison.Ordinal).ShouldBe(body.LastIndexOf(url, StringComparison.Ordinal));
+            comment.Body.ReplaceLineEndings("\n").ShouldEndWith($"\n\n{link}\n");
+            comment.Body.Split(url, StringSplitOptions.None).Length.ShouldBe(2);
         }
     }
 

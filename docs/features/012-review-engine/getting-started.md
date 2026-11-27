@@ -178,7 +178,7 @@ user-secrets, and are JSON arrays in appsettings.
 
 | Key | Meaning |
 |---|---|
-| `PublicBaseUrl` (none) | The UI's address. Commit statuses link to `{PublicBaseUrl}/reviews/{runId}`; without it they carry no link. |
+| `PublicBaseUrl` (none) | The UI's absolute HTTP(S) address. GitHub review summaries, inline finding comments and commit statuses link to `{PublicBaseUrl}/reviews/{runId}`. An unset or invalid address omits the link. |
 | `DefaultViewerLogin` (`admin`) | The GitHub login that the UI and API act as while sign-in is off (section 7.1) |
 | `Viewers:<login>:DisplayName`, `Viewers:<login>:Teams:<n>` | A viewer's display name and teams |
 | `AllowViewerHeader` (on in Development only) | Lets the `X-Review-Viewer` request header choose the viewer while sign-in is off. Only for tests, or behind a proxy that sets the header. |
@@ -486,8 +486,11 @@ to GitHub, came back signed in, and showed the login with a Sign out item.
   internet. Serve it over HTTPS. The session cookie is marked Secure when `PublicBaseUrl` starts with
   `https://`. The UI's own files stay public, but they hold no data.
 
-Either way, set `Review:PublicBaseUrl` to the address people use. The links in GitHub statuses use it,
-and so does the sign-in callback.
+Either way, set `Review:PublicBaseUrl` to the address people use. GitHub posts “View this review in
+Antiphon” under the review summary heading and at the end of each inline finding comment. Both links
+open the run's Findings tab. The setting also supplies the commit status links and the sign-in
+callback address. A relative URL, a loopback address, or an address with credentials, a query or a
+fragment omits the links from the review and commit statuses.
 
 Serve it over HTTPS even on a private network. Browsers set to always use secure connections refuse
 a plain `http://` address with an error page; Chrome did so for a tailnet address in testing. If you
