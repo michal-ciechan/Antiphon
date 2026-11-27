@@ -63,9 +63,9 @@
     },
     {
       "path": ".gitattributes",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "AgentTaskLandRecoveryTests",
         "AgentTaskLandRegistrationSafetyTests",
@@ -1005,6 +1005,15 @@
       ]
     },
     {
+      "path": "server/Application/Services/DelegationWorktreeService.cs",
+      "classes": 26,
+      "reason": "cap",
+      "owed": 1,
+      "first": [
+        "ServerGitProcessTests"
+      ]
+    },
+    {
       "path": "server/Application/Services/GitWorkspaceService.cs",
       "classes": 37,
       "reason": "cap",
@@ -1731,18 +1740,18 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 65,
+      "classes": 66,
       "reason": "cap",
-      "owed": 40,
+      "owed": 41,
       "first": [
         "LandNonCodeSkipTests",
+        "LibGit2VsGitInspectionTests",
         "RunnerSettlementSyncTests",
         "AgentTaskLandVerifierTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "RepairSourceDispatchTests",
         "RepositoryMutationLeaseDescribeTests",
-        "RunnerAlarmDeliveryTests",
-        "RunnerStateAlarmExclusionTests"
+        "RunnerAlarmDeliveryTests"
       ]
     },
     {
@@ -2379,9 +2388,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/GitProcessSpawnLimit.cs",
-      "classes": 141,
+      "classes": 142,
       "reason": "cap",
-      "owed": 116,
+      "owed": 117,
       "first": [
         "AgentTaskLandRemoteSourceRetentionCTests",
         "AgentTaskLandRemovalMatrixTests",
@@ -9456,10 +9465,10 @@
         "DelegationWorktreeTests",
         "ImpactedClassesSelectorTests",
         "LandMergeBranchWitnessTests",
+        "LibGit2VsGitInspectionTests",
         "PostLandMutationCustodyTests",
         "PostLandMutationWorktreeTests",
         "RepositoryMutationLeaseOwnerTests",
-        "ServerGitProcessTests",
         "VerificationRoundSettlementTests",
         "WorktreeBaseSelectionTests"
       ]
@@ -9806,6 +9815,12 @@
         "AgentTaskReplyIntegrationTests",
         "GatedCommitServiceTests",
         "RepositoryMutationLeaseOwnerTests"
+      ]
+    },
+    {
+      "path": "server/Application/Services/GitCommandRepository.cs",
+      "classes": [
+        "LibGit2VsGitInspectionTests"
       ]
     },
     {
@@ -16529,6 +16544,12 @@
       ]
     },
     {
+      "path": "server/Infrastructure/Git/GitRepository.cs",
+      "classes": [
+        "LibGit2VsGitInspectionTests"
+      ]
+    },
+    {
       "path": "server/Infrastructure/Git/GitService.cs",
       "classes": [
         "AdvisoryChangePolicyTests",
@@ -17947,11 +17968,18 @@
       ]
     },
     {
+      "path": "src/Antiphon.GitInProcess/InProcessGitInspection.cs",
+      "classes": [
+        "LibGit2VsGitInspectionTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.GitInProcess/InProcessGitReads.More.cs",
       "classes": [
         "GitInProcessAssemblyTests",
         "InProcessGitCommandsTests",
         "LibGit2VsGitDifferentialTests",
+        "LibGit2VsGitInspectionTests",
         "LibGit2VsGitJunctionTests",
         "LibGit2VsGitWorkingTreeVerdictTests",
         "LibGit2VsGitWorktreeListTests",
@@ -17964,6 +17992,7 @@
         "GitInProcessAssemblyTests",
         "InProcessGitCommandsTests",
         "LibGit2VsGitDifferentialTests",
+        "LibGit2VsGitInspectionTests",
         "LibGit2VsGitJunctionTests",
         "LibGit2VsGitWorkingTreeVerdictTests",
         "LibGit2VsGitWorktreeListTests",
@@ -17976,6 +18005,7 @@
         "GitInProcessAssemblyTests",
         "InProcessGitCommandsTests",
         "LibGit2VsGitDifferentialTests",
+        "LibGit2VsGitInspectionTests",
         "LibGit2VsGitJunctionTests",
         "LibGit2VsGitWorkingTreeVerdictTests",
         "LibGit2VsGitWorktreeListTests",
@@ -28463,6 +28493,14 @@
       "classes": [
         "AgentTaskLandReceiptWatermarkSafetyTests",
         "ReceiptScanDestinationIntegrationTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/RecordingGitRepository.cs",
+      "classes": [
+        "AgentTaskDispatchBaseGuardTests",
+        "AgentTaskWorktreeBaseResolverTests",
+        "DispatchSiblingInspectionTests"
       ]
     },
     {
