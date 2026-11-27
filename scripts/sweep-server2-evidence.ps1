@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory)] [string] $ReleaseList,
     [Parameter(Mandatory)] [string] $Repository,
     [Parameter(Mandatory)] [guid] $ProjectId,
-    [ValidateRange(72, 8760)] [int] $MinAgeHours = 72,
+    [ValidateRange(24, 8760)] [int] $MinAgeHours = 24,
     [ValidateRange(1, 100)] [int] $MaxCandidates = 25,
     [switch] $Apply
 )

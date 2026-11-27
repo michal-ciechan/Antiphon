@@ -1285,7 +1285,8 @@ names the exact task evidence directory and the full owning task ID, for example
 Release a directory only after its durable receipts have been retained and its references have been
 cleared, including card discussions. The sweep itself checks task settlement,
 open task records, board search, Git references and the file tree. It keeps evidence for at least
-72 hours after both the task's completion and the newest write in the tree.
+24 hours after both the task's completion and the newest write in the tree. Set
+`-MinAgeHours` to a higher value when a deployment requires a longer retention period.
 
 ```sh
 pwsh -NoProfile -File scripts/sweep-server2-evidence.ps1 -ReleaseList <release-list> -Repository <antiphon-repo> -ProjectId <project-id>
