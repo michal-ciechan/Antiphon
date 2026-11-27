@@ -1,6 +1,6 @@
 {
   "schemaVersion": 4,
-  "policyHash": "24dc35290379aa4f5c945dc5313c4008b09630982990cac377c5515974503b7d",
+  "policyHash": "4aad09d626e2af942ac6b734043c250ebad98ea3d9f3192435b62767fa54dae5",
   "defaultSuites": [
     "antiphon",
     "session-runner",
@@ -763,6 +763,20 @@
           "platform": "windows",
           "reason": "Linux-only by construction: Linux FIFO and process-group qualification. The case remains required on Linux.",
           "owner": "CARD-0590"
+        },
+        {
+          "suite": "antiphon",
+          "class": "CheckpointEvidencePlacementTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the checkpoint build placement gate protects Linux runner evidence roots. The cases remain required on Linux.",
+          "owner": "CARD-1677"
+        },
+        {
+          "suite": "antiphon",
+          "class": "Server2EvidenceRetentionTests",
+          "platform": "windows",
+          "reason": "Linux-only by construction: the runner sweep uses procfs and GNU file tools. The cases remain required on Linux.",
+          "owner": "CARD-1677"
         },
         {
           "suite": "antiphon",

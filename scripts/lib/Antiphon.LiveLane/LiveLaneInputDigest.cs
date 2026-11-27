@@ -94,8 +94,9 @@ namespace Antiphon.LiveLane
         /// scripts/deploy-server2.ps1; both hashes were resealed. Unit 66 moved it from 214ae333 to 7276a6e6:
         /// tests/test-execution-policy.json lost the two Windows rows of VolumeRetirementHostProofTests (the retirement coordinator
         /// and the desktop origin proof run in process now, C1609Coordinator and C1609HostProof), and its policy hash was resealed.
+        /// The server2 disk repair adds Windows exclusions for its two native Linux fixture classes and reseals the policy.
         /// </summary>
-        public const string Pinned = "7276a6e63980cdcdc050397a50f34aafa2a59f63efd792c9a97f1a8f906f8dd9";
+        public const string Pinned = "5b0655f3917372f70993e34d2de18a8388d8b10890d2daf8ac234629f17aa1aa";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";

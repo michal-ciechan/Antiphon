@@ -22,16 +22,46 @@ The attention item has its own percentage and free-space settings.
 | V-8 | An externally launched historical build checks effective write paths before restore. | HistoricalProjectEvidenceDestinationsAreRefusedBeforeRestore | PC-10a omit IntermediateOutputPath. PC-10b omit MSBuildProjectExtensionsPath. |
 | R-3 | The Linux and native Windows entries check space before bootstrap. | Launcher witnesses | PC-11a bypass the POSIX check. PC-11b bypass the Windows check. |
 | R-4 | The timer targets unused builder cache older than 24 hours. | Inspect service and timer | Host activation is operator work after landing. |
+| V-9 | A held task dispatches after the sample recovers and the same recipient gets a complete matching UserPrompt. | LowDiskRecoveryDeliversTheCompleteQueuedBrief | PC-12 bypass the dispatch hold before remote prep. |
 
 ### Checkpoints
 
-The product row uses one isolated build and exact class union. The guard row
-covers the six-class policy union and named mechanical, layering, guidance and
-fixture/plan guards. The CARD-2093 repair is on its own branch and Merge carries it.
-The inherited plan guard remains red until that repair joins the candidate.
+CP-1 covers the disk and retention invariants with one isolated build and an
+exact class union. CP-2 covers the six-class policy union and the named mechanical,
+layering, guidance and fixture/plan guards. CARD-2093 is on its own branch and
+Merge carries it. The inherited plan guard remains red until that repair joins
+the candidate.
+
+The red CP-1 measured 8m44s to the build-ready boundary, including slot wait,
+and 1m14s of test execution. The rows below reuse the isolated CP-1 artifacts
+for focused neighboring selections, avoiding extra cold builds against the
+same project. CP-9 and CP-10 run after the Antiphon.Tests rows. The broad
+dispatcher file has unbounded derived impact, which is recorded in the impact
+manifest. The named dispatcher, receipt, policy and notification classes
+below cover the matching declared rows. Nightly and rc own full lanes.
 
 | CP | After | Build | Group | Filter | Covers | Expect | Min | EstimatedMinutes | Serial |
 |---|---|---|---|---|---|---|---|---:|---:|---|
-| CP-1 | repairs | tests/Antiphon.Tests -> bin-ad7e-disk/ | disk | `/*/*/(Server2EvidenceRetentionTests*)\|(WorkspaceDiskAdmissionTests*)\|(CheckpointDiskAdmissionTests*)\|(CheckpointEvidencePlacementTests*)/*` | V-1–V-8, R-1, R-2 | Server2EvidenceRetentionTests,WorkspaceDiskAdmissionTests,CheckpointDiskAdmissionTests,CheckpointEvidencePlacementTests | 19 | 20 | true |
-| CP-2 | repairs | tests/Antiphon.Tests -> bin-ad7e-guards/ | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | policy and source guards | TestClassificationPolicyTests,TestClassificationGuardTests,SlowTestRegistryMergeTests,SlowTestTripwireTests,NativeLinuxPolicyWitnessTests,MechanicalPcContractTests,TaskPlatformGuidanceTests,C1729LayeringGuardTests,TestLaneCategoryGuardTests,TestFixtureCleanupGuardTests,PlanCheckpointClassSelectionGuardTests | 87 | 20 | true |
+| CP-1 | repairs | tests/Antiphon.Tests -> bin-ad7e-disk/ | disk | `/*/*/(Server2EvidenceRetentionTests*)\|(WorkspaceDiskAdmissionTests*)\|(CheckpointDiskAdmissionTests*)\|(CheckpointEvidencePlacementTests*)/*` | V-1–V-8, R-1, R-2 | Server2EvidenceRetentionTests,WorkspaceDiskAdmissionTests,CheckpointDiskAdmissionTests,CheckpointEvidencePlacementTests | 19 | 14 | true |
+| CP-2 | repairs | CP-1 | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | policy and source guards | TestClassificationPolicyTests,TestClassificationGuardTests,SlowTestRegistryMergeTests,SlowTestTripwireTests,NativeLinuxPolicyWitnessTests,MechanicalPcContractTests,TaskPlatformGuidanceTests,C1729LayeringGuardTests,TestLaneCategoryGuardTests,TestFixtureCleanupGuardTests,PlanCheckpointClassSelectionGuardTests | 87 | 2 | true |
 | CP-3 | repairs | CP-2 | guards | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | live gate inventory | LiveLaneInventoryTests | 2 | 1 | true |
+| CP-4 | repairs | CP-1 | dispatch recovery | `/*/*/PhoneHomeTaskDispatchProjectionTests/LowDiskRecoveryDeliversTheCompleteQueuedBrief` | V-9 | LowDiskRecoveryDeliversTheCompleteQueuedBrief | 3 | 4 | true |
+| CP-5 | repairs | CP-1 | runner and checkpoint neighbors | `/*/*/(RowVerbTests*)\|(RunSchedulerTests*)\|(CheckpointLauncherTests*)\|(C1677DiskAlarmTests*)\|(CheckpointReceiptSafetyTests*)\|(CheckpointTerminalReceiptTests*)\|(HostCleanupCheckpointReceiptTests*)\|(ProcessSpawnLimitTests*)\|(PhoneHomeRollingRunnerTests*)\|(RefOnlyProductionCompositionTests*)\|(DelegationTestServicesTests*)\|(DelegationHarnessCensusTests*)\|(Card1277PtyHostFixtureTests*)/*` | runner and checkpoint regression | RowVerbTests,RunSchedulerTests,CheckpointLauncherTests,C1677DiskAlarmTests,CheckpointReceiptSafetyTests,CheckpointTerminalReceiptTests,HostCleanupCheckpointReceiptTests,ProcessSpawnLimitTests,PhoneHomeRollingRunnerTests,RefOnlyProductionCompositionTests,DelegationTestServicesTests,DelegationHarnessCensusTests,Card1277PtyHostFixtureTests | 13 | 6 | true |
+| CP-6 | repairs | CP-1 | dispatcher budgets | `/*/*/DelegationDispatchRecoveryBoundaryTests/C1149_C1150_Statement_budgets` | dispatcher statement budgets | C1149_C1150_Statement_budgets | 1 | 1 | true |
+| CP-7 | repairs | CP-1 | native exclusion policy | `/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)\|(LinuxOnlyWindowsExclusionPolicy*)` | OS policy | C1686_LinuxOnlyCensus,LinuxOnlyWindowsExclusionPolicy | 2 | 1 | true |
+| CP-8 | repairs | CP-1 | dispatcher notification neighbors | `/*/*/(AgentTaskLandHeldNotificationTests*)\|(AgentTaskLandNotificationParkFollowUpTests*)\|(AgentTaskLandNotificationPersistenceTests*)\|(AgentTaskLandNotificationReconcileLoadTests*)\|(AgentTaskLandNotificationRecoveryTests*)\|(AgentTaskLandNotificationRescanTests*)\|(AgentTaskLandReceiptTests*)\|(AgentTaskLandReceiptWatermarkSafetyTests*)\|(AgentTaskLandReceiptWatermarkTests*)\|(ExpectationDebtTests*)\|(LandReceiptScanCacheTests*)\|(PreDispatchFailureDeliveryTests*)\|(ReceiptScanDestinationIntegrationTests*)/*` | dispatcher notification regression | AgentTaskLandHeldNotificationTests,AgentTaskLandNotificationParkFollowUpTests,AgentTaskLandNotificationPersistenceTests,AgentTaskLandNotificationReconcileLoadTests,AgentTaskLandNotificationRecoveryTests,AgentTaskLandNotificationRescanTests,AgentTaskLandReceiptTests,AgentTaskLandReceiptWatermarkSafetyTests,AgentTaskLandReceiptWatermarkTests,ExpectationDebtTests,LandReceiptScanCacheTests,PreDispatchFailureDeliveryTests,ReceiptScanDestinationIntegrationTests | 13 | 8 | true |
+| CP-9 | repairs | tests/Antiphon.SessionRunner.Tests -> bin-ad7e-runner/ | spawn roster | `/*/*/ProcessSpawnLimitTests/*` | runner spawn roster | ProcessSpawnLimitTests | 1 | 4 | true |
+| CP-10 | repairs | tests/Antiphon.Agents.Pty.Tests -> bin-ad7e-pty/ | spawn roster | `/*/*/ProcessSpawnLimitTests/*` | PTY spawn roster | ProcessSpawnLimitTests | 1 | 4 | true |
+| CP-11 | repairs | CP-1 | policy pin | `/*/*/LiveLaneRunnerTests/WrapperOnlyPaidManifest` | native exclusions preserve live-lane sentinels | WrapperOnlyPaidManifest | 1 | 2 | true |
+
+## Native and manual witnesses
+
+R-3 Linux uses the real `scripts/antiphon` entry with a controlled `df` and a
+dotnet launch sentinel in `scripts/test-checkpoint-disk-guard.mjs`. The Windows
+obligation uses a clean copy of `scripts\antiphon.cmd` from the tested SHA and a
+caller volume with less than 20 GiB free. It must print `workspace_disk_low`,
+exit 9, and leave the bootstrap cache absent. Run the required impacted Windows
+`Card1277PtyHostFixtureTests` separately on Windows.
+
+R-4 checks the hourly timer and the service's exact builder-prune invocation.
+Host activation follows land.
