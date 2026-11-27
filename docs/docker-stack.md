@@ -1658,7 +1658,8 @@ Fixture retry of an unpinned SHA against the same image fails the same way; do n
 deliberately empty package cache or downgrade the SDK to get past it.
 
 The restore race does not count build-slot wait against its 30-second arrival window. Each
-restore probe writes `slot-held` only after `scripts/build-slot.ps1` grants the slot, and the
+restore probe writes `slot-held` only after the `build-slot` command grants the slot (unit 68: the
+host-published CLI, run with `dotnet exec` from its read-only `/opt/antiphon-cli` mount; no pwsh), and the
 barrier starts that window only once both probes hold slots. Slot acquisition uses the build-slot
 timeout (default 45 minutes), measured with `date +%s` so a slow reader cannot stretch the wait
 past that deadline. A probe that exits 4, or a wait that reaches that deadline while a

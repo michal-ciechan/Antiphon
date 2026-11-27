@@ -164,18 +164,19 @@ cat > "$root/bin/curl" <<'CURL'
 printf 'broker-read\n' >> "$C913_ROOT/trace"
 printf '{}\n'
 CURL
-cat > "$root/bin/pwsh" <<'LEASE'
-#!/bin/sh
-printf 'lease %s\n' "$*" >> "$C913_ROOT/trace"
-[ "$1 $2 $3" = '-NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1' ] || exit 92
-while [ "$1" != -- ]; do shift; done
-shift
-"$@"
-LEASE
+# Unit 68: the smoke leases through the host-published CLI's build-slot (dotnet exec of the read-only /opt/antiphon-cli
+# build); pwsh stays an unexpected call.
 cat > "$root/bin/dotnet" <<'DOTNET'
 #!/bin/sh
 printf '%s\n' "$*" >> "$C913_ROOT/trace"
 case "$1" in
+exec)
+    printf 'lease %s\n' "$*" >> "$C913_ROOT/trace"
+    [ "$2 $3 $4 $5" = '/opt/antiphon-cli/Antiphon.Scripts.dll build-slot --label c849-smoke' ] || exit 92
+    while [ "$1" != -- ]; do shift; done
+    shift
+    "$@"
+    exit $? ;;
 restore) [ "$NUGET_PACKAGES" != /home/app/.nuget/packages ] && [ "$NUGET_SCRATCH" != /var/cache/antiphon/nuget-scratch ] || exit 93 ;;
 build)
     mkdir -p bin/Debug/net9.0/linux-x64
@@ -185,9 +186,10 @@ build)
 esac
 DOTNET
 export NUGET_PACKAGES=/home/app/.nuget/packages NUGET_SCRATCH=/var/cache/antiphon/nuget-scratch NPM_CONFIG_CACHE=/home/app/.npm
+export C849_CLI=/opt/antiphon-cli/Antiphon.Scripts.dll
 fresh
 sh "$root/smoke.sh" > "$root/out" 2>&1 || { cat "$root/out"; fail deployment-smoke-positive; }
-grep -Fq 'lease -NoProfile -File /work/repos/antiphon/scripts/build-slot.ps1' "$root/trace" || fail smoke-lease-required
+grep -Fq 'lease exec /opt/antiphon-cli/Antiphon.Scripts.dll build-slot --label c849-smoke -- /bin/sh ' "$root/trace" || fail smoke-lease-required
 grep -Fxq 'C849_SMOKE uid=1654 restore=0 build=0 run=0 stdout=CARD0849_APPHOST_OK' "$root/out" || fail deployment-smoke-receipt
 pass smoke-lease-required
 for variable in NUGET_PACKAGES NUGET_SCRATCH NPM_CONFIG_CACHE; do

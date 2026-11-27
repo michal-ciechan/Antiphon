@@ -71,6 +71,8 @@ c849_payload_call() {
 }
 c849_compare_import() { :; }
 c849_smoke() { :; }
+# Unit 68: the seed helper mounts the host-published CLI; a preset folder makes c849_cli resolve nothing.
+C849_CLI_DIR=/fixture/antiphon-cli
 c849_fixture_consumer_release() { :; }
 c849_contract_receipt() { :; }
 c849_status_body() { echo '{}'; }

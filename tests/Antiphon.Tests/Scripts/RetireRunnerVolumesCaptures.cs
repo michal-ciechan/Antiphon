@@ -14,8 +14,11 @@ namespace Antiphon.Tests.Scripts;
 /// </summary>
 internal static class RetireRunnerVolumesCaptures
 {
-    /// <summary>The SHA-256 of scripts/c1008-retirement.sh and scripts/c590-remote.sh the capture ran, joined by a colon.</summary>
-    public const string ToolingSha256 = "b5188f7596e371cb28e5d2c99a8b0cb6f754f94cf59a222ad97c1fbce0581bf7:2367c8fbc9ccf3fe39bdf920f4cc1f1cdadc0178af5042c0a74f82e5ff10992b";
+    // Unit 68: re-pinned to scripts/c590-remote.sh after the build-slot steps (unit 67 captured b5188f75...:2367c8fb...). The
+    // packets hold the four c590-remote.sh functions c1008_volume, c1008_rollout_lock, c1008_lock and c849_lock, which unit 68
+    // left byte for byte unchanged, so the captured packets and their tooling digests stay exact.
+    /// <summary>The SHA-256 of scripts/c1008-retirement.sh and scripts/c590-remote.sh the packets hold, joined by a colon.</summary>
+    public const string ToolingSha256 = "b5188f7596e371cb28e5d2c99a8b0cb6f754f94cf59a222ad97c1fbce0581bf7:bf4f4f3a1bdd424187e9fe59fc282c7e20387c626635237571ec2ff67cb5b9e3";
 
     public static readonly string[] Scenarios =
     [

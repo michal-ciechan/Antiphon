@@ -166,7 +166,7 @@ public sealed class RemoteScriptContractTests
     [ParallelLimiter<ProcessSpawnLimit>]
     public void C1066_Fixture_warm_probe_uses_argument_log_under_nounset(string variant)
     {
-        var output = LinuxShell(C1066FixtureHarness("c849_fixture_warm_probe") + $$"""
+        var output = LinuxShell(C1066FixtureHarness("c849_cli", "c849_fixture_warm_probe") + $$"""
             docker() { printf 'C660_ROW net9-offline fail NuGet {{variant}} is not empty\n'; return 1; }
             status=0
             actual="$(c849_fixture_warm_probe fixture-image fixture-packages fixture-scratch '{{variant}}')" || status=$?
@@ -301,8 +301,10 @@ public sealed class RemoteScriptContractTests
             {
                 foreach (Match bind in Regex.Matches(command, @"type=bind,[^""]+"))
                 {
+                    // Unit 68: the host-published CLI of the checkout's inputs (c849_cli) replaced the build-slot.ps1 bind.
                     (bind.Value.Contains("source=$CHECKOUT/scripts/", StringComparison.Ordinal)
-                        || bind.Value.Contains("source=$CHECKOUT/docker/session-runner-grok/verify-codex-image.sh", StringComparison.Ordinal))
+                        || bind.Value.Contains("source=$CHECKOUT/docker/session-runner-grok/verify-codex-image.sh", StringComparison.Ordinal)
+                        || bind.Value == "type=bind,source=$C849_CLI_DIR,target=/opt/antiphon-cli,readonly")
                         .ShouldBeTrue("checkout-input-only: " + bind.Value);
                     bind.Value.ShouldContain("readonly", customMessage: "checkout-bind-readonly");
                 }
@@ -1871,6 +1873,7 @@ public sealed class RemoteScriptContractTests
         SERVER2_ROOT="$fixture_root/server2"; CASE_DIR="$fixture_root/case"
         CHECKOUT="$fixture_root/checkout"; RUN=c1066
         mkdir -p "$SERVER2_ROOT" "$CASE_DIR"
+        C849_CLI_DIR="$fixture_root/antiphon-cli"
         """ + "\n" + string.Join('\n', functions.Select(function => Block(Remote(), function))) + "\n";
 
     [Test]
@@ -6159,7 +6162,9 @@ public sealed class RemoteScriptContractTests
             "c849_payload_call", "c849_payload_fs", "c849_payload_root", "c849_payload_note",
             "c849_validate_seed_relative", "c849_validate_seed_tree", "c849_manifest_write",
             "c849_manifest_validate", "c849_manifest_compare", "c849_recovery_validate",
-            "c849_compare_import", "c849_contract_receipt", "c849_donor" };
+            "c849_compare_import", "c849_contract_receipt", "c849_donor",
+            // Unit 68: the helpers mount the host-published CLI; the preset folder below makes c849_cli resolve nothing.
+            "c849_cli", "c849_cli_enter", "c849_cli_leave" };
         var doubles = new[] { "c849_fixture_work_mount", "c849_fixture_helper_exec", "c849_fixture_tree_mutate",
             "c849_fixture_launch", "c849_fixture_consumer_release", "c849_cold_seed", "c849_smoke",
             "c849_image", "c849_prepare", "c849_optional_donor", "c849_empty_volume", "c849_require_ready",
@@ -6168,7 +6173,8 @@ public sealed class RemoteScriptContractTests
             "c849_status_zero", "c849_seed_failure", "c849_saved_copy", "c849_assert_mounts", "c849_budget_gate" };
         return string.Join('\n', functions.Select(name => Block(remote, name))) + "\n" +
             string.Join('\n', doubles.Select(name => name + "() { printf 'UNEXPECTED " + name +
-                "\\n' >> \"$root/volume-calls\"; exit 97; }")) + "\n";
+                "\\n' >> \"$root/volume-calls\"; exit 97; }")) + "\n" +
+            "C849_CLI_DIR=/fixture/antiphon-cli\n";
     }
 
     [Test]

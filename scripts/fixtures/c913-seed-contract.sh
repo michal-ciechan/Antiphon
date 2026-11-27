@@ -7,6 +7,8 @@ trap 'rm -rf -- "$root"' EXIT
 export C913_ROOT="$root"
 remote="$repo/scripts/c590-remote.sh"
 awk '/^(c849_[a-z_]+|case_runner_cache_inventory)\(\) \{/ { active=1 } active { print } active && /^}$/ { active=0 }' "$remote" > "$root/functions"
+# Unit 68: the host-published CLI the helpers mount read-only (c849_cli resolves nothing when this is set).
+C849_CLI_DIR="$root/cli"
 source "$root/functions"
 source <(awk '/^c849_fixture_inventory_fault\(\) \(/ { active=1 } active { print } active && /^\)$/ { active=0 }' "$remote")
 SERVER2_ROOT="$root/server2"; CASE_DIR="$root/case"; CHECKOUT="$repo"; ROOT="$repo"
@@ -227,6 +229,8 @@ docker() {
           *'.State.Running'*) if [ "$FAULT" = retired-running ] && [ "${@: -1}" = "$donor_id" ]; then echo true; else echo false; fi ;;
           *'com.docker.compose.project'*) echo "$TEMP_PROJECT" ;;
           *'com.docker.compose.service'*) echo session-runner ;;
+          # Unit 68: a runner has no CLI mount, so c849_cli_enter copies the host build into its /tmp.
+          *'"/opt/antiphon-cli"'*) printf '\n' ;;
           *'.Mounts'*) echo '[]' ;;
           *) return 94 ;;
         esac ;;
@@ -238,6 +242,7 @@ docker() {
         if [ "${@: -1}" = "$donor_id" ]; then rm -f "$root/donor-project"; fi
         return 0 ;;
       cp:*)
+        if [ "$2" = "$C849_CLI_DIR/." ] && [[ "$3" == *:/tmp/c849-cli-"$RUN" ]]; then printf 'cli-copy\n' >> "$root/trace"; return 0; fi
         if [[ "$2" == *'/packages/.' ]]; then source=packages; else source=npm; fi
         [ "$FAULT" != "copy-$source" ] || return 1
         if [ "$3" = - ]; then tar -C "$root/donor/$source" -cf - .; else cp -a "$root/donor/$source/." "$3/"; fi
@@ -248,6 +253,7 @@ docker() {
           if [ "$FAULT" = writer ]; then printf '1654 dotnet\n'; else printf '0 init\n'; fi
         elif [[ "$*" == *'ps -eo uid,args'* ]]; then [ "$FAULT" != process-error ] || return 1; if [ "$FAULT" = writer ]; then echo 1; else echo 0; fi
         elif [[ "$*" == *'rev-parse HEAD'* ]]; then echo "$SHA"
+        elif [[ "$*" == *" rm -rf -- /tmp/c849-cli-$RUN" ]] || [[ "$*" == *" chmod -R a+rX,go-w -- /tmp/c849-cli-$RUN" ]]; then [[ "$*" == 'exec -u 0:0 '* ]] || return 94
         elif [[ "$*" == *'curl '* ]]; then [ "$FAULT" != broker-error ] || return 1; if [ "$FAULT" = broker-busy ]; then printf '{"occupied":1,"leases":[{}]}'; else printf '{"occupied":0,"leases":[]}'; fi
         elif [[ "$*" == *'/bin/sh -s'* ]]; then
           cat >/dev/null
