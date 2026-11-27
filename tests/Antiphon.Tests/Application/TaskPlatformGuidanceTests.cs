@@ -136,7 +136,7 @@ public sealed class TaskPlatformGuidanceTests
             "ordinaryScopeCompleted: <Full|Interim|None>",
             "Full only when the whole required selection ran. The caller lands that owner with --expected-source-sha from this evidence.",
             "Platform: GET /api/runner-defaults, GET /api/session-runners; embed no fleet location. Omit --runner unless pinning one host. Omit --platform unless OS needed; --platform Any unpins.",
-            "next: land for clean Final; review (Final) for clean Interim; code for defects (name them in `handoff:`); decide at the round cap.",
+            "next: land for clean Final; review (Final) for clean Interim; code when there are defects (name them in `handoff:`); decide at the round cap.",
         })
             text.ShouldContain(baseLine, Case.Sensitive, $"Missing base Review instruction: {baseLine}");
     }
