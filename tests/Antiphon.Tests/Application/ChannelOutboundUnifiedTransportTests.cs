@@ -470,6 +470,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
             // recovery's.
             await using var w = await UnifiedOutboundTransport.CreateAsync(broker,
                 warmProbes: 2 + (cut is "conversion-dispatched" or "enqueue-refused" ? 1 : 0) + (cut == "result-committed" ? 1 : 0),
+                // Both the source and converter fakes record prompt evidence before their submit callbacks return.
+                postEvidenceSettleMs: 0,
                 configure: services =>
             {
                 services.AddSingleton(Options.Create(delegation));
