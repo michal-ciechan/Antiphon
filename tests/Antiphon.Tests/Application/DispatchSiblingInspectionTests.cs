@@ -153,7 +153,7 @@ public class DispatchSiblingInspectionTests
             trace.Rewritten.ShouldBeGreaterThan(0);
             selected.Decision.ShouldBe(CardWorktreeBaseDecision.Continue);
             selected.SourceTaskId.ShouldBe(source!.Id);
-            trace.Commands.ShouldContain(c => c[0] == "cherry");
+            trace.Commands.ShouldContain(c => c[0] == "contains-unmerged");
         }
         else if (scenario is "absent local ref" or "prefix-neighbor ref")
         {
@@ -165,7 +165,7 @@ public class DispatchSiblingInspectionTests
             trace.Commands.Count(c => c[0] == "for-each-ref").ShouldBe(3);
             trace.Commands.ShouldContain(c => c[0] == "for-each-ref"
                 && c.Contains("refs/remotes/origin/" + source!.WorktreeBranch));
-            trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
+            trace.Commands.ShouldNotContain(c => c[0] == "contains-unmerged" || c[0] == "log");
             selected.GitCommands.ShouldBeLessThanOrEqualTo(5);
         }
         else
@@ -173,7 +173,7 @@ public class DispatchSiblingInspectionTests
             selected.Decision.ShouldBe(CardWorktreeBaseDecision.Target, scenario);
             selected.Incomplete.ShouldBeFalse();
             trace.Commands.Count(c => c[0] == "for-each-ref").ShouldBe(2);
-            trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
+            trace.Commands.ShouldNotContain(c => c[0] == "contains-unmerged" || c[0] == "log");
             selected.GitCommands.ShouldBeLessThanOrEqualTo(4);
         }
         trace.Commands.Clear();
@@ -186,7 +186,7 @@ public class DispatchSiblingInspectionTests
         {
             guard.Reason.ShouldBeNull();
             guard.Warnings.ShouldBeEmpty();
-            trace.Commands.ShouldNotContain(c => c[0] == "cherry" || c[0] == "log");
+            trace.Commands.ShouldNotContain(c => c[0] == "contains-unmerged" || c[0] == "log");
             guard.GitCommands.ShouldBeLessThanOrEqualTo(5);
         }
     }
@@ -786,6 +786,9 @@ public class DispatchSiblingInspectionTests
             if (result != original) Rewritten++;
             return result;
         }
+
+        // The containment question, answered in process or by git; recorded under its own name.
+        public override IGitRepository Open(string path) => new RecordingGitRepository(base.Open(path), Commands.Add);
     }
 
     private static AppDbContext Context(IsolatedTestSchema schema) =>

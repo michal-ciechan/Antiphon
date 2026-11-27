@@ -944,6 +944,14 @@ public class LandingGit : ILandingGit
         }
     }
 
+    /// <summary>
+    /// libgit2 first (<see cref="GitRepository"/>) when this runner's git children read the same repository libgit2
+    /// opens; git commands through this runner otherwise, and wherever libgit2 cannot answer.
+    /// </summary>
+    public virtual IGitRepository Open(string path) => InProcessGitReads.Enabled && InProcessEligible()
+        ? new GitRepository(this, path, () => Scope?.Profile.InProcessHit())
+        : new GitCommandRepository(this, path);
+
     public async Task<bool> HasActiveSequencerAsync(string repository, CancellationToken ct)
         => HasSequencerAt(await CanonicalDirectoryAsync((await RequiredAsync(repository,
             ["rev-parse", "--absolute-git-dir"], ct)).Trim(), ct));

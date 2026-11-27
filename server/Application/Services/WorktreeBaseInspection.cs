@@ -95,6 +95,29 @@ public sealed class WorktreeBaseInspection : IDisposable
         { throw new WorktreeBaseInspectionLimitException("inspection_timeout"); }
     }
 
+    /// <summary>
+    /// A question asked of an <see cref="IGitRepository"/> (answered in process or by git, which the inspection does not
+    /// see): one admission against the deadline, and <paramref name="gitCost"/> commands (what its git answer runs) against
+    /// the command budget whichever way it is answered, so the budget still bounds the git children a fallback can start.
+    /// </summary>
+    private async Task<T> AskAsync<T>(string kind, int gitCost, Func<CancellationToken, Task<T>> question)
+    {
+        CheckDeadline();
+        if (Commands + gitCost > _maxCommands) throw new WorktreeBaseInspectionLimitException("git_command_limit");
+        try
+        {
+            using var admission = await _gate.EnterAsync(_budget.Token);
+            CheckDeadline();
+            Commands += gitCost;
+            CommandKind = kind;
+            var answer = await question(_budget.Token);
+            CheckDeadline();
+            return answer;
+        }
+        catch (OperationCanceledException) when (!caller.IsCancellationRequested)
+        { throw new WorktreeBaseInspectionLimitException("inspection_timeout"); }
+    }
+
     public async Task<string> CommonAsync(string repo)
     {
         if (_commons.TryGetValue(repo, out var cached)) return cached;
@@ -173,21 +196,8 @@ public sealed class WorktreeBaseInspection : IDisposable
         return await ContainsUnmergedAsync(source, target);
     }
 
-    public async Task<DelegationWorktreeService.CommitContainment> ContainsUnmergedAsync(string source, string target)
-    {
-        var merges = await RunAsync(repository, "rev-list", "--max-count=1", "--min-parents=2", $"{target}..{source}");
-        if (!merges.Succeeded || !string.IsNullOrWhiteSpace(merges.Output))
-            return DelegationWorktreeService.CommitContainment.Unknown;
-        var cherry = await RunAsync(repository, "cherry", target, source);
-        if (!cherry.Succeeded) return DelegationWorktreeService.CommitContainment.Unknown;
-        var lines = cherry.Output.Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        if (lines.Any(static line => !line.StartsWith('+') && !line.StartsWith('-')))
-            return DelegationWorktreeService.CommitContainment.Unknown;
-        return lines.Any(static line => line.StartsWith('+'))
-            ? DelegationWorktreeService.CommitContainment.NotContained
-            : DelegationWorktreeService.CommitContainment.Contained;
-    }
+    public Task<DelegationWorktreeService.CommitContainment> ContainsUnmergedAsync(string source, string target) =>
+        AskAsync("patch-containment", 2, token => git.Open(repository).ContainsUnmergedAsync(target, source, token));
 
     public async Task<bool> CheckoutSafeAsync(string branch)
     {
@@ -210,14 +220,7 @@ public sealed class WorktreeBaseInspection : IDisposable
         var status = await RunAsync(path, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none");
         if (!status.Succeeded) throw new IOException("git_checkout_status_failed");
         if (status.Output.Length != 0) return false;
-        foreach (var state in new[] { "MERGE_HEAD", "rebase-merge", "rebase-apply" })
-        {
-            var location = await RunAsync(path, "rev-parse", "--git-path", state);
-            if (!location.Succeeded) throw new IOException("git_checkout_operation_probe_failed");
-            var gitPath = location.Output.Trim();
-            if (File.Exists(gitPath) || Directory.Exists(gitPath)) return false;
-        }
-        return true;
+        return !await AskAsync("checkout-state", 3, token => git.Open(path).OperationInProgressAsync(token));
     }
 
     public void Dispose()

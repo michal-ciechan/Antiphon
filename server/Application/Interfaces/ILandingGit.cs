@@ -22,6 +22,13 @@ public interface ILandingGit
     /// <summary>CARD-1076 D-1. Forwards to the three-argument overload so existing fakes keep working.</summary>
     Task<LandingGitResult> RunAsync(string repository, IReadOnlyList<string> arguments, LandingGitRunOptions options, CancellationToken ct)
         => RunAsync(repository, arguments, ct);
+
+    /// <summary>
+    /// The repository or checkout at <paramref name="path"/>, asked by intent (<see cref="IGitRepository"/>); its git
+    /// answers run through this runner. The default, which fakes keep, answers with git commands only.
+    /// </summary>
+    IGitRepository Open(string path) => new Services.GitCommandRepository(this, path);
+
     Task<LandingGitResult> RunOwnedAsync(string repository, IReadOnlyList<string> arguments,
         Func<int, long, CancellationToken, Task> started, CancellationToken ct);
     Task<bool?> IsProcessAliveAsync(int processId, long startTicks, CancellationToken ct);

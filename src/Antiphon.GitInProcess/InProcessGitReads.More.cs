@@ -261,8 +261,17 @@ internal static partial class InProcessGitReads
             _ => (RefFormat?)null,
         };
         if (format is not { } shape) return null;
+        // --merged=<full commit id>: only refs whose commit that commit contains (an ancestor of it, or it).
+        LibGit2Sharp.Commit? merged = null;
+        var skip = 2;
+        if (a.Count > 2 && a[2].StartsWith("--merged=", StringComparison.Ordinal))
+        {
+            if (!GitText.IsOid(a[2][9..]) || ById(repo, a[2][9..]) is not LibGit2Sharp.Commit into) return null;
+            merged = into;
+            skip = 3;
+        }
         // No pattern lists every ref under refs/.
-        var patterns = a.Skip(2).ToList();
+        var patterns = a.Skip(skip).ToList();
         if (patterns.Any(p => p.Length == 0 || p.StartsWith('-') || p.IndexOfAny(GlobCharacters) >= 0)) return null;
         var lines = new List<(string Name, string Sha, string Symref)>();
         // Two names that differ only in case (a loose Foo beside a packed foo): where the file system ignores case,
@@ -292,6 +301,12 @@ internal static partial class InProcessGitReads
                         || repo.Refs[symbolic.TargetIdentifier] is not DirectReference))
                     return null;
                 symref = symbolic.TargetIdentifier;
+            }
+            if (merged is not null)
+            {
+                // git peels a tag to its commit for --merged; a ref to anything else is left to git.
+                if (repo.Lookup(new ObjectId(sha))?.Peel<LibGit2Sharp.Commit>() is not { } tip) return null;
+                if (tip.Sha != merged.Sha && repo.ObjectDatabase.FindMergeBase(tip, merged)?.Sha != tip.Sha) continue;
             }
             lines.Add((name, sha, symref));
         }

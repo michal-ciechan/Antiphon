@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -358,7 +359,7 @@ public partial class AgentTaskDispatchBaseGuardTests
         git.MovedBranches.ShouldBe(before.Count);
         foreach (var tip in before.Values)
         {
-            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "cherry", targetSha, tip }));
+            git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "contains-unmerged", targetSha, tip }));
 
         }
         git.Commands.ShouldContain(args => args.SequenceEqual(new[] { "merge-base", "--is-ancestor", before[a.WorktreeBranch!], before[b.WorktreeBranch!] }));
@@ -432,6 +433,9 @@ public partial class AgentTaskDispatchBaseGuardTests
                 }
             return result;
         }
+
+        // The containment question names the commits it compares, answered in process or by git.
+        public override IGitRepository Open(string path) => new RecordingGitRepository(base.Open(path), Commands.Add);
     }
 
     [Test]

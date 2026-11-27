@@ -99,8 +99,9 @@ public class AgentTaskWorktreeBaseResolverTests
         selected.SourceTaskId.ShouldBe(b.Id);
         var safety = trace.Commands.Where(c => c.Contains(" worktree list ", StringComparison.Ordinal)
             || c.Contains(" status --porcelain", StringComparison.Ordinal)
-            || c.Contains(" rev-parse --git-path", StringComparison.Ordinal)).ToArray();
-        safety.Length.ShouldBe(5);
+            || c.Contains(" operation-in-progress", StringComparison.Ordinal)).ToArray();
+        // One listing, then the maximal tip's checkout alone: its status and its in-progress operation check.
+        safety.Length.ShouldBe(3);
         var normalizedSafety = safety.Select(c => c.Replace('\\', '/')).ToArray();
         normalizedSafety.ShouldContain(c => c.StartsWith(bCheckout.Replace('\\', '/') + " status ", StringComparison.Ordinal));
         normalizedSafety.ShouldNotContain(c => c.StartsWith(aCheckout.Replace('\\', '/') + " status ", StringComparison.Ordinal));
@@ -1019,6 +1020,9 @@ public class AgentTaskWorktreeBaseResolverTests
             Commands.Add(repository + " " + string.Join(' ', args));
             return await base.RunAsync(repository, args, ct);
         }
+
+        public override IGitRepository Open(string path) =>
+            new RecordingGitRepository(base.Open(path), question => Commands.Add(path + " " + string.Join(' ', question)));
     }
 
     private sealed class DeadlineGit(FakeTimeProvider clock) : LandingGit

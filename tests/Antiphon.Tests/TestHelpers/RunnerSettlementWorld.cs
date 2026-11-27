@@ -265,6 +265,11 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         link.StartsWith("gitdir: ", StringComparison.Ordinal).ShouldBeTrue("linked worktree .git file: " + link);
         var admin = Path.GetFullPath(link["gitdir: ".Length..], worktree);
         File.Exists(Path.Combine(admin, "gitdir")).ShouldBeTrue("worktree admin directory: " + admin);
+        // git worktree remove refuses a locked or dirty worktree; so does this.
+        File.Exists(Path.Combine(admin, "locked")).ShouldBeFalse("worktree is locked: " + worktree);
+        using (var repo = new LibGit2Sharp.Repository(worktree))
+            repo.RetrieveStatus(new LibGit2Sharp.StatusOptions { IncludeUntracked = true, RecurseUntrackedDirs = true })
+                .IsDirty.ShouldBeFalse("worktree has changes: " + worktree);
         SyncWorld.DeleteTree(worktree);
         SyncWorld.DeleteTree(admin);
     }
