@@ -281,7 +281,7 @@ public class DecisionChainTests
     {
         var padding = new string('x', 290);
         var body = $$"""
-            {"detail":{"message":"{{padding}} sk-fixturetoken1234 tail"}}
+            { "detail": { "message": "{{padding}} sk-fixturetoken1234 tail" } }
             """;
         var failure = await RejectSystemOneRequestAsync(body);
 
