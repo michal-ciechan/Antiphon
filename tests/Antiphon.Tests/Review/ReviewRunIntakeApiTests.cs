@@ -737,14 +737,14 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Polling_follows_a_push_on_the_renamed_repository_after_slug_reuse(CancellationToken ct)
     {
-        await factory.ResetAsync();
         const int number = 209672;
         const string renamed = "transferred/widgets";
         using var client = OpenPullRequest(number);
+        factory.Host.Pr(number).RepositoryId = 24672;
         var created = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
         var runId = Id(created);
         await SetRunStatusAsync(runId, ReviewRunStatus.Failed, ct);
-        factory.Host.RepositoryIdForTarget = target => target.Repo == Repo ? 9876543210 : 1234;
+        factory.Host.RepositoryIdForTarget = target => target.Repo == Repo ? 9876543210 : 24672;
         var pushed = new string('c', 40);
         factory.Host.Pr(number).Push(pushed, [], "");
         try
@@ -768,20 +768,26 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Polling_surfaces_unresolved_legacy_runs_and_respects_their_deliberate_closure(CancellationToken ct)
     {
-        await factory.ResetAsync();
         const int openNumber = 209673;
         const int closedNumber = 209674;
+        const string repo = "acme/historical";
+        const long repositoryId = 24673;
         using var client = OpenPullRequest(openNumber);
         factory.Host.Open(closedNumber, "Legacy closed PR", "maintainer", new string('a', 40), new string('b', 40), [], "");
-        var legacyOpen = Id(await IntakeAsync(client, Repo, openNumber, HttpStatusCode.Created, ct));
-        var legacyClosed = Id(await IntakeAsync(client, Repo, closedNumber, HttpStatusCode.Created, ct));
+        factory.Host.Pr(openNumber).RepositoryId = repositoryId;
+        factory.Host.Pr(closedNumber).RepositoryId = repositoryId;
+        var legacyOpen = Id(await IntakeAsync(client, repo, openNumber, HttpStatusCode.Created, ct));
+        var legacyClosed = Id(await IntakeAsync(client, repo, closedNumber, HttpStatusCode.Created, ct));
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.ReviewRuns.Where(r => r.Id == legacyOpen || r.Id == legacyClosed).ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.GitHubRepositoryId, (long?)null).SetProperty(r => r.GitHubRepo, Repo), ct);
+            .SetProperty(r => r.GitHubRepositoryId, (long?)null).SetProperty(r => r.GitHubRepo, repo), ct);
         await CloseCurrentAsync(client, legacyClosed, ct);
 
-        var pass = await PollRepoAsync(Repo, ct, openNumber, closedNumber);
+        factory.Host.RepositoryIdForTarget = _ => repositoryId;
+        ReviewPollingRepoPassDto pass;
+        try { pass = await PollRepoAsync(repo, ct, openNumber, closedNumber); }
+        finally { factory.Host.RepositoryIdForTarget = null; }
         pass.Error.ShouldNotBeNull().ShouldContain(legacyOpen.ToString("D"));
         pass.Error.ShouldContain(legacyClosed.ToString("D"));
         (pass.RunsStarted, pass.RunsRefreshed).ShouldBe((0, 0));
@@ -790,7 +796,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         storedClosed.Id.ShouldBe(legacyClosed);
         storedClosed.Status.ShouldBe(ReviewRunStatus.Closed);
 
-        var explicitRestart = await IntakeAsync(client, Repo, closedNumber, HttpStatusCode.Created, ct);
+        var explicitRestart = await IntakeAsync(client, repo, closedNumber, HttpStatusCode.Created, ct);
         Id(explicitRestart).ShouldNotBe(legacyClosed);
     }
 

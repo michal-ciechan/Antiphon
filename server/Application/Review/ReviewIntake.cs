@@ -25,9 +25,10 @@ public sealed class ReviewIntake(CodeHostRouter router)
     /// <summary>Files listed in a node summary before it says how many more there are.</summary>
     public const int SummaryFileLimit = 200;
 
-    public async Task<IntakeSnapshot> ReadAsync(ReviewRun run, CancellationToken ct)
+    public Task<IntakeSnapshot> ReadAsync(ReviewRun run, CancellationToken ct) => ReadAsync(router.Resolve(run), ct);
+
+    internal static async Task<IntakeSnapshot> ReadAsync(CodeHostBinding binding, CancellationToken ct)
     {
-        var binding = router.Resolve(run);
         var pr = await binding.Host.GetPullRequestAsync(binding.Target, ct);
         return await ReadFilesAsync(binding, pr, ct);
     }

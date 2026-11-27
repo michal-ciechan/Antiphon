@@ -57,13 +57,14 @@ public sealed class ReviewPoller(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        await Task.Yield();
+        await ReportLegacyAtActivationAsync(stoppingToken);
         if (!options.Value.Enabled)
         {
             logger.LogInformation("Review polling is off (Review:Polling:Enabled); POST /api/review-polling/poll still runs a pass.");
             return;
         }
 
-        await Task.Yield();
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -125,6 +126,25 @@ public sealed class ReviewPoller(
         }
     }
 
+    private static IQueryable<ReviewRun> UnresolvedGitHubRuns(AppDbContext db) => db.ReviewRuns.AsNoTracking()
+        .Where(r => !r.IsDemo && r.Subject.Host == ReviewHost.GitHub && r.GitHubRepositoryId == null);
+
+    private async Task ReportLegacyAtActivationAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var count = await UnresolvedGitHubRuns(db).CountAsync(ct);
+            if (count != 0)
+                logger.LogWarning("{Count} historical GitHub review runs need verified repository IDs. Review history and closures remain visible. See the review API activation procedure.", count);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Could not inspect historical GitHub review identities at activation.");
+        }
+    }
+
     private async Task<ReviewPollingRepoPassDto> PollRepoAsync(ReviewPollingRepo repo, ReviewPollingSettings settings, CancellationToken ct)
     {
         var name = repo.Repo.Trim();
@@ -145,7 +165,22 @@ public sealed class ReviewPoller(
             await HandleCommentsAsync(db, binding, repo, name, open, settings, tally, ct);
 
             var existing = await LatestRunsAsync(db, binding.Target, ct);
-            foreach (var pr in open.Values.Where(p => !existing.ContainsKey(p.Number) && Matches(repo, p)).OrderBy(p => p.Number).ToList())
+            HashSet<int> legacyPrs = [];
+            if (repo.Host == ReviewHost.GitHub)
+            {
+                var slug = name.ToLowerInvariant();
+                var legacy = await UnresolvedGitHubRuns(db)
+                    .Where(r => r.GitHubAuthority == binding.Target.GitHubAuthority && r.GitHubRepo == slug && r.GitHubPrNumber != null)
+                    .OrderBy(r => r.Id).Select(r => new { r.Id, r.GitHubPrNumber, r.Status }).ToListAsync(ct);
+                legacyPrs = legacy.Select(r => r.GitHubPrNumber!.Value).ToHashSet();
+                if (legacy.Count != 0)
+                {
+                    var preview = string.Join(", ", legacy.Take(8).Select(r => $"{r.Id:D} ({r.Status})"));
+                    tally.LegacyAttention = $"{legacy.Count} unresolved historical review runs need verified repository IDs: {preview}.";
+                }
+            }
+            foreach (var pr in open.Values.Where(p => !existing.ContainsKey(p.Number) && !legacyPrs.Contains(p.Number) && Matches(repo, p))
+                         .OrderBy(p => p.Number).ToList())
             {
                 await ActAsync(tally, $"#{pr.Number}", async () =>
                 {
@@ -165,14 +200,16 @@ public sealed class ReviewPoller(
             foreach (var run in current.Values.Where(r => r.Walked
                          && r.Status is not (ReviewRunStatus.Closed or ReviewRunStatus.Merged or ReviewRunStatus.Queued or ReviewRunStatus.Running)))
             {
-                var due = !open.TryGetValue(run.PrNumber, out var listed) || !string.Equals(listed.HeadSha, run.HeadSha, StringComparison.OrdinalIgnoreCase);
+                var due = !open.TryGetValue(run.PrNumber, out var listed)
+                    || !string.Equals(listed.HeadSha, run.HeadSha, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(run.Repo, name, StringComparison.OrdinalIgnoreCase);
                 if (!due)
                     continue;
                 await ActAsync(tally, $"#{run.PrNumber}", async () =>
                 {
                     await WithServiceAsync(PollerActor, async s =>
                     {
-                        await s.RefreshAsync(run.Id, ct);
+                        await s.RefreshAsync(run.Id, repo.Host == ReviewHost.GitHub ? binding : null, ct);
                         return true;
                     });
                     tally.Refreshed++;
@@ -315,13 +352,13 @@ public sealed class ReviewPoller(
                 && n.Summary != null && n.Summary.Contains(token), ct);
     }
 
-    private sealed record RunHead(Guid Id, int PrNumber, ReviewRunStatus Status, string HeadSha, DateTime StartedAt, bool Walked);
+    private sealed record RunHead(Guid Id, int PrNumber, ReviewRunStatus Status, string HeadSha, string Repo, DateTime StartedAt, bool Walked);
 
     /// <summary>Each PR's open run, or its latest closed run if it has no open run.</summary>
     private static async Task<Dictionary<int, RunHead>> LatestRunsAsync(AppDbContext db, CodeHostTarget target, CancellationToken ct)
     {
         var rows = await RunsForRepository(db, target)
-            .Select(r => new RunHead(r.Id, r.Subject.PrNumber!.Value, r.Status, r.Subject.HeadSha, r.StartedAt, r.Iterations.Any(i => i.HeadSha != null)))
+            .Select(r => new RunHead(r.Id, r.Subject.PrNumber!.Value, r.Status, r.Subject.HeadSha, r.Subject.Repo, r.StartedAt, r.Iterations.Any(i => i.HeadSha != null)))
             .ToListAsync(ct);
         return rows.GroupBy(r => r.PrNumber).ToDictionary(g => g.Key,
             g => g.OrderBy(r => r.Status == ReviewRunStatus.Closed).ThenByDescending(r => r.StartedAt).ThenByDescending(r => r.Id).First());
@@ -424,8 +461,10 @@ public sealed class ReviewPoller(
         public int Refreshed { get; set; }
         public int Commands { get; set; }
         public string? Error { get; set; }
+        public string? LegacyAttention { get; set; }
 
-        public ReviewPollingRepoPassDto ToDto() => new(Repo, Open, Started, Refreshed, Commands, Error);
+        public ReviewPollingRepoPassDto ToDto() => new(Repo, Open, Started, Refreshed, Commands,
+            Error is null ? LegacyAttention : LegacyAttention is null ? Error : $"{Error} {LegacyAttention}");
     }
 }
 

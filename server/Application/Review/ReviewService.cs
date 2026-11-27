@@ -348,7 +348,9 @@ public sealed class ReviewService(
     /// waiting for intake is handed to the executor. A run never resolved through a code host (the
     /// demo data) or already finished is only re-announced.
     /// </summary>
-    public async Task RefreshAsync(Guid id, CancellationToken ct)
+    public Task RefreshAsync(Guid id, CancellationToken ct) => RefreshAsync(id, null, ct);
+
+    internal async Task RefreshAsync(Guid id, CodeHostBinding? polledBinding, CancellationToken ct)
     {
         var run = await db.ReviewRuns.Include(r => r.Subject).Include(r => r.Iterations).Include(r => r.Nodes)
             .AsSplitQuery().SingleOrDefaultAsync(r => r.Id == id, ct)
@@ -367,8 +369,15 @@ public sealed class ReviewService(
             return;
         }
 
-        var snapshot = await ReadIntakeAsync(() => intake.ReadAsync(run, ct));
+        var snapshot = await ReadIntakeAsync(() => polledBinding is null ? intake.ReadAsync(run, ct)
+            : ReviewIntake.ReadAsync(CodeHostRouter.BindPolledRun(run, polledBinding), ct));
         var pr = snapshot.PullRequest;
+        if (polledBinding is not null && pr.RepositoryId == run.GitHubRepositoryId
+            && string.Equals(pr.RepositoryName, polledBinding.Target.Repo, StringComparison.OrdinalIgnoreCase))
+        {
+            run.Subject.Repo = polledBinding.Target.Repo;
+            run.Subject.Url = pr.Url;
+        }
         var now = Now();
         if (run.Subject.Host == ReviewHost.GitHub && pr.Title.Length > 0)
             run.Subject.Title = pr.Title;
@@ -522,6 +531,8 @@ public sealed class ReviewService(
             .AsSplitQuery().SingleOrDefaultAsync(r => r.Id == runId, ct)
             ?? throw new NotFoundException("Review run", runId);
         var who = string.IsNullOrWhiteSpace(actor) ? viewer.Login : actor.Trim();
+        if (!run.IsDemo && run.Subject.Host == ReviewHost.GitHub && run.GitHubRepositoryId is null)
+            throw new ConflictException("This historical review run needs a verified GitHub repository identity.", "review_legacy_identity_unresolved");
         if (run.Status is ReviewRunStatus.Closed or ReviewRunStatus.Merged)
             throw new ConflictException($"Review run {run.Id} is {run.Status}; it takes no more rounds.", "review_run_finished");
         var current = run.Iterations.MaxBy(i => i.Iteration);

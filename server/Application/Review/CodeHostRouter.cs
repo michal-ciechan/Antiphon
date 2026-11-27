@@ -56,6 +56,9 @@ public sealed class CodeHostRouter(IEnumerable<ICodeHost> hosts, IOptions<Review
 
     public CodeHostBinding Resolve(ReviewRun run)
     {
+        if (run.Subject.Host == ReviewHost.GitHub && !run.IsDemo && run.GitHubRepositoryId is null)
+            throw new CodeHostException(CodeHostFailureKind.Rejected,
+                "This historical review run needs a verified GitHub repository identity.");
         var binding = Resolve(run.Subject);
         if (run.GitHubAuthority is { } authority && binding.Target.GitHubAuthority != authority)
             throw new CodeHostException(CodeHostFailureKind.Rejected,
@@ -64,6 +67,15 @@ public sealed class CodeHostRouter(IEnumerable<ICodeHost> hosts, IOptions<Review
         {
             Target = binding.Target with { ReviewRunId = run.Id, GitHubRepositoryId = run.GitHubRepositoryId },
         };
+    }
+
+    internal static CodeHostBinding BindPolledRun(ReviewRun run, CodeHostBinding binding)
+    {
+        if (run.Subject.Host != binding.Target.Kind || run.GitHubAuthority != binding.Target.GitHubAuthority
+            || run.GitHubRepositoryId is null || run.GitHubRepositoryId != binding.Target.GitHubRepositoryId)
+            throw new CodeHostException(CodeHostFailureKind.Rejected,
+                "The polling repository does not match this review run's verified identity.");
+        return binding with { Target = binding.Target with { PrNumber = run.GitHubPrNumber, ReviewRunId = run.Id } };
     }
 
     /// <summary>A code host failure as the API reports it to a caller.</summary>

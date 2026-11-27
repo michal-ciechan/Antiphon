@@ -205,7 +205,8 @@ public sealed class ReviewWorkflowExecutor(
 
     /// <summary>Runs that are queued, or running under a lapsed lease. Parked and finished runs wait for an event.</summary>
     private static IQueryable<ReviewRun> Claimable(IQueryable<ReviewRun> runs, DateTime staleBefore) =>
-        runs.Where(r => r.Status == ReviewRunStatus.Queued || (r.Status == ReviewRunStatus.Running && r.UpdatedAt < staleBefore));
+        runs.Where(r => (r.Status == ReviewRunStatus.Queued || (r.Status == ReviewRunStatus.Running && r.UpdatedAt < staleBefore))
+            && (r.Subject.Host != ReviewHost.GitHub || r.GitHubRepositoryId != null));
 
     private async Task WalkAsync(IServiceProvider services, Guid runId, CancellationToken ct)
     {
