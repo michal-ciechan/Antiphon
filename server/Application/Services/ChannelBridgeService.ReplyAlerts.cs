@@ -24,7 +24,7 @@ public sealed partial class ChannelBridgeService
             : $"Inspect GET /api/sessions/{id:D}/transcript for the owning turn. {resume}";
     }
 
-    // The oldest accepted inbound after the last outbound owns this silence episode.
+    // The oldest accepted inbound still awaiting its correlated reply owns the deadline.
     // More inbounds cannot reset the deadline. Select only current, enabled bindings.
     internal async Task ScanChannelReplyAlertsAsync(CancellationToken ct)
     {

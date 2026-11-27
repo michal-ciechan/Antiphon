@@ -86,7 +86,7 @@ internal static class TranscriptTurnWindow
         // Older idle relaunches have no synthetic restart record. Native timestamps fence
         // that generation too, without imposing timestamp order within a single turn.
         var generation = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId && t.Sequence == promptSeq
-                && t.Timestamp < t.AgentSession.StartedAt)
+                && (t.Timestamp ?? t.CreatedAt) < t.AgentSession.StartedAt)
             .Select(t => (DateTime?)t.AgentSession.StartedAt).SingleOrDefaultAsync(ct);
         var after = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
@@ -94,14 +94,14 @@ internal static class TranscriptTurnWindow
                 && (t.Kind == TranscriptKinds.UserPrompt
                     || t.Kind == TranscriptKinds.QueuedUserPrompt
                     || t.Kind == TranscriptKinds.TurnEnd || t.Kind == TranscriptKinds.SessionRestartBoundary
-                    || (generation != null && t.Timestamp >= generation)))
-            .Select(t => new { t.Sequence, t.Kind, t.Timestamp })
+                    || (generation != null && (t.Timestamp ?? t.CreatedAt) >= generation)))
+            .Select(t => new { t.Sequence, t.Kind, Time = t.Timestamp ?? t.CreatedAt })
             .ToListAsync(ct);
 
         var sawTurnEnd = false;
         foreach (var row in after.OrderBy(r => r.Sequence))
         {
-            if (row.Kind == TranscriptKinds.SessionRestartBoundary || (generation != null && row.Timestamp >= generation))
+            if (row.Kind == TranscriptKinds.SessionRestartBoundary || (generation != null && row.Time >= generation))
                 return row.Sequence;
             if (row.Kind == TranscriptKinds.TurnEnd)
             {

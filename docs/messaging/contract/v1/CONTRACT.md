@@ -59,14 +59,10 @@ through or ignored.
 | `Raw` | Persisted (in the gateway's own inbox) — the server ignores it | `required` on the record, so a gateway must send at least `{}`. |
 | `Timestamp`, `Author.DisplayName/Username`, `Conversation.Title/Kind` | Envelope header in the prompt; catalog display | Cosmetic. |
 
-Outbound, the server emits `ChannelReply { Channel, ReplyHandle, ConversationId, Kind, Text,
-Attachments }`. `ReplyToMessageId` and `RawOverrides` are never set by the server today;
-`Text` is truncated at 4000 characters before produce. `ConversationId` is always present;
-`ReplyHandle` is null only if the catalog row is missing.
-
-**No per-message correlation on the wire.** A reply is addressed to a conversation, not to
-the inbound message that prompted it. A gateway that wants threading must keep
-conversation-level state. Idempotency/settlement of replies is entirely server-internal.
+Outbound replies route by `Channel` and `ConversationId`. The optional `answeredMessageIds`
+array contains native inbound IDs from the same conversation. On provider acceptance of an
+`Answer`, the gateway marks those exact inbox receipts Answered. A missing or empty array
+has no receipt effect. `ReplyToMessageId` independently selects a native message to quote.
 
 ## Enums
 

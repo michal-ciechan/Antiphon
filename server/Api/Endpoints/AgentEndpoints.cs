@@ -144,14 +144,12 @@ public static class AgentEndpoints
             if (!await db.AgentIncidents.AnyAsync(a => a.Id == incidentId && a.AgentId == id
                     && a.FailureReason == ChannelBridgeService.WithheldReason, ct)) return Results.NotFound();
             var closureId = ChannelWithheldResolution.ClosureId(incidentId);
-            if (!await db.AgentIncidents.AnyAsync(a => a.Id == closureId && a.AgentId == id, ct))
-            {
-                var candidate = await ChannelWithheldResolution.Candidates(db)
-                    .SingleOrDefaultAsync(c => c.IncidentId == incidentId && c.AgentId == id, ct);
-                if (candidate == null || await ChannelWithheldResolution.CloseWithEvidenceAsync(db, candidate,
-                        promptSequence, clock.GetUtcNow().UtcDateTime, ct) == null)
-                    return Results.Conflict(new { reason = "confirmed_channel_prompt_required" });
-            }
+            var candidate = await ChannelWithheldResolution.Candidates(db)
+                .SingleOrDefaultAsync(c => c.IncidentId == incidentId && c.AgentId == id, ct);
+            var closed = candidate == null ? null : await ChannelWithheldResolution.CloseWithEvidenceAsync(
+                db, candidate, promptSequence, clock.GetUtcNow().UtcDateTime, ct);
+            if (closed == null && !await db.AgentIncidents.AnyAsync(a => a.Id == closureId && a.AgentId == id, ct))
+                return Results.Conflict(new { reason = "confirmed_channel_prompt_required" });
             await events.PublishToAllAsync("AgentChanged", new { agentId = id, incidentId = closureId }, ct);
             return Results.Ok(new { incidentId, closureId });
         });

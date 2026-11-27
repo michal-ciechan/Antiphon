@@ -46,10 +46,16 @@ internal static class ChannelWithheldResolution
             && p.Kind == TranscriptKinds.UserPrompt && p.Sequence > floor && p.Text != null);
         if (requestedSequence != null) query = query.Where(p => p.Sequence == requestedSequence);
         // The complete marker/body remains in the persisted prompt, including each member of a batch.
-        var needle = ChannelPromptCorrelation.OpeningMarker(row.Body) ?? row.Body.ReplaceLineEndings("\n").Trim();
-        if (needle.Length == 0) return null;
-        var prompts = await query.Where(p => p.Text!.Contains(needle)).OrderBy(p => p.Sequence).ToListAsync(ct);
-        var proof = prompts.FirstOrDefault(p => ChannelPromptCorrelation.Matches(row, p, TimeSpan.Zero, out _));
+        if (string.IsNullOrWhiteSpace(row.Body)) return null;
+        if (ChannelPromptCorrelation.OpeningMarker(row.Body) is { } marker)
+            query = query.Where(p => p.Text!.Contains(marker));
+        TranscriptEntry? proof = null;
+        await foreach (var prompt in query.OrderBy(p => p.Sequence).AsAsyncEnumerable().WithCancellation(ct))
+        {
+            if (!ChannelPromptCorrelation.Matches(row, prompt, TimeSpan.Zero, out _)) continue;
+            proof = prompt;
+            break;
+        }
         if (proof == null) return null;
         var id = ClosureId(candidate.IncidentId);
         var message = $"Closed incident {candidate.IncidentId:D}; queueId={row.Id:D}, sessionId={row.AgentSessionId:D}, promptSequence={proof.Sequence}, transcriptEntryId={proof.Id:D}.";

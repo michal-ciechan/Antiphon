@@ -121,7 +121,11 @@ public sealed class GatewayTests
         var reply = JsonSerializer.Deserialize<ChannelReply>(
             """{"channel":"telegram","conversationId":"group-A","kind":"answer","answeredMessageIds":["1904"]}""", MessagingJson.Options)!;
         await gateway.DispatchAsync(reply, ct);
+        await gateway.DispatchAsync(reply with { AnsweredMessageIds = ["1914"] }, ct);
+        await gateway.DispatchAsync(reply with { Kind = ChannelReplyKind.Progress, AnsweredMessageIds = ["1913"] }, ct);
+        await store.Store.RecordAsync(EfInboxReceiptStoreTests.Sample("1914", "group-A"), "{}", "in", 0, 3, ct);
         var rows = await store.LoadAsync();
+        rows.Single(r => r.ChannelMessageId == "1914").Status.ShouldBe(Antiphon.Messaging.Service.InboxStatus.Answered);
         var answered = rows.Single(r => r.ConversationId == "group-A" && r.ChannelMessageId == "1904");
         answered.Status.ShouldBe(Antiphon.Messaging.Service.InboxStatus.Answered);
         answered.AnsweredAt.ShouldNotBeNull();
