@@ -20,7 +20,7 @@ The attention item has its own percentage and free-space settings.
 | V-6 | Missing, stale and invalid samples produce bounded diagnostics. | MissingStaleAndInvalidSamplesEmitBoundedDiagnostics | PC-8 remove the degraded-sample warning. |
 | V-7 | The row and scheduler check again under the lease and release it upon refusal. | RowRechecksSpaceAfterAdmissionAndReleasesTheLease, SchedulerRechecksSpaceAfterAdmissionAndReleasesTheLease | PC-9a skip the row recheck. PC-9b skip the scheduler build recheck. PC-9c skip the scheduled row recheck. |
 | V-8 | An externally launched historical build checks effective write paths before restore. | HistoricalProjectEvidenceDestinationsAreRefusedBeforeRestore | PC-10a omit IntermediateOutputPath. PC-10b omit MSBuildProjectExtensionsPath. |
-| R-3 | The Linux and native Windows entries check space before bootstrap. | Launcher witnesses | PC-11a bypass the POSIX check. PC-11b bypass the Windows check. |
+| R-3 | The Linux and native Windows entries check space before bootstrap. | Linux launcher witness, Test-WindowsCheckpointBootstrap | PC-11a bypass the POSIX check. PC-11b bypass the Windows check. |
 | R-4 | The timer targets unused builder cache older than 24 hours. | Inspect service and timer | Host activation is operator work after landing. |
 | V-9 | A held task dispatches after the sample recovers and the same recipient gets a complete matching UserPrompt. | LowDiskRecoveryDeliversTheCompleteQueuedBrief | PC-12 bypass the dispatch hold before remote prep. |
 
@@ -62,6 +62,10 @@ obligation uses a clean copy of `scripts\antiphon.cmd` from the tested SHA and a
 caller volume with less than 20 GiB free. It must print `workspace_disk_low`,
 exit 9, and leave the bootstrap cache absent. Run the required impacted Windows
 `Card1277PtyHostFixtureTests` separately on Windows.
+
+```powershell
+pwsh -NoProfile -File scripts/test-checkpoint-bootstrap-win.ps1 -LowSpaceDirectory <owned-low-space-directory>
+```
 
 R-4 checks the hourly timer and the service's exact builder-prune invocation.
 Host activation follows land.
