@@ -484,67 +484,6 @@ public sealed partial class ImpactedClassesSelectorTests
         "StandingSpecialistRoutingMigrationTests", "WorktreeBaseSelectionTests",
     ];
 
-    // CARD-1820. Hand windows rows plus the temporary override list. Declared-both classes stay off this lane.
-    private const string WindowsTestsFilter =
-        "/*/*/(AgentSessionServiceIntegrationTests*)|(C0824WorkspaceSlotRoleGateTests*)"
-        + "|(Card1761RunnerReadPollTests*)|(LandGraphLandRefreshTests*)|(ServerImagePushCredentialTests*)"
-        + "|(ServerRepositoryMirrorsTests*)/*";
-
-    // CARD-1820. Linux keeps hand and derived classes that are not windowsOnly.
-    private const string WhyMissedTestsFilter =
-        "/*/*/(AdvisoryChangePolicyTests*)|(AgentTaskCommitEndpointTests*)|(AgentTaskDeliveryWatchdogTests*)"
-        + "|(AgentTaskDispatchBaseGuardTests*)|(AgentTaskLandApprovalRequestTests*)|(AgentTaskLandBoundaryTests*)"
-        + "|(AgentTaskLandHeldNotificationTests*)|(AgentTaskLandMonitoringTests*)"
-        + "|(AgentTaskLandNotificationParkFollowUpTests*)|(AgentTaskLandNotificationPersistenceTests*)"
-        + "|(AgentTaskLandNotificationReconcileLoadTests*)|(AgentTaskLandNotificationRecoveryTests*)"
-        + "|(AgentTaskLandNotificationRescanTests*)|(AgentTaskLandPublicationTests*)|(AgentTaskLandQueueAgingTests*)"
-        + "|(AgentTaskLandQueuedReceiptTests*)|(AgentTaskLandReceiptTests*)|(AgentTaskLandReceiptWatermarkSafetyTests*)"
-        + "|(AgentTaskLandReceiptWatermarkTests*)|(AgentTaskLandRequestTests*)|(AgentTaskLandSweepTests*)"
-        + "|(AgentTaskReplyIntegrationTests*)|(AgentTaskWorktreeLockOutcomeTests*)|(AntiphonCliLauncherTests*)"
-        + "|(BlockedTaskParkDeliveryTests*)|(C0747LandReceiptReplayTests*)|(C0747QueueRowExpiryTests*)"
-        + "|(C0824RefOnlyLandingTests*)|(C0824RefOnlyReceiptTests*)|(C0824TransportGitTests*)"
-        + "|(C0824WorkspaceSlotRoleGateTests*)|(C0824WorkspaceSlotServerTests*)|(C1514HostLoadApiTests*)"
-        + "|(C1514HostLoadHistoryTests*)|(C1514HostLoadScriptTests*)|(C1514TaskLoadWindowTests*)"
-        + "|(C1677RetentionServerTests*)|(C1733AllocatorFixtureTests*)|(C1960QuarantineReleaseRouteTests*)"
-        + "|(Card1761RunnerReadPollTests*)|(ChangeAwareReleaseTests*)|(CheckNoteDeliveryHandoffTests*)"
-        + "|(CompletionNoteDurableSweepTests*)|(DataRetentionServiceTests*)|(DelegateBranchNameTests*)"
-        + "|(DelegationTestServicesTests*)|(DelegationWorktreeTests*)|(DispatchBaseNotificationTests*)"
-        + "|(ExpectationDebtTests*)|(ExternalTrackerSyncIdentifierTests*)|(HostTopConsumerUpgradeReplayTests*)"
-        + "|(ImpactedClassesSelectorTests*)|(LandEvidenceWarningDeliveryTests*)|(LandGraphLandRefreshTests*)"
-        + "|(LandReceiptScanCacheTests*)|(LandWorkspaceTests*)|(LegacyCheckNotePublicationTests*)"
-        + "|(LinkedUnattemptedQueueWakeTests*)|(LiveLaneCensusTests*)|(LiveLaneRunnerTests*)"
-        + "|(MergeHighRadiusSubsetTests*)|(NightlyCoreGoldenTests*)|(NightlyRunParityTests*)|(NightlyScriptsTests*)"
-        + "|(PendingSettlementDeliveryTests*)|(PhaseJournalKillDiagnosticTests*)|(PostLandMutationDeliveryTests*)"
-        + "|(PostLandMutationWorktreeTests*)|(PreDispatchFailureDeliveryTests*)|(ProcessSpawnLimitTests*)"
-        + "|(QualificationTimingTests*)|(RcFailedFirstExecutionTests*)|(RcProjectSelectionTests*)|(RcRunEvidenceTests*)"
-        + "|(RcStoppedRunSeedTests*)|(ReceiptScanDestinationIntegrationTests*)|(ReleaseCutTests*)"
-        + "|(ReleaseGateAuthorityContractTests*)|(ReleaseGateFollowupTests*)|(ReleaseGatePublicationAuthorityTests*)"
-        + "|(ReleaseGateRunTests*)|(ReleaseGateStatusTests*)|(ReleaseImpactScriptTests*)|(ReleasePromoteTests*)"
-        + "|(ReleasePublishTests*)|(ReleaseSelectionHopSeedTests*)|(ReleaseTagAllocatorTests*)"
-        + "|(RunnerStartupStaleObservationTests*)|(RunnerTerminalSessionGenerationTests*)"
-        + "|(RunnerTerminalSessionInputEncodingTests*)|(ServerGitProcessTests*)|(ServerImagePushCredentialTests*)"
-        + "|(ServerRepositoryMirrorsTests*)|(SessionRuntimeActionRoutingTests*)"
-        + "|(SessionTerminationSourcePersistenceTests*)|(SourceRevisionStampContractTests*)"
-        + "|(TestFixtureCleanupGuardTests*)|(TestLaneCategoryGuardTests*)|(TestSelectionTests*)"
-        + "|(TestTimingOperationLabelTests*)|(TimeoutAuditTests*)|(VerificationRoundDeliveryTests*)"
-        + "|(WindowsUnitPlatformAdmissionTests*)|(WorktreeBaseSelectionTests*)|(WorktreeLandingCleanupRetryTests*)"
-        + "|(WorktreeManagerGitIntegrationTests*)|(WorktreeManagerSafetyTests*)|(WorktreeManagerStartRefLocalOnlyTests*)"
-        + "|(WorktreeManagerTests*)|(WorktreeRemovalAuthorityTests*)|(WorktreeResidueSweepTests*)/*";
-
-    private const string WhyMissedSessionRunnerFilter =
-        "/*/*/(C1514HostLoadSampleTests*)|(C1514HostLoadSpoolTests*)|(C1514SamplerTickCpuTests*)"
-        + "|(HostStatsSamplerTests*)|(HostStatsStoreTests*)|(HostTopConsumerTests*)"
-        + "|(PhoneHomeCommandDispatcherTests*)|(ProcessSpawnLimitTests*)|(RunnerCapabilitiesTests*)/*";
-
-    // CARD-1843. The Server.Git mirror classes run in their own project; ProcessSpawnLimitTests runs in
-    // every project that declares it (Antiphon.Tests, SessionRunner above, and Agents.Pty).
-    private const string WhyMissedServerGitFilter = "/*/*/(GitIndexLockTests*)|(ServerGitAssemblyTests*)/*";
-
-    // CARD-1830 moved InProcessGitCommandsTests to the GitInProcess mirror, so it runs there and not in Antiphon.Tests.
-    private const string WhyMissedGitInProcessFilter = "/*/*/(InProcessGitCommandsTests*)/*";
-
-    private const string WhyMissedPtyFilter = "/*/*/(ProcessSpawnLimitTests*)/*";
-
     private const string LinuxOnlyCensusFilter =
         "/*/*/ReleaseGatePlatformTests/(C1686_LinuxOnlyCensus*)|(LinuxOnlyWindowsExclusionPolicy*)";
 
@@ -594,7 +533,9 @@ public sealed partial class ImpactedClassesSelectorTests
             var text = await RunAsync(root, "--file-list", list);
             text.Exit.ShouldBe(0, text.Text);
             text.Stdout.Replace("\r\n", "\n").Split('\n')
-                .ShouldContain("windowsFilter=tests/Antiphon.Tests " + WindowsTestsFilter);
+                .Where(line => line.StartsWith("windowsFilter=", StringComparison.Ordinal))
+                .ShouldBe(FilterRows(json.RootElement, "windowsFilters")
+                    .Select(row => "windowsFilter=" + row.Project + " " + row.Filter));
 
             var raw = json.RootElement.GetRawText();
             var mutant = raw.Replace("(LandGraphLandRefreshTests*)|", "", StringComparison.Ordinal);
@@ -736,16 +677,33 @@ public sealed partial class ImpactedClassesSelectorTests
                 .ShouldBe(onWindows, row.Path + " windows lane " + needle);
         }
 
-        filters.ShouldContain(("tests/Antiphon.Tests", WhyMissedTestsFilter));
+        // The why-missed witnesses stay required as reverse edges change with the checkout.
+        AssertWhyMissedClassFilter(filters, "tests/Antiphon.Tests",
+            [.. LandNotificationClasses, "ServerGitProcessTests", "TestSelectionTests", "ProcessSpawnLimitTests"]);
         filters.ShouldContain(("tests/Antiphon.Tests", LinuxOnlyCensusFilter));
-        filters.ShouldContain(("tests/Antiphon.SessionRunner.Tests", WhyMissedSessionRunnerFilter));
-        filters.ShouldContain(("tests/Antiphon.Server.Git.Tests", WhyMissedServerGitFilter));
-        filters.ShouldContain(("tests/Antiphon.GitInProcess.Tests", WhyMissedGitInProcessFilter));
-        filters.ShouldContain(("tests/Antiphon.Agents.Pty.Tests", WhyMissedPtyFilter));
-        windows.ShouldBe([
-            ("tests/Antiphon.E2E", "/*/*/(AgentTaskLandDeliveryE2ETests*)/*"),
-            ("tests/Antiphon.Tests", WindowsTestsFilter),
-        ]);
+        AssertWhyMissedClassFilter(filters, "tests/Antiphon.SessionRunner.Tests",
+            "RunnerCapabilitiesTests", "ProcessSpawnLimitTests");
+        AssertWhyMissedClassFilter(filters, "tests/Antiphon.Server.Git.Tests",
+            "GitIndexLockTests", "ServerGitAssemblyTests");
+        AssertWhyMissedClassFilter(filters, "tests/Antiphon.GitInProcess.Tests", "InProcessGitCommandsTests");
+        AssertWhyMissedClassFilter(filters, "tests/Antiphon.Agents.Pty.Tests", "ProcessSpawnLimitTests");
+        AssertWhyMissedClassFilter(windows, "tests/Antiphon.E2E", "AgentTaskLandDeliveryE2ETests");
+        AssertWhyMissedClassFilter(windows, "tests/Antiphon.Tests",
+            "AgentSessionServiceIntegrationTests", "C0824WorkspaceSlotRoleGateTests", "Card1761RunnerReadPollTests",
+            "LandGraphLandRefreshTests", "ServerImagePushCredentialTests", "ServerRepositoryMirrorsTests");
+    }
+
+    private static void AssertWhyMissedClassFilter(
+        List<(string Project, string Filter)> rows, string project, params string[] requiredClasses)
+    {
+        var filter = rows.Where(row => row.Project == project && row.Filter.StartsWith("/*/*/(", StringComparison.Ordinal))
+            .ShouldHaveSingleItem(project).Filter;
+        var match = Regex.Match(filter, @"\A/\*/\*/\((?<class>\w+)\*\)(?:\|\((?<class>\w+)\*\))*/\*\z");
+        match.Success.ShouldBeTrue(project + " class filter: " + filter);
+        var classes = match.Groups["class"].Captures.Select(capture => capture.Value).ToArray();
+        classes.ShouldBe(classes.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal), project);
+        foreach (var required in requiredClasses)
+            classes.ShouldContain(required, project);
     }
 
     private static HashSet<string> CommittedWindowsOnly()
