@@ -128,9 +128,9 @@ public sealed partial class ReleaseGatePlatformTests
                             [Test, Arguments(42)] public void CanRun(int number) { }
                         }
                     }
-                    public class NonGeneric { public class Nested { [Test] public void CanRun() { } } }
                 }
                 """),
+            ("tests/Nested.cs", "namespace Demo; public class NonGeneric { public class Nested { [Test] public void CanRun() { } } }"),
         ]);
         var path = Path.Combine(repo, "tests", "expected-platform-skips.json");
         void WriteRoster(params string[] identities) => File.WriteAllText(path,
