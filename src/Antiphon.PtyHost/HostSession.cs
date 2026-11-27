@@ -62,6 +62,8 @@ public sealed class HostSession : IAsyncDisposable
 
     internal Func<int, int, Guid, ulong, CancellationToken, Task>? BeforeLinuxPlacementGoForTests { get; set; }
 
+    internal bool RefusePlatformBackendForTests { get; set; }
+
     public HostSession(PtyHostOptions options, HostLog log, IVerificationCustodyFiles? custodyFiles = null)
     {
         _custodyFiles = custodyFiles;
@@ -211,7 +213,7 @@ public sealed class HostSession : IAsyncDisposable
                              _options.LogFile ?? _options.ManifestDir, launch.AnsiLogPath })
                     store.RequireOutsideSnapshot(path, binding);
                 _custody = new(store, binding, _hostInstanceId);
-                if (!PlatformAdmitsBackend(binding.Backend))
+                if (RefusePlatformBackendForTests || !PlatformAdmitsBackend(binding.Backend))
                     throw new PlatformNotSupportedException("verification_custody_unsupported_backend");
                 if (cutoff is { } placementDeadline)
                 {

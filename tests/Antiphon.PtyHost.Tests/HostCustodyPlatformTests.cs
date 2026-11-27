@@ -16,28 +16,41 @@ namespace Antiphon.PtyHost.Tests;
 public sealed class HostCustodyPlatformTests
 {
     [Test]
-    public async Task C1614_Foreign_platform_binding_is_refused_before_native_start()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C1614_Foreign_platform_binding_is_refused_before_native_start(bool forceLinuxBackendRefusal)
     {
-        var opposite = OperatingSystem.IsWindows()
+        // Exercise the Linux binding refusal on either host, even when the kernel probe could succeed.
+        var refusedBackend = OperatingSystem.IsWindows() || forceLinuxBackendRefusal
             ? VerificationCustodyBackends.LinuxCgroup
             : VerificationCustodyBackends.WindowsJob;
         await using var host = HostHarness.Start(o => o with
         {
             PtyBackend = OperatingSystem.IsWindows() ? "modern" : "inbox",
             CustodyStoreRoot = Path.Combine(Path.GetDirectoryName(o.ManifestDir)!, "custody"),
-            CustodyBackend = opposite,
+            CustodyBackend = refusedBackend,
         });
+        host.Session.RefusePlatformBackendForTests = forceLinuxBackendRefusal;
         var (store, binding, marker) = Reserve(host, opposite);
         Guid? container = null;
         try
         {
-            var reply = await host.Session.LaunchAsync(Launch(host, store, binding, marker), CancellationToken.None);
+            var launch = Launch(host, store, binding, marker);
+            if (refusedBackend == VerificationCustodyBackends.LinuxCgroup)
+            {
+                var now = Stopwatch.GetTimestamp();
+                launch = launch with { LinuxPlacementDeadline = LinuxPlacementLaunch.Stamp(now, now) };
+            }
+            var reply = await host.Session.LaunchAsync(launch, CancellationToken.None);
             container = store.ReadRecord<CustodyRoot>(binding, "tracking.json")?.ContainerId;
-            reply.ShouldBeOfType<ErrorMessage>();
+            reply.ShouldBeOfType<ErrorMessage>().Code.ShouldBe("verification_custody_unsupported_backend");
             File.Exists(marker).ShouldBeFalse();
             File.Exists(store.PathFor(binding.ExecutionId, "native-start-intent.json")).ShouldBeFalse();
             File.Exists(store.PathFor(binding.ExecutionId, "producer-receipt.json")).ShouldBeFalse();
-            (await host.Session.GetCustodyAsync(binding, CancellationToken.None)).Receipt.ShouldBeNull();
+            var custody = await host.Session.GetCustodyAsync(binding, CancellationToken.None);
+            custody.State.ShouldBe(VerificationCustodyState.UnsupportedBackend);
+            custody.Receipt.ShouldBeNull();
+            custody.Host.ShouldNotBeNull().LinuxIdentity.ShouldBeNull();
         }
         finally
         {
