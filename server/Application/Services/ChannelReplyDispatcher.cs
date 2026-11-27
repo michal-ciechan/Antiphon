@@ -100,7 +100,7 @@ public sealed record ChannelReplyDebtState(int Attempts, DateTime CreatedAt, str
 public sealed class ChannelReplyDispatcher
 {
     private sealed record ReplyTarget(string Provider, string? ReplyHandle, string ConversationId,
-        IReadOnlyList<Guid> CorrelationIds, bool HasCatalog);
+        IReadOnlyList<Guid> CorrelationIds, IReadOnlyList<string> NativeMessageIds, bool HasCatalog);
 
     /// <summary>Why a correlation was abandoned without an answer. All are Critical incidents.</summary>
     private enum LossReason
@@ -647,8 +647,9 @@ public sealed class ChannelReplyDispatcher
             }
 
             var replyHandle = await ResolveInboundReplyHandleAsync(db, group, channel?.ReplyHandle, ct);
-            targets.Add(new ReplyTarget(provider, replyHandle, conversationId,
-                group.Select(m => m.Id).ToArray(), channel is not null));
+            var memberIds = group.Select(m => m.Id).ToArray();
+            var nativeIds = await NativeInboundIdsAsync(db, provider, conversationId, memberIds, ct);
+            targets.Add(new ReplyTarget(provider, replyHandle, conversationId, memberIds, nativeIds, channel is not null));
         }
 
         var failed = unroutable.Select(m => m.Id).ToHashSet();
@@ -673,14 +674,14 @@ public sealed class ChannelReplyDispatcher
             {
                 foreach (var target in targets.Where(t => t.HasCatalog))
                     await outbound.CaptureAsync(new ChannelReply { Channel = target.Provider,
-                            ConversationId = target.ConversationId, ReplyHandle = target.ReplyHandle },
+                            ConversationId = target.ConversationId, ReplyHandle = target.ReplyHandle, AnsweredMessageIds = target.NativeMessageIds },
                         new ChannelOutboundSource(sessionId, userPrompt.Sequence, userPrompt.Sequence + 1,
                             maxTextSeq, "main", target.CorrelationIds),
                         ChannelReplyPreparation.Describe(responseText), _settings, ct, suppress: true);
             }
             foreach (var target in targets.Where(t => !outbound.UnifiedRecoveryEnabled || !t.HasCatalog))
                 await outbound.SuppressDirectAsync(new ChannelReply { Channel = target.Provider,
-                        ConversationId = target.ConversationId, ReplyHandle = target.ReplyHandle },
+                        ConversationId = target.ConversationId, ReplyHandle = target.ReplyHandle, AnsweredMessageIds = target.NativeMessageIds },
                     new ChannelOutboundSource(sessionId, userPrompt.Sequence, userPrompt.Sequence + 1,
                         maxTextSeq, "main", target.CorrelationIds), ct);
             _logger.LogInformation(
@@ -711,13 +712,9 @@ public sealed class ChannelReplyDispatcher
                 var (targetBody, targetAttachments) = outbound.UnifiedRecoveryEnabled && !captureReply
                     ? PrepareReplyBody(responseText, sessionId) : (bodyText, attachments);
                 var targetText = Truncate(targetBody);
-                var answeredIds = await db.ChannelInbounds.AsNoTracking()
-                    .Where(i => i.QueueMessageId != null && target.CorrelationIds.Contains(i.QueueMessageId.Value)
-                        && i.Provider == target.Provider && i.ConversationId == target.ConversationId)
-                    .OrderBy(i => i.AcceptanceSequence).Select(i => i.NativeMessageId).ToListAsync(ct);
                 var reply = new ChannelReply
                 {
-                    AnsweredMessageIds = answeredIds,
+                    AnsweredMessageIds = target.NativeMessageIds,
                     Channel = target.Provider,
                     ReplyHandle = target.ReplyHandle,
                     ConversationId = target.ConversationId,
@@ -1426,6 +1423,12 @@ public sealed class ChannelReplyDispatcher
             await outbound.CloseTailAsync(root, ct, next is null ? terminalGeneration : null);
     }
 
+    private static Task<List<string>> NativeInboundIdsAsync(AppDbContext db, string provider, string conversationId,
+        IReadOnlyList<Guid> memberIds, CancellationToken ct) =>
+        db.ChannelInbounds.AsNoTracking().Where(i => i.QueueMessageId != null && memberIds.Contains(i.QueueMessageId.Value)
+                && i.Provider == provider && i.ConversationId == conversationId)
+            .OrderBy(i => i.AcceptanceSequence).Select(i => i.NativeMessageId).ToListAsync(ct);
+
     private async Task DispatchFollowUpAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
@@ -1474,7 +1477,8 @@ public sealed class ChannelReplyDispatcher
             {
                 var (body, attachments) = PrepareReplyBody(joined, sessionId);
                 var text = Truncate(body);
-                var reply = new ChannelReply { Channel = root.Provider!, ConversationId = root.Conversation!,
+                var nativeIds = await NativeInboundIdsAsync(db, root.Provider!, root.Conversation!, members, ct);
+                var reply = new ChannelReply { Channel = root.Provider!, ConversationId = root.Conversation!, AnsweredMessageIds = nativeIds,
                     ReplyHandle = root.Handle, Text = text.Length == 0 ? null : text,
                     Kind = ClassifyKind(body), Attachments = attachments };
                 var source = new ChannelOutboundSource(sessionId, root.Prompt.Value, through + 1,
