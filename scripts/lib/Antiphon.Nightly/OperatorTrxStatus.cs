@@ -14,6 +14,7 @@ namespace Antiphon.Nightly
     {
         private const int BiggestChunkCount = 8;
         private const double PriorMatches = 20;
+        private const int MinimumMatchedPriorSeconds = 20;
         private const double MinimumPercentileMatches = 20;
         private const double NormalP95 = 1.645;
         private static readonly StringComparer ChunkNames = StringComparer.OrdinalIgnoreCase;
@@ -129,9 +130,10 @@ namespace Antiphon.Nightly
 
             double ratio = 1;
             double? upperRatio = null;
-            if (matched.Length > 0)
+            var priorSeconds = matched.Sum(chunk => chunk.Prior);
+            // A few milliseconds of comparable history cannot establish the speed of the remaining run.
+            if (priorSeconds >= MinimumMatchedPriorSeconds)
             {
-                var priorSeconds = matched.Sum(chunk => chunk.Prior);
                 var rawRatio = matched.Sum(chunk => chunk.Live) / priorSeconds;
                 // The effective count discounts unequal weights. One long chunk can dominate the ratio
                 // even when many short chunks have finished.
