@@ -12,7 +12,6 @@ namespace Antiphon.Nightly
 {
     internal static class OperatorTrxStatus
     {
-        private const int TimesPrefixBytes = 6000;
         private const int BiggestChunkCount = 8;
         private const double PriorMatches = 20;
         private const double MinimumPercentileMatches = 20;
@@ -47,29 +46,8 @@ namespace Antiphon.Nightly
             }
 
             var failures = reportFailures ? new JsonArray() : null;
-            var live = new Dictionary<string, ChunkTime>(ChunkNames);
-            var duplicate = new HashSet<string>(ChunkNames);
-            foreach (var file in current)
-            {
-                var name = files.Path.GetFileNameWithoutExtension(file.Name);
-                try
-                {
-                    var (time, failed) = ReadTrx(files, file.FullName, reportFailures);
-                    if (!live.TryAdd(name, time))
-                    {
-                        duplicate.Add(name);
-                        errors.Add("rc live TRX has a duplicate chunk identity: " + name + ".");
-                    }
-                    if (reportFailures)
-                        foreach (var failure in failed)
-                            failures.Add(new JsonObject { ["chunk"] = name, ["testName"] = failure, ["fixes"] = null });
-                }
-                catch (Exception error) when (OperatorRcStatus.ReadError(error) || error is XmlException || error is InvalidDataException)
-                {
-                    errors.Add("rc live TRX " + file.Name + " unreadable or incomplete; its failures and duration are unverified.");
-                }
-            }
-            foreach (var name in duplicate) live.Remove(name);
+            var live = ReadTrxChunks(files, current, failures, "rc live TRX", errors);
+            ReadCommandCompletions(files, logDir, schedule, live, errors);
             var firstStart = live.Values.Where(time => time != null).Select(time => (DateTimeOffset?)time.Start).Min();
             var startup = started.HasValue && firstStart >= started && firstStart <= now
                 ? (firstStart - started)?.TotalSeconds : null;
@@ -96,36 +74,45 @@ namespace Antiphon.Nightly
         private static Dictionary<string, ChunkTime> ReadPrevious(
             IFileSystem files, string logDir, string supplied, List<string> errors, out string path)
         {
-            var previous = new Dictionary<string, ChunkTime>(ChunkNames);
             path = null;
             try
             {
-                path = OperatorRcStatus.PreviousRun(files, logDir, supplied, errors);
-                if (path == null)
+                if (!string.IsNullOrEmpty(supplied))
                 {
-                    errors.Add("Previous rc run not found; supply --previous-run-log-dir (status: --rc-previous-run-log-dir) if its logs are available.");
-                    return previous;
-                }
-
-                var buffer = new byte[TimesPrefixBytes];
-                foreach (var file in TrxFiles(files, path))
-                {
-                    var name = files.Path.GetFileNameWithoutExtension(file.Name);
-                    ChunkTime time = null;
-                    try { time = ReadPrior(files, file.FullName, buffer); }
-                    catch (Exception error) when (OperatorRcStatus.ReadError(error))
+                    var selected = files.Path.GetFullPath(supplied);
+                    if (!OperatorRcStatus.SamePath(files, logDir, selected))
                     {
-                        errors.Add("Previous rc TRX " + file.Name + " could not be read.");
+                        path = selected;
+                        var reason = Incomplete(files, selected, errors, out var previous);
+                        if (reason != null)
+                            errors.Add("Supplied previous rc run is not a complete baseline: " + reason + ".");
+                        return previous;
                     }
-                    if (!previous.TryAdd(name, time)) previous[name] = null;
                 }
-                if (previous.Count == 0) errors.Add("Previous rc run has no TRX records; ETA is unknown.");
+                else
+                {
+                    foreach (var group in OperatorRcStatus.PreviousRunsByStart(files, logDir))
+                    {
+                        var complete = new List<(string Dir, Dictionary<string, ChunkTime> Chunks)>();
+                        foreach (var directory in group)
+                            if (Incomplete(files, directory, null, out var previous) == null)
+                                complete.Add((directory, previous));
+                        if (complete.Count == 0) continue;
+                        if (complete.Count == 1)
+                        {
+                            path = complete[0].Dir;
+                            return complete[0].Chunks;
+                        }
+                        break;
+                    }
+                }
+                errors.Add("Previous rc run not found; supply --previous-run-log-dir (status: --rc-previous-run-log-dir) if its logs are available.");
             }
             catch (Exception error) when (OperatorRcStatus.ReadError(error))
             {
                 errors.Add("Previous rc run could not be fully read; historical timings may be incomplete.");
             }
-            return previous;
+            return new Dictionary<string, ChunkTime>(ChunkNames);
         }
 
         private static QualificationEtaReading Project(string[] planned, Dictionary<string, ChunkTime> live,
@@ -230,20 +217,60 @@ namespace Antiphon.Nightly
         }
 
         /// <summary>
-        /// D-2: a historical run is a baseline only when its TRX files cover its own dispatch-schedule.json (a stopped or
-        /// partial attempt does not). Null: complete; otherwise the reason.
+        /// Automatic baselines require terminal evidence for each scheduled chunk. A terminal chunk may have no price.
         /// </summary>
-        internal static string Incomplete(IFileSystem files, string directory)
+        private static string Incomplete(IFileSystem files, string directory, List<string> issues,
+            out Dictionary<string, ChunkTime> previous)
         {
             var read = RcQualificationRecords.Read(files, files.Path.Combine(directory, "dispatch-schedule.json"));
-            if (!read.Ok) return "its dispatch-schedule.json is unavailable (" + read.Reason + ")";
-            var schedule = JsonNode.Parse(read.Record.Value.GetRawText()).AsObject();
+            var schedule = read.Ok ? JsonNode.Parse(read.Record.Value.GetRawText()).AsObject() : null;
             var planned = ScheduleKeys(schedule);
-            if (planned == null)
-                return "its dispatch schedule is incomplete or invalid";
-            var timed = new HashSet<string>(TrxFiles(files, directory).Select(file => files.Path.GetFileNameWithoutExtension(file.Name)), ChunkNames);
-            var missing = planned.Count(chunk => !timed.Contains(chunk));
-            return missing == 0 ? null : missing + " of its " + planned.Length + " scheduled chunks have no TRX";
+            previous = new Dictionary<string, ChunkTime>(ChunkNames);
+            if (planned == null && issues == null)
+                return "its dispatch schedule is unavailable or invalid";
+
+            var records = TrxFiles(files, directory).ToArray();
+            ReadCommandCompletions(files, directory, schedule, previous, issues);
+            if (issues == null)
+            {
+                // A stopped attempt may have many TRXs. Reject missing files before streaming their contents.
+                var available = records.Select(file => files.Path.GetFileNameWithoutExtension(file.Name))
+                    .Concat(previous.Keys).ToHashSet(ChunkNames);
+                if (planned.Any(chunk => !available.Contains(chunk))) return "its dispatch schedule has unfinished chunks";
+            }
+            foreach (var (name, time) in ReadTrxChunks(files, records, null, "Previous rc TRX", issues))
+                previous.TryAdd(name, time);
+
+            if (!read.Ok) return "its dispatch-schedule.json is unavailable (" + read.Reason + ")";
+            if (planned == null) return "its dispatch schedule is incomplete or invalid";
+            var missing = planned.Length - planned.Count(previous.ContainsKey);
+            return missing == 0 ? null : missing + " of its " + planned.Length + " scheduled chunks have no terminal record";
+        }
+
+        private static void ReadCommandCompletions(IFileSystem files, string directory, JsonObject schedule,
+            Dictionary<string, ChunkTime> observed, List<string> issues)
+        {
+            if (schedule?["entries"] is not JsonArray entries) return;
+            foreach (var entry in entries)
+            {
+                var suite = OperatorRcStatus.Text(entry, "suite");
+                var chunk = OperatorRcStatus.Text(entry, "chunk");
+                if (chunk != "all" || suite is not ("client" or "scripts")) continue;
+
+                var name = suite + "-" + chunk;
+                var path = files.Path.Combine(directory, name + ".timing.json");
+                var sidecar = OperatorRcStatus.ReadRecord(files, path, issues, required: false);
+                var runId = OperatorRcStatus.Text(sidecar, "runId");
+                var attempt = OperatorRcStatus.Text(sidecar, "attempt");
+                var scheduledAttempt = OperatorRcStatus.Text(schedule, "attempt");
+                if (OperatorRcStatus.Text(sidecar, "suite") == suite
+                    && OperatorRcStatus.Text(sidecar, "chunk") == chunk
+                    && (runId == null || runId == OperatorRcStatus.Text(schedule, "runId"))
+                    && (attempt == null || scheduledAttempt == null || attempt == scheduledAttempt)
+                    && OperatorRcStatus.Text(sidecar, "lastPhase") == "complete"
+                    && OperatorRcStatus.Time(OperatorRcStatus.Text(sidecar, "completedAt")) != null)
+                    observed.TryAdd(name, null);
+            }
         }
 
         private static string[] ScheduleKeys(JsonObject schedule)
@@ -262,24 +289,34 @@ namespace Antiphon.Nightly
             return suite == null || chunk == null ? null : suite + "-" + chunk;
         }
 
-        private static ChunkTime ReadPrior(IFileSystem files, string path, byte[] buffer)
+        private static Dictionary<string, ChunkTime> ReadTrxChunks(IFileSystem files, IEnumerable<IFileInfo> records,
+            JsonArray failures, string source, List<string> issues)
         {
-            try
+            var observed = new Dictionary<string, ChunkTime>(ChunkNames);
+            var names = new HashSet<string>(ChunkNames);
+            foreach (var file in records)
             {
-                using var stream = RcQualificationRecords.OpenSharedRead(files, path);
-                var count = stream.ReadAtLeast(buffer, buffer.Length, false);
-                using var prefix = new MemoryStream(buffer, 0, count, writable: false);
-                using var reader = XmlReader.Create(prefix, ReaderSettings());
-                if (!IsTrx(reader)) return null;
-                while (reader.Read())
-                    if (reader.Depth == 1 && IsElement(reader, "Times"))
-                        return Time(reader);
+                var name = files.Path.GetFileNameWithoutExtension(file.Name);
+                if (!names.Add(name))
+                {
+                    observed.Remove(name);
+                    issues?.Add(source + " has a duplicate chunk identity: " + name + ".");
+                    continue;
+                }
+                try
+                {
+                    var (time, failed) = ReadTrx(files, file.FullName, failures != null);
+                    observed.Add(name, time);
+                    if (failures != null)
+                        foreach (var failure in failed)
+                            failures.Add(new JsonObject { ["chunk"] = name, ["testName"] = failure, ["fixes"] = null });
+                }
+                catch (Exception error) when (OperatorRcStatus.ReadError(error) || error is XmlException || error is InvalidDataException)
+                {
+                    issues?.Add(source + " " + file.Name + " unreadable or incomplete; its failures and duration are unverified.");
+                }
             }
-            catch (XmlException)
-            {
-                // A prefix ending before Times, or an invalid header, supplies no timing.
-            }
-            return null;
+            return observed;
         }
 
         private static (ChunkTime Time, List<string> Failures) ReadTrx(IFileSystem files, string path, bool reportFailures)

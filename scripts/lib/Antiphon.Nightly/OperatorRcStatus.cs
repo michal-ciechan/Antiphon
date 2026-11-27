@@ -204,32 +204,18 @@ namespace Antiphon.Nightly
                 errors.Add("rc supervisor-heartbeat.json observation time is ahead of this host's clock.");
         }
 
-        internal static string PreviousRun(IFileSystem files, string live, string previous, List<string> errors)
+        internal static IEnumerable<IGrouping<DateTime?, string>> PreviousRunsByStart(IFileSystem files, string live)
         {
-            if (!string.IsNullOrEmpty(previous))
-            {
-                var selected = files.Path.GetFullPath(previous);
-                if (SamePath(files, live, selected)) return null;
-                if (OperatorTrxStatus.Incomplete(files, selected) is string reason)
-                    errors.Add("Supplied previous rc run is not a complete baseline: " + reason + ".");
-                return selected;
-            }
             var root = FindReleaseRoot(files, live);
             var liveStamp = RunStamp(files, live);
-            if (root == null || liveStamp == null) return null;
-            var candidates = Directories(files, files.Path.Combine(root, "candidates"), "rc-*")
+            if (root == null || liveStamp == null) return Array.Empty<IGrouping<DateTime?, string>>();
+            return Directories(files, files.Path.Combine(root, "candidates"), "rc-*")
                 .Where(dir => CandidateName.IsMatch(files.Path.GetFileName(dir)))
                 .SelectMany(dir => Directories(files, files.Path.Combine(dir, "logs"), "*"))
                 .Select(dir => (Dir: dir, Start: RunStamp(files, dir)))
                 .Where(item => item.Start < liveStamp)
-                .OrderByDescending(item => item.Start);
-            // D-2: the newest earlier attempt whose TRX files cover its own schedule; stopped partial attempts are skipped.
-            foreach (var group in candidates.GroupBy(item => item.Start))
-            {
-                var complete = group.Where(item => OperatorTrxStatus.Incomplete(files, item.Dir) == null).ToArray();
-                if (complete.Length > 0) return complete.Length == 1 ? complete[0].Dir : null;
-            }
-            return null;
+                .OrderByDescending(item => item.Start)
+                .GroupBy(item => item.Start, item => item.Dir);
         }
 
         private static DateTime? RunStamp(IFileSystem files, string dir)
@@ -270,7 +256,7 @@ namespace Antiphon.Nightly
             var read = RcQualificationRecords.Read(files, path);
             if (read.Ok) return JsonNode.Parse(read.Record.Value.GetRawText()).AsObject();
             if (required || read.Status != "missing")
-                errors.Add("rc " + files.Path.GetFileName(path) + " unavailable (" + read.Reason + ").");
+                errors?.Add("rc " + files.Path.GetFileName(path) + " unavailable (" + read.Reason + ").");
             return null;
         }
 
@@ -282,7 +268,7 @@ namespace Antiphon.Nightly
             return null;
         }
 
-        private static bool SamePath(IFileSystem files, string left, string right) =>
+        internal static bool SamePath(IFileSystem files, string left, string right) =>
             !string.IsNullOrEmpty(left) && !string.IsNullOrEmpty(right)
             && string.Equals(files.Path.TrimEndingDirectorySeparator(files.Path.GetFullPath(left)),
                 files.Path.TrimEndingDirectorySeparator(files.Path.GetFullPath(right)),
