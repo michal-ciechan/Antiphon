@@ -328,6 +328,7 @@ try
         .ValidateOnStart();
     // CARD-1677 S3: the WorkspaceDiskLow attention row. Report only.
     builder.Services.AddSingleton<IValidateOptions<WorkspaceDiskAlarmSettings>, WorkspaceDiskAlarmSettingsValidator>();
+    builder.Services.AddSingleton<WorkspaceDiskAdmission>();
     builder.Services.AddOptions<WorkspaceDiskAlarmSettings>()
         .Bind(builder.Configuration.GetSection(WorkspaceDiskAlarmSettings.SectionName))
         .ValidateOnStart();

@@ -149,6 +149,7 @@ public sealed partial class AgentTaskDispatcher
     // CARD-1478. Absent, or a floor of zero, keeps today's launch. The detail is this instance's
     // stash for the tick that traces HeldOnMemory.
     private readonly DesktopLaunchMemoryAdmission? _desktopMemory;
+    private readonly WorkspaceDiskAdmission? _workspaceDisk;
     private string? _desktopMemoryHoldDetail;
 
     public AgentTaskDispatcher(
@@ -234,11 +235,13 @@ public sealed partial class AgentTaskDispatcher
         TaskProviderWaitReader? providerWait = null,
         DesktopLaunchMemoryAdmission? desktopMemory = null,
         RefOnlyDesktopGate? refOnlyGate = null,
-        RefOnlyDesktopProvisioner? refOnlyProvisioner = null)
+        RefOnlyDesktopProvisioner? refOnlyProvisioner = null,
+        WorkspaceDiskAdmission? workspaceDisk = null)
     {
         _refOnlyGate = refOnlyGate;
         _refOnlyProvisioner = refOnlyProvisioner;
         _desktopMemory = desktopMemory;
+        _workspaceDisk = workspaceDisk;
         _providerWait = providerWait;
         _dispatchConcurrency = dispatchConcurrency;
         _siblingInspection = siblingInspection;
@@ -1442,6 +1445,9 @@ public sealed partial class AgentTaskDispatcher
 
             return (HoldKind.RunnerUnavailable, DispatchHoldDetails.RunnerUnavailable(runnerId, ex.Message));
         }
+
+        if (_workspaceDisk?.HoldReason(runnerId) is { } diskHold)
+            return (HoldKind.RunnerUnavailable, DispatchHoldDetails.RunnerUnavailable(runnerId, diskHold));
 
         // CARD-0653: declared seats, before any claim or remote prep. Failed and stopped
         // sessions do not reserve. In-flight mirrors and prepared-but-unlaunched tasks do.
@@ -6313,6 +6319,13 @@ public sealed partial class AgentTaskDispatcher
         string? remoteCwd = null;
         if (claimed.RunnerId is { Length: > 0 } remoteRunner)
         {
+            if (_workspaceDisk?.HoldReason(remoteRunner) is { } diskHold)
+            {
+                await AbandonClaimAsync(ct);
+                await RemoteWarnAsync(claimed, now, DispatchHoldDetails.RunnerUnavailable(remoteRunner, diskHold), ct);
+                return DispatchOneResult.NotClaimed;
+            }
+
             // CARD-0633 D-5: the push and mirror are network work and never run inside this
             // transaction (a silent runner held the row lock and the serial tick for the whole
             // mirror budget, CARD-0629). Commit the claim with the task still Queued - the desktop
