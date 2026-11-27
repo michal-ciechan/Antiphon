@@ -924,7 +924,8 @@ work (OQ-3).
   decision or completion chain. Other non-zero exits and missing CLI results are `Unavailable`,
   and timeouts are `Timeout`. Those outcomes allow fallback. If the chain runs out of entries,
   the node summary includes the CLI diagnostic. Exit diagnostics include the exit code and a
-  bounded, redacted excerpt when the CLI supplies one.
+  fixed reason for recognized overload, rate-limit, or connection errors. The diagnostic
+  masks sensitive values before clipping its private input and publishes only those fixed reasons.
 - **Escalate by confidence.** An answer below its question's per-provider threshold escalates
   **that question only** to the next entry. A refused answer escalates the same way.
 - **Record every call** in `llm_call`: chain, entry, provider, transport, resolved model, tokens,
@@ -979,8 +980,8 @@ the server machine's own Claude Code sign-in (the subscription, no API key). Eve
 --model <m> --tools <t>` with the prompt on stdin, never `--bare` (it disables the subscription
 sign-in). The Claude Code nesting variables (`CLAUDECODE` and the session markers) are removed from
 the child's environment. The process tree is killed on timeout or cancellation. A non-zero exit,
-`is_error: true` or output with no JSON result fails the call. Diagnostics use redacted stderr or
-the structured error result. The prompt goes only to stdin. Usage comes from the result: tokens
+`is_error: true` or output with no JSON result fails the call. The public reason is selected from
+stderr or the structured error result. The prompt goes only to stdin. Usage comes from the result: tokens
 from `usage` (input counts cache reads and writes), the model from the main `modelUsage` key
 (for example `claude-haiku-5-5`), and cost from
 `total_cost_usd`, recorded as `api-equivalent` (D-20) with transport `OneShot`.
@@ -1000,8 +1001,9 @@ from `usage` (input counts cache reads and writes), the model from the main `mod
   (90). `Review:Agents:Cli:MaxParallel` (2) bounds how many run at once. Runs live in memory, so a
   handle from before a server restart fails the node ("the run was lost"); Refresh reruns it.
 - **Completions and decisions, dialect `claude-cli`.** Set a `Model` (an alias such as `haiku`,
-  or a full id) and use `Transport: OneShot` in the chain. The server checks at startup that
-  every `OneShot` entry names a configured `claude-cli` provider. The dialect ignores `BaseUrl`
+  or a full id) and use `Transport: OneShot` in the chain. Startup warns when a `OneShot` entry
+  names a different or missing provider dialect. The configured dialect continues to select the
+  adapter so existing HTTP entries can keep serving. The CLI dialect ignores `BaseUrl`
   and `ApiKeyConfigKey`. For proxy-backed decisions, use `Transport: Http` with
   `litellm-systemone` or another Jev dialect. The CLI runs with no tools in an empty scratch
   folder, bounded by the provider's `TimeoutSeconds`. A completion's prompt is the instructions followed by each input as a labelled

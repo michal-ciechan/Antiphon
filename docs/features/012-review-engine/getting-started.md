@@ -284,6 +284,13 @@ take a `Transport`:
 
 The workflow uses the chains `decisions-default` and `completions-cheap`.
 
+Before a restart, run `dotnet Antiphon.Server.dll --list-review-chains` from the candidate
+server's content root with the same environment and configuration arguments as the service.
+It prints the effective decision and completion chains, entry indexes, provider names,
+transports and dialects, then exits before starting the server. If an existing `OneShot` entry
+uses an HTTP provider dialect, the server warns at startup and keeps serving through that HTTP
+adapter. Set the entry to `Transport: Http` to match the provider.
+
 **Defaults.** With no decisions configured, the server adds `jev` (with no base URL) and three
 placeholder seat providers, and none of these can answer yet. **Configuring any decisions provider
 replaces that whole default set**, so list every provider you want. Completions work differently:

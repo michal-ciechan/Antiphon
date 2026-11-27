@@ -50,7 +50,7 @@ public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> setti
             var reason = ex is FileNotFoundException or DirectoryNotFoundException or Win32Exception { NativeErrorCode: 2 or 3 }
                 ? "the executable or its directory was not found"
                 : "the server could not launch the executable";
-            throw new ClaudeCliException($"'{SafeDiagnostic(Path.GetFileName(command))}' could not be started: {reason}. " +
+            throw new ClaudeCliException($"'{Excerpt(RedactDiagnostic(Path.GetFileName(command)))}' could not be started: {reason}. " +
                 "Set Review:Agents:Cli:Command to the claude executable on the server.", ClaudeCliFailureKind.Start);
         }
 
@@ -177,11 +177,26 @@ public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> setti
         if (string.IsNullOrWhiteSpace(text))
             return Excerpt(null);
 
-        var plain = AnsiEscape().Replace(text, "").ReplaceLineEndings(" ").Replace('\t', ' ');
-        plain = new string(plain.Where(c => !char.IsControl(c) && char.GetUnicodeCategory(c) != UnicodeCategory.Format).ToArray());
-        // Redact before clipping so a credential that crosses the excerpt boundary is still removed in full.
+        // Remove whole values before clipping. The final projection emits only fixed reasons,
+        // so identifiers and credential formats unknown to the first pass also stay private.
+        var excerpt = Excerpt(RedactDiagnostic(text));
+        var reason = PublicDiagnosticReason().Match(excerpt);
+        if (reason.Groups["overload"].Success)
+            return "CLI backend overloaded";
+        if (reason.Groups["rateLimit"].Success)
+            return "CLI request rate limited";
+        if (reason.Groups["network"].Success)
+            return "CLI backend connection failed";
+        return "CLI output contained no recognized public diagnostic.";
+    }
+
+    private static string RedactDiagnostic(string text)
+    {
+        var plain = AnsiEscape().Replace(text, "");
+        plain = new string(plain.Where(c => c is '\r' or '\n' or '\t'
+            || (!char.IsControl(c) && char.GetUnicodeCategory(c) != UnicodeCategory.Format)).ToArray());
         var scrubbed = SensitiveDiagnosticText().Replace(plain, "[redacted]");
-        return Excerpt(new DiagnosticsRedactor(includePaths: false).Redact(scrubbed));
+        return new DiagnosticsRedactor(includePaths: false).Redact(scrubbed);
     }
 
     [GeneratedRegex(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\))")]
@@ -191,9 +206,26 @@ public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> setti
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Multiline)]
     private static partial Regex AuthenticationError();
 
-    [GeneratedRegex("""\b(?:https?://\S+|(?:bearer|basic)\s+\S+|[\w-]*(?:api[_-]?key|token|password|secret|authorization)["']?\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)|[A-Za-z0-9_+/-]{32,}={0,2}(?:\.[A-Za-z0-9_+/-]+)*)""",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("""
+        \b(?:[\w-]*[-_])?(?:authorization|cookie)["']?[ \t]*[:=][ \t]*
+            (?:"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*)
+        | \b(?:bearer|basic)[ \t]+[^\r\n]+
+        | \b[\w-]*(?:key|token|secret|password|account(?:[_-]?id)?|user(?:[_-]?name|[_-]?id))["']?[ \t]*[:=][ \t]*
+            (?:"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|[^\s,;}\]]+)
+        | \b[a-z][a-z0-9+.-]*://[^\s/?#<>]+@
+        | \b[\w.%+'-]+@[\w.-]+
+        | \b(?:sk-|ghp_|gho_|github_pat_|xox[a-z]*-)[a-z0-9_-]+
+        | \b(?:eyj[a-z0-9_-]*|e30)\.[a-z0-9_-]+\.[a-z0-9_-]+\b
+        | [a-z0-9_+/-]{32,}={0,2}
+        | (?:[a-z]:[\\/]users[\\/]|/(?:home|users)/)[^\\/\s"']+
+        """, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace | RegexOptions.NonBacktracking)]
     private static partial Regex SensitiveDiagnosticText();
+
+    [GeneratedRegex("""
+        \b(?:(?<overload>(?:529|overloaded))|(?<rateLimit>(?:429|rate[ -]limit(?:ed)?))|
+        (?<network>(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|connection (?:refused|reset))))\b
+        """, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PublicDiagnosticReason();
 
     public static string Excerpt(string? text)
     {

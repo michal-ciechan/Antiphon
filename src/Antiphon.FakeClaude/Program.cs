@@ -134,9 +134,10 @@ internal static class Program
             Console.Error.WriteLine("CLI backend overloaded");
             Console.Error.WriteLine("Proxy-Authorization: Basic aGVsbG86d29ybGQ=");
             Console.Error.WriteLine("Cookie: sid=cook1e; tracking=track8");
-            Console.Error.WriteLine("""{"token":"fixture token value","password":"escaped\\"quote"}""");
+            Console.Error.WriteLine("""{"token":"fixture token value","password":"escaped\"quote"}""");
             Console.Error.WriteLine("HTTP https://user:pass@host.example/result for fixture-user@host.example");
             Console.Error.WriteLine("Account username: fixture-owner");
+            Console.Error.WriteLine("Account reference fixture-unlabelled-owner");
             return 7;
         }
 

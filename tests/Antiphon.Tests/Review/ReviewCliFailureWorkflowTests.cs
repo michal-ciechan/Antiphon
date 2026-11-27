@@ -33,7 +33,7 @@ public sealed class ReviewCliFailureWorkflowTests
     private static readonly string[] SensitiveValues =
     [
         "xyShort", "aGVsbG86d29ybGQ=", "cook1e", "track8", "fixture token value", "escaped", "quote",
-        "user:pass", "fixture-user@host.example", "fixture-owner",
+        "user:pass", "fixture-user@host.example", "fixture-owner", "fixture-unlabelled-owner",
     ];
 
     [Test]

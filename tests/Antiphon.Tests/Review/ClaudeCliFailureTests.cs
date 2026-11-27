@@ -33,6 +33,7 @@ public sealed class ClaudeCliFailureTests
         {
             [$"{prefix}:Providers:legacy-http:Dialect"] = "backup",
             [$"{prefix}:Providers:legacy-http:Model"] = "fake",
+            [$"{prefix}:Providers:legacy-http:ApiKey"] = "fixture-key-value",
             [$"{prefix}:Chains:{ChainName}:0:Provider"] = "legacy-http",
             [$"{prefix}:Chains:{ChainName}:0:Transport"] = "OneShot",
         });
@@ -51,6 +52,10 @@ public sealed class ClaudeCliFailureTests
         logs.Warnings.ShouldContain(message => message.Contains(prefix)
             && message.Contains(ChainName) && message.Contains("entry 0")
             && message.Contains("legacy-http") && message.Contains("backup"));
+        using var listing = new StringWriter();
+        ReviewChainRegistration.WriteEffectiveReviewChains(host.Services, listing);
+        listing.ToString().ShouldContain($"{prefix} chain '{ChainName}' entry 0 provider 'legacy-http' transport 'OneShot' dialect 'backup'");
+        listing.ToString().ShouldNotContain("fixture-key-value");
         if (section == "Decisions")
         {
             var result = await host.Services.GetRequiredService<DecisionChain>().DecideAsync(ChainName, Decision, CancellationToken.None);
@@ -76,6 +81,7 @@ public sealed class ClaudeCliFailureTests
     [Arguments("HTTP https://user:pass@host.example/result", "user:pass")]
     [Arguments("Account fixture-user@host.example", "fixture-user@host.example")]
     [Arguments("Account username: fixture-owner", "fixture-owner")]
+    [Arguments("CLI raw owner reference fixture-unlabelled-owner", "fixture-unlabelled-owner")]
     [Arguments("key='padded synthetic' password=fixturePass", "padded synthetic")]
     [Arguments("Error ghp_short gho_short github_pat_short xoxb-short sk-short", "short")]
     [Arguments("Service rejected e30.e30.fakeSignature", "fakeSignature")]
@@ -93,10 +99,11 @@ public sealed class ClaudeCliFailureTests
     public void Public_stderr_removes_the_prefix_of_a_token_crossing_the_excerpt_boundary()
     {
         const string prefix = "boundaryPrefix";
-        var stderr = string.Concat(Enumerable.Repeat("detail ", 69)) + prefix + new string('a', 80);
+        var stderr = string.Concat(Enumerable.Repeat("detail ", 67)) + prefix + new string('a', 80) + "\nAPI Error: 529";
         var failure = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(7, "", stderr));
         failure.Message.Contains(prefix, StringComparison.Ordinal).ShouldBeFalse();
         failure.Message.ShouldContain("exit 7");
+        failure.Message.ShouldContain("CLI backend overloaded");
     }
 
     [Test]

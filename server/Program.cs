@@ -40,6 +40,16 @@ using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.Server.Infrastructure.WorkflowDefinitions;
 
+const string listReviewChains = "--list-review-chains";
+if (args.Contains(listReviewChains, StringComparer.Ordinal))
+{
+    var previewBuilder = WebApplication.CreateBuilder(args.Where(arg => arg != listReviewChains).ToArray());
+    previewBuilder.Services.AddReviewChainOptions(previewBuilder.Configuration);
+    using var preview = previewBuilder.Build();
+    ReviewChainRegistration.WriteEffectiveReviewChains(preview.Services, Console.Out);
+    return;
+}
+
 // Startup writes PROCESS-GLOBAL state: Serilog's static Log.Logger. WebApplicationFactory runs
 // this entry point once per factory, and the test assembly holds several of them (the shared
 // AntiphonWebAppFactory, its per-suite subclasses, and SmokeTests' own bare factory), so two
