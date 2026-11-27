@@ -124,7 +124,7 @@ user-secrets or your platform's secret store.
 ### 4.2 A working starting point
 
 This configuration is for a company on github.com, with the Claude Code CLI signed in on the server
-machine. It is the same set of settings that `scripts/review-standalone.ps1` uses (section 6.1).
+machine. It is the same set of settings that `scripts/antiphon review-standalone` uses (section 6.1).
 
 ```json
 {
@@ -343,55 +343,52 @@ reads them leniently.
 
 ### 6.1 One machine, standalone (the quickest way to try it)
 
-`scripts/review-standalone.ps1` (PowerShell 7) runs a review-only server and its UI, with no AppHost
-and no session runner. Each run does the following:
-- **Postgres:** starts a `postgres:16` container (`antiphon-review-standalone-pg`, port 17290, its own
-  volume).
-- **Mirror:** clones the repo to `-MirrorPath`.
-- **Settings:** reads the App from a Bitwarden item and sets the section 4.2 settings as environment
-  variables of the server process only. Nothing is written to disk.
-- **Server and UI:** starts the server on 17262 and the UI (Vite) on 17263.
+`scripts/antiphon review-standalone` starts the review-only server and its Vite UI directly.
+The standalone UI launcher uses `cmd.exe`. Run the commands from the checkout root.
+On Windows, use `scripts\antiphon.cmd` with the same command names and flags.
+
+- Starts Postgres 16 on port 17290 in the `antiphon-review-standalone-pg` container with a dedicated volume.
+- Clones the repo to `--mirror-path`.
+- Reads the App from Bitwarden and passes the settings from section 4.2 as server environment variables.
+- Starts the server on 17262 and the Vite UI on 17263.
 
 ```powershell
-pwsh -NoProfile -File scripts/review-standalone.ps1 -Repo acme/widgets -VaultItem "GitHub App - acme-review" `
-  -ViewerLogin your-github-login -MirrorPath C:\mirrors\widgets -PublicBaseUrl https://review.example.com
-pwsh -NoProfile -File scripts/review-standalone.ps1 -Stop
+.\scripts\antiphon.cmd review-standalone --repo acme/widgets --vault-item "GitHub App - acme-review" `
+  --viewer-login your-github-login --mirror-path C:\mirrors\widgets --public-base-url https://review.example.com
+.\scripts\antiphon.cmd review-standalone --stop
 ```
 
-- **Requirements:** docker, git, the .NET SDK, Node (`npx`), the `bw` CLI unlocked, and `claude`
-  signed in.
-- **The Bitwarden item** needs:
-  - the fields `Client ID` and `Installation ID`;
-  - the PEM key in its notes.
-- **Without Bitwarden:** set the same environment variables yourself. The script's settings block is
-  the list.
-- **Logs** go to `logs/review-standalone/`.
-- **Defaults:** the script's defaults point at Antiphon's own repo and vault item, so always pass
-  `-Repo`, `-VaultItem`, `-ViewerLogin` and `-MirrorPath`.
-- **Merge gate:** the script switches it off for `-Repo`, so Antiphon merges approved PRs. Pass
-  `-NoAutoMerge` to keep it on.
-- **Sign-in:** `-SignIn` turns on sign-in with GitHub (section 7.1), with `-ViewerLogin` as an
-  allowed login. It needs `-PublicBaseUrl`, and a `Client secret` field in the vault item.
-- **Other options:** `-NoPolling`, `-NoClient`, `-PollSeconds`, and port overrides.
+- Install Docker, Git, the .NET SDK, Node (`npx`) and the `bw` CLI. Unlock `bw` and sign in to `claude`.
+- The Bitwarden item needs `Client ID` and `Installation ID` fields and the PEM key in its notes.
+  To deploy without Bitwarden, configure the server directly using section 4.
+- Logs go to `logs/review-standalone/`.
+- The defaults point at Antiphon's own repo and vault item. Pass `--repo`, `--vault-item`,
+  `--viewer-login` and `--mirror-path` for your deployment.
+- The command switches off the merge gate for `--repo`, so Antiphon merges approved PRs. Pass
+  `--no-auto-merge` to keep the gate on.
+- `--sign-in` enables GitHub sign-in (section 7.1) and allows `--viewer-login` to sign in. It
+  requires `--public-base-url` and a `Client secret` field in the vault item.
+- Other options include `--no-polling`, `--no-client`, `--poll-seconds`, `--port`, `--client-port`
+  and `--postgres-port`.
 
 ### 6.2 Inside an existing Antiphon (AppHost)
 
-`scripts/review-github-setup.ps1` writes the App and the review settings into the server's
-user-secrets (`antiphon-server`). Restart the AppHost afterwards.
+`scripts/antiphon review-github-setup` writes the App and review settings into the server's
+user-secrets (`antiphon-server` by default).
 
 ```powershell
-pwsh -NoProfile -File scripts/review-github-setup.ps1 -Repo acme/widgets -Project Widgets `
-  -VaultItem "GitHub App - acme-review" -ViewerLogin your-github-login -PublicBaseUrl https://antiphon.example.com -DryRun
+.\scripts\antiphon.cmd review-github-setup --repo acme/widgets --project Widgets `
+  --vault-item "GitHub App - acme-review" --viewer-login your-github-login `
+  --public-base-url https://antiphon.example.com --dry-run
 ```
 
-`-DryRun` prints what it would write, with the key redacted. Here reviewers use the `delegation`
-transport on the local runner, so the Antiphon project named by `-Project` needs its repository URL
-and local path set. The script also does three more things:
-- verification runs on a Haiku seat;
-- polling is on;
-- the author may decide their own gates.
+`--dry-run` previews the settings with the key redacted. Run again without that flag to write
+the settings, then restart the AppHost. Reviewers use the `delegation` transport on the local
+runner, so set the repository URL and local path on the Antiphon project named by `--project`.
+The command sets verification to run on a Haiku seat, enables polling and allows authors to
+decide their own gates.
 
-Re-run the script after a setting it writes changes. User-secrets persist across restarts and new
+Re-run the command after a setting it writes changes. User-secrets persist across restarts and new
 builds.
 
 ### 6.3 Docker
@@ -534,7 +531,7 @@ What happens then:
   it is set, else in the server's own key ring. Keep that folder across restarts, or everyone signs in
   again. In a Linux container, set it (the review compose file uses `/state/review-signin-keys`):
   there, the server's own key ring makes no keys without a certificate, and sign-in fails.
-- **Turn it on only on a server that runs the review engine alone,** such as the standalone script
+- **Turn it on only on a server that runs the review engine alone,** such as `review-standalone`
   or the review compose file. On a full Antiphon, the session runner and the scripts call the API
   without a session, so they would be locked out.
 
@@ -771,9 +768,12 @@ uses.
    the runs page, or comment `/antiphon review` on the PR.
 4. On the run page, watch the steps go through intake, review, publish, and then the decision. On
    GitHub, the PR gets a review from the App's bot and the two `antiphon/*` statuses.
-5. For an automated live check, run `scripts/review-live-github.ps1 -Pr <n>`. Use it only on a
-   scratch PR labelled `antiphon:live-check` and `antiphon:skip`. The test keeps the merge gate on,
-   so it never merges.
+5. For an automated live check, run the command below with your scratch PR number. Label the PR
+   `antiphon:live-check` and `antiphon:skip`. The test keeps the merge gate on.
+
+   ```sh
+   scripts/antiphon review-live-github --pr 123 --repo acme/widgets --vault-item "GitHub App - acme-review"
+   ```
 
 In `Development`, `POST /api/review-runs/demo` fills the UI with demo runs, so you can look around
 before connecting GitHub.
