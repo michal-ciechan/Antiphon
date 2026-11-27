@@ -174,6 +174,19 @@ public class HerdrLabelFollowSchedulingTests
     }
 
     [Test]
+    public async Task Saved_snapshot_reads_while_writer_holds_mutex_on_unix()
+    {
+        Skip.Unless(!OperatingSystem.IsWindows(), "Unix snapshot replacement permits a concurrent unlocked read.");
+        await using var f = new HerdrLabelFollowFixture();
+        f.Binding.SaveAtomic(f.Path);
+
+        using var writer = HerdrSnapshotFile.Acquire(f.Path);
+        // A different thread must read while this thread still owns the mutex.
+        var saved = Task.Run(f.TryReadSaved).WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+        saved.ShouldNotBeNull().TabLabel.ShouldBe("Old");
+    }
+
+    [Test]
     public async Task Saved_snapshot_read_times_out_while_writer_holds_mutex()
     {
         await using var f = new HerdrLabelFollowFixture();
