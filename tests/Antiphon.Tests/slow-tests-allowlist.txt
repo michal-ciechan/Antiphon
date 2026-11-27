@@ -129,12 +129,16 @@ Antiphon.Tests.Infrastructure.WorktreeManagerGitIntegrationTests
 Antiphon.Tests.Application.DelegationWorktreeTests
 # CARD-0508: real Git default-branch selection and cherry containment.
 Antiphon.Tests.Application.WorktreeBaseSelectionTests
+# CARD-2082 base-selection migration check retains the parent fixture's Slow category.
+Antiphon.Tests.Invariants.WorktreeBaseSelectionInvariantTests
 # CARD-0540: real dispatcher/Git/schema checks; 20-tip probe census measured 59.3s, ordinary rows 3-39s.
 Antiphon.Tests.Application.AgentTaskDispatchBaseGuardTests
 # CARD-1213 S1: real runner WebSocket, real Git recipients and isolated PostgreSQL recovery cuts; review CP-7 measured 65s for 3 methods.
 Antiphon.Tests.Application.DelegateBranchDeliveryTests
 # CARD-0508: real dispatcher claim capture against a real Git repo.
 Antiphon.Tests.Application.DispatchBaseNotificationTests
+# CARD-2082 dispatch notification migration check retains the parent fixture's Slow category and timeout.
+Antiphon.Tests.Invariants.DispatchBaseNotificationInvariantTests
 # CARD-0487: historical allowance, session Git/PTY integration.
 Antiphon.Tests.Application.AgentSessionServiceIntegrationTests
 # CARD-0487: historical allowance, live runtime cost.
@@ -199,6 +203,8 @@ Antiphon.Tests.Application.ChannelInboundRecoveryTests
 Antiphon.Tests.Application.DelegateScriptLandCompatibilityTests
 # CARD-0476 fresh-process lazy DB probes, Docker cold start
 Antiphon.Tests.TestHelpers.TestDbFixtureLazyInitializationTests
+# CARD-2082 shared-store selection check retains the parent fixture's Slow category.
+Antiphon.Tests.Invariants.TestDbFixtureLazyInitializationInvariantTests
 # CARD-0499: real dispatcher tick + dual worktree + scratch remote.
 Antiphon.Tests.Application.RepairSourceDispatchTests
 # CARD-0499: real dispatch then settlement through AgentTaskReplyService.
@@ -383,11 +389,15 @@ Antiphon.Tests.Application.WorkingTranscriptRecoveryTests
 Antiphon.Tests.Application.StaleWorkingTranscriptWatchdogTests
 # CARD-1032 S6: real loopback phone-home queue with scratch Git, durable receipt and reconnect.
 Antiphon.Tests.Application.PhoneHomeCompletedCardTransportTests
+# CARD-2082 completed-card transport surface check retains the parent fixture's Slow category and serialization.
+Antiphon.Tests.Invariants.PhoneHomeCompletedCardTransportInvariantTests
 
 # CARD-1032 S7: real PostgreSQL, scratch Git, phone-home recipient and receipt refusal matrices.
 Antiphon.Tests.Application.CardWorktreeMirrorCleanupTests
 # CARD-0824 S5b-1: explicit migration upgrade and isolated persisted-coordinate ownership matrices.
 Antiphon.Tests.Application.C0824RefOnlyIdentityTests
+# CARD-2082 ref-only model and migration check retains the parent fixture's Slow category and timeout.
+Antiphon.Tests.Invariants.C0824RefOnlyIdentityInvariantTests
 # CARD-0824 S5b-1: real Git land, verification-window drift and recovery refusal matrices.
 Antiphon.Tests.Application.C0824RefOnlyLandingTests
 # CARD-1259: isolated PostgreSQL commit faults, durable action debt and hosted worker lifecycle.
@@ -504,3 +514,5 @@ Antiphon.Tests.Invariants.SessionTranscriptSummaryMigrationInvariantTests
 Antiphon.Tests.Application.SessionTranscriptSummaryAppendCostTests
 # CARD-1901: real Git origins, bound host proofs and native offline retirement audit corpus.
 Antiphon.Tests.Scripts.VolumeRetirementPublicationTests
+# CARD-2082 binding-clock source check retains the parent fixture's Slow category and timeout.
+Antiphon.Tests.Invariants.VolumeRetirementPublicationInvariantTests
