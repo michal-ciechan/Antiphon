@@ -8551,7 +8551,7 @@ namespace Antiphon.Server.Migrations
                     b.HasIndex("GitHubAuthority", "GitHubRepo", "GitHubPrNumber")
                         .IsUnique()
                         .HasDatabaseName("IX_ReviewRuns_GitHubLegacyIdentity_Open")
-                        .HasFilter("\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepositoryId\" IS NULL AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
+                        .HasFilter("\"Status\" <> 'Closed' AND NOT \"IsDemo\" AND \"GitHubRepositoryId\" IS NULL AND \"GitHubAuthority\" IS NOT NULL AND \"GitHubRepo\" IS NOT NULL AND \"GitHubPrNumber\" IS NOT NULL");
 
                     b.HasIndex("GitHubAuthority", "GitHubRepositoryId", "GitHubPrNumber")
                         .IsUnique()
