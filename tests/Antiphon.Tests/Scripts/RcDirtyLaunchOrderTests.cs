@@ -122,9 +122,8 @@ public sealed class RcDirtyLaunchOrderTests
             Note(text.Contains("[ValidateSet('Full', 'Shadow', 'ChangeAware')][string]$SelectionMode = 'Full'", StringComparison.Ordinal),
                 name + "-modes-unchanged");
             Note(!HasDirtyOrderCaller(text), name + "-has-no-dirty-order-caller");
-            Note(!text.Contains("Incremental", StringComparison.Ordinal), name + "-has-no-incremental-mode");
         }
-        // ReleaseCutTests exercises the in-process qualification seam. The public parser must refuse Incremental.
+        // Only a bound cut hop can request Incremental. The ordinary selection-mode switches still refuse it.
         var cut = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/ReleaseCut.cs");
         Note(!HasDirtyOrderCaller(cut), "release-cut-has-no-dirty-order-caller");
         string[] cutArgs = ["--ref", "rc/2026-11-30"];
@@ -139,7 +138,17 @@ public sealed class RcDirtyLaunchOrderTests
         var testsRun = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/NightlyTests.cs");
         Note(NightlyTestsOptions.SelectionModes.SequenceEqual(["Full", "Shadow", "ChangeAware"]) && new NightlyTestsOptions().SelectionMode == "Full", "nightly-tests-modes-unchanged");
         Note(!HasDirtyOrderCaller(testsOptions) && !HasDirtyOrderCaller(testsRun), "nightly-tests-has-no-dirty-order-caller");
-        Note(!testsOptions.Contains("Incremental", StringComparison.Ordinal) && !testsRun.Contains("Incremental", StringComparison.Ordinal), "nightly-tests-has-no-incremental-mode");
+        string[] directMode = ["--selection-mode", "Incremental"];
+        Note(NightlyRunOptions.Parse([]).SelectionMode == "Full" && NightlyTestsOptions.Parse([]).SelectionMode == "Full",
+            "nightly-parsers-default-to-full");
+        Refuses(() => NightlyRunOptions.Parse(directMode), "--selection-mode expects ");
+        Refuses(() => NightlyTestsOptions.Parse(directMode), "--selection-mode expects ");
+
+        var unbound = NightlyTestsOptions.Parse(["--requested-selection-mode", "Incremental"]);
+        Note(RcIncrementalCut.BindTests(unbound, "", "", "rc", "windows", DateTime.UtcNow) is null,
+            "incremental-request-without-admission-stays-full");
+        var unsolicited = NightlyTestsOptions.Parse(["--incremental-approval-digest", new string('a', 64)]);
+        Refuses(() => RcIncrementalCut.BindTests(unsolicited, "", "", "rc", "windows", DateTime.UtcNow), "incremental-hop-mismatch");
         // 2026-11-22 plan, unit 8: the selection attempt is the core's (release-selection.ps1 and the CLI's copy are deleted).
         var compiled = RcInputFixtureRepository.ReadSource("scripts/lib/Antiphon.Nightly/ReleaseSelectionAttempt.cs");
         Note(compiled.Contains("(\"effectiveMode\", \"Full\"), (\"coverageScope\", \"Full\")", StringComparison.Ordinal), "release-selection-effective-mode-full");

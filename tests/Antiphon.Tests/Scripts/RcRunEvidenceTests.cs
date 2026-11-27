@@ -201,7 +201,9 @@ public sealed class RcRunEvidenceTests
         Note(testsImpl.Contains(BuildCall, StringComparison.Ordinal) && suiteRunner.Contains(DiscoveryCall, StringComparison.Ordinal)
             && chunkRunner.Contains(LaunchCall, StringComparison.Ordinal) && chunkRunner.Contains(RevisionCall, StringComparison.Ordinal), "tests-impl-wires-evidence");
         Note(runImpl.Contains("rcEvidence.SourceSnapshot(", StringComparison.Ordinal) && runImpl.Contains("rcEvidence.AssertInputs(", StringComparison.Ordinal), "run-impl-wires-checkout");
-        Note(!PublishesRelease(testsImpl) && !runImpl.Contains("Incremental", StringComparison.OrdinalIgnoreCase), "wiring-adds-no-mode-or-publish");
+        Note(!PublishesRelease(testsImpl) && !PublishesRelease(runImpl), "evidence-wiring-does-not-publish");
+        Note(NightlyRunOptions.Parse([]).SelectionMode == "Full" && NightlyTestsOptions.Parse([]).SelectionMode == "Full",
+            "evidence-wiring-defaults-to-full");
         Contract(nameof(OneBuildAndDiscoveryPerSuite));
     }
 
@@ -271,6 +273,7 @@ public sealed class RcRunEvidenceTests
         File.WriteAllText(Path.Combine(faulted, ".git"), "gitdir: " + Path.Combine(root, "no-such-git-dir") + "\n");
 
         var childLines = new List<string>();
+        var testsHops = new List<NightlyTestsOptions>();
         var faultChild = false;
         var processes = new Nightly.FakeProcessTable();
         processes.Start(processes.CurrentPid, Nightly.NightlyRunWorld.ProcessStart);
@@ -281,6 +284,7 @@ public sealed class RcRunEvidenceTests
             if (Nightly.NightlyRunHops.IsTestsHop(launch))
             {
                 var options = Nightly.NightlyRunHops.TestsOptions(launch);
+                testsHops.Add(options);
                 if (faultChild) options.RepoRoot = faulted;
                 Directory.CreateDirectory(options.LogRoot);
                 var recorder = new RcRunEvidenceRecorder("record", false, false, line => { lock (childLines) childLines.Add(line); });
@@ -329,7 +333,7 @@ public sealed class RcRunEvidenceTests
             var result = NightlyRun.Run(new NightlyRunOptions
             {
                 NoSync = true, NoReport = true, CheckoutRoot = repo, StateRoot = state, LogRoot = logs, CoordinationRoot = coord, RemoteUrl = "https://github.com/michal-ciechan/Antiphon",
-                Ref = "master", Trigger = "scheduled", Profile = "nightly", SelectionMode = "Full", Suites = ["probe"], Repository = "michal-ciechan/Antiphon", RunId = runId,
+                Ref = "master", Trigger = "scheduled", Profile = "nightly", Suites = ["probe"], Repository = "michal-ciechan/Antiphon", RunId = runId,
             }, host, new NightlyRunBindings
             {
                 CliPath = Nightly.NightlyRunWorld.StagedCli, RcEvidence = new RcRunEvidenceRecorder("record", false, false, line => { lock (childLines) childLines.Add(line); }),
@@ -375,7 +379,10 @@ public sealed class RcRunEvidenceTests
         Note(warnings == 1, "fault-one-warning");
         var runText = ReadSource(RunImpl);
         var testsText = ReadSource(TestsImpl);
-        Note(!runText.Contains("Incremental", StringComparison.OrdinalIgnoreCase) && !PublishesRelease(testsText), "run-path-adds-no-mode-or-publish");
+        Note(!PublishesRelease(runText) && !PublishesRelease(testsText), "run-path-does-not-publish");
+        Note(testsHops.Count == 3 && testsHops.All(options => options.SelectionMode == "Full" && options.RequestedSelectionMode == ""
+            && options.IncrementalApprovalDigest == "" && options.IncrementalBaselineSha == "" && options.IncrementalInventoryPath == ""
+            && options.IncrementalInventoryDigest == "" && options.IncrementalOwedDigest == ""), "default-tests-hops-stay-unbound-full");
         Contract(nameof(OneEvidenceRootPerRun));
     }
 
