@@ -31,6 +31,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     public int Overlaps { get; private set; }
     public int PeakConcurrentSends { get; private set; }
     public Func<CancellationToken, Task>? BeforeClose { get; init; }
+    public Action? OnDispose { get; init; }
 
     public IReadOnlyList<PhoneHomeFrame> Sent
     {
@@ -114,9 +115,7 @@ internal sealed class PhoneHomeTestWebSocket : WebSocket
     public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) =>
         CloseAsync(closeStatus, statusDescription, cancellationToken);
 
-    public override void Dispose()
-    {
-    }
+    public override void Dispose() => OnDispose?.Invoke();
 
     public override async Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
     {

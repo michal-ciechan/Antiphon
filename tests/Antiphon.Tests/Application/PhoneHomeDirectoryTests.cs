@@ -10,7 +10,8 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner.Tests.TestHelpers;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Shouldly;
 using System.Net;
@@ -61,44 +62,46 @@ public sealed class PhoneHomeDirectoryTests
     }
 
     [Test]
-    public async Task Registration_and_recovery_can_progress_during_superseded_socket_cleanup()
+    public async Task Shutdown_drains_a_held_superseded_close_and_observes_its_fault()
     {
-        var directory = Directory(maxCapacity: 8);
-        var closingEpoch = new TaskCompletionSource<long?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var host = await PhoneHomeTestHost.StartAsync();
+        var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var previous = new PhoneHomeTestWebSocket
+        var failure = new IOException("superseded socket dispose fault");
+        var previous = new PhoneHomeTestWebSocket
         {
             BeforeClose = ct =>
             {
-                closingEpoch.TrySetResult(directory.SnapshotLive()?.Epoch);
+                closing.SetResult();
                 return finishClose.Task.WaitAsync(ct);
             },
+            OnDispose = () => throw failure,
         };
-        var request = Registration(capacity: 1);
-        var first = directory.Register(request);
-        await directory.AcceptConnectAsync("server2", first.Ticket, previous);
-        var second = directory.Register(request);
-        using var replacement = new PhoneHomeTestWebSocket();
-        replacement.Abort(); // The recovery cycle can inspect this socket without making a List RPC.
-        using var pump = new PhoneHomeRecoveryPump(directory, Options.Create(new PhoneHomeRunnerSettings()),
-            new NoScopeFactory(), NullLogger<PhoneHomeRecoveryPump>.Instance);
-        var accept = Task.Run(() => directory.AcceptConnectAsync("server2", second.Ticket, replacement));
+        var first = await host.RegisterAsync();
+        await using var old = await host.Directory.AcceptConnectAsync(host.AllowedRunnerId, first.Ticket, previous);
+        var second = await host.RegisterAsync();
+        await using var current = await host.Directory.AcceptConnectAsync(
+            host.AllowedRunnerId, second.Ticket, new PhoneHomeTestWebSocket());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await closing.Task.WaitAsync(deadline.Token);
+
+        var hostedDirectory = host.App.Services.GetServices<IHostedService>()
+            .OfType<PhoneHomeRunnerDirectory>().ShouldHaveSingleItem();
+        var stopping = ((IHostedService)hostedDirectory).StopAsync(deadline.Token);
         try
         {
-            (await closingEpoch.Task.WaitAsync(TimeSpan.FromSeconds(2))).ShouldBe(second.Epoch,
-                "the replacement must be published before the previous transport starts closing");
-            var one = Task.Run(() => directory.Register(request));
-            var two = Task.Run(() => directory.Register(request));
-            var cycle = Task.Run(() => pump.RunCycleAsync(CancellationToken.None));
-            await Task.WhenAll(one, two, cycle).WaitAsync(TimeSpan.FromSeconds(2));
-            (await one).Epoch.ShouldNotBe((await two).Epoch);
-            (await cycle).ShouldBeFalse();
+            stopping.IsCompleted.ShouldBeFalse("shutdown must join the held cleanup");
+            Should.Throw<ServiceUnavailableException>(() => host.Directory.Register(host.Registration()))
+                .Code.ShouldBe(PhoneHomeRunnerDirectory.RegistrationBusy);
         }
         finally
         {
             finishClose.TrySetResult();
-            await (await accept).DisposeAsync();
+            await stopping;
         }
+        host.Logs.Entries.ShouldContain(entry => entry.Level == LogLevel.Warning
+            && ReferenceEquals(entry.Exception, failure));
+        previous.State.ShouldBe(WebSocketState.Closed);
     }
 
     [Test]

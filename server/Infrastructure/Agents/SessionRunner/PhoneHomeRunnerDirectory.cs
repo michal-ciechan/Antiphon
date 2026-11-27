@@ -16,7 +16,7 @@ using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Infrastructure.Agents.SessionRunner;
 
-public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerEligibilitySnapshotSource
+public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerEligibilitySnapshotSource, IHostedService
 {
     public const string LocalRunnerId = PhoneHomeProtocol.LocalRunnerId;
     internal const string RegistrationBusy = "phone_home_registration_busy";
@@ -30,6 +30,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     private readonly object _gate = new();
     private readonly Dictionary<string, Ticket> _tickets = new(StringComparer.Ordinal);
     private readonly Dictionary<string, RunnerSlot> _slots = new(StringComparer.Ordinal);
+    private readonly Dictionary<PhoneHomeLiveConnection, Task> _supersededCleanups = new();
+    private bool _stopping;
     private readonly object _desktopGate = new();
     private readonly DesktopCapabilitiesSnapshot _desktopSnapshot = new();
     private readonly ILogger _logger;
@@ -65,6 +67,19 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     }
 
     public ISessionRunnerClient Local => _local;
+
+    Task IHostedService.StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    Task IHostedService.StopAsync(CancellationToken cancellationToken)
+    {
+        Task[] pending;
+        lock (_gate)
+        {
+            _stopping = true;
+            pending = _supersededCleanups.Values.ToArray();
+        }
+        return Task.WhenAll(pending).WaitAsync(cancellationToken);
+    }
 
     /// <summary>CARD-0726 TD-4: the observer <c>Program</c> passed. Tests prove the wire; nothing else reads it.</summary>
     internal IRunnerEligibilityObserver? Observer => _observer;
@@ -282,6 +297,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             throw new ServiceUnavailableException("Runner registration is busy. Retry shortly.", RegistrationBusy);
         try
         {
+            ThrowIfStopping();
             if (slot.State?.RetiredAt is not null)
                 throw new ConflictException(
                     $"Runner '{request.RunnerId}' is retired until its drain is cleared.",
@@ -364,20 +380,21 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         }
     }
 
-    public async Task<PhoneHomeLiveConnection> AcceptConnectAsync(
+    public Task<PhoneHomeLiveConnection> AcceptConnectAsync(
         string runnerId, string ticketValue, System.Net.WebSockets.WebSocket socket)
     {
         PhoneHomeLiveConnection connection;
-        PhoneHomeLiveConnection? previous;
+        TaskCompletionSource? startCleanup = null;
         lock (_gate)
         {
+            ThrowIfStopping();
             if (!_tickets.Remove(ticketValue, out var ticket))
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
             ValidateTicket(runnerId, ticket);
 
             if (!_slots.TryGetValue(runnerId, out var slot))
                 throw new ConflictException("Connection ticket is invalid.", PhoneHomeProblemTypes.InvalidTicket);
-            previous = slot.Live;
+            var previous = slot.Live;
             if (previous is not null)
             {
                 RecordDisconnect(slot, previous, "superseded");
@@ -392,19 +409,46 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
             slot.Live = connection;
             slot.LeaseUntil = _clock.GetUtcNow().AddSeconds(_settings.LeaseSeconds);
             slot.Reconnects++;
+
+            if (previous is not null)
+            {
+                // Enroll the close with shutdown before releasing the publication gate.
+                startCleanup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                _supersededCleanups.Add(previous, CloseSupersededAsync(previous, startCleanup.Task));
+            }
         }
 
-        if (previous is not null)
+        if (startCleanup is not null)
         {
-            // Closing the old transport can resume its endpoint in Disconnect, which takes _gate.
-            try { await previous.DisposeAsync("superseded"); }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to close superseded runner {RunnerId} epoch {Epoch}", runnerId, previous.Epoch);
-            }
+            // Closing can resume the old endpoint in Disconnect. The new endpoint can begin
+            // receiving as soon as this returns, even if that close is still pending.
+            startCleanup.SetResult();
             Notify(runnerId);
         }
-        return connection;
+        return Task.FromResult(connection);
+    }
+
+    private async Task CloseSupersededAsync(PhoneHomeLiveConnection connection, Task start)
+    {
+        await start.ConfigureAwait(false);
+        try { await connection.DisposeAsync("superseded"); }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to close superseded runner {RunnerId} epoch {Epoch}",
+                connection.RunnerId, connection.Epoch);
+        }
+        finally
+        {
+            lock (_gate)
+                _supersededCleanups.Remove(connection);
+        }
+    }
+
+    // Caller holds _gate.
+    private void ThrowIfStopping()
+    {
+        if (_stopping)
+            throw new ServiceUnavailableException("Runner registration is busy. Retry shortly.", RegistrationBusy);
     }
 
     public void MarkRecovered(PhoneHomeLiveConnection? connection)

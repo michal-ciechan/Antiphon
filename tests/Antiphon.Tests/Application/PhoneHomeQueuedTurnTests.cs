@@ -1,5 +1,5 @@
-using System.Text;
 using System.Net.WebSockets;
+using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -38,8 +38,10 @@ public class PhoneHomeQueuedTurnTests
         await h.InsertTurnAsync("prior-observable-turn", "prior-answer");
         var floor = await h.CurrentTranscriptMaxSequenceAsync();
         var body = "Replacement prompt head " + Guid.NewGuid().ToString("N") + " and unique tail.";
-        await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
+        var queued = await h.Queue.EnqueueAsync(h.SessionId, body, MessageSendMode.WhenIdle, CancellationToken.None,
             deliverIfIdle: false);
+        var queuedId = queued.Messages.Single(message =>
+            message.Body == body && message.Status == nameof(QueuedMessageStatus.Pending)).Id;
 
         var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finishClose = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -63,7 +65,7 @@ public class PhoneHomeQueuedTurnTests
             var live = host.Directory.SnapshotLive();
             live.ShouldNotBeNull();
             live.Epoch.ShouldBe(registration.Epoch + 1);
-            await observer.Superseded.Task.WaitAsync(deadline.Token);
+            (await observer.Superseded.Task.WaitAsync(deadline.Token)).ShouldBe(host.AllowedRunnerId);
             (await pump.RunCycleAsync(deadline.Token)).ShouldBeTrue("the open replacement can answer List while the old close is held");
             peer.RequestCount(PhoneHomeOperation.List).ShouldBe(1);
 
@@ -90,18 +92,21 @@ public class PhoneHomeQueuedTurnTests
             finally { await flush; }
 
             await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
-            var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.Body == body);
+            var row = await db.SessionQueuedMessages.SingleAsync(m => m.Id == queuedId);
             row.Status.ShouldBe(QueuedMessageStatus.Sent);
             row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            row.LastDeliveryBaselineSequence.ShouldBe(floor);
             var receipt = await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == h.SessionId
                 && t.Kind == TranscriptKinds.UserPrompt && t.Sequence > floor);
             IndependentFullBody(body, receipt.Text).ShouldBeTrue();
             oldSocket.State.ShouldBe(WebSocketState.Open, "delivery completed before the old close was released");
-            (await host.RegisterAsync()).Epoch.ShouldBe(live.Epoch + 1);
+            var tickets = await Task.WhenAll(host.RegisterAsync(), host.RegisterAsync()).WaitAsync(deadline.Token);
+            tickets.Select(ticket => ticket.Epoch).ShouldBe([live.Epoch + 1, live.Epoch + 2], ignoreOrder: true);
         }
         finally
         {
             finishClose.TrySetResult();
+            await old.DisposeAsync("superseded");
             await pump.EndPumpForTest();
             await using var peer = await replacement;
         }
@@ -110,12 +115,12 @@ public class PhoneHomeQueuedTurnTests
     private sealed class SupersedeObserver : IRunnerEligibilityObserver
     {
         private int _notifications;
-        public TaskCompletionSource Superseded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string> Superseded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public void Changed(string runnerId)
         {
             if (Interlocked.Increment(ref _notifications) == 2)
-                Superseded.SetResult();
+                Superseded.SetResult(runnerId);
         }
     }
 

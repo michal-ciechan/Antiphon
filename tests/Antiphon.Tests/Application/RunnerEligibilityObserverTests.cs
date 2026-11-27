@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Agents.SessionRunner;
@@ -35,6 +36,7 @@ public sealed class RunnerEligibilityObserverTests
         recorder.Ids.ShouldBe(["runner-a"]);
 
         await using var replacement = await host.ConnectPeerAsync(runnerId: "runner-a", storeId: liveA.RunnerStoreId, secret: secretA);
+        await recorder.WaitForCountAsync(2);
         recorder.Ids.ShouldBe(["runner-a", "runner-a"]);
         var next = host.Directory.SnapshotLive("runner-a");
         next.ShouldNotBeNull();
@@ -42,9 +44,7 @@ public sealed class RunnerEligibilityObserverTests
         recorder.Ids.ShouldBe(["runner-a", "runner-a", "runner-a"]);
 
         replacement.Socket.Abort();
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (host.Directory.Status("runner-a").Available && DateTime.UtcNow < deadline)
-            await Task.Delay(20);
+        await recorder.WaitForCountAsync(4);
         host.Directory.Status("runner-a").Available.ShouldBeFalse();
         recorder.Ids.ShouldBe(["runner-a", "runner-a", "runner-a", "runner-a"]);
         recorder.Ids.ShouldNotContain("runner-b");
@@ -182,9 +182,17 @@ public sealed class RunnerEligibilityObserverTests
 
     private sealed class IdRecorder : IRunnerEligibilityObserver
     {
-        public List<string> Ids { get; } = [];
+        private readonly ConcurrentQueue<string> _ids = new();
+        public IReadOnlyList<string> Ids => _ids.ToArray();
 
-        public void Changed(string runnerId) => Ids.Add(runnerId);
+        public void Changed(string runnerId) => _ids.Enqueue(runnerId);
+
+        public async Task WaitForCountAsync(int count)
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (_ids.Count < count)
+                await Task.Delay(20, deadline.Token);
+        }
     }
 
     private sealed class ThrowingObserver : IRunnerEligibilityObserver
