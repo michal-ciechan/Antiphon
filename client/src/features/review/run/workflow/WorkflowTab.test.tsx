@@ -18,7 +18,7 @@ vi.mock('@xyflow/react', async (importOriginal) => {
   type CanvasProps = ComponentProps<typeof original.ReactFlow>
   function Canvas({ nodes, edges, nodeTypes, onInit, onNodeClick }: CanvasProps) {
     useEffect(() => {
-      onInit?.({ fitView } as import('@xyflow/react').ReactFlowInstance)
+      onInit?.({ fitView } as unknown as import('@xyflow/react').ReactFlowInstance)
     }, [onInit])
     return (
       <div>
