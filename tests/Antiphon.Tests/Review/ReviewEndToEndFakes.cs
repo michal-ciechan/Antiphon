@@ -213,6 +213,7 @@ public sealed class ScriptedCodeHost : ICodeHost
 /// <summary>One scripted PR. The test moves its head and base and reads what the engine wrote.</summary>
 public sealed class ScriptedPr(int number, string title, string author, string baseSha, string headSha, IReadOnlyList<CodeHostChangedFile> files, string diff)
 {
+    public long RepositoryId { get; set; } = 1234;
     public int CommentCounter;
 
     public int Number { get; } = number;

@@ -176,6 +176,64 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         await AssertStoredRunsAsync(number, 1, ct);
     }
 
+    [Test]
+    public async Task Repository_rename_preserves_the_open_run(CancellationToken ct)
+    {
+        const int number = 209660;
+        using var client = OpenPullRequest(number);
+        var original = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+
+        var renamed = await IntakeAsync(client, "transferred/widgets", number, HttpStatusCode.OK, ct);
+
+        Id(renamed).ShouldBe(Id(original));
+        await AssertStoredRunsAsync(number, 1, ct);
+    }
+
+    [Test]
+    public async Task Reused_slug_creates_a_run_for_the_new_repository(CancellationToken ct)
+    {
+        const int number = 209661;
+        using var client = OpenPullRequest(number);
+        var original = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        factory.Host.Pr(number).RepositoryId = 9876543210;
+
+        var replacement = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+
+        Id(replacement).ShouldNotBe(Id(original));
+    }
+
+    [Test]
+    public async Task Rebinding_a_slug_to_another_GitHub_authority_keeps_runs_separate(CancellationToken ct)
+    {
+        const int number = 209662;
+        const string repo = "acme/enterprise";
+        using var client = OpenPullRequest(number);
+        var original = await IntakeAsync(client, repo, number, HttpStatusCode.Created, ct);
+        var options = factory.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ReviewCodeHostSettings>>().Value;
+        options.Hosts["intake-test-enterprise"].BaseUrl = "https://second.example/api/v3/";
+
+        var replacement = await IntakeAsync(client, repo, number, HttpStatusCode.Created, ct);
+
+        Id(replacement).ShouldNotBe(Id(original));
+    }
+
+    [Test]
+    public async Task Demo_does_not_reserve_a_real_PR_slot(CancellationToken ct)
+    {
+        const int number = 812;
+        using var client = OpenPullRequest(number);
+        using var demo = await client.PostAsync("/api/review-runs/demo", null, ct);
+        demo.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var examples = (await demo.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("items");
+        var sample = examples.EnumerateArray().Single(example =>
+            example.GetProperty("subject").GetProperty("repo").GetString() == "acme/orders-service"
+            && example.GetProperty("subject").GetProperty("prNumber").GetInt32() == number);
+
+        var real = await IntakeAsync(client, "acme/orders-service", number, HttpStatusCode.Created, ct);
+
+        Id(real).ShouldNotBe(Id(sample));
+    }
+
     private HttpClient OpenPullRequest(int number)
     {
         factory.Host.Open(number, "Fix the lease", "author", new string('a', 40), new string('b', 40), [], "");
@@ -211,7 +269,16 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
             services.RemoveAll<ICodeHost>();
             services.AddSingleton<ICodeHost>(Host);
             services.PostConfigure<ReviewExecutorSettings>(options => options.Enabled = false);
-            services.PostConfigure<ReviewSettings>(options => options.AllowViewerHeader = true);
+            services.PostConfigure<ReviewSettings>(options =>
+            {
+                options.AllowViewerHeader = true;
+                options.DemoSeedEnabled = true;
+            });
+            services.PostConfigure<ReviewCodeHostSettings>(options =>
+            {
+                options.Hosts["intake-test-enterprise"] = new ReviewCodeHost { BaseUrl = "https://first.example/api/v3" };
+                options.Repos.Add(new ReviewCodeHostRepo { Repo = "acme/enterprise", Host = "intake-test-enterprise" });
+            });
             services.AddDbContext<AppDbContext>(options => options.AddInterceptors(Race));
         }
     }
