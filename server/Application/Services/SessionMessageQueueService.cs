@@ -1741,12 +1741,18 @@ public sealed partial class SessionMessageQueueService
                 outcome = await DeliverAsync(sessionId, sendNowBody, ct, baseline,
                     firstInputDeadlineAt: FirstInputDeadline([message]),
                     pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message),
-                    resumeNote: StandingResumeNote.IsNote(message));
+                    resumeNote: StandingResumeNote.IsNote(message), submission: SubmissionFor(db, [message]));
             }
             catch (OptionalBriefExpiredException)
             {
                 await CancelJustClaimedExpiredBriefsAsync(db, [message], ct);
                 return await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+            }
+            if (outcome.QueueSettled)
+            {
+                var settled = await BuildQueueDtoAsync(db, sessionId, MaxAttempts, ct);
+                await PublishQueueChangedAsync(settled, ct);
+                return settled;
             }
             if (outcome.SpillWriteFailedBeforeInput)
             {
@@ -3018,7 +3024,7 @@ public sealed partial class SessionMessageQueueService
             capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
                 pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration),
-                resumeNote: StandingResumeNote.IsNote(head));
+                resumeNote: StandingResumeNote.IsNote(head), submission: SubmissionFor(db, run));
         }
         catch (OptionalBriefExpiredException)
         {
@@ -3057,6 +3063,9 @@ public sealed partial class SessionMessageQueueService
             await RecordTransportFailureAsync(sessionId, ex, ct);
             return FlushResult.Failed;
         }
+
+        if (outcome.QueueSettled)
+            return FlushResult.LateConfirmed;
 
         if (outcome.SpillWriteFailedBeforeInput)
         {
@@ -3774,9 +3783,11 @@ public sealed partial class SessionMessageQueueService
             }
             PointerMilestone(sessionId, pointerAttempt, "enter-only");
         }
+        var submission = SubmissionFor(db, run);
         try
         {
-            await _runtime.SendInputAsync(sessionId, "\r", ct);
+            if (await SubmitDeliveryAsync(sessionId, body, kind, submission, retry: false, ct) != QueueSubmitResult.WroteEnter)
+                return FlushResult.LateConfirmed;
         }
         catch (Exception ex) when (IsHerdrUnreachable(ex))
         {
@@ -3794,7 +3805,7 @@ public sealed partial class SessionMessageQueueService
             outcome = await WaitForTranscriptConfirmAsync(
                 sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
                 ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run), pointerAttempt: pointerAttempt,
-                resumeNote: StandingResumeNote.IsNote(head));
+                resumeNote: StandingResumeNote.IsNote(head), submission: submission);
             outcome = outcome with { PointerConsumed = pointerAttempt is not null };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -3809,6 +3820,9 @@ public sealed partial class SessionMessageQueueService
                 sessionId, run.Count);
             return FlushResult.Nothing;
         }
+
+        if (outcome.QueueSettled)
+            return FlushResult.LateConfirmed;
 
         var ids = run.Select(m => m.Id).ToList();
         if (CompletedDelivery(outcome.Verdict))
@@ -4028,7 +4042,8 @@ public sealed partial class SessionMessageQueueService
 
     private readonly record struct DeliveryOutcome(
         DeliveryVerdict Verdict, string? RecordText = null, string ConfirmedBy = DeliveryConfirmedBy.None,
-        string? UnavailabilityCode = null, bool SpillWriteFailedBeforeInput = false, bool PointerConsumed = false)
+        string? UnavailabilityCode = null, bool SpillWriteFailedBeforeInput = false, bool PointerConsumed = false,
+        bool QueueSettled = false)
     {
         public static DeliveryOutcome Delivered { get; } = new(DeliveryVerdict.Delivered);
         public static DeliveryOutcome Of(DeliveryVerdict verdict, string? recordText = null) =>
@@ -4228,7 +4243,8 @@ public sealed partial class SessionMessageQueueService
         PtyDeliveryCeilings? ceilings = null, DateTime? firstInputDeadlineAt = null,
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
-        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false)
+        bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
+        QueuedSubmission? submission = null)
     {
         if (pointerAttempt is not null) overlayRecovery = false;
         // Line endings are normalized to LF before anything touches the PTY. Measured against real
@@ -4455,7 +4471,7 @@ public sealed partial class SessionMessageQueueService
             if (pointerAttempt is not null)
             {
                 PointerMilestone(sessionId, pointerAttempt, "write-return", trimmed.Length);
-                return await SubmitConsumedPointerAsync(sessionId, trimmed, pointerAttempt, ceilings, firstInputDeadlineAt, ct);
+                return await SubmitConsumedPointerAsync(sessionId, trimmed, pointerAttempt, ceilings, firstInputDeadlineAt, submission, ct);
             }
             if (verify && !await WaitForComposerEvidenceAsync(sessionId, before.RenderedScreen, trimmed, ct))
             {
@@ -4506,13 +4522,14 @@ public sealed partial class SessionMessageQueueService
             await Task.Delay(TimeSpan.FromMilliseconds(20), _timeProvider, ct);
             // CARD-0693: the body already left, so an unreachable runner here is not a refund (see
             // the body write above): it propagates and the attempt keeps its floor.
-            await _runtime.SendInputAsync(sessionId, "\r", ct);
+            if (await SubmitDeliveryAsync(sessionId, trimmed, kind, submission, retry: false, ct) != QueueSubmitResult.WroteEnter)
+                return new DeliveryOutcome(DeliveryVerdict.NoSubmitOutput, QueueSettled: true);
 
             if (confirmTranscript)
             {
                 return await WaitForTranscriptConfirmAsync(
                     sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
-                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt, resumeNote: resumeNote);
+                    ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt, resumeNote: resumeNote, submission: submission);
             }
 
             // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
@@ -4568,7 +4585,8 @@ public sealed partial class SessionMessageQueueService
         Guid sessionId, string body, TranscriptBaseline baseline, long? sequenceBeforeSubmit,
         string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null,
-        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null, bool resumeNote = false)
+        DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
+        QueuedSubmission? submission = null)
     {
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
         var fullInline = resumeNote || await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
@@ -4793,8 +4811,10 @@ public sealed partial class SessionMessageQueueService
                         sessionId, entersSent + 1, _verification.SubmitAttempts);
                     // CARD-0693: never the attempt's first write (the caller's Enter went first), so
                     // an unreachable runner propagates rather than refunding the attempt.
-                    await _runtime.SendInputAsync(sessionId, "\r", ct);
-                    entersSent++;
+                    var submit = await SubmitDeliveryAsync(sessionId, body, kind, submission, retry: true, ct);
+                    if (submit == QueueSubmitResult.Settled)
+                        return new DeliveryOutcome(DeliveryVerdict.NoSubmitOutput, QueueSettled: true);
+                    entersSent = submit == QueueSubmitResult.WroteEnter ? entersSent + 1 : _verification.SubmitAttempts;
                     lastEnter = UtcNow();
                 }
             }

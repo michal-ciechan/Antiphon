@@ -3249,7 +3249,8 @@ public sealed class AgentTaskService
     {
         // CARD-1488/1497: no lease waiter, closing-line nudge or parent wait note outlives the
         // cancel. After the commit and the queue gate, best-effort, before the seat goes back.
-        await TerminalTaskResidue.RetireAsync(task, _db, _messageQueue, _leaseWaiters, _logger, CancellationToken.None);
+        var cleanupToken = task.ReviewerRunId is null ? CancellationToken.None : ct;
+        await TerminalTaskResidue.RetireAsync(task, _db, _messageQueue, _leaseWaiters, _logger, cleanupToken);
         if (task.SourceLandingOperationId is not null) _completionNotes?.Recovery.Check(task.Id);
         if (_seatReleaseScopes is not null)
         {
@@ -3259,7 +3260,7 @@ public sealed class AgentTaskService
         }
         // CARD-0664 D-2/D-3: best-effort, after the Canceled commit.
         if (_workspaceUse is not null)
-            await _workspaceUse.ReleaseTaskConsumersAsync(task.Id, CancellationToken.None);
+            await _workspaceUse.ReleaseTaskConsumersAsync(task.Id, cleanupToken);
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
 
         return await SummaryOfAsync(task, ct);

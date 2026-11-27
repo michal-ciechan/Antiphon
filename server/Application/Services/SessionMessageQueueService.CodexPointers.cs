@@ -75,7 +75,7 @@ public sealed partial class SessionMessageQueueService
             sessionId, attempt.QueueId, attempt.Generation, milestone, length);
 
     private async Task<DeliveryOutcome> SubmitConsumedPointerAsync(Guid sessionId, string body, PointerAttempt attempt,
-        PtyDeliveryCeilings? ceilings, DateTime? firstInputDeadlineAt, CancellationToken ct)
+        PtyDeliveryCeilings? ceilings, DateTime? firstInputDeadlineAt, QueuedSubmission? submission, CancellationToken ct)
     {
         var deadline = UtcNow().AddSeconds(_verification.EvidenceTimeoutSeconds);
         var lastPull = DateTime.MinValue;
@@ -107,10 +107,11 @@ public sealed partial class SessionMessageQueueService
         if (observation.Receipt.Identity) return ReceiptOutcome(observation.Receipt);
         if (!observation.CompleteComposer) return DeliveryOutcome.Of(DeliveryVerdict.NoComposerEvidence);
         PointerMilestone(sessionId, attempt, "enter");
-        await _runtime.SendInputAsync(sessionId, "\r", ct);
+        if (await SubmitDeliveryAsync(sessionId, body, AgentKind.Codex, submission, retry: false, ct) != QueueSubmitResult.WroteEnter)
+            return new DeliveryOutcome(DeliveryVerdict.NoSubmitOutput, QueueSettled: true);
         var outcome = await WaitForTranscriptConfirmAsync(sessionId, body, attempt.Baseline, submit.Sequence,
             submit.Screen, AgentKind.Codex, ct, ceilings, attempt.Started - TimeSpan.FromSeconds(
-                Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds)), firstInputDeadlineAt, attempt);
+                Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds)), firstInputDeadlineAt, attempt, submission: submission);
         return outcome with { PointerConsumed = true };
 
         DeliveryOutcome ReceiptOutcome(TranscriptConfirm receipt)
