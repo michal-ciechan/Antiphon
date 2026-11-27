@@ -746,7 +746,8 @@ public sealed class DerivedImpactIndexTests
         using var sweepJson = JsonDocument.Parse(sweep.Stdout);
         Strings(sweepJson.RootElement, "classes").ShouldContain("C1677TempFamilyRegistryTests");
         WholeClasses(sweepJson.RootElement, "windowsFilters").ShouldNotContain("C1677TempFamilyRegistryTests");
-        OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(7);
+        // The merged index has 33 readers, with eight beyond the 25-reader cap.
+        OwedCount(sweepJson.RootElement, LeakSweepPath).ShouldBe(8);
     }
 
     // CARD-1843. Every merge-subset entry runs in exactly the projects whose directories declare its class, a
