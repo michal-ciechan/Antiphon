@@ -90,7 +90,7 @@ namespace Antiphon.LiveLane
         /// Linux-only rows of LinuxServerRestartGateTests, Server2ProductionServerContractTests and C1744G1DesktopWinComposeTests,
         /// whose witnesses now run their commands in process, and its policy hash was resealed.
         /// </summary>
-        public const string Pinned = "c63422c3e0e485e38bdb492223f5e7c3447c69372aba3bc2f36a1ea5d149ed80";
+        public const string Pinned = "906e5c35d672bf911db8e07f22e3eb86cf6b787e21f839c8a7144740998351c8";
 
         /// <summary>The policy the census reads, under a root.</summary>
         public const string PolicyPath = "tests/test-execution-policy.json";

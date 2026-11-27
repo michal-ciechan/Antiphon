@@ -1798,10 +1798,11 @@
     },
     {
       "path": "src/Antiphon.HostCleanup/Checkpoints/SafeWrite.cs",
-      "classes": 30,
+      "classes": 31,
       "reason": "cap",
-      "owed": 5,
+      "owed": 6,
       "first": [
+        "HostCleanupCheckpointAuthorityTests",
         "ScriptsLaneRepairTests",
         "C1307ToolRemovalTests",
         "CheckpointReceiptSafetyTests",
@@ -1859,9 +1860,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 112,
+      "classes": 113,
       "reason": "cap",
-      "owed": 87,
+      "owed": 88,
       "first": [
         "PhoneHomeDirectoryTests",
         "MultiRunnerDirectoryTests",
@@ -1875,9 +1876,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeFraming.cs",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
         "HostTopConsumerUpgradeReplayTests",
         "PhoneHomeReadAdmissionTests",
@@ -1886,7 +1887,7 @@
         "C1817RunnerRepositoryMaintenanceTests",
         "DelegateBranchDeliveryTests",
         "HostTopConsumerIngestTests",
-        "PhoneHomeCompletedCardTransportTests"
+        "LinuxRunnerCustodyLifecycleTests"
       ]
     },
     {
@@ -1907,9 +1908,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionGeneration.cs",
-      "classes": 103,
+      "classes": 104,
       "reason": "cap",
-      "owed": 78,
+      "owed": 79,
       "first": [
         "CheckNoteDeliveryHandoffTests",
         "CompactionContinuationWireTests",
@@ -1923,9 +1924,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/SessionRunnerContracts.cs",
-      "classes": 443,
+      "classes": 444,
       "reason": "cap",
-      "owed": 418,
+      "owed": 419,
       "first": [
         "HerdrStatusPushTests",
         "PermissionWaitTests",
@@ -1939,18 +1940,18 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/VerificationCustody.cs",
-      "classes": 34,
+      "classes": 35,
       "reason": "cap",
-      "owed": 9,
+      "owed": 10,
       "first": [
+        "RunnerCustodyCrashTests",
         "RunnerCustodyTests",
         "SourceLandingAdmissionTests",
         "PostLandMutationCustodyTests",
         "HttpResilienceRegistrationTests",
         "LinuxCustodyProbeTests",
         "RemoteVerificationWorkspaceTests",
-        "C1022BackendCapabilitiesTests",
-        "PhoneHomeRollingRunnerTests"
+        "C1022BackendCapabilitiesTests"
       ]
     },
     {
@@ -2001,50 +2002,51 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeCommandDispatcher.cs",
-      "classes": 45,
+      "classes": 46,
       "reason": "cap",
-      "owed": 20,
+      "owed": 21,
       "first": [
+        "RunnerCapacityCountTests",
         "RunnerMultilinePromptDeliveryTests",
         "RunnerReadJsonTests",
         "TranscriptSinceReadTests",
         "UnixPtyArgvAdmissionTests",
         "RunnerWorkspaceServiceTests",
         "CompletedCardWorkspaceRemovalTests",
-        "LegacyWorkspaceRemovalGateTests",
-        "C0824WorkspaceSlotOverflowTests"
+        "LegacyWorkspaceRemovalGateTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeRuntimeAdapter.cs",
-      "classes": 26,
+      "classes": 27,
       "reason": "cap",
-      "owed": 1,
+      "owed": 2,
       "first": [
+        "C1677RetentionDispatchTests",
         "CompletedCardWorkspaceContractTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/PhoneHomeSettings.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
+        "DelegateBranchDeliveryTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "DockerStackContractTests",
         "HerdrSnapshotBoundedReadTests",
-        "LinuxRunnerCustodyLifecycleTests",
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeEpochAgreementTests",
-        "PhoneHomeRollingRunnerTests"
+        "PhoneHomePendingPlacementCleanupTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.DecisionPaths.cs",
-      "classes": 80,
+      "classes": 81,
       "reason": "cap",
-      "owed": 55,
+      "owed": 56,
       "first": [
         "RunnerPlatformLaunchTests",
         "TranscriptSinceReadTests",
@@ -2058,9 +2060,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.TempSweep.cs",
-      "classes": 80,
+      "classes": 81,
       "reason": "cap",
-      "owed": 55,
+      "owed": 56,
       "first": [
         "RunnerPlatformLaunchTests",
         "TranscriptSinceReadTests",
@@ -2074,9 +2076,9 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/SessionRunnerRuntime.cs",
-      "classes": 93,
+      "classes": 94,
       "reason": "cap",
-      "owed": 68,
+      "owed": 69,
       "first": [
         "ClaudeDialogInputGuardTests",
         "CodexLaunchRefusalTests",
@@ -2099,10 +2101,11 @@
     },
     {
       "path": "tests/Antiphon.SessionRunner.Tests/PtyHostLeakSweep.cs",
-      "classes": 32,
+      "classes": 33,
       "reason": "cap",
-      "owed": 7,
+      "owed": 8,
       "first": [
+        "RunnerPlatformLaunchTests",
         "RunnerStartupReadinessTests",
         "SessionLivenessTests",
         "DerivedImpactIndexTests",
@@ -2146,34 +2149,34 @@
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestBase.Diagnostics.cs",
-      "classes": 83,
+      "classes": 84,
       "reason": "cap",
-      "owed": 58,
+      "owed": 59,
       "first": [
+        "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointReceiptStallBudgetTests",
         "CheckpointRecoveryFixtureTests",
         "CheckpointRecoveryLinuxTests",
         "CheckpointRecoveryWindowsTests",
         "CheckpointRepeatBuildIsolationTests",
-        "CheckpointRepeatConfigurationTests",
-        "CheckpointRepeatDocumentationTests"
+        "CheckpointRepeatConfigurationTests"
       ]
     },
     {
       "path": "tests/Antiphon.Tests/Checkpoints/CheckpointTestScope.cs",
-      "classes": 86,
+      "classes": 87,
       "reason": "cap",
-      "owed": 61,
+      "owed": 62,
       "first": [
+        "CheckpointLaunchCleanupTests",
         "CheckpointManifestTests",
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
         "CheckpointProcessIdentityTests",
         "CheckpointReceiptSafetyTests",
-        "CheckpointReceiptStallBudgetTests",
-        "CheckpointRecoveryFixtureTests"
+        "CheckpointReceiptStallBudgetTests"
       ]
     },
     {
@@ -2334,18 +2337,18 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/CheckpointToolSpawnLimit.cs",
-      "classes": 43,
+      "classes": 44,
       "reason": "cap",
-      "owed": 18,
+      "owed": 19,
       "first": [
+        "CheckpointSlotExecutorTests",
         "CheckpointSourceGitBoundsTests",
         "CheckpointSourceStateTests",
         "CheckpointStampSafetyTests",
         "CheckpointStepDeadlineTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempUsageTests",
-        "CheckpointTrackedBaselineTests",
-        "CheckpointWarmBuildTests"
+        "CheckpointTrackedBaselineTests"
       ]
     },
     {
@@ -2392,9 +2395,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 588,
+      "classes": 589,
       "reason": "cap",
-      "owed": 563,
+      "owed": 564,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -18156,6 +18159,7 @@
         "C1307ToolRemovalTests",
         "CheckpointAdmissionContractTests",
         "CheckpointExecutorLogTests",
+        "CheckpointHeldHandleTests",
         "CheckpointStatePublicationTests",
         "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
@@ -18173,6 +18177,7 @@
         "AnchoredPathDeleteWitnessTests",
         "CheckpointAdmissionContractTests",
         "CheckpointExecutorLogTests",
+        "CheckpointHeldHandleTests",
         "CheckpointOwnedOutputTests",
         "CheckpointReceiptSafetyTests",
         "CheckpointStatePublicationTests",
@@ -18264,6 +18269,7 @@
       "path": "src/Antiphon.HostCleanup/Checkpoints/ICheckpointCleanupIo.cs",
       "classes": [
         "AnchoredPathDeleteWitnessTests",
+        "CheckpointHeldHandleTests",
         "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
@@ -18380,6 +18386,7 @@
         "AnchoredPathDeleteWitnessTests",
         "CheckpointAdmissionContractTests",
         "CheckpointBuildBindingPathTests",
+        "CheckpointHeldHandleTests",
         "CheckpointImportTests",
         "CheckpointLargeStampTests",
         "CheckpointOrFilterTests",
@@ -18393,7 +18400,6 @@
         "CheckpointWindowsAnchoredDeleteTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
         "EvidenceFolderTests",
-        "HostCleanupCheckpointAuthorityTests",
         "HostCleanupCheckpointCompatibilityTests",
         "HostCleanupCheckpointExtractionTests",
         "OuterRowBuildStampTests",
@@ -19024,7 +19030,8 @@
       "path": "src/Antiphon.PtyHost.Protocol/PtyHostMessages.cs",
       "classes": [
         "Card2060PlacementHandshakeTests",
-        "LinuxCgroupCustodyTests"
+        "LinuxCgroupCustodyTests",
+        "PhoneHomeCommandDispatcherTests"
       ]
     },
     {
@@ -19781,11 +19788,11 @@
         "LinuxRunnerCustodyLifecycleTests",
         "MultiRunnerProjectionTests",
         "PhoneHomeCommandDispatcherTests",
+        "PhoneHomePendingPlacementCleanupTests",
         "PhoneHomeStandingLaunchTests",
         "PostLandMutationCleanupTests",
         "PostLandMutationReceiptPolicyTests",
         "RunnerAbsenceEvidenceRuntimeTests",
-        "RunnerCustodyCrashTests",
         "RunnerCustodyLedgerBackendTests",
         "RunnerCustodyReleaseTests",
         "UnixPtyArgvAdmissionTests",
@@ -20467,11 +20474,11 @@
         "PhoneHomeConnectionTests",
         "PhoneHomeEpochAgreementTests",
         "PhoneHomeMirrorJoinTests",
+        "PhoneHomePendingPlacementCleanupTests",
         "PhoneHomeSpillTransportTests",
         "PhoneHomeTaskDispatchProjectionTests",
         "PtyConditionalReadTests",
         "RunnerAbsenceEvidencePhoneHomeTests",
-        "RunnerCapacityCountTests",
         "RunnerCodexCliEvidenceTests",
         "RunnerWorkspaceBindingTests",
         "StandingRunnerCwdTests"
@@ -20519,7 +20526,6 @@
         "BlockedParkWireTests",
         "C1022BackendCapabilitiesTests",
         "C1022BackendLaunchTests",
-        "C1677RetentionDispatchTests",
         "C1677TempSweepDispatchTests",
         "Card1619RunnerExitTests",
         "CompletedCardWorkspaceRemovalTests",
@@ -20531,6 +20537,7 @@
         "PhoneHomeCompletedCardTransportTests",
         "PhoneHomeEpochAgreementTests",
         "PhoneHomeMirrorJoinTests",
+        "PhoneHomePendingPlacementCleanupTests",
         "PtyConditionalReadTests",
         "RunnerAbsenceEvidencePhoneHomeTests",
         "RunnerCapabilitiesTests",
@@ -20560,8 +20567,8 @@
         "CodexAuthProbeTests",
         "CodexProviderAuthRoutingTests",
         "CompletedCardWorkspaceRemovalTests",
-        "DelegateBranchDeliveryTests",
         "GrokAuthProbeTests",
+        "LinuxRunnerCustodyLifecycleTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
@@ -20679,6 +20686,8 @@
         "C1744G3PhoneHomeSupervisionTests",
         "DelegateBranchDeliveryTests",
         "HerdrSnapshotBoundedReadTests",
+        "LinuxRunnerCustodyLifecycleTests",
+        "PhoneHomePendingPlacementCleanupTests",
         "PtyConditionalReadTests",
         "RunnerCapabilitiesTests",
         "RunnerWorkspaceServiceTests",
@@ -22719,6 +22728,12 @@
       ]
     },
     {
+      "path": "tests/Antiphon.SessionRunner.Tests/LinuxCustodyProbeTests.cs",
+      "classes": [
+        "PhoneHomePendingPlacementCleanupTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.SessionRunner.Tests/LinuxRunnerCustodyLifecycleTests.cs",
       "classes": [
         "Card1619LinuxCustodyStopIntentTests"
@@ -22800,13 +22815,13 @@
         "GrokRulesHttpAcceptanceTests",
         "GrokRulesRunnerRefusalTests",
         "GrokRulesStoreFailureTests",
+        "PhoneHomePendingPlacementCleanupTests",
         "PtyBackendSeamTests",
         "PtyHostAdoptionTests",
         "RemoteControlConditionalInputTests",
         "RunnerChildClaudeTokenInheritanceTests",
         "RunnerMultilinePromptDeliveryTests",
         "RunnerPlatformContractTests",
-        "RunnerPlatformLaunchTests",
         "RunnerSessionGenerationTests",
         "SessionBufferBoundsTests",
         "SessionCpuWatchdogTests",
@@ -25343,6 +25358,7 @@
       "path": "tests/Antiphon.Tests/Checkpoints/AnchoredPathDeleteWitnessTests.cs",
       "classes": [
         "CheckpointExecutorLogTests",
+        "CheckpointHeldHandleTests",
         "CheckpointStatePublicationTests",
         "CheckpointWarmBuildTests",
         "CheckpointWindowsAnchoredPathDeleteWitnessTests",
@@ -25407,6 +25423,12 @@
         "EvidenceFolderTests",
         "OutputCleanupTests",
         "ReportBudgetWorkspacePortabilityTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Checkpoints/CheckpointHeldHandleTests.cs",
+      "classes": [
+        "CheckpointWarmBuildTests"
       ]
     },
     {
@@ -25516,6 +25538,7 @@
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointGitEncodingScriptTests",
+        "CheckpointHeldHandleTests",
         "CheckpointImportTests",
         "CheckpointLargeStampTests",
         "CheckpointLaunchCleanupTests",
@@ -25523,7 +25546,6 @@
         "CheckpointOrFilterTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
-        "CheckpointProcessIdentityTests",
         "CheckpointTempScopeTests"
       ]
     },
@@ -25546,9 +25568,9 @@
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointGitEncodingScriptTests",
+        "CheckpointHeldHandleTests",
         "CheckpointImportTests",
         "CheckpointLargeStampTests",
-        "CheckpointLaunchCleanupTests",
         "CheckpointTaskOwnershipTests",
         "CheckpointTempLifecycleTests",
         "CheckpointTempScopeTests",
@@ -26526,6 +26548,7 @@
     {
       "path": "tests/Antiphon.Tests/Scripts/QualificationEtaTests.cs",
       "classes": [
+        "OperatorStatusTests",
         "WatchQualTests"
       ]
     },
@@ -27347,6 +27370,7 @@
         "CheckpointFixtureGitEnvironmentTests",
         "CheckpointFixtureProcessTests",
         "CheckpointGitEncodingScriptTests",
+        "CheckpointHeldHandleTests",
         "CheckpointLargeStampTests",
         "CheckpointOutputConfinementTests",
         "CheckpointOwnedOutputTests",
@@ -27357,8 +27381,7 @@
         "CheckpointRecoveryWindowsTests",
         "CheckpointSelectedOutputTests",
         "CheckpointShadowCustodyTests",
-        "CheckpointShapeConflictTests",
-        "CheckpointSlotExecutorTests"
+        "CheckpointShapeConflictTests"
       ]
     },
     {
@@ -29599,6 +29622,7 @@
         "CheckpointOutputConfinementTests",
         "CheckpointShapeConflictTests",
         "CheckpointTrackedBaselineTests",
+        "CheckpointWarmBuildTests",
         "LandingRemovalPolicyControlTests",
         "LinuxOwnedGitProcessTests",
         "ProjectReadinessCollationTests",
