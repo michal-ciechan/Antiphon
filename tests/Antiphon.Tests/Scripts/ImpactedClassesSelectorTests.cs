@@ -701,7 +701,8 @@ public sealed partial class ImpactedClassesSelectorTests
         var match = Regex.Match(filter, @"\A/\*/\*/\((?<class>\w+)\*\)(?:\|\((?<class>\w+)\*\))*/\*\z");
         match.Success.ShouldBeTrue(project + " class filter: " + filter);
         var classes = match.Groups["class"].Captures.Select(capture => capture.Value).ToArray();
-        classes.ShouldBe(classes.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal), project);
+        classes.SequenceEqual(classes.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal), StringComparer.Ordinal)
+            .ShouldBeTrue(project + " classes must be sorted and unique: " + filter);
         foreach (var required in requiredClasses)
             classes.ShouldContain(required, project);
     }
