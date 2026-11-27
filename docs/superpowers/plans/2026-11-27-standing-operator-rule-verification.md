@@ -19,13 +19,12 @@ Full task base: 561591c562f31dd4fe0fc8f940f2ea7e947ce965. The Code brief specifi
 | CP-5 | S3 | `tests/Antiphon.Agents.Pty.Tests -> bin-2f23-verify-pty/` | pty-spawn-census | `/*/*/ProcessSpawnLimitTests/*` | R-3 | Both methods pass | 2 | 2 | true |
 | CP-6 | S3 | `tests/Antiphon.SessionRunner.Tests -> bin-2f23-verify-runner/` | runner-spawn-census | `/*/*/ProcessSpawnLimitTests/*` | R-3 | Both methods pass | 2 | 2 | true |
 | CP-7 | S3 | CP-2 | land-graph-pointer | `/*/*/LandGraphLandRefreshTests/instructions_say_the_land_path_refreshes_and_bare_update_stays_forbidden` | R-1 | The named method passes | 1 | 1 | true |
-
 | CP-8 | S3 | CP-2 | migration-prompt-pins | `/*/*/AdditiveMigrationRuleWitnessTests/(stage_code_runs_the_downgrade_selector*)\|(stage_review_runs_the_downgrade_selector*)\|(stage_test_design_requires_existing_tests_affected*)\|(orchestrator_skill_requires_the_migration_blast_radius*)` | R-1 | All four methods pass | 4 | 1 | true |
 | CP-9 | S3 | CP-2 | report-prompt-contract | `/*/*/DelegationReportFormatterTests/(a_blocked_question_note_puts_reason_asks_authority_and_next_outside_the_excerpt*)\|(a_blocked_note_without_authority_names_reply_not_continue*)\|(the_stage_handoff_contract_is_at_most_700_characters*)\|(the_handoff_block_paragraph_appears_for_every_stage_role*)` | R-1 | All four methods represented and pass | 8 | 1 | true |
 
 ### Final rerun
 
-The S2 selection at `2d9ec1c39fec0019bdc41e78624a9de3d77c4fbf` reached CP-2 before the host ran out of disk space. CP-2 caught the lost overnight Blocked-seat instruction. S3 restores it. CP-8 and CP-9 now select the migration instructions and report-formatting methods that read the changed prompts. The migration source census and Windows drive-letter path check in those classes cover independent behavior.
+The S2 selection at `2d9ec1c39fec0019bdc41e78624a9de3d77c4fbf` reached CP-2 before the host ran out of disk space. The TRX recorded 409 passes, two failures and a Windows-only skip. S3 restores the overnight Blocked-seat instruction that CP-2 caught. CP-8 and CP-9 now select the migration instructions and report-formatting methods that read the changed prompts. The migration source census and Windows drive-letter path check in those classes cover independent behavior.
 
 ### Cost
 
