@@ -91,6 +91,7 @@ public sealed class ReleaseCutTests
         var results = new List<NightlyTestsResult>();
         var executed = new List<string>();
         var withholdGuard = true;
+        var interruptGuard = false;
         var interruptOrdinary = true;
         NightlyHost nightly = null!;
         var launcher = new RecordingLauncher(launch =>
@@ -132,6 +133,7 @@ public sealed class ReleaseCutTests
                 var isInvariant = trxName.StartsWith("antiphon-invariant-", StringComparison.Ordinal);
                 var type = isMessaging ? owedClass : isInvariant ? invariantClass : ordinaryClass;
                 executed.Add(type);
+                if (isInvariant && interruptGuard) throw new OperationCanceledException("fixture interrupted before the invariant produced a receipt");
                 if (isMessaging && interruptOrdinary) throw new OperationCanceledException("fixture interrupted before messaging produced a receipt");
                 string[] ids = isMessaging ? [owed] : isInvariant ? withholdGuard ? [guardA] : [guardA, guardB] : [ordinary];
                 NightlyFixture.WriteTrx(Path.Combine(Value("--results-directory"), trxName),
@@ -212,6 +214,53 @@ public sealed class ReleaseCutTests
         testsHops.Last().IncrementalInventoryDigest.ShouldBeEmpty();
         results.Last().CoverageScope.ShouldBe("Full");
         executed.ShouldBe([invariantClass, ordinaryClass, owedClass], ignoreOrder: true);
+
+        var opaqueInventory = Path.Combine(root, "opaque-inventory.json");
+        var opaque = Prior("client", "client", "prior-opaque", "Client", []);
+        var opaqueDigest = RcChunkReceipt.Seal(opaqueInventory, world.Sha, 1, [.. prior, opaque]);
+        RcComparisonBaseline.Record(Path.Combine(root, "comparison.json"), comparison, opaqueInventory, opaqueDigest);
+
+        JsonElement RunFallback(string id, bool tested, string[] expectedStarts)
+        {
+            executed.Clear();
+            var cut = Cut(id);
+            cut.Tested.ShouldBe(tested, string.Join('\n', results.Last().Reasons));
+            cut.Published.ShouldBeFalse();
+            executed.ShouldBe(expectedStarts);
+            var hop = testsHops.Last();
+            hop.RequestedSelectionMode.ShouldBe("Incremental");
+            hop.IncrementalInventoryDigest.ShouldBe(opaqueDigest);
+            File.Exists(Path.Combine(hop.LogRoot, "incremental-plan.json")).ShouldBeFalse();
+            using var schedule = JsonDocument.Parse(File.ReadAllText(Path.Combine(hop.LogRoot, "dispatch-schedule.json")));
+            schedule.RootElement.TryGetProperty("invariantPrefix", out var prefix).ShouldBeTrue(id + " must persist invariantPrefix");
+            using var summary = JsonDocument.Parse(File.ReadAllText(Path.Combine(hop.LogRoot, "summary.json")));
+            summary.RootElement.GetProperty("coverageScope").GetString().ShouldBe("Full", id);
+            return prefix.Clone();
+        }
+
+        void AssertIncompletePrefix(JsonElement prefix, string[] missingUids)
+        {
+            prefix.GetProperty("complete").GetBoolean().ShouldBeFalse();
+            prefix.GetProperty("suite").GetString().ShouldBe("antiphon");
+            var chunk = prefix.GetProperty("chunk").GetString();
+            chunk.ShouldStartWith("invariant-");
+            var outstanding = prefix.GetProperty("outstanding").EnumerateArray().ToArray();
+            outstanding.Select(row => row.GetProperty("suite").GetString()).ShouldBe(["antiphon", "antiphon", "messaging"]);
+            var missing = outstanding.Single(row => row.GetProperty("chunk").GetString() == chunk);
+            missing.GetProperty("missingUids").EnumerateArray().Select(uid => uid.GetString()).ShouldBe(missingUids);
+        }
+
+        withholdGuard = true;
+        AssertIncompletePrefix(RunFallback("c2082-opaque-partial", false, [invariantClass]), ["Antiphon.Tests/" + guardB]);
+        withholdGuard = false;
+        interruptGuard = true;
+        AssertIncompletePrefix(RunFallback("c2082-opaque-interrupted", false, [invariantClass]),
+            ["Antiphon.Tests/" + guardA, "Antiphon.Tests/" + guardB]);
+        interruptGuard = false;
+        var completed = RunFallback("c2082-opaque-complete", true, [invariantClass, ordinaryClass, owedClass]);
+        completed.GetProperty("complete").GetBoolean().ShouldBeTrue();
+        completed.GetProperty("executedGroups").GetInt32().ShouldBe(1);
+        completed.TryGetProperty("outstanding", out _).ShouldBeFalse();
 
         probe.PlatformName = "linux";
         executed.Clear();
