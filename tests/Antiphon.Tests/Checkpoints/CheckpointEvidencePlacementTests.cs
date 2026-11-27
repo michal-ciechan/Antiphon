@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using Antiphon.Checkpoints;
 using Antiphon.TestSupport;
 using Antiphon.Tests.TestHelpers;
@@ -39,4 +40,3 @@ public sealed class CheckpointEvidencePlacementTests
         Directory.Exists(Path.Combine(repo.Path, "obj")).ShouldBeFalse("MSBuild only evaluated the project");
     }
 }
-using System.Xml.Linq;
