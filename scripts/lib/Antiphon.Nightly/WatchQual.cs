@@ -9,7 +9,7 @@
 //     --min-file-age-seconds old (oldest first): "FAILURES <name>: <n> failed :: <Class> <n>, ..." (the eight classes
 //     with most failures; Failed, Error, Timeout and Aborted results, as TrxReport counts them) and the path recorded,
 //     or TRX-PARSE-ERROR for a file that is not a complete TRX yet (no ResultSummary): it stays unrecorded and is retried;
-//   - with --timing-root, the one QualificationEta line (CARD-1842), or ETA-ERROR; without it no ETA line;
+//   - with --timing-root, the shared ETA and any UNVERIFIED observations, or ETA-ERROR;
 //   - RUN-ENDED when summary.json is in the log directory, which ends the watch;
 //   - HANG-SUSPECTED and HEARTBEAT-STALE when the heartbeat (utc, else observedAtUtc) turns hung or stale, again after
 //     it recovers; HEARTBEAT-MISSING and HEARTBEAT-ERROR once per change.
@@ -143,10 +143,9 @@ namespace Antiphon.Nightly
                 else ReadTrx(options, host, files, seen);
                 if (!string.IsNullOrWhiteSpace(options.TimingRoot))
                 {
-                    // The ETA only reads the timing root.
-                    host.Out.WriteLine(QualificationEta.TryRead(files, options.TimingRoot, host.UtcNow, "", out var reading, out var error)
-                        ? reading.Line
-                        : "ETA-ERROR " + error);
+                    var eta = new QualificationEtaOptions { TimingRoot = options.TimingRoot, RunLogDir = options.LogDir };
+                    if (!QualificationEta.TryWrite(eta, host, files, out var error))
+                        host.Out.WriteLine("ETA-ERROR " + error);
                 }
                 var summary = files.Path.Combine(options.LogDir, "summary.json");
                 if (files.File.Exists(summary) || files.Directory.Exists(summary))
@@ -246,7 +245,7 @@ namespace Antiphon.Nightly
                 var stamp = Stamp(beat, "utc") ?? Stamp(beat, "observedAtUtc");
                 if (stamp == null) throw new InvalidDataException("Heartbeat has no utc or observedAtUtc.");
                 var utc = DateTimeOffset.Parse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).UtcDateTime;
-                var hang = QualificationEta.Member(beat, "hangSuspected")?.ValueKind == JsonValueKind.True;
+                var hang = Member(beat, "hangSuspected").ValueKind == JsonValueKind.True;
                 var stale = (host.UtcNow - utc).TotalMinutes >= options.HeartbeatStaleMinutes;
                 if (hang && !state.WasHang)
                     host.Out.WriteLine("HANG-SUSPECTED heartbeat " + stamp + " runId=" + Field(beat, "runId") + " idleMinutes=" + Field(beat, "idleMinutes"));
@@ -267,10 +266,16 @@ namespace Antiphon.Nightly
         // A heartbeat instant: a non-empty string member, else null.
         private static string Stamp(JsonElement beat, string name)
         {
-            var value = QualificationEta.Member(beat, name);
-            return value?.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(value.Value.GetString()) ? value.Value.GetString() : null;
+            var value = Member(beat, name);
+            return value.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(value.GetString()) ? value.GetString() : null;
         }
 
-        private static string Field(JsonElement beat, string name) => QualificationEta.Text(QualificationEta.Member(beat, name));
+        private static JsonElement Member(JsonElement beat, string name) =>
+            beat.ValueKind == JsonValueKind.Object && beat.TryGetProperty(name, out var value) ? value : default;
+
+        private static string Field(JsonElement beat, string name) => JsonText(Member(beat, name));
+
+        private static string JsonText(JsonElement value) =>
+            value.ValueKind == JsonValueKind.Array ? string.Join(" ", value.EnumerateArray().Select(JsonText)) : value.ToString();
     }
 }
