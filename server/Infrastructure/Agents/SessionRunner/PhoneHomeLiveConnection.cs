@@ -42,6 +42,11 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private Task? _creditWriter;
     private int _disposing;
     private readonly TaskCompletionSource _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Lock _socketAbortGate = new();
+    private TaskCompletionSource? _abortingSocket;
+    private int _intentionalAbort;
+    private bool _socketDisposalStarted;
+    private List<Exception>? _abortFailures;
     public PhoneHomeEventWindowOptions? EventWindow { get; }
     public PhoneHomeProducerPressure? ProducerPressure { get; private set; }
     internal CancellationToken Closed => _closed.Token;
@@ -481,7 +486,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
             receiving = ReceiveLoopCoreAsync(ct, logger);
             if (await Task.WhenAny(receiving, _creditWriter) == _creditWriter)
             {
-                _socket.Abort();
+                if (!receiving.IsCompleted)
+                    TryAbortSocket(IsIntentionalWriterStop());
                 await _creditWriter;
             }
             await receiving;
@@ -494,12 +500,22 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                 catch { /* the owning receive path classifies the writer fault */ }
             if (receiving is { IsCompleted: false })
             {
-                _socket.Abort();
-                try { await receiving; } catch { /* the writer failure owns the verdict */ }
+                var aborted = TryAbortSocket(IsIntentionalWriterStop());
+                var observed = ObserveReceiveCompletionAsync(receiving);
+                // If Abort failed, let retirement dispose the socket and release the read.
+                if (aborted)
+                    await observed;
             }
             Interlocked.Exchange(ref _receiveLoopRunning, 0);
         }
     }
+
+    private bool IsIntentionalWriterStop() =>
+        _creditWriter?.IsCanceled == true && _creditStop.IsCancellationRequested
+        && IsIntentionalRetirement(Volatile.Read(ref _closedReason));
+
+    private static async Task ObserveReceiveCompletionAsync(Task receiving) =>
+        await receiving.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     private async Task ReceiveLoopCoreAsync(CancellationToken ct, ILogger? logger)
     {
@@ -739,7 +755,8 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
     private async Task CloseSocketAsync(string reason)
     {
         var stopping = string.Equals(reason, "request_aborted", StringComparison.Ordinal);
-        Exception? failure = null;
+        List<Exception>? failures = null;
+        var level = LogLevel.Debug;
         try
         {
             if (_socket.State == WebSocketState.Open)
@@ -748,70 +765,118 @@ public sealed class PhoneHomeLiveConnection : IAsyncDisposable
                     TimeSpan.FromSeconds(PhoneHomeProtocol.CloseHandshakeSeconds));
                 try
                 {
-                    await CloseHandshakeAsync(stopping, handshake.Token);
-                }
-                catch (Exception ex) when (IsBenignClose(ex, stopping || handshake.IsCancellationRequested)
-                    || (ex is WebSocketException { WebSocketErrorCode: WebSocketError.InvalidState }
-                        && _socket.State is WebSocketState.Aborted or WebSocketState.Closed))
-                {
-                    // The peer may disconnect, the handshake may be canceled, or the receive
-                    // loop may abort the socket after cleanup observed it open.
+                    // CARD-0716: close output can send 1001 beside the endpoint's active receive.
+                    // Once that receive has returned, CloseAsync reads the acknowledgement.
+                    var status = stopping ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure;
+                    var description = stopping ? PhoneHomeCloseReasons.ServerStopping : "dispose";
+                    if (Volatile.Read(ref _receiveLoopRunning) == 0)
+                    {
+                        await _socket.CloseAsync(status, description, handshake.Token).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _socket.CloseOutputAsync(status, description, handshake.Token).ConfigureAwait(false);
+                        var deadline = DateTime.UtcNow.AddSeconds(PhoneHomeProtocol.CloseHandshakeSeconds);
+                        while (DateTime.UtcNow < deadline
+                            && _socket.State is WebSocketState.Open or WebSocketState.CloseSent
+                            && !handshake.IsCancellationRequested)
+                        {
+                            await Task.Delay(50, handshake.Token).ConfigureAwait(false);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
-                    failure = ex;
+                    RecordFailure(ex);
                 }
 
                 if (_socket.State is WebSocketState.Open or WebSocketState.CloseSent)
-                    _socket.Abort();
+                    TryAbortSocket(IsIntentionalRetirement(reason));
             }
-        }
-        catch (Exception ex) when (IsBenignClose(ex, stopping))
-        {
-            // The socket can close while the abort is starting.
         }
         catch (Exception ex)
         {
-            failure = failure is null ? ex : new AggregateException(failure, ex);
+            RecordFailure(ex);
+        }
+
+        // Abort can resume the close await inline. Join it asynchronously before reading
+        // its faults and prevent later receive continuations from starting another Abort.
+        Task? aborting;
+        lock (_socketAbortGate)
+        {
+            _socketDisposalStarted = true;
+            aborting = _abortingSocket?.Task;
+        }
+        if (aborting is not null)
+            await aborting.ConfigureAwait(false);
+        if (_abortFailures is { } abortFailures)
+        {
+            level = LogLevel.Warning;
+            (failures ??= []).AddRange(abortFailures);
+            _abortFailures = null;
         }
 
         try { _socket.Dispose(); }
-        catch (Exception ex) { failure = failure is null ? ex : new AggregateException(failure, ex); }
+        catch (Exception ex) { RecordFailure(ex); }
 
-        if (failure is null)
+        if (failures is null)
             return;
+        var failure = failures.Count == 1 ? failures[0] : new AggregateException(failures);
         if (_closeLogger is null)
             ExceptionDispatchInfo.Throw(failure);
 
         // The endpoint and the directory can race to dispose. Only the owner logs,
         // and it does so before waking the other caller.
-        _closeLogger.LogWarning(failure, "Failed to close phone-home runner {RunnerId} epoch {Epoch} ({Reason})",
-            RunnerId, Epoch, reason);
+        _closeLogger.Log(level, failure,
+            "Failed to close phone-home runner {RunnerId} epoch {Epoch} ({Reason}): {ExceptionType}",
+            RunnerId, Epoch, reason, string.Join(", ", failures.Select(ex => ex.GetType().Name)));
+
+        void RecordFailure(Exception ex)
+        {
+            // Capture intent here: the fallback Abort may set it after a handshake fault.
+            if (Volatile.Read(ref _intentionalAbort) == 0
+                || ex is not (WebSocketException { WebSocketErrorCode: WebSocketError.InvalidState }
+                    or OperationCanceledException or ObjectDisposedException))
+                level = LogLevel.Warning;
+            (failures ??= []).Add(ex);
+        }
     }
 
-    private static bool IsBenignClose(Exception ex, bool expectedCancellation) =>
-        ex is WebSocketException { WebSocketErrorCode: WebSocketError.ConnectionClosedPrematurely }
-        || ex is OperationCanceledException && expectedCancellation;
+    private static bool IsIntentionalRetirement(string? reason) =>
+        reason is "superseded" or "request_aborted" or "dispose";
 
-    private async Task CloseHandshakeAsync(bool stopping, CancellationToken cancellationToken)
+    private bool TryAbortSocket(bool intentional)
     {
-        // CARD-0716: CloseOutputAsync can send 1001 server_stopping beside the endpoint's active
-        // receive. Once that receive has returned, CloseAsync reads the peer's acknowledgement.
-        var status = stopping ? WebSocketCloseStatus.EndpointUnavailable : WebSocketCloseStatus.NormalClosure;
-        var description = stopping ? PhoneHomeCloseReasons.ServerStopping : "dispose";
-        if (Volatile.Read(ref _receiveLoopRunning) == 0)
+        TaskCompletionSource completion;
+        lock (_socketAbortGate)
         {
-            await _socket.CloseAsync(status, description, cancellationToken);
-            return;
+            if (_socketDisposalStarted || _abortingSocket is not null)
+                return false;
+            completion = _abortingSocket = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        await _socket.CloseOutputAsync(status, description, cancellationToken);
-        var deadline = DateTime.UtcNow.AddSeconds(PhoneHomeProtocol.CloseHandshakeSeconds);
-        while (DateTime.UtcNow < deadline
-            && _socket.State is WebSocketState.Open or WebSocketState.CloseSent
-            && !cancellationToken.IsCancellationRequested)
+        Exception? failure = null;
+        try
         {
-            await Task.Delay(50, cancellationToken);
+            if (intentional)
+                Interlocked.Exchange(ref _intentionalAbort, 1);
+            _socket.Abort();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            return false;
+        }
+        finally
+        {
+            lock (_socketAbortGate)
+            {
+                if (failure is not null)
+                    (_abortFailures ??= []).Add(failure);
+                _abortingSocket = null;
+            }
+            completion.SetResult();
         }
     }
 
