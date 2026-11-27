@@ -372,17 +372,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
                 return reason;
         }
 
-        stream = Io.Open(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        if (stream is not FileStream file)
-        {
-            Remember(full);
-            return null;
-        }
-
-        // Reopening the path for custody metadata stalls against our own exclusive handle on Windows.
-        context.Registry.RecordCreated(full);
-        if (CheckpointNativeIo.Untrusted(file.SafeFileHandle, out var identity) is null)
-            context.Registry.RecordIdentity(full, identity);
+        stream = OpenAndRemember(full, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         return null;
     }
 
@@ -404,8 +394,7 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
                 return reason;
         }
 
-        stream = Io.Open(full, FileMode.Append, FileAccess.Write, share);
-        Remember(full);
+        stream = OpenAndRemember(full, FileMode.Append, FileAccess.Write, share);
         return null;
     }
 
@@ -426,9 +415,27 @@ public sealed class CheckpointWrite(CheckpointCleanupContext context)
                 return reason;
         }
 
-        stream = Io.Open(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        Remember(full);
+        stream = OpenAndRemember(full, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         return null;
+    }
+
+    private Stream OpenAndRemember(string path, FileMode mode, FileAccess access, FileShare share)
+    {
+        var opened = Io.Open(path, mode, access, share);
+        try
+        {
+            // A second open for custody metadata can conflict with our own sharing mode on Windows.
+            var identity = opened is FileStream file && CheckpointNativeIo.Untrusted(file.SafeFileHandle, out var verified) is null
+                ? verified : default;
+            context.Registry.RecordCreated(path);
+            context.Registry.RecordIdentity(path, identity);
+            return opened;
+        }
+        catch
+        {
+            opened.Dispose();
+            throw;
+        }
     }
 
     public void Require(string? reason)

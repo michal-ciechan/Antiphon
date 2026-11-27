@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -691,7 +692,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     {
         var root = TempDir();
         var path = Path.Combine(root, "staged.seal");
-        var io = new ExclusiveCreateIo(path);
+        var io = new ExclusiveOpenIo(path);
         var context = new CheckpointCleanupContext(io, CheckpointCleanupDefaults.Context.Git);
         var write = new CheckpointWrite(context);
 
@@ -701,6 +702,7 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             refusal.ShouldBeNull();
             stream.ShouldNotBeNull();
             io.ExclusivePathProbes.ShouldBe(0, "Windows denies a second open while the creator holds FileShare.None");
+            write.WasCreated(path).ShouldBeTrue();
             context.Registry.Identity(path).ShouldNotBeNull();
         }
 
@@ -710,14 +712,28 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
     [Test]
     public async Task overlapping_build_keeps_first_rows_partition()
     {
-        var fixture = NewSealFixture();
-        fixture.Seed();
+        var clock = Stopwatch.StartNew();
+        var phases = new ConcurrentQueue<string>();
+        void Mark(string phase) => phases.Enqueue(FormattableString.Invariant($"{phase}={clock.Elapsed.TotalMilliseconds:F1}ms"));
+        string Timeline() => "overlap phases " + string.Join(", ", phases);
+
+        SealFixture fixture;
+        using (TestTiming.BeginPhase(TestPhaseKind.FixtureSetup, "seed"))
+        {
+            fixture = NewSealFixture();
+            fixture.Seed();
+        }
+        Mark("seeded");
         var rowEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondBuildEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var slots = new SealSlots(async (label, token) =>
         {
             if (label == "build:bin-second")
+            {
+                Mark("second-slot-wait-start");
                 await rowEntered.Task.WaitAsync(token);
+                Mark("second-slot-wait-end");
+            }
             return SealSlots.Grant();
         });
         var driver = new SealDriver(fixture)
@@ -726,30 +742,47 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             {
                 if (SealFixture.HasOutput(request, "bin-proof"))
                 {
+                    Mark("first-row-entered");
                     rowEntered.TrySetResult();
                     await secondBuildEntered.Task.WaitAsync(token);
+                    Mark("first-row-released");
                 }
             },
             OnBuild = (request, _) =>
             {
-                if (request.Arguments.Contains("--property:OutputPath=bin-second/"))
+                if (!request.Arguments.Contains("--property:OutputPath=bin-second/"))
+                    Mark("first-build-entered");
+                else
                 {
+                    Mark("gate-contention-start");
+                    using var phase = TestTiming.BeginPhase(TestPhaseKind.Filesystem, "prepare");
                     using var contender = CheckpointIntermediateCache.TryOpen(fixture.Root, fixture.Source, fixture.Source.Commit);
-                    contender.ShouldBeNull("the first test host still owns borrowed intermediates");
+                    Mark("gate-contention-end");
+                    contender.ShouldBeNull("the first test host still owns borrowed intermediates. " + Timeline());
                     secondBuildEntered.TrySetResult();
                 }
                 return Task.FromResult(new DriverResult(0, "", ""));
             },
         };
-        using var watchdog = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // CARD-2085: the 5 s watchdog is provisional. The Linux p95 was 1,436 ms
+        // across 11 samples, including six at server2 load 31-48. Native Windows sampling is pending.
+        var budget = TimeSpan.FromSeconds(5);
+        Mark("watchdog-start");
+        using var watchdog = new CancellationTokenSource(budget);
         using (var cache = fixture.Open())
         {
-            var result = await fixture.RunAsync(cache, driver, slots: slots, cancellationToken: watchdog.Token, second: true);
-            result.ExitCode.ShouldBe(ExitCodes.Green, Describe(result));
+            Mark("gate-opened");
+            SchedulerResult result;
+            using (TestTiming.BeginPhase(TestPhaseKind.OurCode, "checkpoint-tool"))
+                result = await fixture.RunAsync(cache, driver, slots: slots, cancellationToken: watchdog.Token, second: true);
+            Mark("scheduler-returned");
+            result.ExitCode.ShouldBe(ExitCodes.Green,
+                $"{Timeline()} (caller budget {budget.TotalMilliseconds} ms, canceled={watchdog.IsCancellationRequested}). {Describe(result)}");
             result.Rows.Count.ShouldBe(2);
             fixture.AssertGreen(result, driver, "bin-proof", warm: true);
             fixture.AssertGreen(result, driver, "bin-second", warm: false);
         }
+        Mark("gate-released");
 
         rowEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
         secondBuildEntered.Task.IsCompletedSuccessfully.ShouldBeTrue();
@@ -757,6 +790,8 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
         using var reopened = fixture.Open();
         fixture.Prepare(reopened).ShouldNotBeNull().Path.ShouldBe(fixture.Partition);
         File.ReadAllBytes(fixture.Seal).ShouldBe(fixture.ExpectedDigest());
+        Mark("seal-verified");
+        Console.WriteLine(Timeline());
     }
 
     [Test]
@@ -987,29 +1022,6 @@ public sealed class CheckpointWarmBuildTests : CheckpointTestBase
             .Where(arg => arg.StartsWith("--property:", StringComparison.Ordinal) &&
                 !arg.StartsWith("--property:OutputPath=", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).ToArray();
-    }
-
-    private sealed class ExclusiveCreateIo(string protectedPath) : ForwardingNativeIo, ICheckpointCleanupIo
-    {
-        private Stream? _exclusive;
-        internal int ExclusivePathProbes { get; private set; }
-        CheckpointPlatform ICheckpointCleanupIo.Platform => CheckpointPlatform.Windows;
-
-        public override Stream Open(string path, FileMode mode, FileAccess access, FileShare share)
-        {
-            var opened = base.Open(path, mode, access, share);
-            if (path == protectedPath && share == FileShare.None)
-                _exclusive = opened;
-            return opened;
-        }
-
-        CheckpointStat ICheckpointCleanupIo.CustodyStat(string path)
-        {
-            if (path != protectedPath || _exclusive?.CanWrite != true)
-                return base.CustodyStat(path);
-            ExclusivePathProbes++;
-            return new CheckpointStat("unknown", 0, 0, 0, 0, 0);
-        }
     }
 
     private sealed class DigestSealIo(CheckpointCleanupContext context) : CheckpointIntermediateCache.SealIo
