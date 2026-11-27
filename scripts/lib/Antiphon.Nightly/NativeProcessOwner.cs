@@ -24,7 +24,7 @@ namespace Antiphon.Nightly
         public string[] Barriers { get; set; } = Array.Empty<string>();
         public bool FailAssignment { get; set; }
         public bool FailJobTermination { get; set; }
-        public int CleanupTimeoutMilliseconds { get; set; } = 15000;
+        public int CleanupTimeoutMilliseconds { get; set; } = NativeProcessOwner.DefaultCleanupTimeoutMilliseconds;
         public bool ZeroCountAtRootWait { get; set; }
         public string TrxPath { get; set; } = "";
         public string DiagnosticDirectory { get; set; } = "";
@@ -86,6 +86,7 @@ namespace Antiphon.Nightly
 
     public sealed class NativeProcessOwner
     {
+        internal const int DefaultCleanupTimeoutMilliseconds = 15000;
         private const int OutputDrainTimeoutMilliseconds = 15000;
         private readonly CancellationTokenSource _drainCancellation = new CancellationTokenSource();
         private readonly NativeProcessHooks _hooks;
@@ -132,6 +133,10 @@ namespace Antiphon.Nightly
             ReaderWork stdout = null, stderr = null;
             Task logWrite = null;
             Stopwatch drain = null;
+            Stopwatch cleanup = null;
+            int cleanupBudget = _hooks.CleanupTimeoutMilliseconds > 0
+                ? _hooks.CleanupTimeoutMilliseconds : DefaultCleanupTimeoutMilliseconds;
+            var drainCancellation = _drainCancellation.Token;
             var clock = Stopwatch.StartNew();
             bool resumed = false;
             string stdoutPath = logPath + ".stdout.tmp", stderrPath = logPath + ".stderr.tmp";
@@ -257,22 +262,24 @@ namespace Antiphon.Nightly
                     Observation.TimedOut = true;
                 }
                 Observation.ExecutionMilliseconds = graceResult.ElapsedMilliseconds;
-                var cleanup = Stopwatch.StartNew();
                 if (Observation.TimedOut)
                 {
                     try { WriteHangCapture(job, root, logPath); }
                     catch (Exception captureEx) { Observation.HangCaptureError = captureEx.Message; }
                 }
-                if (Observation.TimedOut || stopOwnedChildren)
+                bool terminate = Observation.TimedOut || stopOwnedChildren;
+                if (terminate) _hooks.Pause("job-termination");
+                cleanup = Stopwatch.StartNew();
+                if (terminate)
                 {
-                    _hooks.Pause("job-termination");
                     Observation.TerminationRequested = true;
                     Observation.TerminationSucceeded = TryTerminateJob(job);
                     Check(Observation.TerminationSucceeded, "TerminateJobObject");
                 }
                 while (!RootExited(root) || Count(job) != 0)
                 {
-                    if (cleanup.ElapsedMilliseconds >= 15000) throw new TimeoutException("Native job cleanup not observed within 15000ms.");
+                    if (TimeLeft(cleanup, cleanupBudget) == 0)
+                        throw new TimeoutException("Native job cleanup not observed within " + cleanupBudget + "ms.");
                     Thread.Sleep(10);
                 }
                 Observation.RemainingProcessCount = Count(job);
@@ -296,7 +303,7 @@ namespace Antiphon.Nightly
                     // Physical EOF and flushed temporary files permit the final write;
                     // reader completion is independently observed by the owner below.
                     Task.WhenAll(stdout.ContentReady.Task, stderr.ContentReady.Task).GetAwaiter().GetResult();
-                    _hooks.Pause("log-write", _drainCancellation.Token);
+                    _hooks.Pause("log-write", drainCancellation);
                     using (var output = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read))
                     {
                         using (var input = File.OpenRead(stdoutPath)) input.CopyTo(output);
@@ -327,39 +334,35 @@ namespace Antiphon.Nightly
             catch (Exception ex)
             {
                 Observation.Error = ex.Message; Observation.ExitCode = 1;
+                Observation.OutputDrained = false;
+                cleanup ??= Stopwatch.StartNew();
                 _drainCancellation.Cancel();
-                // Failed admission must kill the suspended root, which is not yet in our job.
-                // A running root is contained: kill only our job, never a process-name sweep.
-                if (root != IntPtr.Zero)
+                try
                 {
-                    Observation.TerminationRequested = true;
-                    Observation.TerminationSucceeded = resumed ? TryTerminateJob(job) : TerminateProcess(root, 1);
-                    if (!Observation.TerminationSucceeded && !RootExited(root)) Close(ref job); // kill-on-close fallback
-                    // Keep this foreground owner until the retained exact handles signal.
-                    while (_hooks.HoldWait("failure-cleanup") || !RootExited(root) || _descendants.Values.Any(p => !p.HasExited)) Thread.Sleep(100);
-                    if (job != IntPtr.Zero)
+                    if (root != IntPtr.Zero) FinishFailedCleanup(root, ref job, resumed, cleanup, cleanupBudget);
+                }
+                catch (Exception cleanupError)
+                {
+                    Observation.Error += "; Native job cleanup observation failed: " + cleanupError.Message;
+                }
+                Observation.CleanupMilliseconds = cleanup.Elapsed.TotalMilliseconds;
+                var pendingOutput = new[] { stdout?.Completion, stderr?.Completion, logWrite }.Where(work => work != null);
+                try
+                {
+                    if (!Task.WhenAll(pendingOutput).Wait(TimeLeft(cleanup, cleanupBudget)))
                     {
-                        Observation.RemainingProcessCount = Count(job);
-                        while (Observation.RemainingProcessCount != 0)
-                        { Thread.Sleep(100); Observation.RemainingProcessCount = Count(job); }
-                        Observation.ChildrenExited = RootExited(root) && Observation.RemainingProcessCount == 0;
+                        Observation.TimedOut = true;
+                        Observation.OutputDrainTimedOut = true;
+                        Observation.Error += "; Native error-path output drain exceeded the remaining cleanup budget.";
                     }
                 }
-                if (stdout != null && stderr != null)
-                {
-                    try { Task.WhenAll(stdout.Completion, stderr.Completion).GetAwaiter().GetResult(); } catch { /* retain partial logs */ }
-                }
+                catch (AggregateException) { /* retain partial logs and original failure */ }
                 // No clean output verdict after any exception; retain temporary evidence.
             }
             finally
             {
                 // Retain the idle verdict for the observer's next poll or until the next native chunk starts.
                 if (string.IsNullOrEmpty(Observation.IdleHangReason)) ClearActiveHeartbeat();
-                // Join test-operation barriers too, including when a broken verdict is
-                // deliberately exercised. The observer can see that broken verdict.
-                if (stdout != null && stderr != null)
-                    try { Task.WhenAll(stdout.Completion, stderr.Completion).GetAwaiter().GetResult(); } catch { }
-                if (logWrite != null) try { logWrite.GetAwaiter().GetResult(); } catch { }
                 if (drain != null) Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
                 _drainCancellation.Dispose();
                 StampOwnerObservation(root);
@@ -377,6 +380,43 @@ namespace Antiphon.Nightly
 
         private bool TryTerminateJob(IntPtr job) => !_hooks.FailJobTermination && TerminateJobObject(job, 1);
 
+        private void FinishFailedCleanup(IntPtr root, ref IntPtr job, bool resumed, Stopwatch cleanup, int budget)
+        {
+            Observation.ChildrenExited = false;
+            Observation.RemainingProcessCount = -1;
+            Observation.TerminationRequested = true;
+            // An unadmitted suspended root may still be outside our job.
+            Observation.TerminationSucceeded = resumed ? TryTerminateJob(job) : TerminateProcess(root, 1);
+            if (!Observation.TerminationSucceeded)
+            {
+                // Closing the last private job handle kills the job even if the root already exited.
+                JobHandle = IntPtr.Zero;
+                Close(ref job);
+            }
+
+            while (true)
+            {
+                Observation.RemainingProcessCount = job == IntPtr.Zero ? -1 : Count(job);
+                if (!_hooks.HoldWait("failure-cleanup") && Observation.RemainingProcessCount <= 0
+                    && RootExited(root) && _descendants.Values.All(process => process.HasExited))
+                {
+                    Observation.ChildrenExited = Observation.RemainingProcessCount == 0;
+                    return;
+                }
+                int remaining = TimeLeft(cleanup, budget);
+                if (remaining == 0)
+                {
+                    Observation.TimedOut = true;
+                    string message = "Native job cleanup not observed within " + budget + "ms.";
+                    if (!Observation.Error.Contains(message, StringComparison.Ordinal)) Observation.Error += "; " + message;
+                    return;
+                }
+                Thread.Sleep(Math.Min(remaining, 10));
+            }
+        }
+
+        private static int TimeLeft(Stopwatch clock, int budget) => (int)Math.Max(0, budget - clock.ElapsedMilliseconds);
+
         private sealed class ReaderWork
         {
             public Task Completion;
@@ -385,6 +425,7 @@ namespace Antiphon.Nightly
         private ReaderWork Drain(IntPtr handle, string path, string phase)
         {
             var reader = new ReaderWork();
+            var cancellation = _drainCancellation.Token;
             reader.Completion = Task.Run(() =>
             {
                 try
@@ -398,7 +439,7 @@ namespace Antiphon.Nightly
                         var buffer = new byte[81920];
                         while (true)
                         {
-                            _drainCancellation.Token.ThrowIfCancellationRequested();
+                            cancellation.ThrowIfCancellationRequested();
                             uint available;
                             if (!PeekNamedPipe(pipe, IntPtr.Zero, 0, IntPtr.Zero, out available, IntPtr.Zero))
                             {
@@ -415,7 +456,7 @@ namespace Antiphon.Nightly
                         output.Flush(true);
                     }
                     reader.ContentReady.SetResult(true);
-                    _hooks.Pause(phase, _drainCancellation.Token);
+                    _hooks.Pause(phase, cancellation);
                 }
                 catch (Exception ex) { reader.ContentReady.TrySetException(ex); throw; }
             });
