@@ -8,6 +8,7 @@ using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -33,6 +34,7 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
 
     /// <summary>The one repo with the merge gate off (<c>Review:Policy:GatesOff:merge-gate</c>); acme/widgets keeps it on.</summary>
     private const string AutoMergeRepo = "acme/automerge";
+    private const string PublicBaseUrl = "https://antiphon.test";
 
     private const string MixedGroup = "concurrency+correctness+tests";
     private const string LeaseAnchor = "finally { _lock.Release(); }";
@@ -83,6 +85,96 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
         factory.Decisions.Reset();
         factory.Reviewer.Reset();
         factory.Host.RefuseStatuses = false;
+        factory.Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl = PublicBaseUrl;
+    }
+
+    [Test]
+    public async Task Reviews_and_inline_comments_link_once_to_the_same_run_across_publications()
+    {
+        factory.Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl = $"{PublicBaseUrl}/review-ui/";
+        const int number = 105;
+        var pr = factory.Host.Open(number, "Release the lease after the save", "dana", BaseSha, HeadSha, Files, Diff);
+        factory.Decisions.Categorise(externalContract: 0.2);
+        Applies(seed0001: 0.9, seed0002: 0.6, seed0004: 0.8, seed0006: 0.7);
+        var leaseFinding = new ScriptedFinding("SEED-0004", "major", 0.9, "src/Lease.cs", LeaseAnchor,
+            "Release happens early", "The flush is still pending.");
+        factory.Reviewer.Script(number, 1, MixedGroup, leaseFinding);
+        using var client = factory.CreateClient();
+        var id = await StartReviewAsync(client, number);
+        await WaitForAsync(client, id, "AwaitingFixes");
+
+        var url = $"{PublicBaseUrl}/review-ui/reviews/{id}";
+        var first = pr.Read(p => p.Reviews.ShouldHaveSingleItem());
+        AssertRunLinks(first, 1, "src/Lease.cs", url);
+        pr.Status("antiphon/review", HeadSha).ShouldNotBeNull().TargetUrl.ShouldBe(url);
+
+        factory.Reviewer.Script(number, 1, MixedGroup, leaseFinding,
+            new ScriptedFinding("SEED-0006", "major", 0.9, "tests/LeaseTests.cs", TestsAnchor,
+                "Coverage is missing", "The lease release has no test."));
+        using var request = Request(HttpMethod.Post, $"/api/review-runs/{id}/rounds", "lee", new { });
+        using var response = await client.SendAsync(request);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var run = await WaitForAsync(client, id, "AwaitingFixes");
+        run.GetProperty("id").GetGuid().ShouldBe(Guid.Parse(id));
+        run.GetProperty("iterations").GetArrayLength().ShouldBe(2);
+
+        var reviews = pr.Read(p => p.Reviews.ToList());
+        reviews.Count.ShouldBe(2);
+        AssertRunLinks(reviews[0], 1, "src/Lease.cs", url);
+        AssertRunLinks(reviews[1], 2, "tests/LeaseTests.cs", url);
+    }
+
+    [Test]
+    [Arguments((string?)null)]
+    [Arguments(" ")]
+    [Arguments("/review-ui")]
+    [Arguments("http://localhost:17203")]
+    [Arguments("https://127.0.0.1")]
+    [Arguments("ftp://antiphon.test")]
+    [Arguments("https://viewer:fixture-password@antiphon.test")]
+    [Arguments("https://antiphon.test?token=fixture-token")]
+    [Arguments("https://antiphon.test#fixture-fragment")]
+    public async Task Reviews_and_inline_comments_keep_the_original_bodies_without_a_safe_public_base(string? publicBaseUrl)
+    {
+        factory.Services.GetRequiredService<IOptions<ReviewSettings>>().Value.PublicBaseUrl = publicBaseUrl;
+        const int number = 106;
+        var pr = factory.Host.Open(number, "Release the lease after the save", "dana", BaseSha, HeadSha, Files, Diff);
+        factory.Decisions.Categorise(externalContract: 0.2);
+        Applies(seed0001: 0.9, seed0002: 0.6, seed0004: 0.8, seed0006: 0.7);
+        factory.Reviewer.Script(number, 1, MixedGroup,
+            new ScriptedFinding("SEED-0004", "major", 0.9, "src/Lease.cs", LeaseAnchor,
+                "Release happens early", "The flush is still pending."));
+        using var client = factory.CreateClient();
+        var id = await StartReviewAsync(client, number);
+        await WaitForAsync(client, id, "AwaitingFixes");
+
+        var review = pr.Read(p => p.Reviews.ShouldHaveSingleItem());
+        review.Body.ReplaceLineEndings("\n").ShouldBe(
+            "**Antiphon review**, round 1 (iteration 1)\n\nFindings:\n- **F1** major · `src/Lease.cs`: Release happens early\n");
+        review.Comments.ShouldHaveSingleItem().Body.ReplaceLineEndings("\n").ShouldBe(
+            "**F1 · major** Release happens early\n\nThe flush is still pending.\n\n_Check SEED-0004_\n");
+        pr.Status("antiphon/review", HeadSha).ShouldNotBeNull().TargetUrl.ShouldBeNull();
+    }
+
+    private static void AssertRunLinks(CodeHostReview review, int iteration, string filePath, string url)
+    {
+        var link = $"[View this review in Antiphon](<{url}>)";
+        var summary = review.Body.ReplaceLineEndings("\n");
+        summary.ShouldStartWith($"**Antiphon review**, round 1 (iteration {iteration})\n\n{link}\n\n");
+        var comment = review.Comments.ShouldHaveSingleItem();
+        comment.Path.ShouldBe(filePath);
+        comment.Body.ReplaceLineEndings("\n").ShouldEndWith($"\n\n{link}\n");
+        foreach (var body in new[] { summary, comment.Body })
+        {
+            body.IndexOf(url, StringComparison.Ordinal).ShouldBe(body.LastIndexOf(url, StringComparison.Ordinal));
+        }
+    }
+
+    private static async Task<string> StartReviewAsync(HttpClient client, int number)
+    {
+        using var created = await client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = "acme/widgets", prNumber = number });
+        created.StatusCode.ShouldBe(HttpStatusCode.Created, await created.Content.ReadAsStringAsync());
+        return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
     }
 
     [Test]
@@ -463,7 +555,7 @@ public class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory factory)
             {
                 s.AllowViewerHeader = true;
                 s.DefaultViewerLogin = "ops";
-                s.PublicBaseUrl = "https://antiphon.test";
+                s.PublicBaseUrl = PublicBaseUrl;
             });
             services.PostConfigure<ReviewCompletionSettings>(s =>
             {
