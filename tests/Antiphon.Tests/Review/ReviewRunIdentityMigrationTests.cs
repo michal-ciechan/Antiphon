@@ -26,15 +26,15 @@ public sealed class ReviewRunIdentityMigrationTests
             var run = Guid.NewGuid();
             var startedAt = start.AddMinutes(i);
             var stage = i < 4 ? "Review" : i < 6 ? "Publish" : i < 8 ? "AwaitingFixes" : "HumanGate";
-            await db.Database.ExecuteSqlInterpolatedAsync($"""
+            await db.Database.ExecuteSqlInterpolatedAsync($$"""
                 INSERT INTO "ReviewSubjects"
                     ("Id", "Host", "Repo", "PrNumber", "Title", "AuthorLogin", "OpenedByLogin", "BaseRef", "HeadRef",
                      "BaseSha", "HeadSha", "OwnerTeams", "OwnerUsers", "CreatedAt")
-                VALUES ({subject}, 'GitHub', {repo}, 56, 'Fix the lease', 'author', 'author', 'main', 'fix', '', '', '{{}}', '{{}}', {startedAt});
+                VALUES ({{subject}}, 'GitHub', {{repo}}, 56, 'Fix the lease', 'author', 'author', 'main', 'fix', '', '', '{}', '{}', {{startedAt}});
                 INSERT INTO "ReviewRuns"
                     ("Id", "SubjectId", "Status", "Stage", "Round", "BotOnlyRounds", "CostUsd", "Categories",
                      "WorkflowName", "StartedAt", "UpdatedAt")
-                VALUES ({run}, {subject}, {statuses[i]}, {stage}, 1, 0, 0, '{{}}', 'pr-review', {startedAt}, {startedAt});
+                VALUES ({{run}}, {{subject}}, {{statuses[i]}}, {{stage}}, 1, 0, 0, '{}', 'pr-review', {{startedAt}}, {{startedAt}});
                 """, ct);
             keeper = run;
         }

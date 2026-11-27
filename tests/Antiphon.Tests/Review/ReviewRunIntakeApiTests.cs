@@ -119,8 +119,8 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         factory.Race.Arm(number);
         using var client = OpenPullRequest(number);
 
-        using var first = client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = Repo, prNumber = number }, ct);
-        using var second = client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = Repo, prNumber = number }, ct);
+        var first = client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = Repo, prNumber = number }, ct);
+        var second = client.PostAsJsonAsync("/api/review-runs", new { host = "GitHub", repo = Repo, prNumber = number }, ct);
         var responses = await Task.WhenAll(first, second);
         using var left = responses[0];
         using var right = responses[1];
