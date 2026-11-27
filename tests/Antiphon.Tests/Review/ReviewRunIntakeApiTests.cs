@@ -167,6 +167,8 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         Id(byRepo).ShouldBe(Id(created));
         var byUrl = await IntakeAsync(client, $"https://GitHub.com/ACME/widgets/pull/{number}?tab=files", null, HttpStatusCode.OK, ct);
         Id(byUrl).ShouldBe(Id(created));
+        var byPath = await IntakeAsync(client, $"ACME/widgets/{number}", null, HttpStatusCode.OK, ct);
+        Id(byPath).ShouldBe(Id(created));
 
         using var mismatch = await client.PostAsJsonAsync("/api/review-runs",
             new { host = "GitHub", repo = $"https://github.com/acme/widgets/pull/{number}", prNumber = number + 1 }, ct);

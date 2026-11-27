@@ -291,15 +291,18 @@ public sealed class ReviewService(
     private static ConflictException RunChanged(Guid id) =>
         new($"Review run {id} changed. Reload it and retry.", "review_run_changed");
 
-    private async Task SaveRunAsync(Guid id, CancellationToken ct)
+    private async Task SaveRunAsync(ReviewRun run, CancellationToken ct)
     {
+        // Keep the run's status check in the write when only a child changed
+        // and the wall clock still reads the same timestamp.
+        db.Entry(run).Property(r => r.UpdatedAt).IsModified = true;
         try
         {
             await db.SaveChangesAsync(ct);
         }
         catch (DbUpdateConcurrencyException ex) when (ex.Entries.Any(entry => entry.Entity is ReviewRun))
         {
-            throw RunChanged(id);
+            throw RunChanged(run.Id);
         }
     }
 
@@ -344,7 +347,7 @@ public sealed class ReviewService(
                 Complete(parked, merged ? "merge" : "close", merged ? "merged on the code host" : "closed on the code host", now);
             await SupersedeGatesAsync(run, merged ? "the PR was merged" : "the PR was closed", now, ct);
             ReviewWorkflowExecutor.Finish(run, merged ? ReviewRunStatus.Merged : ReviewRunStatus.Closed, now);
-            await SaveRunAsync(id, ct);
+            await SaveRunAsync(run, ct);
             await PublishAsync(id, ct);
             return;
         }
@@ -383,7 +386,7 @@ public sealed class ReviewService(
                 Complete(wait, evt, detail!, now);
                 run.Status = ReviewRunStatus.Queued;
                 run.WaitingOn = ReviewWaitingOn.Bot;
-                await SaveRunAsync(id, ct);
+                await SaveRunAsync(run, ct);
                 await PublishAsync(id, ct);
                 executor.Wake();
                 return;
@@ -391,7 +394,7 @@ public sealed class ReviewService(
 
             if (!moved)
             {
-                await SaveRunAsync(id, ct);
+                await SaveRunAsync(run, ct);
                 await PublishAsync(id, ct);
                 return;
             }
@@ -420,7 +423,7 @@ public sealed class ReviewService(
             run.WaitingOn = ReviewWaitingOn.Bot;
         }
 
-        await SaveRunAsync(id, ct);
+        await SaveRunAsync(run, ct);
         await PublishAsync(id, ct);
         if (trigger is not null)
             executor.Wake();
@@ -513,7 +516,7 @@ public sealed class ReviewService(
             run.Status = ReviewRunStatus.Queued;
             run.WaitingOn = ReviewWaitingOn.Bot;
             run.UpdatedAt = now;
-            await SaveRunAsync(runId, ct);
+            await SaveRunAsync(run, ct);
             await PublishAsync(run.Id, ct);
             executor.Wake();
             return await GetRunAsync(run.Id, ct);
@@ -559,7 +562,7 @@ public sealed class ReviewService(
         run.Stage = ReviewStage.Intake;
         run.WaitingOn = ReviewWaitingOn.Bot;
         run.UpdatedAt = now;
-        await SaveRunAsync(runId, ct);
+        await SaveRunAsync(run, ct);
         if (approved)
             await WithdrawApprovalAsync(run, who, ct);
         await PublishAsync(run.Id, ct);
@@ -679,7 +682,7 @@ public sealed class ReviewService(
         Apply(finding, request);
         run.BotOnlyRounds = 0;
         run.UpdatedAt = Now();
-        await SaveRunAsync(run.Id, ct);
+        await SaveRunAsync(run, ct);
         await PublishAsync(run.Id, ct);
         executor.Wake();
         return ToDto(finding);
@@ -708,7 +711,7 @@ public sealed class ReviewService(
         // A submitted review is human involvement: the bot-only counter starts again (design 5).
         run.BotOnlyRounds = 0;
         run.UpdatedAt = Now();
-        await SaveRunAsync(runId, ct);
+        await SaveRunAsync(run, ct);
         await PublishAsync(runId, ct);
         executor.Wake();
         return new ReviewItemsDto<ReviewFindingDto>(ids.Select(id => ToDto(findings[id])).ToList());
@@ -962,7 +965,7 @@ public sealed class ReviewService(
         }
 
         run.UpdatedAt = now;
-        await SaveRunAsync(run.Id, ct);
+        await SaveRunAsync(run, ct);
         await PublishAsync(run.Id, ct);
         if (request.Decision == ReviewGateDecision.AnotherRound || (walked && request.Decision == ReviewGateDecision.Approve))
             executor.Wake();
@@ -984,7 +987,7 @@ public sealed class ReviewService(
         if (run.Status == ReviewRunStatus.Closed)
             throw RunChanged(runId);
         run.UpdatedAt = Now();
-        await SaveRunAsync(runId, ct);
+        await SaveRunAsync(run, ct);
         await PublishAsync(runId, ct);
     }
 

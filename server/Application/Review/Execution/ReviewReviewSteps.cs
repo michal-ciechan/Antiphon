@@ -88,8 +88,7 @@ public static class ReviewReviewSteps
 
             child.Status = ReviewNodeStatus.Running;
             child.StartedAt ??= walk.Now();
-            walk.Run.UpdatedAt = walk.Now();
-            await walk.Db.SaveChangesAsync(ct);
+            await SaveReviewerProgressAsync(walk, ct);
             var previous = ReviewWalk.Output<ReviewerOutput>(child);
             var attempt = previous?.Attempts ?? 1;
             var unchanged = false;
@@ -145,8 +144,7 @@ public static class ReviewReviewSteps
                 Complete(walk, child, ReviewNodeStatus.Failed, ex.Message, null);
             }
 
-            walk.Run.UpdatedAt = walk.Now();
-            await walk.Db.SaveChangesAsync(ct);
+            await SaveReviewerProgressAsync(walk, ct);
             if (unchanged)
                 continue;
             var done = groups.Count(g => walk.Latest(childNodeId, g.Key)?.Status == ReviewNodeStatus.Succeeded);
@@ -160,6 +158,14 @@ public static class ReviewReviewSteps
             return NodeResult.Poll($"{children.Count(c => c.Child.Status == ReviewNodeStatus.Succeeded)}/{children.Count} reviewers done");
         return NodeResult.Ok(null, $"{children.Count} reviewers done: "
             + string.Join(", ", children.Select(c => $"{c.Group.Key} {ReviewWalk.Output<ReviewerOutput>(c.Child)?.Findings.Count ?? 0}")));
+    }
+
+    private static Task SaveReviewerProgressAsync(ReviewWalk walk, CancellationToken ct)
+    {
+        // Include the run's status check when admitting the reviewer and saving its result.
+        walk.Run.UpdatedAt = walk.Now();
+        walk.Db.Entry(walk.Run).Property(run => run.UpdatedAt).IsModified = true;
+        return walk.Db.SaveChangesAsync(ct);
     }
 
     /// <summary>
