@@ -780,6 +780,7 @@ public sealed class TestTimingSession : IDisposable
         "seed", "prepare", "run", "pool", "cleanup",
         "runtime-model", "harness-model", "probe-generated-model", "scratch-git",
         "checkpoint-tool", "checkpoint-scope",
+        "deploy-server2",
         "shape-git", "shape-judge", "shape-links", "shape-pwsh", "shape-receipt",
         "shape-repository", "shape-tool-checkpoint", "shape-user-inputs",
         "pty-host-stranger-adoption-sweep",
