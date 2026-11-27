@@ -130,6 +130,13 @@
       "os": null,
       "measuredRunId": null
     },
+    "Antiphon.E2E.Invariants.AntiphonAppFixtureHostPathInvariantTests": {
+      "seconds": 10,
+      "basis": "conservative-bound",
+      "hostId": null,
+      "os": null,
+      "measuredRunId": null
+    },
     "Antiphon.E2E.LandDeliveryFixtureProbeTests": {
       "seconds": 150,
       "basis": "conservative-bound",
