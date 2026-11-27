@@ -421,6 +421,10 @@ public sealed class WorktreeResidueRecoveryTests
         prepared.Start.Environment.Remove(WorktreeRetirementCrashWorker.CompiledModelVariable);
         if (useCompiledModel)
             prepared.Start.Environment[WorktreeRetirementCrashWorker.CompiledModelVariable] = "1";
+        // A hook already supplied by the caller keeps its normal ordering. In that case the
+        // worker still enters through the TUnit before-discovery hook.
+        if (!prepared.Start.Environment.TryGetValue(StartupHook.Variable, out var hooks) || string.IsNullOrEmpty(hooks))
+            prepared.Start.Environment[StartupHook.Variable] = typeof(StartupHook).Assembly.Location;
         var present = TestWorkerModes.All
             .Select(mode => mode.Marker)
             .Where(key => prepared.Start.Environment.ContainsKey(key))
