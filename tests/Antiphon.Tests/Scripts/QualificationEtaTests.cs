@@ -19,6 +19,66 @@ public sealed class QualificationEtaTests
 {
     private static readonly DateTime NowUtc = new(2026, 11, 10, 12, 0, 0, DateTimeKind.Utc);
 
+    [Test]
+    public void Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles()
+    {
+        var files = new MockFileSystem();
+        var releases = NewRoot(files);
+        var logs = files.Path.Combine(releases, "candidates", "rc-2026-11-10-0123456789ab", "logs");
+        const string runId = "01234567-89ab-4cde-8f01-23456789abcd";
+        var root = files.Path.Combine(logs, "timing-" + runId);
+        var live = files.Path.Combine(logs, "2026-11-10-1100-01234567");
+        var previous = files.Path.Combine(logs, "2026-11-09-1100-76543210");
+        var finished = Enumerable.Range(0, 20).Select(index => "a" + index).ToArray();
+        files.Directory.CreateDirectory(root);
+        WritePlan(files, root, "suite", """{"chunk":"b","plannedSeconds":10000},{"chunk":"unknown","plannedSeconds":10000}""");
+        for (var index = 0; index < finished.Length; index++)
+        {
+            WriteFixtureTrx(files, previous, finished[index], 10);
+            WriteFixtureTrx(files, live, finished[index], index < 10 ? 10 : 30);
+        }
+        WriteFixtureTrx(files, previous, "b", 100);
+        WriteFixtureTrx(files, previous, "removed", 900);
+        WriteFixtureSchedule(files, previous, "previous", [.. finished, "b", "removed"]);
+        WriteFixtureSchedule(files, live, runId, [.. finished, "b", "unknown"]);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var options = QualificationEtaOptions.Parse(["--timing-root", root]);
+        QualificationEta.Run(options, Host(output, error, new FakeTimeProvider(NowUtc)), files).ShouldBe(0, error.ToString());
+        error.ToString().ShouldBeEmpty();
+        var lines = output.ToString().Trim().Split(Environment.NewLine);
+        // Raw scale 400/200 = 2. With 20 matches and 20 prior matches at scale 1, the scale is 1.5.
+        // The standard error of the 20 equal-weight ratios (ten 1s and ten 3s) is 1/sqrt(19).
+        // The known 100 seconds therefore project 150 seconds and 150 + 164.5/sqrt(19) = 187.739 seconds.
+        lines[0].ShouldBe("ETA outstanding=2 running=0 completed=20 unpriced=1 pointSeconds=150 "
+            + "p50=2026-11-10T12:02:30.000Z p95=2026-11-10T12:03:07.739Z confidence=matched lowerBound=true");
+        lines[1].ShouldBe("UNVERIFIED rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): suite-unknown.");
+    }
+
+    internal static void WriteFixtureSchedule(MockFileSystem files, string directory, string runId, string[] chunks)
+    {
+        files.Directory.CreateDirectory(directory);
+        files.File.WriteAllText(files.Path.Combine(directory, "dispatch-schedule.json"), System.Text.Json.JsonSerializer.Serialize(new
+        {
+            runId,
+            preparationComplete = true,
+            entries = chunks.Select(chunk => new { suite = "suite", chunk }),
+        }));
+    }
+
+    internal static void WriteFixtureTrx(MockFileSystem files, string directory, string chunk, int duration)
+    {
+        files.Directory.CreateDirectory(directory);
+        var start = NowUtc.AddHours(-1);
+        files.File.WriteAllText(files.Path.Combine(directory, "suite-" + chunk + ".trx"), $"""
+            <TestRun xmlns="{WatchQual.TrxNamespace}">
+              <Times start="{start:O}" finish="{start.AddSeconds(duration):O}" />
+              <ResultSummary outcome="Completed" />
+            </TestRun>
+            """);
+    }
+
     private static readonly Regex EtaPattern = new(
         @"^ETA outstanding=(\d+) running=(\d+) completed=(\d+) unpriced=(\d+) pointSeconds=([0-9]+(?:\.[0-9]+)?) p50=(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z) p95=(unavailable|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$");
 
