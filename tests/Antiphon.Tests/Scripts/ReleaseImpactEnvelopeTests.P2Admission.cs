@@ -63,9 +63,11 @@ public sealed partial class ReleaseImpactEnvelopeTests
         result.Owed.Zip(expected).All(pair => pair.First.Cases.SequenceEqual(pair.Second.Cases)) &&
         result.Reason.StartsWith(why, StringComparison.Ordinal);
 
-    private static void CheckAdmission(CancellationToken cancellationToken, bool receipts)
+    private enum AdmissionCases { Proposal, Receipt, Origin }
+
+    private static void CheckAdmission(CancellationToken cancellationToken, AdmissionCases cases, string method)
     {
-        using var timing = new P2MatrixTiming(receipts ? nameof(ReceiptBindingsRefuse) : nameof(TamperedBindingsRefuse), cancellationToken);
+        using var timing = new P2MatrixTiming(method, cancellationToken);
         using var toolRepo = new RcInputFixtureRepository("p2-tool-");
         var tool = CreateP2Installation(toolRepo);
         using var world = P2World.Create(tool);
@@ -117,9 +119,13 @@ public sealed partial class ReleaseImpactEnvelopeTests
             CheckFull(id, Admit(Reseal(wire, changed)), why);
         }
 
-        if (receipts) CheckReceiptAndOriginBindings();
-        else CheckProposalBindings();
-        CheckAdmissionRoster("admission", rows, roster, timing, id => IsReceiptScenario(id) == receipts);
+        switch (cases)
+        {
+            case AdmissionCases.Receipt: CheckReceiptBindings(); break;
+            case AdmissionCases.Origin: CheckOriginBindings(); break;
+            default: CheckProposalBindings(); break;
+        }
+        CheckAdmissionRoster("admission", rows, roster, timing, id => AdmissionPartition(id) == cases);
 
         void CheckProposalBindings()
         {
@@ -383,7 +389,7 @@ public sealed partial class ReleaseImpactEnvelopeTests
             Case("T.snapshot.originalUnchanged", Ids(good.CarryCandidates).SequenceEqual(["Q"]) && good.CreditedCount == 0);
         }
 
-        void CheckReceiptAndOriginBindings()
+        void CheckReceiptBindings()
         {
             timing.Phase("receipt custody and owed rows");
             var dirty = timing.Prepare(world.Request, world.Chunks, world.Authority(dirtyQuiet: true));
@@ -460,7 +466,10 @@ public sealed partial class ReleaseImpactEnvelopeTests
                 var resealed = Reseal(disputed, outward, originalDigest, "T." + id + ".resealDistinct");
                 CheckFull("T." + id + ".disputedMode", Admit(resealed, binding), "p2-");
             }
+        }
 
+        void CheckOriginBindings()
+        {
             timing.Phase("execution origins and immutable reads");
             var oneOpen = timing.Prepare(world.Request, world.Chunks, world.Authority(flipQuietRead: true));
             Case("T.snapshot.artifactOpenCount", world.QuietOpens == 1, $"opens={world.QuietOpens}");
@@ -527,11 +536,17 @@ public sealed partial class ReleaseImpactEnvelopeTests
         }
     }
 
-    private static bool IsReceiptScenario(string id) =>
-        id.StartsWith("T.receipts.", StringComparison.Ordinal) || id.StartsWith("T.owed.missingRow.", StringComparison.Ordinal) ||
-        id.StartsWith("T.targetInputs.sameCasesDirtyInputs.", StringComparison.Ordinal) ||
-        id is "T.snapshot.artifactOpenCount" or "T.snapshot.originalEligible" or "T.context.equalHeads" or
-            "T.context.nonAncestor.mode" or "T.algorithm.actualInstall.mode";
+    private static AdmissionCases AdmissionPartition(string id)
+    {
+        if (id.StartsWith("T.receipts.originChain.", StringComparison.Ordinal) ||
+            id is "T.snapshot.artifactOpenCount" or "T.snapshot.originalEligible" or "T.context.equalHeads" or
+                "T.context.nonAncestor.mode" or "T.algorithm.actualInstall.mode")
+            return AdmissionCases.Origin;
+        if (id.StartsWith("T.receipts.", StringComparison.Ordinal) || id.StartsWith("T.owed.missingRow.", StringComparison.Ordinal) ||
+            id.StartsWith("T.targetInputs.sameCasesDirtyInputs.", StringComparison.Ordinal))
+            return AdmissionCases.Receipt;
+        return AdmissionCases.Proposal;
+    }
 
     private static void CheckAdmissionRoster(string matrix, NightlyCaseRows rows, List<string> roster, P2MatrixTiming timing,
         Func<string, bool>? includes = null)
@@ -547,7 +562,13 @@ public sealed partial class ReleaseImpactEnvelopeTests
 
     [Test]
     [P2MatrixTimeout(30_000)]
-    public void ReceiptBindingsRefuse(CancellationToken cancellationToken) => CheckAdmission(cancellationToken, receipts: true);
+    public void ReceiptBindingsRefuse(CancellationToken cancellationToken) =>
+        CheckAdmission(cancellationToken, AdmissionCases.Receipt, nameof(ReceiptBindingsRefuse));
+
+    [Test]
+    [P2MatrixTimeout(30_000)]
+    public void OriginBindingsRefuse(CancellationToken cancellationToken) =>
+        CheckAdmission(cancellationToken, AdmissionCases.Origin, nameof(OriginBindingsRefuse));
 
     [Test]
     [P2MatrixTimeout(30_000, windowsMilliseconds: 30_000)]
