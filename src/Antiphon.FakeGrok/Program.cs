@@ -1065,7 +1065,8 @@ internal static class Program
 
     /// <summary>
     /// Completes a report-hold turn. The user chunk was written when the prompt arrived;
-    /// this appends only the assistant text and <c>turn_completed</c>.
+    /// this appends only the assistant text and <c>turn_completed</c>, with the same prompt
+    /// identity on both records so the normalizer can identify the closing response.
     /// </summary>
     private static void AppendAssistantCompletion(string sessionDir, string sessionId, string assistant)
     {
@@ -1088,7 +1089,7 @@ internal static class Program
                         sessionUpdate = "agent_message_chunk",
                         content = new { type = "text", text = assistant }
                     },
-                    _meta = Meta()
+                    _meta = new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs, promptId }
                 }
             }));
             AppendShared(updates, JsonSerializer.Serialize(new
