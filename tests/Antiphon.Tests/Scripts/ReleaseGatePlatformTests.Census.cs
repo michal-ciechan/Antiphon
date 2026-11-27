@@ -108,7 +108,7 @@ public sealed partial class ReleaseGatePlatformTests
     }
 
     [Test]
-    public void Merge_guard_uses_CLR_nested_and_generic_roster_identities()
+    public void LinuxOnlyWindowsExclusionPolicy_uses_CLR_nested_and_generic_roster_identities()
     {
         using var fixture = NightlyFixture.Create("eps-nested");
         var repo = CensusRoot(fixture, "nested-roster",
