@@ -24,15 +24,14 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public int GetterCount => Methods.Count(m => m == "tab.get");
     public Task FollowAsync(CancellationToken ct = default) => Child.FollowLabelsAsync(Clock, () => true, ct);
     public Task<HerdrLabelObservation?> ReadAsync() => Child.ReadLabelObservationAsync(Clock, () => true, CancellationToken.None);
-    public HerdrPaneSidecar Saved
+    public HerdrPaneSidecar Saved => TryReadSaved().ShouldNotBeNull("expected to acquire the Herdr snapshot mutex");
+
+    public HerdrPaneSidecar? TryReadSaved()
     {
-        get
-        {
-            // The timer can replace the snapshot while a test polls it. Read under the writer's path lock.
-            var path = Path;
-            using var lease = HerdrSnapshotFile.Acquire(path);
-            return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
-        }
+        // The timer can replace the snapshot while a test polls it. Read under the writer's path lock.
+        var path = Path;
+        using var lease = HerdrSnapshotFile.Acquire(path);
+        return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
     }
 
     public async Task<SessionRunnerRuntime> AdoptRuntimeAsync()

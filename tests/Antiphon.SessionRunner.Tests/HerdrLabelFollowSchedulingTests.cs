@@ -168,6 +168,38 @@ public class HerdrLabelFollowSchedulingTests
     }
 
     [Test]
+    public async Task Saved_snapshot_read_times_out_while_writer_holds_mutex()
+    {
+        await using var f = new HerdrLabelFollowFixture();
+        f.Binding.SaveAtomic(f.Path);
+        var deadline = TimeSpan.FromSeconds(1);
+        var writerHasLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = Task.Factory.StartNew(() =>
+        {
+            using var lease = HerdrSnapshotFile.Acquire(f.Path);
+            writerHasLock.SetResult();
+            releaseWriter.Task.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        Task<HerdrPaneSidecar?>? read = null;
+        try
+        {
+            await writerHasLock.Task.WaitAsync(deadline);
+            read = Task.Run(f.TryReadSaved);
+            (await read.WaitAsync(deadline)).ShouldBeNull();
+        }
+        finally
+        {
+            releaseWriter.SetResult();
+            await writer.WaitAsync(deadline);
+            if (read is not null) await read.WaitAsync(deadline);
+        }
+
+        f.Saved.TabLabel.ShouldBe("Old");
+    }
+
+    [Test]
     public async Task Idle_healthy_stream_checks_without_turns_or_gets()
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await using var runtime = await f.AdoptRuntimeAsync();
