@@ -353,6 +353,50 @@ public class ClaudeDialogInputGuardTests
         f.Child.Inputs.ShouldBe(["verified"]);
     }
 
+    [Test]
+    public async Task VerifiedAdoptionRefusesBodyWhenAnOperatorHasDrafted()
+    {
+        await using var f = new Fixture(adopted: true);
+        f.Session.AttachTailerForTest(new Tailer(f.Id) { HistoryReady = true });
+        await f.RequestAsync("fixture");
+        f.Clock.Now += TimeSpan.FromMilliseconds(500);
+        var verified = await f.Runtime.GetSnapshotAsync(f.Id, CancellationToken.None);
+        verified.Dialog!.InputHistoryKnown.ShouldBeTrue();
+
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ operator fixture"));
+        var request = await f.RequestAsync("queued fixture");
+        var result = await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposer = "" }, CancellationToken.None);
+
+        result.Outcome.ShouldNotBe(ConditionalInputOutcomes.Written);
+        f.Child.Inputs.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task GuardedEnterRefusesAnEditBetweenPasteAndSubmit()
+    {
+        const string body = "queued fixture";
+        await using var f = new Fixture();
+        var request = await f.RequestAsync(body);
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposer = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {body} edited"));
+        var enter = await f.RequestAsync("\r");
+
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, enter with { ExpectedComposer = body }, CancellationToken.None))
+            .Outcome.ShouldNotBe(ConditionalInputOutcomes.Written);
+        f.Child.Inputs.ShouldBe([body]);
+
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {body}"));
+        enter = await f.RequestAsync("\r");
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, enter with { ExpectedComposer = body }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Child.Inputs.ShouldBe([body, "\r"]);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "c680-" + Guid.NewGuid().ToString("N"));

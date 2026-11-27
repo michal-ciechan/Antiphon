@@ -26,7 +26,8 @@ public sealed record RunnerConditionalInputRequest(
     bool RequireClaudeDialogClear = false,
     long? ExpectedInputRevision = null,
     Guid? ExpectedRuntimeEpoch = null,
-    ClaudeDialogInputIntent DialogIntent = ClaudeDialogInputIntent.None);
+    ClaudeDialogInputIntent DialogIntent = ClaudeDialogInputIntent.None,
+    string? ExpectedComposer = null);
 
 // Finite internal maintenance actions; none can carry arbitrary task text into a dialog.
 public enum ClaudeDialogInputIntent { None, StartupTrust, StartupEffortKeep, StartupEffortSwitch, UnsafeDeleteNo, RemoteControlDismiss }
