@@ -1629,6 +1629,25 @@ public class DelegationQuestionDetectionTests
     }
 
     [Test]
+    public void blocked_handoff_supplies_the_recommendation_without_using_the_finding_marker_as_an_ask()
+    {
+        var task = new AgentTask { Id = Guid.NewGuid(), Status = AgentTaskStatus.Blocked };
+        const string report = """
+            The release needs a caller decision.
+
+            --- next stage ---
+            next: decide
+            handoff: Hold the release and retain the candidate.
+            [antiphon-finding:12345678 found] verification incomplete
+            """;
+
+        BlockedNote.ExtractAsks(report).ShouldBe("The release needs a caller decision.");
+        var note = BlockedNote.Format(task, report, new DelegationSettings());
+        note.ShouldContain("recommended: Hold the release and retain the candidate.");
+        note.ShouldNotContain("[antiphon-finding:");
+    }
+
+    [Test]
     public void asks_is_capped_at_240_characters()
     {
         var line = new string('q', 300) + "?";
