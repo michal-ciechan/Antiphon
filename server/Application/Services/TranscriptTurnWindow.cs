@@ -44,7 +44,7 @@ internal static class TranscriptTurnWindow
     {
         var prevTurnEndSeq = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
-                && t.Kind == TranscriptKinds.TurnEnd
+                && (t.Kind == TranscriptKinds.TurnEnd || t.Kind == TranscriptKinds.SessionRestartBoundary)
                 && t.Sequence < turnEndSeq)
             .MaxAsync(t => (long?)t.Sequence, ct) ?? 0;
 
@@ -83,18 +83,26 @@ internal static class TranscriptTurnWindow
     public static async Task<long?> FindNextTurnOpeningPromptSeqAsync(
         AppDbContext db, Guid sessionId, long promptSeq, CancellationToken ct)
     {
+        // Older idle relaunches have no synthetic restart record. Native timestamps fence
+        // that generation too, without imposing timestamp order within a single turn.
+        var generation = await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId && t.Sequence == promptSeq
+                && t.Timestamp < t.AgentSession.StartedAt)
+            .Select(t => (DateTime?)t.AgentSession.StartedAt).SingleOrDefaultAsync(ct);
         var after = await db.TranscriptEntries
             .Where(t => t.AgentSessionId == sessionId
                 && t.Sequence > promptSeq
                 && (t.Kind == TranscriptKinds.UserPrompt
                     || t.Kind == TranscriptKinds.QueuedUserPrompt
-                    || t.Kind == TranscriptKinds.TurnEnd))
-            .Select(t => new { t.Sequence, t.Kind })
+                    || t.Kind == TranscriptKinds.TurnEnd || t.Kind == TranscriptKinds.SessionRestartBoundary
+                    || (generation != null && t.Timestamp >= generation)))
+            .Select(t => new { t.Sequence, t.Kind, t.Timestamp })
             .ToListAsync(ct);
 
         var sawTurnEnd = false;
         foreach (var row in after.OrderBy(r => r.Sequence))
         {
+            if (row.Kind == TranscriptKinds.SessionRestartBoundary || (generation != null && row.Timestamp >= generation))
+                return row.Sequence;
             if (row.Kind == TranscriptKinds.TurnEnd)
             {
                 sawTurnEnd = true;

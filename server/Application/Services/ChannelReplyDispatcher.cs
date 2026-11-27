@@ -1754,8 +1754,8 @@ public sealed class ChannelReplyDispatcher
             .OrderBy(m => m.Sequence)
             .ToListAsync(ct);
         var ids = ChannelContracts.CollectInjectionShortIds(userPrompt.Text);
-        var matches = candidates.Where(m =>
-            MatchesByTaskId(m, ids) || MatchesHeaderLine(m, normalizedTurn)).ToList();
+        var matches = candidates.Where(m => !StandingResumeNote.IsNote(m)
+            && (MatchesByTaskId(m, ids) || MatchesHeaderLine(m, normalizedTurn))).ToList();
         return unifiedRecovery ? MatchMachineSources(matches, userPrompt) : matches;
     }
 

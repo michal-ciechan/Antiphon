@@ -20,6 +20,25 @@ internal static class StandingResumeNote
 
 public sealed partial class SessionMessageQueueService
 {
+    internal static async Task RetirePriorResumeNotesAsync(AppDbContext db, Guid sessionId, DateTime generation,
+        DateTime now, CancellationToken ct)
+    {
+        var pending = await db.SessionQueuedMessages.AsNoTracking()
+            .Where(m => m.AgentSessionId == sessionId && m.Status == QueuedMessageStatus.Pending
+                && m.Origin == QueuedMessageOrigin.System && m.RuntimeActionKey != null
+                && m.RuntimeActionKey.StartsWith(StandingResumeNote.KeyPrefix))
+            .Select(m => new { m.Id, m.RuntimeActionKey }).ToListAsync(ct);
+        var current = SessionGeneration.Normalize(generation).Ticks;
+        var expired = pending.Where(m => long.TryParse(m.RuntimeActionKey!.AsSpan(StandingResumeNote.KeyPrefix.Length),
+                NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) && ticks > 0 && ticks < current)
+            .Select(m => m.Id).ToArray();
+        if (expired.Length > 0)
+            await db.SessionQueuedMessages.Where(m => expired.Contains(m.Id) && m.Status == QueuedMessageStatus.Pending
+                    && m.AgentSession.StartedAt == generation)
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, QueuedMessageStatus.Canceled)
+                    .SetProperty(m => m.CanceledAt, now), ct);
+    }
+
     private sealed record ResumeReceiptFence(SessionQueuedMessage? Note, bool Ready, bool Confirmed = false);
 
     // Callers own the queue semaphore, never a state-store lease. ObserveReceiptReadinessAsync

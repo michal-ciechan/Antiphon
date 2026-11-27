@@ -2638,6 +2638,8 @@ public sealed partial class SessionMessageQueueService
             .FirstAsync(ct);
         var sessionGeneration = SessionGeneration.Normalize(attemptSession.StartedAt);
         var sessionKind = attemptSession.AgentKind;
+        if (pending.Any(m => StandingResumeNote.IsNote(m) && m.RuntimeActionKey != StandingResumeNote.Key(sessionGeneration)))
+            await RetirePriorResumeNotesAsync(db, sessionId, attemptSession.StartedAt, UtcNow(), ct);
         pending = pending.Where(m => !StandingResumeNote.IsNote(m)
             || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
         if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))

@@ -667,7 +667,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             session.LastSeenAt = UtcNow();
             await _db.SaveChangesAsync(ct);
 
-            _channelInboundWake?.Signal(agentId);
+            if (resumeMode == AgentSessionResumeMode.Resume)
+                await SessionMessageQueueService.RetirePriorResumeNotesAsync(_db, session.Id, session.StartedAt, UtcNow(), ct);
 
             // Before anything types into the session: if the reused transcript still reads
             // mid-turn, the old process died before its TurnEnd — state the truth (boundary
@@ -690,6 +691,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Best-effort: this session has no purpose that a monitoring command's failure invalidates.
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await SendRemoteControlCommandsAsync(adapter, remoteControlName, session, agentId, resumeMode, ct);
+            _channelInboundWake?.Signal(agentId);
 
             // Channel-facing agents get the bootstrap note for explicit creation and the cheaper
             // restart note for strict resume. Missing history never falls through to creation.
@@ -2896,7 +2898,9 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         using var setupCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         setupCts.CancelAfter(setupTimeoutMs);
         var rcCt = setupCts.Token;
-        var stage = "start";
+        var stage = "queue-writer";
+        var writer = _messageQueue.GetLock(sessionId);
+        var ownsWriter = false;
 
         _logger.LogInformation(
             "Remote-control setup starting for session {SessionId} (budget {TimeoutMs}ms)",
@@ -2904,6 +2908,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         try
         {
+            await writer.WaitAsync(rcCt);
+            ownsWriter = true;
             await using var recoveryScope = _scopeFactory.CreateAsyncScope();
             var recovery = recoveryScope.ServiceProvider.GetService<RemoteControlRecoveryService>();
             var generation = SessionGeneration.Normalize(session.StartedAt);
@@ -2965,19 +2971,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             if (bridge == RemoteControlBridgeState.Unarmed && recovery is not null)
             {
                 stage = "remote-control-submit";
-                var sem = _messageQueue.GetLock(sessionId);
-                await sem.WaitAsync(rcCt);
-                try
-                {
-                    var requestId = await recovery.ReserveAutomaticArmUnderLockAsync(
-                        sessionId, generation, QueuedMessageOrigin.System, rcCt);
-                    if (requestId is Guid q)
-                        await recovery.ExecuteAutomaticArmUnderLockAsync(sessionId, q, rcCt);
-                }
-                finally
-                {
-                    sem.Release();
-                }
+                var requestId = await recovery.ReserveAutomaticArmUnderLockAsync(
+                    sessionId, generation, QueuedMessageOrigin.System, rcCt);
+                if (requestId is Guid q)
+                    await recovery.ExecuteAutomaticArmUnderLockAsync(sessionId, q, rcCt);
 
                 bridge = recovery.ProbeBridge(adapter.Pid);
                 observation = await recovery.ObserveAsync(sessionId, generation, rcCt);
@@ -3019,6 +3016,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             stage = "rename-first-output";
             await adapter.WaitForFirstPromptOutputAsync(RemoteControlCommandTimeout, rcCt);
 
+            writer.Release();
+            ownsWriter = false;
             _logger.LogInformation("Remote-control setup completed for session {SessionId}", sessionId);
 
             try
@@ -3055,7 +3054,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             {
                 using var dismissCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 dismissCts.CancelAfter(RemoteControlMenuDismissBudget);
-                menuDismissed = await TryDismissRemoteControlMenuAsync(adapter, dismissCts.Token);
+                menuDismissed = ownsWriter && await TryDismissRemoteControlMenuAsync(adapter, dismissCts.Token);
             }
             catch (Exception dismissEx)
             {
@@ -3079,6 +3078,10 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                       + "(CARD-0056), so the launch continued.",
                 reason,
                 ct);
+        }
+        finally
+        {
+            if (ownsWriter) writer.Release();
         }
     }
 
