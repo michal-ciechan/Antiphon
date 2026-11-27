@@ -32,7 +32,8 @@ public sealed class ReviewEvidenceResettlementTests
     private static CancellationToken TestCancellation => TestContext.Current!.Execution.CancellationToken;
     // All variants begin with the same blocked review. Keep that receipt in a frozen
     // template and give each variant its own Git root, database and service provider.
-    private static readonly Lazy<Task<IncidentSeed>> Incident = new(CaptureIncidentAsync);
+    private static readonly SemaphoreSlim IncidentGate = new(1);
+    private static IncidentSeed? _incident;
 
     private sealed record IncidentSeed(RunnerSettlementWorld World, Guid Subject, string Token,
         string Database, string Fingerprint);
@@ -93,12 +94,13 @@ public sealed class ReviewEvidenceResettlementTests
         }
     }
 
-    private static async Task AwaitGitAsync(Task operation, string helper, TimeSpan? bound = null)
+    private static async Task AwaitGitAsync(Task operation, string helper, TimeSpan? bound = null,
+        CancellationToken? cancellation = null)
     {
         var deadline = bound ?? GitHelperBound;
         try
         {
-            await operation.WaitAsync(deadline, TestCancellation);
+            await operation.WaitAsync(deadline, cancellation ?? TestCancellation);
         }
         catch (TimeoutException ex) when (operation.Exception?.InnerException != ex)
         {
@@ -108,9 +110,10 @@ public sealed class ReviewEvidenceResettlementTests
         }
     }
 
-    private static async Task<T> AwaitGitAsync<T>(Task<T> operation, string helper, TimeSpan? bound = null)
+    private static async Task<T> AwaitGitAsync<T>(Task<T> operation, string helper, TimeSpan? bound = null,
+        CancellationToken? cancellation = null)
     {
-        await AwaitGitAsync((Task)operation, helper, bound);
+        await AwaitGitAsync((Task)operation, helper, bound, cancellation);
         return await operation;
     }
 
@@ -124,9 +127,18 @@ public sealed class ReviewEvidenceResettlementTests
     private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> IncidentAsync()
     {
         if (!PostLandWorldSnapshot.Enabled)
-            return await BuildIncidentAsync();
+            return await BuildIncidentAsync(TestCancellation);
 
-        var seed = await Incident.Value;
+        IncidentSeed seed;
+        await IncidentGate.WaitAsync(TestCancellation);
+        try
+        {
+            // Publish only a complete capture. The owner holds the process lane until capture
+            // finishes, using capture-specific deadlines even if that case is cancelled.
+            seed = _incident ??= await CaptureIncidentAsync();
+        }
+        finally { IncidentGate.Release(); }
+        TestCancellation.ThrowIfCancellationRequested();
         using var span = TestTrace.ChunkSpan("review incident copy");
         var token = Guid.NewGuid().ToString("N")[..12];
         var root = Path.Combine(Path.GetTempPath(), "c657-" + token);
@@ -164,15 +176,16 @@ public sealed class ReviewEvidenceResettlementTests
     private static async Task<IncidentSeed> CaptureIncidentAsync()
     {
         using var span = TestTrace.ChunkSpan("review incident capture");
-        var (world, subject, _) = await BuildIncidentAsync();
+        var (world, subject, _) = await BuildIncidentAsync(CancellationToken.None);
         try
         {
             var leaf = Path.GetFileName(world.Git.Root);
             if (!leaf.StartsWith("c657-", StringComparison.Ordinal) || leaf.Length != 17
                 || !leaf[5..].All(Uri.IsHexDigit) || !PostLandWorldSnapshot.IsPlainTree(world.Git.Root))
                 throw new InvalidOperationException("Review incident is not a plain fixture tree.");
+            using var fingerprintBound = new CancellationTokenSource(GitHelperBound);
             var fingerprint = await new TaskProgressGit(world.Git.Leases)
-                .EndpointFingerprintAsync(world.Git.Desktop, TestCancellation)
+                .EndpointFingerprintAsync(world.Git.Desktop, fingerprintBound.Token)
                 ?? throw new InvalidOperationException("Review incident has no remote endpoint.");
             var connection = world.Schema.ConnectionString;
             await world.Services.DisposeAsync();
@@ -186,16 +199,19 @@ public sealed class ReviewEvidenceResettlementTests
         catch { await world.DisposeAsync(); throw; }
     }
 
-    private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> BuildIncidentAsync()
+    private static async Task<(RunnerSettlementWorld World, Guid Subject, StageOutcome Old)> BuildIncidentAsync(
+        CancellationToken cancellation)
     {
         // CARD-1082 D-8: the CARD-1043 incident stays reachable with the kill switch off.
         var w = await AwaitGitAsync(RunnerSettlementWorld.CreateAsync(AgentTaskRole.Review, profiled: true,
-            controlledSyncClock: true, mirrorPublish: true, syncDebt: false), nameof(RunnerSettlementWorld.CreateAsync));
+            controlledSyncClock: true, mirrorPublish: true, syncDebt: false), nameof(RunnerSettlementWorld.CreateAsync),
+            cancellation: cancellation);
         try
         {
-            await AwaitGitAsync(w.Git.EnsureRunnerAsync(), nameof(w.Git.EnsureRunnerAsync));
-            var subject = await AwaitGitAsync(w.AddReviewSubjectAsync(w.Git.Baseline), nameof(w.AddReviewSubjectAsync));
-            await BlockAsync(w, Report(w, subject, w.Git.Baseline));
+            await AwaitGitAsync(w.Git.EnsureRunnerAsync(), nameof(w.Git.EnsureRunnerAsync), cancellation: cancellation);
+            var subject = await AwaitGitAsync(w.AddReviewSubjectAsync(w.Git.Baseline), nameof(w.AddReviewSubjectAsync),
+                cancellation: cancellation);
+            await BlockAsync(w, Report(w, subject, w.Git.Baseline), cancellation);
             return (w, subject, await AssertIncidentAsync(w));
         }
         catch { await w.DisposeAsync(); throw; }
@@ -211,19 +227,20 @@ public sealed class ReviewEvidenceResettlementTests
         return old;
     }
 
-    private static async Task BlockAsync(RunnerSettlementWorld w, string report)
+    private static async Task BlockAsync(RunnerSettlementWorld w, string report, CancellationToken? cancellation = null)
     {
-        await using var held = await AwaitGitAsync(w.Git.Leases.TryAcquireAsync(w.Git.Desktop, TestCancellation),
-            nameof(w.Git.Leases.TryAcquireAsync));
+        var token = cancellation ?? TestCancellation;
+        await using var held = await AwaitGitAsync(w.Git.Leases.TryAcquireAsync(w.Git.Desktop, token),
+            nameof(w.Git.Leases.TryAcquireAsync), cancellation: token);
         held.ShouldNotBeNull();
         var busy = w.LeaseBusy.Next();
         var settling = w.SettleAsync(report);
         try
         {
-            (await AwaitGitAsync(System.Threading.Tasks.Task.WhenAny(busy, settling), nameof(w.SettleAsync), Guard)).ShouldBe(busy);
+            (await AwaitGitAsync(System.Threading.Tasks.Task.WhenAny(busy, settling), nameof(w.SettleAsync), Guard, token)).ShouldBe(busy);
             w.SyncClock!.Advance(TimeSpan.FromSeconds(new DelegationSettings().RunnerSyncBudgetSeconds));
         }
-        finally { await AwaitGitAsync(settling, nameof(w.SettleAsync), Guard); }
+        finally { await AwaitGitAsync(settling, nameof(w.SettleAsync), Guard, token); }
         w.Task.Status.ShouldBe(AgentTaskStatus.Blocked);
         w.Evidence()!.RemoteSync!.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
     }
