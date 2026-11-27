@@ -1184,8 +1184,8 @@ public sealed class RunnerSettlementSyncTests
         {
             var world = new SyncWorld { _cardBranch = cardBranch };
             Directory.CreateDirectory(world.Root);
-            var plain = immutableSeedOrigin is null && !extraMasterCommit && !withSubmodule && initialFiles is not { Count: > 0 };
-            var cloned = plain && GitTreeTemplate.Enabled && await world.CloneBaseAsync();
+            var plain = immutableSeedOrigin is null && !extraMasterCommit && !withSubmodule;
+            var cloned = plain && GitTreeTemplate.Enabled && await world.CloneBaseAsync(initialFiles);
             if (cloned)
             {
                 // The base tree (origin, desktop, base commit, the task worktree) came from the template.
@@ -1444,13 +1444,16 @@ public sealed class RunnerSettlementSyncTests
         /// (the branch carries it), instead of ~13 git processes per world. False (and the root emptied) when the
         /// template is refused, so the caller builds it with git.
         /// </summary>
-        private async Task<bool> CloneBaseAsync()
+        private async Task<bool> CloneBaseAsync(IReadOnlyDictionary<string, string>? initialFiles)
         {
             try
             {
                 var prefix = _cardBranch ? "feat/card-1213-code-" : "feat/card-task-";
-                var template = await GitTreeTemplate.BuildOnceAsync("c657-sync-world" + (_cardBranch ? "-card" : ""), ["task"],
-                    async (root, tokens) => { await BuildBaseAsync(root, prefix + tokens["task"]); return new Dictionary<string, string>(); },
+                // One template per distinct set of initial files (committed in the base commit), keyed by their hash.
+                var files = initialFiles is { Count: > 0 } ? initialFiles : null;
+                var key = "c657-sync-world" + (_cardBranch ? "-card" : "") + (files is null ? "" : "-files-" + FilesKey(files));
+                var template = await GitTreeTemplate.BuildOnceAsync(key, ["task"],
+                    async (root, tokens) => { await BuildBaseAsync(root, prefix + tokens["task"], files); return new Dictionary<string, string>(); },
                     tokenLength: 8);
                 template.CloneTo(Root, new Dictionary<string, string> { ["task"] = TaskId.ToString("N")[..8] });
                 return true;
@@ -1468,7 +1471,11 @@ public sealed class RunnerSettlementSyncTests
             }
         }
 
-        private static async System.Threading.Tasks.Task BuildBaseAsync(string root, string branch)
+        private static string FilesKey(IReadOnlyDictionary<string, string> files) => Convert.ToHexStringLower(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\0',
+                files.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => f.Key + '\0' + f.Value)))))[..16];
+
+        private static async System.Threading.Tasks.Task BuildBaseAsync(string root, string branch, IReadOnlyDictionary<string, string>? files)
         {
             static async System.Threading.Tasks.Task Run(string directory, params string[] arguments)
             {
@@ -1486,6 +1493,12 @@ public sealed class RunnerSettlementSyncTests
             await Run(desktop, "config", "commit.gpgsign", "false");
             File.WriteAllText(Path.Combine(desktop, "README.md"), "base\n");
             await Run(desktop, "add", "README.md");
+            foreach (var file in files ?? new Dictionary<string, string>())
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(desktop, file.Key))!);
+                await File.WriteAllTextAsync(Path.Combine(desktop, file.Key), file.Value);
+                await Run(desktop, "add", "--", file.Key);
+            }
             await Run(desktop, "commit", "-m", "base");
             await Run(desktop, "remote", "add", "origin", origin);
             await Run(desktop, "push", "origin", "master");

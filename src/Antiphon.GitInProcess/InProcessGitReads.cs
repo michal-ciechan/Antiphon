@@ -45,6 +45,9 @@ internal static partial class InProcessGitReads
         // --no-optional-locks stops git refreshing (writing) the index during a read. Nothing answered
         // here writes anything, so the read is the same with or without it.
         if (arguments.Count > 0 && arguments[0] == "--no-optional-locks") arguments = arguments.Skip(1).ToArray();
+        // --literal-pathspecs before ls-tree: the one path form answered (LsTreePath) takes only names without
+        // pathspec magic or glob characters, which match the same path literally or not.
+        if (arguments is ["--literal-pathspecs", "ls-tree", ..]) arguments = arguments.Skip(1).ToArray();
         if (!Enabled || arguments.Count < 2) return null;
         // check-ref-format of a land ref we built ourselves needs no repository: every name of
         // this shape is valid under git-check-ref-format(1). Any other name is git's.
@@ -72,7 +75,7 @@ internal static partial class InProcessGitReads
 
     private static bool Handled(IReadOnlyList<string> a) => a[0] is "rev-parse" or "show-ref" or "symbolic-ref" or "merge-base"
             or "for-each-ref" or "diff-tree" or "ls-tree"
-        || a is ["cat-file", "-e", _] or ["rev-list", "--count", _]
+        || a is ["cat-file", "-e", _] or ["cat-file", "-s", _] or ["show", _] or ["rev-list", "--count", _]
         || a is ["worktree", "list", "--porcelain", "-z"] or ["worktree", "list", "--porcelain"];
 
     /// <summary>
@@ -258,6 +261,11 @@ internal static partial class InProcessGitReads
                 return InsideWorkTree(repo, repository) is null ? null : PathAnswer(repo.Info.WorkingDirectory);
             case "rev-parse" when a is [_, "--path-format=absolute", "--git-dir"]:
                 return InsideWorkTree(repo, repository) is null ? null : PathAnswer(repo.Info.Path);
+            // rev-parse <rev>^{commit} without --verify: the same commit for every name Commit answers (it refuses
+            // anything git would warn about or read otherwise); a missing one is git's error.
+            case "rev-parse" when a.Count == 2 && a[1].Length > "^{commit}".Length && a[1].EndsWith("^{commit}", StringComparison.Ordinal)
+                && !a[1].StartsWith('-'):
+                return Commit(repo, a[1][..^"^{commit}".Length], peel: true);
             case "rev-parse" when a.Count == 2 && a[1] == "HEAD":
                 return Commit(repo, "HEAD", peel: false);
             // rev-parse --verify --quiet HEAD: HEAD's commit as rev-parse HEAD prints it; an unborn HEAD, naming a
@@ -358,7 +366,11 @@ internal static partial class InProcessGitReads
 
             case "rev-list":
                 return RevListCount(repo, repository, a);
-            case "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file":
+            case "for-each-ref" or "diff-tree" or "ls-tree" or "cat-file" or "show":
+                // Path reads (ls-tree -- <path>, <rev>:./<path>) name paths relative to the working directory: only at
+                // a checkout root, where that is the repository root.
+                if (a is ["ls-tree", "-z", _, "--", _] or ["show", _] or ["cat-file", "-s", _]
+                    && InsideWorkTree(repo, repository) is null) return null;
                 return MoreAnswer(repo, a);
         }
         return null;

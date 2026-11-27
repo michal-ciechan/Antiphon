@@ -39,17 +39,24 @@ internal sealed class RefOnlyDeliverableFixture : IAsyncDisposable
     {
         var w = World.Git;
         await w.EnsureRunnerAsync();
+        // Setup, not the code under test: libgit2 writes the blobs, index, commit and push (no git processes).
+        using var repo = new LibGit2Sharp.Repository(w.Runner);
         foreach (var file in files)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(w.Runner, file.Key))!);
             await File.WriteAllBytesAsync(Path.Combine(w.Runner, file.Key), file.Value);
-            // These fixtures promise exact object bytes, independent of host autocrlf and clean filters.
-            var blob = await w.RunAsync(w.Runner, "hash-object", "--no-filters", "-w", "--", file.Key);
-            await w.RunAsync(w.Runner, "update-index", "--add", "--cacheinfo", "100644", blob, file.Key);
+            // These fixtures promise exact object bytes, independent of host autocrlf and clean filters: a blob
+            // written from a stream with no path hint runs no filter.
+            using var bytes = new MemoryStream(file.Value);
+            var blob = repo.ObjectDatabase.CreateBlob(bytes);
+            repo.Index.Add(blob, file.Key, LibGit2Sharp.Mode.NonExecutableFile);
         }
-        await w.RunAsync(w.Runner, "commit", "-m", "exact deliverable source");
-        await w.RunAsync(w.Runner, "push", "origin", "HEAD:" + w.FullRef);
-        return await w.RunAsync(w.Runner, "rev-parse", "HEAD");
+        repo.Index.Write();
+        var identity = new LibGit2Sharp.Signature("CARD-0657 test", "c657@example.invalid", DateTimeOffset.Now);
+        var commit = repo.Commit("exact deliverable source", identity, identity, new LibGit2Sharp.CommitOptions());
+        repo.Network.Push(repo.Network.Remotes["origin"], "HEAD:" + w.FullRef,
+            new LibGit2Sharp.PushOptions { OnPushStatusError = e => throw new InvalidOperationException("deliverable push refused: " + e.Message) });
+        return commit.Sha;
     }
     public async Task<DeliverableBundleService.SourceManifest> ManifestAsync()
     {

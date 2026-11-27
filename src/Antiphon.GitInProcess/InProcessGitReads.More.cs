@@ -71,10 +71,111 @@ internal static partial class InProcessGitReads
     {
         "for-each-ref" => ForEachRef(repo, a),
         "diff-tree" => DiffTree(repo, a),
-        "ls-tree" => LsTree(repo, a),
+        "ls-tree" => a is ["ls-tree", "-z", _, "--", _] ? LsTreePath(repo, a[2], a[4]) : LsTree(repo, a),
+        "cat-file" when a is ["cat-file", "-s", var spec] => BlobAt(repo, spec) is { } sized ? Ok(sized.Size + "\n") : null,
         "cat-file" => CatFileExists(repo, a),
+        "show" => BlobAt(repo, a[1]) is { } shown ? Ok(StdoutText(shown)) : null,
         _ => null,
     };
+
+    /// <summary>
+    /// The blob <c>&lt;full commit or tree id&gt;:./&lt;path&gt;</c> names, read at a checkout root (the caller's check):
+    /// the path is a plain relative one (no empty, ".", ".." or backslash component) and every tree on the way was
+    /// stored canonically. Null (git answers) for anything else: another spelling, a missing path, a tree or a link.
+    /// </summary>
+    private static Blob? BlobAt(Repository repo, string spec)
+    {
+        var colon = spec.IndexOf(':');
+        if (colon != 40 || !GitText.IsOid(spec[..colon]) || !spec[(colon + 1)..].StartsWith("./", StringComparison.Ordinal)) return null;
+        var path = spec[(colon + 3)..];
+        if (!PlainPath(path) || TreeOf(repo, spec[..colon]) is not { } tree) return null;
+        return Entry(tree, path) is { TargetType: TreeEntryTargetType.Blob, Mode: Mode.NonExecutableFile or Mode.ExecutableFile } entry
+            ? (Blob)entry.Target : null;
+    }
+
+    /// <summary>
+    /// The raw bytes <c>git show &lt;full commit or tree id&gt;:./&lt;path&gt;</c> run in <paramref name="repository"/> would
+    /// write for a regular blob (<see cref="BlobAt"/>), read at a checkout root. True with the bytes, or with null when
+    /// the blob is larger than <paramref name="maxBytes"/>; false (run git) for anything else.
+    /// </summary>
+    internal static bool TryShowBlobBytes(string repository, string spec, long maxBytes, out byte[]? bytes)
+    {
+        bytes = null;
+        if (!Enabled) return false;
+        try
+        {
+            using var repo = new Repository(repository);
+            if (Unusual(repo) || InsideWorkTree(repo, repository) is null || BlobAt(repo, spec) is not { } blob) return false;
+            if (blob.Size > maxBytes) return true;
+            using var stream = blob.GetContentStream();
+            using var copy = new MemoryStream((int)blob.Size);
+            stream.CopyTo(copy);
+            bytes = copy.ToArray();
+            return true;
+        }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or OperationCanceledException))
+        {
+            bytes = null;
+            return false;
+        }
+    }
+
+    /// <summary>The entry at <paramref name="path"/>, every tree read on the way canonical; null when absent or not.</summary>
+    private static TreeEntry? Entry(Tree tree, string path)
+    {
+        var parts = path.Split('/');
+        for (var i = 0; ; i++)
+        {
+            if (!Canonical(tree)) return null;
+            var entry = tree[parts[i]];
+            if (entry is null || i == parts.Length - 1) return entry;
+            if (entry.TargetType != TreeEntryTargetType.Tree) return null;
+            tree = (Tree)entry.Target;
+        }
+    }
+
+    private static bool PlainPath(string path) =>
+        path.Length > 0 && !path.Contains('\\') && !path.Any(c => c < 0x20 || c == 0x7f || c is '*' or '?' or '[')
+        && !path.StartsWith(':') && path.Split('/').All(p => p.Length > 0 && p is not ("." or ".."));
+
+    /// <summary>A blob's bytes as the process path reads git's stdout: UTF-8, with a byte-order mark honoured as
+    /// <c>Process</c>'s reader honours it.</summary>
+    private static string StdoutText(Blob blob)
+    {
+        using var reader = new StreamReader(blob.GetContentStream(), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// <c>ls-tree -z &lt;full id&gt; -- &lt;path&gt;</c> at a checkout root for a plain path (no glob or pathspec magic, so
+    /// --literal-pathspecs reads it the same): the one entry at that path as git prints it, or nothing (exit 0) when no
+    /// entry is there. Every tree on the way must be stored canonically (<see cref="Canonical"/>).
+    /// </summary>
+    private static LandingGitResult? LsTreePath(Repository repo, string rev, string path)
+    {
+        if (!GitText.IsOid(rev) || rev.Length != 40 || !PlainPath(path) || TreeOf(repo, rev) is not { } tree) return null;
+        var parts = path.Split('/');
+        var current = tree;
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (!Canonical(current)) return null;
+            var entry = current[parts[i]];
+            if (entry is null) return Ok("");
+            if (i == parts.Length - 1)
+            {
+                var type = entry.TargetType switch
+                {
+                    TreeEntryTargetType.Tree => "tree",
+                    TreeEntryTargetType.GitLink => "commit",
+                    _ => "blob",
+                };
+                return Ok(ModeText(entry) + " " + type + " " + entry.Target.Sha + "\t" + path + "\0");
+            }
+            if (entry.TargetType != TreeEntryTargetType.Tree) return Ok("");
+            current = (Tree)entry.Target;
+        }
+        return null;
+    }
 
     /// <summary>
     /// <c>cat-file -e &lt;full id&gt;</c> and <c>cat-file -e &lt;full id&gt;^{commit}</c>: exit 0, no output, for an

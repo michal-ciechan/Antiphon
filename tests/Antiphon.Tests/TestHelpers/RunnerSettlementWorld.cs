@@ -255,11 +255,25 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         BuildServices();
     }
 
+    /// <summary>
+    /// What <c>git worktree remove</c> does to the world's freshly created, clean worktree, without a git process: the
+    /// worktree directory and its admin directory (named by the <c>.git</c> file's gitdir line) are deleted.
+    /// </summary>
+    private static void RemoveCleanWorktree(string worktree)
+    {
+        var link = File.ReadAllText(Path.Combine(worktree, ".git")).Trim();
+        link.StartsWith("gitdir: ", StringComparison.Ordinal).ShouldBeTrue("linked worktree .git file: " + link);
+        var admin = Path.GetFullPath(link["gitdir: ".Length..], worktree);
+        File.Exists(Path.Combine(admin, "gitdir")).ShouldBeTrue("worktree admin directory: " + admin);
+        SyncWorld.DeleteTree(worktree);
+        SyncWorld.DeleteTree(admin);
+    }
+
     /// <summary>Seed an already recorded mode; this never exercises new-task admission.</summary>
     public async Task RecordRefOnlyAsync()
     {
         await Git.EnsureRunnerAsync();
-        await Git.RunAsync(Git.Desktop, "worktree", "remove", Git.Worktree);
+        RemoveCleanWorktree(Git.Worktree);
         await using var db = CreateContext();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == TaskId);
         var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)!;

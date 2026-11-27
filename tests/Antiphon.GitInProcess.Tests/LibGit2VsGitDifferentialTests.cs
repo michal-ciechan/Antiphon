@@ -25,7 +25,9 @@ public sealed class LibGit2VsGitDifferentialTests
 
     private static async Task<(LandingGitResult Result, string Error)> GitWithErrorAsync(string cwd, params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // UTF-8, as the server's and runners' git children are read.
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8 };
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         foreach (var a in args) start.ArgumentList.Add(a);
         using var p = Process.Start(start)!;
@@ -328,6 +330,57 @@ public sealed class LibGit2VsGitDifferentialTests
         await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/Observe");
         await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/x.lock");
         await CompareAsync(repo, Expect.Fallback, "check-ref-format", "refs/antiphon/progress/" + task + "/a/b");
+
+        // Path reads at a checkout root: ls-tree of one path, a blob's bytes and size, and an unverified peel.
+        var source = fixture.Source;
+        Directory.CreateDirectory(Path.Combine(source, "docs", "deep"));
+        await File.WriteAllBytesAsync(Path.Combine(source, "docs", "evidence.md"), [0xEF, 0xBB, 0xBF, .. "café résumé\nline two\n"u8.ToArray()]);
+        await File.WriteAllTextAsync(Path.Combine(source, "docs", "deep", "notes.txt"), "notes\n");
+        await fixture.RequiredAsync(source, "-c", "core.autocrlf=false", "add", "docs");
+        await fixture.RequiredAsync(source, "commit", "-q", "-m", "docs");
+        var docs = (await GitAsync(source, "rev-parse", "HEAD")).Output.Trim();
+        var docsTree = (await GitAsync(source, "rev-parse", docs + "^{tree}")).Output.Trim();
+        await CompareAsync(source, Expect.Answered, "rev-parse", docs + "^{commit}");
+        await CompareAsync(source, Expect.Answered, "rev-parse", "HEAD^{commit}");
+        foreach (var path in new[] { "docs/evidence.md", "docs", "docs/deep/notes.txt", "docs/missing.md", "docs/evidence.md/x", "nope/x" })
+        {
+            await CompareAsync(source, Expect.Answered, "ls-tree", "-z", docs, "--", path);
+            await CompareAsync(source, Expect.Answered, "--literal-pathspecs", "ls-tree", "-z", docs, "--", path);
+        }
+        await CompareAsync(source, Expect.Answered, "ls-tree", "-z", docsTree, "--", "docs/evidence.md");
+        await CompareAsync(source, Expect.Fallback, "ls-tree", "-z", docs, "--", "docs/*.md");
+        await CompareAsync(source, Expect.Fallback, "ls-tree", "-z", docs, "--", "docs/");
+        await CompareAsync(source, Expect.Fallback, "ls-tree", "-z", docs, "--", ":(glob)docs");
+        foreach (var path in new[] { "docs/evidence.md", "docs/deep/notes.txt" })
+        {
+            await CompareAsync(source, Expect.Answered, "show", docs + ":./" + path);
+            await CompareAsync(source, Expect.Answered, "cat-file", "-s", docs + ":./" + path);
+        }
+        await CompareAsync(source, Expect.Fallback, "show", docs + ":./docs");
+        await CompareAsync(source, Expect.Fallback, "show", docs + ":./docs/missing.md");
+        await CompareAsync(source, Expect.Fallback, "show", docs + ":docs/evidence.md");
+        await CompareAsync(source, Expect.Fallback, "show", "HEAD:./docs/evidence.md");
+        await CompareAsync(source, Expect.Fallback, "cat-file", "-s", docs + ":./docs/../docs/evidence.md");
+        // The byte read (GitWorkspaceService.GetContentBytesAtAsync): git show's raw stdout bytes, the bound kept.
+        foreach (var path in new[] { "docs/evidence.md", "docs/deep/notes.txt" })
+        {
+            var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, RedirectStandardOutput = true };
+            start.ArgumentList.Add("show");
+            start.ArgumentList.Add(docs + ":./" + path);
+            using var git = Process.Start(start)!;
+            using var raw = new MemoryStream();
+            await git.StandardOutput.BaseStream.CopyToAsync(raw);
+            await git.WaitForExitAsync();
+            InProcessGitReads.TryShowBlobBytes(source, docs + ":./" + path, 1 << 20, out var bytes).ShouldBeTrue(path);
+            bytes.ShouldBe(raw.ToArray(), path);
+            InProcessGitReads.TryShowBlobBytes(source, docs + ":./" + path, raw.Length - 1, out var bounded).ShouldBeTrue(path);
+            bounded.ShouldBeNull("over the bound: " + path);
+        }
+        InProcessGitReads.TryShowBlobBytes(source, docs + ":./docs/missing.md", 1 << 20, out _).ShouldBeFalse();
+        InProcessGitReads.TryShowBlobBytes(Path.Combine(source, "docs"), docs + ":./evidence.md", 1 << 20, out _).ShouldBeFalse();
+
+        // Not at the checkout root: the ./ path is relative to the working directory, git's to read.
+        await CompareAsync(Path.Combine(source, "docs"), Expect.Fallback, "show", docs + ":./evidence.md");
     }
 
     [Test]
@@ -598,7 +651,9 @@ public sealed class LibGit2VsGitDifferentialTests
     private static async Task<(LandingGitResult Result, string Error)> GitInAsync(string cwd, IReadOnlyDictionary<string, string?> env,
         params string[] args)
     {
-        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        // UTF-8, as the server's and runners' git children are read.
+        var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8 };
         start.Environment.Clear();
         foreach (var (name, value) in env) if (value is not null) start.Environment[name] = value;
         foreach (var a in args) start.ArgumentList.Add(a);
