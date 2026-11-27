@@ -77,8 +77,24 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 
     public static Task WaitAsync(Func<bool> condition) => WaitAsync(_ => condition());
 
-    public Task WaitForSubscriptionAsync(TimeProvider? timeProvider = null) =>
-        WaitAsync(_ => Fake.SubscriptionRecords.Count == 1, timeProvider);
+    public async Task WaitForSubscriptionAsync(TimeProvider? timeProvider = null)
+    {
+        var recorded = Fake.FirstSubscriptionRecorded;
+        var missedDeadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Check the signal at the deadline even if the test continuation has yet to run.
+        await using var timer = (timeProvider ?? TimeProvider.System).CreateTimer(_ =>
+        {
+            if (!recorded.IsCompletedSuccessfully)
+                missedDeadline.TrySetResult();
+        }, null, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+
+        await Task.WhenAny(recorded, missedDeadline.Task);
+        if (missedDeadline.Task.IsCompleted)
+            throw new TimeoutException("The fake Herdr server did not record a subscription within two seconds.");
+
+        await recorded;
+        Fake.SubscriptionRecords.Count.ShouldBe(1);
+    }
 
     public static async Task WaitAsync(Func<TimeSpan, bool> condition, TimeProvider? timeProvider = null)
     {
