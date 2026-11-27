@@ -35,7 +35,7 @@ namespace Antiphon.Nightly
                     && (file.Attributes & FileAttributes.ReparsePoint) == 0);
 
         internal static Observation Read(IFileSystem files, string logDir, JsonObject schedule, JsonObject active, DateTimeOffset now,
-            DateTimeOffset? started, bool completed, bool comparable, string previousRunLogDir, List<string> errors, bool reportFailures)
+            DateTimeOffset? started, bool completed, JsonObject state, string previousRunLogDir, List<string> errors, bool reportFailures)
         {
             IFileInfo[] current;
             try
@@ -64,7 +64,7 @@ namespace Antiphon.Nightly
                 return observation;
             }
             if (completed) return observation;
-            if (!comparable)
+            if (!OperatorRcStatus.IsEtaEligible(files, logDir, schedule, state, errors))
             {
                 errors.Add("rc historical ETA requires a sequential Windows Full run.");
                 return observation;

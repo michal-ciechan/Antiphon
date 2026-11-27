@@ -12,6 +12,7 @@ namespace Antiphon.Tests.Scripts;
 public sealed class QualificationEtaTests
 {
     private static readonly DateTime NowUtc = new(2026, 11, 10, 12, 0, 0, DateTimeKind.Utc);
+    internal const string SequentialNote = " Sequential test time only. Build and startup overhead are outside the projection.";
 
     [Test]
     public void Scheduled_trx_history_gives_the_hand_calculated_point_and_percentiles()
@@ -46,7 +47,7 @@ public sealed class QualificationEtaTests
         // The standard error of the 20 equal-weight ratios (ten 1s and ten 3s) is 1/sqrt(19).
         // The known 100 seconds therefore project 150 seconds and 150 + 164.5/sqrt(19) = 187.739 seconds.
         lines[0].ShouldBe("ETA outstanding=2 running=0 completed=20 unpriced=1 pointSeconds=150 "
-            + "p50=2026-11-10T12:02:30.000Z p95=2026-11-10T12:03:07.739Z confidence=matched lowerBound=true");
+            + "p50=2026-11-10T12:02:30.000Z p95=2026-11-10T12:03:07.739Z confidence=matched lowerBound=true" + SequentialNote);
         lines.Length.ShouldBe(2, "the lower bound must carry its missing-chunk warning");
         lines[1].ShouldBe("UNVERIFIED rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): suite-unknown.");
     }
@@ -123,14 +124,14 @@ public sealed class QualificationEtaTests
         files.File.WriteAllText(active, """{"runId":"fixture","state":"Active","suite":"suite","chunk":"a"}""");
 
         Observe(files, ["--timing-root", root, "--previous-run-log-dir", previous]).ShouldBe([
-            "ETA outstanding=1 running=1 completed=0 unpriced=0 pointSeconds=60 p50=2026-11-10T12:01:00.000Z p95=unavailable confidence=provisional lowerBound=false",
+            "ETA outstanding=1 running=1 completed=0 unpriced=0 pointSeconds=60 p50=2026-11-10T12:01:00.000Z p95=unavailable confidence=provisional lowerBound=false" + SequentialNote,
         ]);
 
         WriteFixtureTrx(files, root, "a", 30);
         var before = TreeStamp(files, root);
         // A raw ratio of 1.5 receives 1/21 of the weight. The stale active record refers to a finished chunk.
         Observe(files, ["--timing-root", root, "--previous-run-log-dir", previous]).ShouldBe([
-            "ETA outstanding=1 running=0 completed=1 unpriced=0 pointSeconds=40.952 p50=2026-11-10T12:00:40.952Z p95=unavailable confidence=provisional lowerBound=false",
+            "ETA outstanding=1 running=0 completed=1 unpriced=0 pointSeconds=40.952 p50=2026-11-10T12:00:40.952Z p95=unavailable confidence=provisional lowerBound=false" + SequentialNote,
         ]);
         TreeStamp(files, root).ShouldBe(before);
     }
@@ -154,7 +155,7 @@ public sealed class QualificationEtaTests
         WriteFixtureSchedule(files, previous, "earlier", [.. shortChunks, "dominant", "b"]);
 
         Observe(files, ["--timing-root", root, "--previous-run-log-dir", previous]).ShouldBe([
-            "ETA outstanding=1 running=0 completed=21 unpriced=0 pointSeconds=60 p50=2026-11-10T12:01:00.000Z p95=unavailable confidence=provisional lowerBound=false",
+            "ETA outstanding=1 running=0 completed=21 unpriced=0 pointSeconds=60 p50=2026-11-10T12:01:00.000Z p95=unavailable confidence=provisional lowerBound=false" + SequentialNote,
         ]);
     }
 
@@ -178,7 +179,7 @@ public sealed class QualificationEtaTests
 
         Observe(files, ["--timing-root", root, "--previous-run-log-dir", previous]).ShouldBe([
             "ETA outstanding=1 running=0 completed=21 unpriced=0 pointSeconds=104.997 p50=2026-11-10T12:01:44.997Z "
-            + "p95=2026-11-10T12:02:02.281Z confidence=matched lowerBound=false",
+            + "p95=2026-11-10T12:02:02.281Z confidence=matched lowerBound=false" + SequentialNote,
         ]);
     }
 

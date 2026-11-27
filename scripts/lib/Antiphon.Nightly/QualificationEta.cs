@@ -53,8 +53,9 @@ namespace Antiphon.Nightly
         internal void Write(TextWriter output)
         {
             var point = PointSeconds?.ToString("0.###", CultureInfo.InvariantCulture) ?? "unavailable";
+            var assumption = PointSeconds.HasValue ? " " + OperatorStatusShape.OverheadNote : "";
             output.WriteLine(FormattableString.Invariant(
-                $"ETA outstanding={Outstanding} running={Running} completed={Completed} unpriced={UnknownRemaining.Length} pointSeconds={point} p50={FormatUtc(P50Utc)} p95={FormatUtc(P95Utc)} confidence={Confidence} lowerBound={(LowerBound ? "true" : "false")}"));
+                $"ETA outstanding={Outstanding} running={Running} completed={Completed} unpriced={UnknownRemaining.Length} pointSeconds={point} p50={FormatUtc(P50Utc)} p95={FormatUtc(P95Utc)} confidence={Confidence} lowerBound={(LowerBound ? "true" : "false")}{assumption}"));
         }
 
         private static string FormatUtc(DateTimeOffset? value) =>
@@ -85,7 +86,7 @@ namespace Antiphon.Nightly
                 if (input.Schedule != null)
                 {
                     var observed = OperatorTrxStatus.Read(files, input.LogDir, input.Schedule, input.Active,
-                        (options.NowUtc ?? host.UtcNow).ToUniversalTime(), null, completed: false, comparable: true,
+                        (options.NowUtc ?? host.UtcNow).ToUniversalTime(), null, completed: false, state: null,
                         options.PreviousRunLogDir, issues, reportFailures: false);
                     if (observed?.Eta != null)
                     {

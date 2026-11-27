@@ -63,7 +63,8 @@ public sealed class OperatorStatusTests
         var host = QualificationEtaTests.Host(output, error, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(Now));
         QualificationEta.Run(QualificationEtaOptions.Parse(["--timing-root", world.Timing]), host, new FileSystem()).ShouldBe(0, error.ToString());
         output.ToString().Trim().Split(Environment.NewLine).ShouldBe([
-            "ETA outstanding=1 running=1 completed=2 unpriced=1 pointSeconds=40.952 p50=2026-11-26T12:00:40.952Z p95=unavailable confidence=provisional lowerBound=true",
+            "ETA outstanding=1 running=1 completed=2 unpriced=1 pointSeconds=40.952 p50=2026-11-26T12:00:40.952Z p95=unavailable confidence=provisional lowerBound=true"
+                + QualificationEtaTests.SequentialNote,
             "UNVERIFIED rc ETA is a lower bound: no previous timing for 1 remaining chunk(s): suite-newWaiting.",
         ]);
     }

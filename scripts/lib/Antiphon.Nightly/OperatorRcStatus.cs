@@ -28,7 +28,6 @@ namespace Antiphon.Nightly
             {
                 // The desktop default is fully qualified only on Windows. Explicit paths
                 // also let a host read a copied run using its own filesystem conventions.
-                var comparable = false;
                 if (!string.IsNullOrEmpty(logDir))
                 {
                     logDir = files.Path.TrimEndingDirectorySeparator(files.Path.GetFullPath(logDir));
@@ -47,9 +46,7 @@ namespace Antiphon.Nightly
                 }
                 else if (!string.IsNullOrEmpty(releaseRoot))
                 {
-                    var states = Directories(files, releaseRoot, "state-*")
-                        .Select(dir => (Dir: dir, State: ReadRecord(files, files.Path.Combine(dir, "last-run.json"), errors, required: false)))
-                        .Where(item => item.State != null && Text(item.State, "lane") == "rc")
+                    var states = RcStates(files, releaseRoot, errors)
                         .Where(item => runId != null ? Text(item.State, "runId") == runId
                             : !string.IsNullOrEmpty(logDir) ? SamePath(files, Text(item.State, "logDir"), logDir)
                             : item.State["completedAt"] == null && item.State["exitCode"] == null)
@@ -63,14 +60,11 @@ namespace Antiphon.Nightly
                 heartbeatPath = FindHeartbeat(files, releaseRoot, heartbeatPath, runId, errors);
                 var taskRoot = string.IsNullOrEmpty(heartbeatPath) ? null : files.Path.GetDirectoryName(files.Path.GetFullPath(heartbeatPath));
                 var supervisor = taskRoot == null ? null : ReadRecord(files, files.Path.Combine(taskRoot, "supervisor-identity.json"), errors, required: false);
-                bool Matches(JsonObject record) =>
-                    runId != null && Text(record, "runId") == runId &&
-                    (string.IsNullOrEmpty(logDir) || Text(record, "logDir") == null || SamePath(files, Text(record, "logDir"), logDir));
-                if (!Matches(state))
+                if (!MatchesRun(files, state, runId, logDir))
                 {
                     var copy = taskRoot == null || Text(supervisor, "runId") != runId ? null
                         : ReadRecord(files, files.Path.Combine(taskRoot, "own-last-run.json"), errors, required: false);
-                    if (Matches(copy))
+                    if (MatchesRun(files, copy, runId, logDir))
                         state = copy;
                     else
                     {
@@ -109,15 +103,11 @@ namespace Antiphon.Nightly
 
                 if (!string.IsNullOrEmpty(logDir))
                 {
-                    var scope = Text(state, "coverageScope");
                     if (candidate != null && CandidateFromLog(files, logDir) is string logCandidate && logCandidate != candidate)
                     {
                         errors.Add("rc selected state and log directory name different candidates.");
                         schedule = null;
                     }
-                    var platform = Text(state, "platform");
-                    comparable = (scope == null || scope == "Full") &&
-                        (platform == null || platform.Equals("windows", StringComparison.OrdinalIgnoreCase));
                 }
                 else
                 {
@@ -155,7 +145,7 @@ namespace Antiphon.Nightly
 
                 if (!string.IsNullOrEmpty(logDir))
                     OperatorTrxStatus.PopulateReport(report, OperatorTrxStatus.Read(files, logDir, schedule,
-                        report["activeChunk"] as JsonObject, now, started, completed.HasValue, comparable,
+                        report["activeChunk"] as JsonObject, now, started, completed.HasValue, state,
                         options.RcPreviousRunLogDir, errors, reportFailures: true));
 
                 if (string.IsNullOrEmpty(heartbeatPath))
@@ -170,6 +160,43 @@ namespace Antiphon.Nightly
 
             return report;
         }
+
+        internal static bool IsEtaEligible(IFileSystem files, string logDir, JsonObject schedule, JsonObject state, List<string> errors)
+        {
+            static bool SupportsSequentialFull(JsonObject record)
+            {
+                var scope = Text(record, "coverageScope");
+                var platform = Text(record, "platform");
+                return (scope == null || scope == "Full") &&
+                    (platform == null || platform.Equals("windows", StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!SupportsSequentialFull(schedule) || !SupportsSequentialFull(state)) return false;
+            if (state != null) return true;
+
+            // CLI and watcher have no explicit state directory. Bind release records by full run ID and log path.
+            var root = FindReleaseRoot(files, logDir);
+            var runId = Text(schedule, "runId");
+            if (root == null || runId == null) return true;
+            var states = RcStates(files, root, errors)
+                .Where(item => MatchesRun(files, item.State, runId, logDir)).ToArray();
+            if (states.Length > 0) return states.All(item => SupportsSequentialFull(item.State));
+
+            var heartbeat = FindHeartbeat(files, root, null, runId, errors);
+            if (heartbeat == null) return true;
+            var taskDir = files.Path.GetDirectoryName(heartbeat);
+            var copy = ReadRecord(files, files.Path.Combine(taskDir, "own-last-run.json"), errors, required: false);
+            return !MatchesRun(files, copy, runId, logDir) || SupportsSequentialFull(copy);
+        }
+
+        private static IEnumerable<(string Dir, JsonObject State)> RcStates(IFileSystem files, string root, List<string> errors) =>
+            Directories(files, root, "state-*")
+                .Select(dir => (Dir: dir, State: ReadRecord(files, files.Path.Combine(dir, "last-run.json"), errors, required: false)))
+                .Where(item => Text(item.State, "lane") == "rc");
+
+        private static bool MatchesRun(IFileSystem files, JsonObject record, string runId, string logDir) =>
+            runId != null && Text(record, "runId") == runId &&
+            (string.IsNullOrEmpty(logDir) || Text(record, "logDir") == null || SamePath(files, Text(record, "logDir"), logDir));
 
         private static string FindHeartbeat(IFileSystem files, string root, string path, string runId, List<string> errors)
         {

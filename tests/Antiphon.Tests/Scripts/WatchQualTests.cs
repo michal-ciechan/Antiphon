@@ -177,7 +177,8 @@ public sealed class WatchQualTests
         var (exit, lines) = world.Run(world.Options(timingRoot: root, logDir: live));
         exit.ShouldBe(0);
         lines.ShouldBe([
-            "ETA outstanding=2 running=0 completed=1 unpriced=0 pointSeconds=300 p50=2026-11-10T12:05:00.000Z p95=unavailable confidence=provisional lowerBound=false",
+            "ETA outstanding=2 running=0 completed=1 unpriced=0 pointSeconds=300 p50=2026-11-10T12:05:00.000Z p95=unavailable confidence=provisional lowerBound=false"
+                + QualificationEtaTests.SequentialNote,
             "watch-qual window ended; re-arm",
         ]);
         QualificationEtaTests.TreeStamp(world.Files, root).ShouldBe(before, "timing root changed");
