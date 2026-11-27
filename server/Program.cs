@@ -13,6 +13,7 @@ using Antiphon.Resilience;
 using Antiphon.Server.Infrastructure.Resilience;
 using Serilog;
 using Antiphon.Messaging.Client;
+using Antiphon.Server.Api;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
@@ -202,22 +203,7 @@ try
                 ? Microsoft.AspNetCore.Http.CookieSecurePolicy.Always
                 : Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest;
         });
-    builder.Services.AddOptions<ReviewDecisionSettings>()
-        .Bind(builder.Configuration.GetSection(ReviewDecisionSettings.SectionName))
-        .PostConfigure(s =>
-        {
-            s.ApplyDefaults();
-            // A provider names its key by configuration key only; the value never reaches a log.
-            foreach (var provider in s.Providers.Values)
-            {
-                if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
-                    provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
-            }
-        })
-        .Validate(s => s.Chains.Values.SelectMany(entries => entries)
-                .All(entry => entry.HasValidOneShotDialect(s.Providers.GetValueOrDefault(entry.Provider)?.Dialect)),
-            "Review:Decisions:Chains entries with Transport=OneShot require a configured provider with Dialect=claude-cli.")
-        .ValidateOnStart();
+    builder.Services.AddReviewChainOptions(builder.Configuration);
     builder.Services.AddOptions<ReviewCodeHostSettings>()
         .Bind(builder.Configuration.GetSection(ReviewCodeHostSettings.SectionName))
         .PostConfigure(s =>
@@ -237,24 +223,6 @@ try
         .Bind(builder.Configuration.GetSection(ReviewAgentSettings.SectionName))
         .Validate(s => ReviewAgentTransports.IsKnown(s.Transport),
             $"{ReviewAgentSettings.SectionName}:Transport must be '{ReviewAgentTransports.Delegation}' (the default) or '{ReviewAgentTransports.Cli}'.")
-        .ValidateOnStart();
-    builder.Services.AddOptions<ReviewCompletionSettings>()
-        .Bind(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName))
-        .PostConfigure(s =>
-        {
-            s.ApplyDefaultProviders();
-            // A provider names its key by configuration key only; the value never reaches a log.
-            foreach (var provider in s.Providers.Values)
-            {
-                if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
-                    provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
-            }
-
-            s.ApplyDefaultChain();
-        })
-        .Validate(s => s.Chains.Values.SelectMany(entries => entries)
-                .All(entry => entry.HasValidOneShotDialect(s.Providers.GetValueOrDefault(entry.Provider)?.Dialect)),
-            "Review:Completions:Chains entries with Transport=OneShot require a configured provider with Dialect=claude-cli.")
         .ValidateOnStart();
     builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
     builder.Services.Configure<ReviewPollingSettings>(builder.Configuration.GetSection(ReviewPollingSettings.SectionName));

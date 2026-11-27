@@ -1,8 +1,13 @@
+using Antiphon.Server.Api;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review.Decisions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Infrastructure.Review;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -16,6 +21,83 @@ public sealed class ClaudeCliFailureTests
 {
     private const string ChainName = "decisions-default";
     private static readonly DecisionRequest Decision = new("State", [DecisionQuestion.Noul("applies", "Does it apply?")]);
+
+    [Test]
+    [Arguments("Decisions")]
+    [Arguments("Completions")]
+    public async Task Legacy_OneShot_HTTP_entry_warns_at_startup_and_still_serves_by_dialect(string section)
+    {
+        var prefix = $"Review:{section}";
+        var builder = Host.CreateApplicationBuilder();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [$"{prefix}:Providers:legacy-http:Dialect"] = "backup",
+            [$"{prefix}:Providers:legacy-http:Model"] = "fake",
+            [$"{prefix}:Chains:{ChainName}:0:Provider"] = "legacy-http",
+            [$"{prefix}:Chains:{ChainName}:0:Transport"] = "OneShot",
+        });
+        var logs = new ReviewTestLog();
+        builder.Logging.AddProvider(logs);
+        builder.Services.AddReviewChainOptions(builder.Configuration);
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton<IDecisionModel, BackupModel>();
+        builder.Services.AddSingleton<ICompletionModel, BackupCompletionModel>();
+        builder.Services.AddSingleton<DecisionChain>();
+        builder.Services.AddSingleton<CompletionChain>();
+
+        using var host = builder.Build();
+        await host.StartAsync(CancellationToken.None);
+        // Assert before resolving either chain. The warning must be emitted on host startup.
+        logs.Warnings.ShouldContain(message => message.Contains(prefix)
+            && message.Contains(ChainName) && message.Contains("entry 0")
+            && message.Contains("legacy-http") && message.Contains("backup"));
+        if (section == "Decisions")
+        {
+            var result = await host.Services.GetRequiredService<DecisionChain>().DecideAsync(ChainName, Decision, CancellationToken.None);
+            result.Answers["applies"].ServedBy!.Provider.ShouldBe("legacy-http");
+        }
+        else
+        {
+            var result = await host.Services.GetRequiredService<CompletionChain>()
+                .CompleteAsync(ChainName, new CompletionRequest("Instructions", [], "text"), CancellationToken.None);
+            result.Text.ShouldBe("backup answered");
+        }
+        await host.StopAsync(CancellationToken.None);
+    }
+
+    [Test]
+    [Arguments("Authorization: Bearer xyShort", "xyShort")]
+    [Arguments("Authorization: Bearer sk-ant-synthetic-long-credential-only", "sk-ant-synthetic-long-credential-only")]
+    [Arguments("Proxy-Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==", "QWxhZGRpbjpvcGVuIHNlc2FtZQ==")]
+    [Arguments("Cookie: sid=cook1e; tracking=track8", "cook1e")]
+    [Arguments("Set-Cookie: sid=cook1e; tracking=track8", "track8")]
+    [Arguments("""{"token":"fixture token value","password":"escaped\"quote"}""", "fixture token value")]
+    [Arguments("""{"token":"fixture token value","password":"escaped\"quote"}""", "quote")]
+    [Arguments("HTTP https://user:pass@host.example/result", "user:pass")]
+    [Arguments("Account fixture-user@host.example", "fixture-user@host.example")]
+    [Arguments("Account username: fixture-owner", "fixture-owner")]
+    [Arguments("key='padded synthetic' password=fixturePass", "padded synthetic")]
+    [Arguments("Error ghp_short gho_short github_pat_short xoxb-short sk-short", "short")]
+    [Arguments("Service rejected e30.e30.fakeSignature", "fakeSignature")]
+    [Arguments("Open /home/fixture-owner/.config", "fixture-owner")]
+    [Arguments(@"Open C:\Users\fixture-owner\config.json", "fixture-owner")]
+    public void Public_stderr_removes_credentials_and_account_identifiers(string stderr, string sensitive)
+    {
+        var failure = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(7, "", "CLI backend overloaded\n" + stderr));
+        failure.Message.ShouldContain("CLI backend overloaded");
+        failure.Message.ShouldContain("exit 7");
+        failure.Message.Contains(sensitive, StringComparison.Ordinal).ShouldBeFalse();
+    }
+
+    [Test]
+    public void Public_stderr_removes_the_prefix_of_a_token_crossing_the_excerpt_boundary()
+    {
+        const string prefix = "boundaryPrefix";
+        var stderr = string.Concat(Enumerable.Repeat("detail ", 69)) + prefix + new string('a', 80);
+        var failure = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(7, "", stderr));
+        failure.Message.Contains(prefix, StringComparison.Ordinal).ShouldBeFalse();
+        failure.Message.ShouldContain("exit 7");
+    }
 
     [Test]
     public async Task Missing_executable_rejects_the_chain_and_names_the_command()
@@ -174,5 +256,14 @@ public sealed class ClaudeCliFailureTests
             return Task.FromResult(new DecisionResult(answers, new DecisionUsage(1, 2), 0.01m, "actual",
                 new DecisionServedBy(options.ProviderId, "Http", "fake")));
         }
+    }
+
+    private sealed class BackupCompletionModel : ICompletionModel
+    {
+        public bool Serves(string dialect) => dialect == "backup";
+
+        public Task<CompletionResult> CompleteAsync(CompletionRequest request, CompletionOptions options, CancellationToken ct) =>
+            Task.FromResult(new CompletionResult("backup answered", new DecisionUsage(1, 2), 0.01m, "actual",
+                new DecisionServedBy(options.ProviderId, "Http", "fake")));
     }
 }

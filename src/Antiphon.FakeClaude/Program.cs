@@ -127,6 +127,19 @@ internal static class Program
 
     private static int Main(string[] args)
     {
+        if (args.Contains("-p") && GetArg(args, "--model") == "fixture-review-cli-failure")
+        {
+            // Non-interactive review fixture. All values are synthetic and this mode never enters the TUI.
+            Console.Error.WriteLine("Authorization: Bearer xyShort");
+            Console.Error.WriteLine("CLI backend overloaded");
+            Console.Error.WriteLine("Proxy-Authorization: Basic aGVsbG86d29ybGQ=");
+            Console.Error.WriteLine("Cookie: sid=cook1e; tracking=track8");
+            Console.Error.WriteLine("""{"token":"fixture token value","password":"escaped\\"quote"}""");
+            Console.Error.WriteLine("HTTP https://user:pass@host.example/result for fixture-user@host.example");
+            Console.Error.WriteLine("Account username: fixture-owner");
+            return 7;
+        }
+
         // Unknown flags (including CARD-0306's --settings <path>) are ignored; they are not a prompt.
         var banner = GetArg(args, "--banner") ?? "Fake Claude ready";
         var debugInput = Environment.GetEnvironmentVariable("ANTIPHON_FAKE_DEBUG_INPUT") == "1";
