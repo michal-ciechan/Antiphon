@@ -20,6 +20,13 @@ public sealed class BaselineComparer
 
     public BaselineComparer(IDriver driver, IBuildSlotClient? slots = null, TimeSpan? timeout = null,
         Func<CancellationToken, Task>? beforeLaunch = null, RunBudgetClock? budget = null, TimeSpan? admissionLimit = null)
+        : this(driver, slots, timeout, beforeLaunch, budget, admissionLimit, null)
+    {
+    }
+
+    internal BaselineComparer(IDriver driver, IBuildSlotClient? slots, TimeSpan? timeout,
+        Func<CancellationToken, Task>? beforeLaunch, RunBudgetClock? budget, TimeSpan? admissionLimit,
+        Func<string, long?>? diskFreeBytes)
     {
         _driver = driver;
         _slots = slots ?? new FixedSlotClient("off");

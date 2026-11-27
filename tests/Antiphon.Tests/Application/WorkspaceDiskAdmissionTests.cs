@@ -32,6 +32,30 @@ public sealed class WorkspaceDiskAdmissionTests
     }
 
     [Test]
+    [Arguments("server2", "server2-temp")]
+    [Arguments("server2-temp", "server2")]
+    public void SharedFilesystemHoldsBothRoutesAndRecoversFromEither(string firstRoute, string otherRoute)
+    {
+        var (guard, cache, clock, log) = Create();
+        Record(cache, clock.GetUtcNow(), firstRoute, Floor - 1);
+        cache.Latest(otherRoute).ShouldBeNull();
+        guard.HoldReason(firstRoute).ShouldStartWith("workspace_disk_low:");
+        guard.HoldReason(otherRoute).ShouldStartWith("workspace_disk_low:");
+        guard.HoldReason(RunnerPlatformWire.DesktopId).ShouldBeNull();
+        log.Messages.ShouldBeEmpty("the peer provides a usable measurement for the same filesystem");
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Record(cache, clock.GetUtcNow(), otherRoute, Floor);
+        guard.HoldReason(firstRoute).ShouldBeNull();
+        guard.HoldReason(otherRoute).ShouldBeNull();
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Record(cache, clock.GetUtcNow(), firstRoute, -1);
+        guard.HoldReason(firstRoute).ShouldBeNull();
+        log.Messages.ShouldBeEmpty("an invalid sample cannot replace a valid measurement");
+    }
+
+    [Test]
     public void MissingStaleAndInvalidSamplesEmitBoundedDiagnostics()
     {
         var (guard, cache, clock, log) = Create();

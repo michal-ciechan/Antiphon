@@ -139,6 +139,30 @@ public sealed class CliEntryTests
     }
 
     [Test]
+    public void Checkpoint_entry_refuses_low_space_before_publishing_or_launching()
+    {
+        using var fixture = Checkout();
+        var builds = new Builds();
+        using var error = new StringWriter();
+        var childCount = 0;
+        var publish = new CliPublishOptions
+        {
+            Error = error,
+            Build = builds.Build,
+            DiskFreeBytes = path => path == fixture.Root ? (20L << 30) - 1 : 20L << 30,
+        };
+
+        var exit = CliEntry.Run(["checkpoints", "run"], Exe(fixture), publish,
+            (_, _, _) => { childCount++; return 0; });
+
+        exit.ShouldBe(9);
+        error.ToString().ShouldContain("workspace_disk_low");
+        builds.Requests.ShouldBeEmpty();
+        childCount.ShouldBe(0);
+        Directory.Exists(fixture.PathOf("bin-launcher")).ShouldBeFalse();
+    }
+
+    [Test]
     public void With_nothing_published_the_entry_publishes_the_cli_in_process_first()
     {
         using var fixture = Checkout();

@@ -160,6 +160,35 @@ public sealed class BaselineComparerTests : CheckpointTestBase
     }
 
     [Test]
+    [Arguments("build")]
+    [Arguments("run")]
+    public async Task BaselineRechecksSpaceAfterGrantAndReleasesTheLease(string phase)
+    {
+        var driver = Script(GreenTrx());
+        var slots = new RecordingSlots();
+        var free = 20L << 30;
+        var phaseLabel = "tool-run: baseline " + phase + " ";
+        slots.OnAcquire = label =>
+        {
+            if (label.StartsWith(phaseLabel, StringComparison.Ordinal))
+                free--;
+        };
+        var comparer = new BaselineComparer(driver, slots, null, null, null, null, _ => free);
+
+        await comparer.CompareAsync(TempDir(), TempDir(), "origin/master",
+            [Failures("CP-1", "bin-a", "N.A.one")],
+            [new BuildSpec { Id = "bin-a", Project = "tests/Antiphon.Tests", OutputPath = "bin-a/" }],
+            CancellationToken.None);
+
+        driver.Count(CheckpointFixtures.IsBuild).ShouldBe(phase == "build" ? 0 : 1);
+        driver.Count(CheckpointFixtures.IsRun).ShouldBe(0);
+        comparer.ToolRuns.ShouldContain(line => line.StartsWith(phaseLabel, StringComparison.Ordinal)
+            && line.Contains("workspace_disk_low", StringComparison.Ordinal));
+        slots.Released.ShouldContain(label => label.StartsWith(phaseLabel, StringComparison.Ordinal));
+        driver.Count(request => request.Arguments.Contains("remove")).ShouldBe(1);
+    }
+
+    [Test]
     public async Task baseline_stops_when_the_timeout_is_already_spent()
     {
         var driver = Script(GreenTrx());
@@ -211,6 +240,8 @@ public sealed class BaselineComparerTests : CheckpointTestBase
     private sealed class RecordingSlots : IBuildSlotClient
     {
         public List<string> Labels { get; } = [];
+        public List<string> Released { get; } = [];
+        public Action<string>? OnAcquire { get; set; }
 
         public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new SlotSession("enabled", 4));
@@ -218,7 +249,13 @@ public sealed class BaselineComparerTests : CheckpointTestBase
         public Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
         {
             Labels.Add(label);
-            return Task.FromResult(new SlotLease { State = "granted", MaxCpuCount = 4 });
+            OnAcquire?.Invoke(label);
+            return Task.FromResult(new SlotLease
+            {
+                State = "granted",
+                MaxCpuCount = 4,
+                ReleaseAsync = _ => { Released.Add(label); return Task.CompletedTask; },
+            });
         }
     }
 

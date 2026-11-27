@@ -13,6 +13,39 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class CheckpointEvidencePlacementTests
 {
     [Test]
+    public async Task ReferenceSpecificPropertiesAreCheckedForEveryOccurrenceOfTheSameProject()
+    {
+        using var repo = new ScratchGitRepo("disk-reference-placement");
+        var protectedPath = "/work/evidence/reference-witness-" + Guid.NewGuid().ToString("N") + "/";
+        await repo.CommitFileAsync("child/Child.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup>
+                <TargetFramework>net9.0</TargetFramework>
+                <IntermediateOutputPath Condition="'$(PlacementVariant)' == 'unsafe'">REPLACE</IntermediateOutputPath>
+              </PropertyGroup>
+            </Project>
+            """.Replace("REPLACE", protectedPath, StringComparison.Ordinal));
+        await repo.CommitFileAsync("Main.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="child/Child.csproj" AdditionalProperties="PlacementVariant=safe" />
+                <ProjectReference Include="child/Child.csproj" AdditionalProperties="PlacementVariant=unsafe" />
+              </ItemGroup>
+            </Project>
+            """);
+
+        var prepared = BuildConfinement.Prepare(repo.Path,
+            BuildStep.BuildArguments("Main.csproj", "bin-placement/", [], 2), null, CancellationToken.None);
+
+        prepared.Detail.ShouldContain("workspace_evidence_write");
+        prepared.Detail.ShouldContain("IntermediateOutputPath");
+        prepared.Arguments.ShouldBeEmpty();
+        Directory.Exists(protectedPath).ShouldBeFalse();
+        Directory.Exists(Path.Combine(repo.Path, "child", "obj")).ShouldBeFalse();
+    }
+
+    [Test]
     [Arguments("IntermediateOutputPath", false)]
     [Arguments("MSBuildProjectExtensionsPath", false)]
     [Arguments("MSBuildProjectExtensionsPath", true)]
