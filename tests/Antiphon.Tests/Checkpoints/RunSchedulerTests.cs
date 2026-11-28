@@ -761,9 +761,9 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             Directory.CreateDirectory(project);
             File.WriteAllText(Path.Combine(project, "sample.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
             var results = Path.Combine(repo, ".antiphon", "checkpoints");
-            var baseline = await RunObservationArmAsync(root, repo, results, grouped, fails, null);
-            var positive = await RunObservationArmAsync(root, repo, results, grouped, fails, TimingFault.None);
-            var sinkFailure = await RunObservationArmAsync(root, repo, results, grouped, fails, TimingFault.BeforeSpool);
+            var baseline = await RunObservationArmAsync(repo, results, grouped, fails, null);
+            var positive = await RunObservationArmAsync(repo, results, grouped, fails, TimingFault.None);
+            var sinkFailure = await RunObservationArmAsync(repo, results, grouped, fails, TimingFault.BeforeSpool);
             var label = (grouped ? "grouped" : "standalone") + "-" + (fails ? "red" : "green");
             baseline.Exit.ShouldBe(fails ? 1 : 0, label + "-baseline-exit");
             positive.Exit.ShouldBe(baseline.Exit, label + "-exit");
@@ -801,7 +801,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
-    private static async Task<ObservationArm> RunObservationArmAsync(string root, string repo, string results,
+    private static async Task<ObservationArm> RunObservationArmAsync(string repo, string results,
         bool grouped, bool fails, TimingFault? fault)
     {
         var clock = new ControlledTimeProvider(ObservationEpoch);
@@ -866,10 +866,20 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var row = report.Rows.Single();
         var trx = TrxReport.Parse(row.Trx!);
         var read = await BuildObservationReplay.ReadAsync(run, deadline.Token);
-        var archive = Path.Combine(root, fault?.ToString() ?? "disabled");
-        Directory.CreateDirectory(archive);
-        Directory.Move(run, Path.Combine(archive, "results"));
-        Directory.Move(Path.Combine(repo, "sample", ObservationBuild), Path.Combine(archive, "output"));
+        if (grouped)
+            RunOwnershipStore.Read(run, runtime.CleanupContext).ShouldNotBeNull().Launched.ShouldBeNull();
+        // The in-process arm has joined and its bytes are in memory. Dispose its artifacts
+        // through an owned scratch root so the next arm can use the same logical paths.
+        var archive = OwnedTempRoot.CreateOwned();
+        try
+        {
+            Directory.Move(run, Path.Combine(archive, "results"));
+            Directory.Move(Path.Combine(repo, "sample", ObservationBuild), Path.Combine(archive, "output"));
+        }
+        finally
+        {
+            OwnedTempRoot.Release(archive);
+        }
         return new(exit, driver.Calls, slots.Events, json, markdown, row.Line!, trx, read, milliseconds);
     }
 

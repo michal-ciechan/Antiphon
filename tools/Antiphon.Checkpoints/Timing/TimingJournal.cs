@@ -143,7 +143,17 @@ public sealed class TimingJournal
             return;
         foreach (var file in Directory.GetFiles(dir, "*.json").OrderBy(path => path, StringComparer.Ordinal))
         {
-            var ev = JsonSerializer.Deserialize<TimingEvent>(await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false), Json)
+            string staged;
+            try
+            {
+                staged = await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false);
+            }
+            catch (FileNotFoundException)
+            {
+                // A concurrent append can commit and acknowledge this file after enumeration.
+                continue;
+            }
+            var ev = JsonSerializer.Deserialize<TimingEvent>(staged, Json)
                 ?? throw new TimingIntegrityException("event-conflict");
             var previous = Fault;
             Fault = TimingFault.None;

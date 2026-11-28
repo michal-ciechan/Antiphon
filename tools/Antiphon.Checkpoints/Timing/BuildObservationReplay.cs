@@ -75,21 +75,28 @@ internal static class BuildObservationReplay
                 cancellationToken.ThrowIfCancellationRequested();
                 if (++entries > 2 * CheckpointBuildObservation.EventLimit + 16 * 4)
                     return false;
-                var attributes = File.GetAttributes(path);
-                if (attributes.HasFlag(FileAttributes.ReparsePoint))
-                    return false;
-                if (attributes.HasFlag(FileAttributes.Directory))
+                try
                 {
-                    if (directory.Depth >= 4)
+                    var attributes = File.GetAttributes(path);
+                    if (attributes.HasFlag(FileAttributes.ReparsePoint))
                         return false;
-                    paths.Push((path, directory.Depth + 1));
-                    continue;
+                    if (attributes.HasFlag(FileAttributes.Directory))
+                    {
+                        if (directory.Depth >= 4)
+                            return false;
+                        paths.Push((path, directory.Depth + 1));
+                        continue;
+                    }
+                    if (Path.GetFileName(path) == "events.jsonl" && ++shards > 16)
+                        return false;
+                    bytes += new FileInfo(path).Length;
+                    if (bytes > 2 * CheckpointBuildObservation.ByteLimit)
+                        return false;
                 }
-                if (Path.GetFileName(path) == "events.jsonl" && ++shards > 16)
-                    return false;
-                bytes += new FileInfo(path).Length;
-                if (bytes > 2 * CheckpointBuildObservation.ByteLimit)
-                    return false;
+                catch (FileNotFoundException) when (directory.Depth == 1 && Path.GetFileName(directory.Path) == "spool")
+                {
+                    // A committed stage may disappear while the budget is being checked.
+                }
             }
         }
         return true;
