@@ -168,7 +168,9 @@ The `Publish` node accepts `params.inputs` as an array of case-sensitive produce
 explicit list requires one `CollateFindings` and one `VerifyFindings` producer and accepts one
 `Categorise` and one `SelectChecks` producer each. `params.summaryTemplate` is an optional string
 with bounded, named slots. Validation uses `invalid-input`, `unavailable-input`, or
-`invalid-summary-template` with the affected Publish node and its `field`. See the
+`invalid-summary-template` with the affected Publish node and its `field`. Publish
+requires a `Code` node. Other kinds using `run: Publish` receive `invalid-publish-kind`
+on the `kind` field. See the
 [worked Publish example](getting-started.md#configuring-the-pr-review-summary).
 
 ## Routes

@@ -10,8 +10,11 @@ internal sealed record ReviewPublishConfiguration(string Collate, string Verify,
     public const string CollateStep = "CollateFindings";
     public const string VerifyStep = "VerifyFindings";
     public const int MaxInputs = 8;
+    public const string KindError = "Publish requires a Code node.";
 
     private enum Role { Collate, Verify, Categorise, Select }
+
+    public static bool HasInvalidKind(WorkflowNode node) => node.Run == Step && node.Kind != ReviewNodeKind.Code;
 
     public static bool TryRead(WorkflowDefinition workflow, WorkflowNode consumer, out ReviewPublishConfiguration? configuration)
     {
@@ -44,8 +47,13 @@ internal sealed record ReviewPublishConfiguration(string Collate, string Verify,
 
     public static void Validate(WorkflowDefinition workflow, WorkflowNode node, List<WorkflowDiagnostic> diagnostics)
     {
-        if (node.Run != Step || node.Kind != ReviewNodeKind.Code)
+        if (node.Run != Step)
             return;
+        if (HasInvalidKind(node))
+        {
+            diagnostics.Add(Error("invalid-publish-kind", "kind", KindError));
+            return;
+        }
 
         if (!TryRead(workflow, node, out var configuration))
             diagnostics.Add(Error("invalid-input", InputsField, "Declare one CollateFindings and one VerifyFindings node, and at most one Categorise and one SelectChecks node."));

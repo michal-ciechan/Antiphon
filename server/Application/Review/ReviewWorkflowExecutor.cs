@@ -63,7 +63,7 @@ public sealed class ReviewWorkflowExecutor(
         ["BuildPacks"] = ReviewSelectionSteps.BuildPacksAsync,
         ["CollateFindings"] = ReviewReviewSteps.CollateAsync,
         ["VerifyFindings"] = ReviewReviewSteps.VerifyAsync,
-        ["Publish"] = ReviewReviewSteps.PublishAsync,
+        [ReviewPublishConfiguration.Step] = ReviewReviewSteps.PublishAsync,
         ["RouteAfterRound"] = ReviewDecideSteps.RouteAsync,
         ["NeedsHumanApproval"] = ReviewDecideSteps.NeedsHumanApprovalAsync,
         ["BotApprove"] = ReviewDecideSteps.BotApproveAsync,
@@ -382,6 +382,7 @@ public sealed class ReviewWorkflowExecutor(
     private static Task<NodeResult> RunNodeAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct) =>
         node.Kind switch
         {
+            _ when ReviewPublishConfiguration.HasInvalidKind(node) => Task.FromResult(NodeResult.Fail(ReviewPublishConfiguration.KindError)),
             ReviewNodeKind.Gate => ReviewDecideSteps.GateAsync(walk, node, execution, ct),
             ReviewNodeKind.Wait => ReviewDecideSteps.WaitAsync(walk, node, execution, ct),
             ReviewNodeKind.FanOut => ReviewReviewSteps.FanOutAsync(walk, node, execution, ct),
