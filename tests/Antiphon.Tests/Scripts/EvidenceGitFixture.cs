@@ -118,7 +118,11 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
         return oid;
     }
     internal Task SetAsync(string path, string oid, string mode = "100644") =>
-        RequiredAsync("git", ["update-index", "-z", "--index-info"], Encoding.UTF8.GetBytes(mode + " " + oid + "\t" + path + "\0"));
+        UpdateIndexAsync([(path, oid, mode)]);
+
+    private Task UpdateIndexAsync(IEnumerable<(string Path, string Oid, string Mode)> rows) =>
+        RequiredAsync("git", ["update-index", "-z", "--index-info"],
+            Encoding.UTF8.GetBytes(string.Concat(rows.Select(row => $"{row.Mode} {row.Oid}\t{row.Path}\0"))));
     internal Task RemoveAsync(string path) => SetAsync(path, new string('0', 40), "0");
     internal async Task<string> CommitIndexAsync(string[] parents, string message = "fixture commit")
     {
@@ -240,7 +244,11 @@ internal sealed class EvidenceGitFixture : IAsyncDisposable
     internal async Task<string> ExactDeletionAsync(string baseRef, Inventory inv, string? parent = null, string? message = null)
     {
         await GitAsync("read-tree", parent ?? baseRef);
-        foreach (var e in inv.Delete) await RemoveAsync(e.Path);
+        if (inv.Delete.Length > 0)
+        {
+            var deletedOid = new string('0', 40);
+            await UpdateIndexAsync(inv.Delete.Select(entry => (entry.Path, deletedOid, "0")));
+        }
         return await CommitIndexAsync([parent ?? baseRef], message ?? "remove rejected evidence\n\nAntiphon-Evidence-Deletion: CARD-1015");
     }
     internal Task<Result> DeletionAsync(string inventoryRef, string head, Inventory inv, string? count = null, string? digest = null, string? bytes = null, GitHook? hook = null) =>
