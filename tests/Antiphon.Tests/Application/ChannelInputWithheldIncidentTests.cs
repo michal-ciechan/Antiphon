@@ -240,6 +240,48 @@ public sealed partial class ChannelInputWithheldIncidentTests
     }
 
     [Test]
+    [Timeout(120_000)]
+    public async Task LiveAndRecoveryPollsRejectMachinePromptQuotingTheChannelBody(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, new OutageQueueClock());
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        var chat = await h.BindChannelAsync();
+        h.Adapter.OnSubmitted = async body =>
+        {
+            var machine = $"Synthetic system report quoting the inbound:\n{body}";
+            await h.SeedPendingMessageAsync(machine, origin: QueuedMessageOrigin.System,
+                status: QueuedMessageStatus.Sent, deliveryAttempts: 1, deliveryVerdict: DeliveryVerdict.Delivered,
+                lastDeliveryStartedAt: h.Now, baselineSequence: floor);
+            await h.InsertStoreVisibleTurnAsync(machine, "fixture unrelated answer");
+        };
+        using var bridge = Bridge(h);
+        await bridge.HandleInboundAsync(Message(chat, "fixture-quoted-live", "fixture inbound"), ct);
+        var body = h.Adapter.SubmittedBodies.ShouldHaveSingleItem();
+        await using var db = Db(schema.ConnectionString);
+
+        var held = await ReadAttemptAsync();
+        held.Status.ShouldBe(QueuedMessageStatus.Sent);
+        held.DeliveryVerdict.ShouldBeNull("the live poll must reject an outer machine prompt");
+        held.LastDeliveryBaselineSequence.ShouldBe(floor);
+
+        await h.Queue.FlushSessionAsync(h.SessionId, ct);
+        (await ReadAttemptAsync()).DeliveryVerdict.ShouldBeNull("recovery must reject the same quote");
+        await h.InsertStoreVisibleTurnAsync(body, "fixture owning answer");
+        await h.Queue.FlushSessionAsync(h.SessionId, ct);
+
+        var confirmed = await ReadAttemptAsync();
+        confirmed.DeliveryVerdict.ShouldBe(DeliveryVerdict.LateConfirmed);
+        confirmed.LastDeliveryBaselineSequence.ShouldBe(floor);
+        confirmed.DeliveryAttempts.ShouldBe(1);
+        h.Adapter.SubmittedBodies.ShouldBe([body]);
+
+        Task<SessionQueuedMessage> ReadAttemptAsync() => db.SessionQueuedMessages.AsNoTracking()
+            .SingleAsync(m => m.AgentSessionId == h.SessionId && m.Origin == QueuedMessageOrigin.Channel, ct);
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     [Timeout(120_000)]
