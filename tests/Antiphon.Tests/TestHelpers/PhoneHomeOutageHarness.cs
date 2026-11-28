@@ -273,5 +273,7 @@ internal sealed class OutageQueueClock : TimeProvider
 {
     private TimeSpan _offset;
     public override DateTimeOffset GetUtcNow() => DateTimeOffset.UtcNow + _offset;
+    public override long GetTimestamp() =>
+        base.GetTimestamp() + (long)Math.Round(_offset.TotalSeconds * TimestampFrequency);
     public void Advance(TimeSpan span) => _offset += span;
 }
