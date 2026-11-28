@@ -288,21 +288,118 @@ public class DecisionChainTests
         failure.Message.ShouldBe(Rejected400Prefix + padding + " sk-*** ta");
     }
 
-    private const string Rejected400Prefix = "Provider 'primary' rejected the request (400): HTTP 400: ";
+    [Test]
+    [Arguments("""{"detail":{"message":"Field required \uD800"}}""")]
+    [Arguments("""{"detail":{"message":"Field required \uDC00"}}""")]
+    [Arguments("""{"detail":{"loc":["body","\uD800"],"msg":"Field required"}}""")]
+    [Arguments("""{"detail":{"loc":["body","\uDC00"],"msg":"Field required"}}""")]
+    [Arguments("""{"detail":{"loc":"\uD800","msg":"Field required"}}""")]
+    [Arguments("""{"detail":{"loc":"\uDC00","msg":"Field required"}}""")]
+    public async Task A_system_one_400_with_a_lone_surrogate_still_records_the_rejection(string body)
+    {
+        var failure = await RejectSystemOneRequestAsync(body);
 
-    private static async Task<DecisionChainException> RejectSystemOneRequestAsync(string body)
+        failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);
+    }
+
+    [Test]
+    [Arguments("fixture.person@example.test")]
+    [Arguments("X-API-Key: fixture-only-credential")]
+    [Arguments("Authorization: Bearer fixture-only-credential")]
+    [Arguments("https://fixture-user:fixture-pass@example.test/?key=fixture-secret")]
+    [Arguments("d41d8cd98f00b204e9800998ecf8427e")]
+    [Arguments("Rml4dHVyZU9ubHlDcmVkZW50aWFsTm90QVJlYWxLZXk=")]
+    [Arguments("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.dGVzdHNpZ25hdHVyZQ")]
+    public async Task A_system_one_400_omits_sensitive_message_and_location_values(string sensitive)
+    {
+        var detail = new JsonArray(
+            new JsonObject { ["msg"] = sensitive, ["loc"] = new JsonArray("body", "state") },
+            new JsonObject { ["msg"] = "Field required", ["loc"] = new JsonArray("body", sensitive) });
+        var failure = await RejectSystemOneRequestAsync(new JsonObject { ["detail"] = detail }.ToJsonString());
+
+        failure.Message.ShouldBe(Rejected400Prefix + "Field required");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_system_one_400_omits_unparseable_error_bodies(bool overDepth)
+    {
+        const string body = """{"detail":{"msg":"Field required"},"input":"private request preview""";
+        var failure = await RejectSystemOneRequestAsync(overDepth
+            ? body + "\",\"nested\":" + new string('[', 70) + "0" + new string(']', 70) + "}"
+            : body);
+
+        failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);
+    }
+
+    [Test]
+    [Arguments(1, 65)]
+    [Arguments(8, 40)]
+    public async Task A_system_one_400_omits_diagnostics_when_the_json_traversal_budget_is_exceeded(int arrays, int items)
+    {
+        var detail = new JsonArray(new JsonObject { ["msg"] = "Field required" });
+        for (var array = 0; array < arrays; array++)
+        {
+            var padding = new JsonArray();
+            for (var i = 0; i < items; i++)
+                padding.Add(0);
+            detail.Add(padding);
+        }
+        var failure = await RejectSystemOneRequestAsync(new JsonObject { ["detail"] = detail }.ToJsonString());
+
+        failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);
+    }
+
+    [Test]
+    public async Task A_system_one_400_stops_reading_an_oversized_body()
+    {
+        const int byteLimit = 16 * 1024;
+        var bytes = Encoding.UTF8.GetBytes("""{"detail":{"msg":"Field required"}}""" + new string(' ', byteLimit * 3));
+        using var stream = new CountedErrorStream(bytes);
+        using var content = new StreamContent(stream);
+
+        var failure = await RejectSystemOneRequestAsync(content);
+
+        stream.BytesRead.ShouldBe(byteLimit + 1);
+        failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);
+    }
+
+    private const string Rejected400Prefix = "Provider 'primary' rejected the request (400): HTTP 400: ";
+    private const string DiagnosticOmitted = "Provider diagnostic omitted.";
+
+    private static Task<DecisionChainException> RejectSystemOneRequestAsync(string body) =>
+        RejectSystemOneRequestAsync(new StringContent(body, Encoding.UTF8, "application/json"));
+
+    private static async Task<DecisionChainException> RejectSystemOneRequestAsync(HttpContent content)
     {
         var settings = Settings(("primary", JevDialects.TypeSafeNative, "https://primary.example"),
             ("secondary", JevDialects.LiteLlmSystemOne, "https://secondary.example"));
-        using var handler = new FakeHandler(_ => Json(HttpStatusCode.BadRequest, body));
+        using var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = content });
 
         var failure = await Should.ThrowAsync<DecisionChainException>(() =>
             Chain(handler, settings).DecideAsync("test", SystemOneRequest, CancellationToken.None));
 
         failure.Kind.ShouldBe(DecisionFailureKind.Rejected);
-        failure.Calls.ShouldHaveSingleItem().Outcome.ShouldBe("rejected");
+        var call = failure.Calls.ShouldHaveSingleItem();
+        call.Outcome.ShouldBe("rejected");
+        call.Provider.ShouldBe("primary");
         handler.Requests.ShouldHaveSingleItem().Uri.ShouldBe("https://primary.example/v1/systemone");
         return failure;
+    }
+
+    private sealed class CountedErrorStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        public int BytesRead { get; private set; }
+        public override bool CanSeek => false;
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var count = Read(buffer.Span);
+            BytesRead += count;
+            return ValueTask.FromResult(count);
+        }
     }
 
     [Test]
