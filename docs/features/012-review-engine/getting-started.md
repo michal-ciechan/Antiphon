@@ -809,10 +809,12 @@ for this iteration.
 | `{{categorisation}}`, `{{selectedChecks}}` | Context from the corresponding declared producer |
 | `{{blastRadius}}`, `{{categories}}` | Cumulative blast radius and categories |
 
-Put each section slot on its own line. Use exactly one `{{defaultBody}}` or `{{findings}}`. The
-template is limited to 8 KiB in UTF-8 and the rendered body to 48 KiB. Publish uses the standard
-body when a stored template is invalid or its render exceeds the limit, and records a warning
-on the execution. Values supplied by the review are rendered as literal text in custom summaries.
+Put each section slot on its own line. Place exactly one `{{defaultBody}}` or `{{findings}}` in
+visible top-level Markdown text, outside code, HTML and links. The template is limited to 8 KiB
+in UTF-8. Authored summaries use LF line endings and have a 48 KiB final limit that includes
+the run link. An invalid or oversized template uses the standard layout with the same literal
+escaping and records a warning on the execution. When that layout needs to be shortened,
+Publish omits whole finding entries and adds a notice. The omitted findings remain in Antiphon.
 The engine still decides which findings are posted and where. A summary is posted only if at
 least one finding qualifies and the code host accepts reviews on the PR. A configured public run
 URL is added once after rendering and is also appended to each inline comment.

@@ -138,11 +138,11 @@ public partial class ReviewEndToEndApiTests
             "**Categories across all iterations** · feature, external&#45;contract", "",
             "**Selected checks**",
             "- AAA · First check",
-            "- ZZZ · Last check"));
+            "- ZZZ · Last check").ReplaceLineEndings("\n"));
         receipt.Review.Body.ShouldNotContain("DECOY");
         receipt.Review.Body.ShouldNotContain("REJECTED");
         var runLink = FixtureRunLink(id);
-        receipt.Review.Body.ShouldStartWith(Lines("**Antiphon review**, round 1 (iteration 1)", "", runLink, ""));
+        receipt.Review.Body.ShouldStartWith($"**Antiphon review**, round 1 (iteration 1)\n\n{runLink}\n");
         receipt.Review.Body.Split(runLink, StringSplitOptions.None).Length.ShouldBe(2);
         receipt.Review.Comments.ShouldHaveSingleItem().Body.ShouldEndWith(runLink + Environment.NewLine);
     }
@@ -174,7 +174,7 @@ public partial class ReviewEndToEndApiTests
         var review = Receipt(eligible.Pr, eligible.Output).Review;
         review.Body.ShouldBe(Lines("Custom fixture 1", "", "Findings:", "- **F3** major · src&#47;Lease&#46;&#8203;cs: Inline control",
             "", "Listed here only:", "- F1 nit · src&#47;Lease&#46;&#8203;cs&#58;&#8203;14: Summary nit",
-            "- F2 major · src&#47;Lease&#46;&#8203;cs&#58;&#8203;55: Outside hunk", "", FixtureRunLink(eligible.RunId), ""));
+            "- F2 major · src&#47;Lease&#46;&#8203;cs&#58;&#8203;55: Outside hunk", "", FixtureRunLink(eligible.RunId), "").ReplaceLineEndings("\n"));
         var comment = review.Comments.ShouldHaveSingleItem();
         (comment.Path, comment.Line).ShouldBe((inline.File, inline.Line));
         eligible.Findings.ShouldAllBe(f => f.Posted);
@@ -292,6 +292,9 @@ public partial class ReviewEndToEndApiTests
         review.Body.ShouldStartWith("**Antiphon review**, round 1 (iteration 1)\n");
         review.Body.ShouldNotContain("~~~");
         review.Body.ShouldContain("Listed here only:\n- F1 major · src&#47;Lease&#46;&#8203;cs&#58;&#8203;55: " + candidate.Title);
+        var html = Markdig.Markdown.ToHtml(review.Body);
+        html.ShouldContain("<li>F1 major · ");
+        html.ShouldContain(candidate.Title + "</li>");
         fixture.Findings.ShouldHaveSingleItem().Posted.ShouldBeTrue();
         review.Comments.ShouldBeEmpty();
     }

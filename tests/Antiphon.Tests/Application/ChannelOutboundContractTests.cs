@@ -24,7 +24,7 @@ public sealed class ChannelOutboundContractTests
         var serverDependencies = serverProject.Descendants()
             .Where(e => e.Name.LocalName is "PackageReference" or "ProjectReference")
             .Select(e => (string?)e.Attribute("Include") ?? "").ToArray();
-        serverDependencies.ShouldNotContain(x => x.Contains("Markdig", StringComparison.OrdinalIgnoreCase));
+        // The review engine also uses the parser. The optional PDF renderer remains outside the server.
         serverDependencies.ShouldNotContain(x => x.Contains("MarkdownPdf", StringComparison.OrdinalIgnoreCase));
         var toolDependencies = toolProject.Descendants()
             .Where(e => e.Name.LocalName == "ProjectReference")

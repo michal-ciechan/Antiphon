@@ -202,8 +202,6 @@ public class ReviewPublishSummaryTests
         System.Text.Encoding.UTF8.GetByteCount(body).ShouldBeLessThanOrEqualTo(ReviewSummaryRenderer.MaxCustomBodyBytes);
     }
 
-    private static readonly ReviewPublishConfiguration Binding = new("collate", "verify", "categorise", "select");
-
     [Test]
     public void C2110_S1_unit_Custom_summary_uses_the_same_LF_bytes_for_CRLF_and_LF_templates()
     {
@@ -216,6 +214,8 @@ public class ReviewPublishSummaryTests
         lf.ShouldStartWith("Custom heading\n\nFindings:\n- **F1** major · path: Visible finding\n\n**Blast radius across all iterations**\n");
         lf.ShouldNotContain("\r");
     }
+
+    private static readonly ReviewPublishConfiguration Binding = new("collate", "verify", "categorise", "select");
 
     private static ReviewWalk Walk(params ReviewNodeExecution[] rows) =>
         new(null!, null!, new ReviewRun { Round = 1, Subject = new ReviewSubject(), Nodes = [.. rows] },
