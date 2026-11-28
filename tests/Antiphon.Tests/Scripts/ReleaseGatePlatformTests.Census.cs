@@ -139,9 +139,22 @@ public sealed partial class ReleaseGatePlatformTests
                 entries = identities.Select(test => new { platform = "windows", test, reasonPrefix = "fixture" }),
             }));
 
-        WriteRoster("Demo.Outer`1+Inner`2.CanRun", "Demo.NonGeneric+Nested.CanRun", "Demo.Another.CanRun",
-            "Demo.Outer`1+Inner`2[[System.Int32, System.Private.CoreLib],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun");
+        const string generic = "Demo.Outer`1+Inner`2";
+        const string valid = generic + "[[System.Int32, System.Private.CoreLib],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun";
+        const string wrongArgumentCount = generic + "[[System.Int32, System.Private.CoreLib],[System.String, System.Private.CoreLib]].CanRun";
+        const string invalidArgument = generic + "[[not a CLR type, System.Private.CoreLib],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun";
+        var nestedArgument = typeof(Dictionary<string, int[,]>).AssemblyQualifiedName;
+        var validNestedArgument = generic + $"[[{nestedArgument}],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun";
+
+        WriteRoster(generic + ".CanRun", "Demo.NonGeneric+Nested.CanRun", "Demo.Another.CanRun", valid, validNestedArgument);
         AssertExpectedSkipRosterIsCurrent(repo);
+
+        WriteRoster(valid, wrongArgumentCount, invalidArgument, validNestedArgument);
+        var staleArguments = Should.Throw<ShouldAssertException>(() => AssertExpectedSkipRosterIsCurrent(repo));
+        staleArguments.Message.ShouldContain(wrongArgumentCount);
+        staleArguments.Message.ShouldContain(invalidArgument);
+        staleArguments.Message.ShouldNotContain(valid);
+        staleArguments.Message.ShouldNotContain(validNestedArgument);
 
         WriteRoster("Demo.NonGeneric.Nested.CanRun", "Demo.Outer`1+Inner`1.CanRun", "Demo.Unrelated.CanRun");
         var stale = Should.Throw<ShouldAssertException>(() => AssertExpectedSkipRosterIsCurrent(repo));

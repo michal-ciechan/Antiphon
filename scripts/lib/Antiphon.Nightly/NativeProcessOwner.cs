@@ -965,14 +965,14 @@ namespace Antiphon.Nightly
                 "DuplicateHandle close launch copy");
         }
 
-        private static void StopHandleCarrier(ref ProcessInfo carrier)
+        private void StopHandleCarrier(ref ProcessInfo carrier)
         {
             if (carrier.Process == IntPtr.Zero) return;
             try
             {
                 // The carrier never runs. Its exit also releases any copies left by a failed launch.
                 Check(TerminateProcess(carrier.Process, 1) || RootExited(carrier.Process), "TerminateProcess handle carrier");
-                var wait = WaitForSingleObject(carrier.Process, DefaultCleanupTimeoutMilliseconds);
+                var wait = WaitForCarrierExit(carrier.Process, DefaultCleanupTimeoutMilliseconds);
                 if (wait == 258) throw new TimeoutException("Suspended handle carrier did not exit within the cleanup budget.");
                 Check(wait == 0, "WaitForSingleObject handle carrier");
             }
@@ -982,6 +982,15 @@ namespace Antiphon.Nightly
                 Close(ref carrier.Process);
             }
         }
+
+        private uint WaitForCarrierExit(IntPtr carrier, int milliseconds)
+        {
+            if (!_hooks.HoldWait("carrier-exit")) return WaitForSingleObject(carrier, (uint)milliseconds);
+            // Hold the exit observation for this wait, after the real carrier termination request.
+            Thread.Sleep(milliseconds);
+            return 258;
+        }
+
         private static void Close(ref IntPtr handle) { if (handle != IntPtr.Zero) { CloseHandle(handle); handle = IntPtr.Zero; } }
         private static void Check(bool ok, string operation) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), operation); }
 

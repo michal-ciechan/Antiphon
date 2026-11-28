@@ -216,6 +216,43 @@ public sealed class NightlyNativeOwnershipTests
         }, cancellationToken);
 
     [Test, Timeout(120_000)]
+    public Task C1039_FileStdinFailedLaunchHasOneCleanupBudget(CancellationToken cancellationToken) =>
+        RunAsync(nameof(C1039_FileStdinFailedLaunchHasOneCleanupBudget), native =>
+        {
+            const int cleanupBudget = 750;
+            const int tolerance = 500;
+            var root = native.NewRoot("failed file stdin launch");
+            var input = Path.Combine(root, "stdin.txt");
+            var log = Path.Combine(root, "native.log");
+            File.WriteAllText(input, "fixture input");
+            var hooks = new NativeProcessHooks
+            {
+                StandardInputPath = input,
+                BarrierDirectory = root,
+                Barriers = ["create-process", "carrier-exit"],
+                CleanupTimeoutMilliseconds = cleanupBudget,
+            };
+            var owner = NativeProcessOwner.Start(Path.Combine(root, "missing.exe"), [], root, 30_000, log, null, hooks);
+            native.Owners.Add(owner);
+            native.WaitFor(() => File.Exists(Path.Combine(root, "create-process.entered")), "file stdin carrier setup");
+
+            var elapsed = Stopwatch.StartNew();
+            native.Release(new NativeRun(root, owner, log), "create-process");
+            var result = owner.Completion.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken).GetAwaiter().GetResult();
+            elapsed.Stop();
+
+            result.Pid.ShouldBe(0);
+            result.ExitCode.ShouldBe(1);
+            result.Error.ShouldContain("CreateProcess suspended");
+            File.Exists(Path.Combine(root, "carrier-exit.entered")).ShouldBeTrue("the file stdin carrier must reach its delayed wait");
+            File.WriteAllText(Path.Combine(root, "result.json"), JsonSerializer.Serialize(result));
+            Console.WriteLine($"C1039_CARRIER_CLEANUP wall={elapsed.Elapsed.TotalMilliseconds:F0}ms cleanup={result.CleanupMilliseconds:F0}ms budget={cleanupBudget}ms");
+            elapsed.ElapsedMilliseconds.ShouldBeLessThanOrEqualTo(cleanupBudget + tolerance, "failed launch and carrier cleanup share one deadline");
+            result.CleanupMilliseconds.ShouldBeInRange(cleanupBudget - 50, cleanupBudget + tolerance, "the cleanup receipt includes the carrier wait");
+            result.Error.ShouldContain("Suspended handle carrier did not exit within the cleanup budget");
+        }, cancellationToken);
+
+    [Test, Timeout(120_000)]
     public Task C1039_ConcurrentLaunchDoesNotInheritStdin(CancellationToken cancellationToken) =>
         RunAsync(nameof(C1039_ConcurrentLaunchDoesNotInheritStdin), native =>
         {
