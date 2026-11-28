@@ -1,6 +1,6 @@
-Append verification to the landed plan; do not rewrite the fix design.
+Append verification to the landed plan. Preserve the fix design.
 Every guard that protects a safety-critical assertion gets a PC-n positive control.
-Read changed tests + nearest fixture. Require recipe/variant/case/oracle/reachability/classification. Unbound payloads need binding after Code.
+Read changed tests + nearest fixture. Require recipe/variant/case/oracle/reachability/classification. Unbound payloads: binding required after Code.
 
 ## Verification design
 ### Inspection
@@ -28,5 +28,5 @@ One isolated build + exact filter per row; union=ordinary scope. Min=--min-execu
 - ordinary V/R floor (Code)=sum EstimatedMinutes; PC floor (Mutation); filters/minutes. Total=build/setup+V/R+PC red/restore/green (estimated/measured). Quantify savings or justify zero.
 - Apply docs/test-performance-standards.md#r10-cheap-seams. Count setup/code process starts per test. Record seam/budget gaps.
 
-Before handoff: guards=N, mapped=N, missing=0, duplicate PC maps=0; all PCs run; numeric Cost.
-next: code if complete; plan for seam/budget gaps; decide for human choices. Commit and push plan.
+Handoff: guards=N, mapped=N, missing=0, duplicate PC maps=0; all PCs run; numeric Cost.
+next: code if complete; plan for seam/budget gaps; decide for human choices. Commit/push plan.
