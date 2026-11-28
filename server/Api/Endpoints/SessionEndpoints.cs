@@ -174,9 +174,12 @@ public static class SessionEndpoints
         sessions.MapPost("/{id:guid}/input", async (
             Guid id,
             SendSessionInputRequest request,
+            SessionTerminalAttachments attachments,
             AgentSessionService service,
             CancellationToken cancellationToken) =>
         {
+            using var input = attachments.TryBeginInput(id)
+                ?? throw new ConflictException(SessionTerminalAttachments.StopInFlightMessage, "session_stop_in_flight");
             await service.SendInputAsync(id, request.Input, cancellationToken);
             return Results.NoContent();
         });

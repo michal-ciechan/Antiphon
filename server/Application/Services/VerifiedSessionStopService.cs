@@ -86,7 +86,8 @@ public sealed class VerifiedSessionStopService(
             targetOwners.Count == 1 ? targetOwners[0] : null, ct);
 
         if (!attachments.TryBeginStop(id))
-            throw new ConflictException("The seat has a browser attachment or a stop in flight.", "session_stop_attached");
+            throw new ConflictException("The seat has a browser attachment, terminal input or a stop in flight.",
+                "session_stop_attached");
         try
         {
             var gate = messages.GetLock(id);

@@ -31,7 +31,7 @@ public class AntiphonHub : Hub
     {
         var session = SessionGroupId(groupName);
         if (session is Guid id && !_attachments.TryAttach(id, Context.ConnectionId))
-            throw new HubException("The session is being stopped.");
+            throw new HubException(SessionTerminalAttachments.StopInFlightMessage);
         // If adding the group fails, retain the attachment until LeaveGroup or disconnect.
         // A failed repeat join cannot prove an earlier membership is gone.
         await Groups.AddToGroupAsync(Context.ConnectionId, groupName);

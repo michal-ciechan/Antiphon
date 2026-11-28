@@ -28,6 +28,8 @@ const connection = vi.hoisted(() => ({
   invoke: vi.fn(async () => undefined),
   on: (event: string, handler: (payload: unknown) => void) => connection.handlers.set(event, handler),
   off: (event: string) => connection.handlers.delete(event),
+  onreconnecting: () => {},
+  onclose: () => {},
   onreconnected: (handler: () => void) => { connection.reconnected = handler },
 }))
 vi.mock('@microsoft/signalr', () => ({

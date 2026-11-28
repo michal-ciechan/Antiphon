@@ -1,10 +1,11 @@
 import '@xterm/xterm/css/xterm.css'
 import { Box, Stack, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
 import { FitAddon } from '@xterm/addon-fit'
 import type { AgentSessionSummaryDto } from '../../api/boards'
+import { getApiErrorMessage } from '../../api/client'
 import { getSessionBuffer, resizeSession, sendSessionInput } from '../../api/sessions'
 import { TerminalKeypad } from './TerminalKeypad'
 import { createTerminalCopyKeyHandler } from './terminalCopy'
@@ -26,7 +27,12 @@ const HUB_URL = '/hubs/antiphon'
 export function SessionTerminal({ session, fill = false }: SessionTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sessionId = session.id
-  const inputEnabled = session.status === 'Running'
+  const generation = session.startedAt
+  const running = session.status === 'Running'
+  const sendInput = useRef<((input: string) => void) | null>(null)
+  const [terminalConnection, setTerminalConnection] = useState<{ sessionId: string; generation: string; joined: boolean; detail?: string }>()
+  const inputEnabled = running && terminalConnection?.sessionId === sessionId
+    && terminalConnection.generation === generation && terminalConnection.joined
   // Touch devices / narrow viewports can't produce TUI keys (arrows, esc, tab, ctrl) — give them buttons.
   const showKeypad = useMediaQuery('(max-width: 48em), (pointer: coarse)')
 
@@ -40,9 +46,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
     let lastAppliedSequence = 0
     const pendingDeltas: AgentTextDeltaPayload[] = []
     const groupName = `session-${sessionId}`
-    const terminal = createMirrorTerminal({
-      disableStdin: !inputEnabled,
-    })
+    const terminal = createMirrorTerminal({ disableStdin: true })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(host)
@@ -50,8 +54,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
     fitAddon.fit()
 
     const dataDisposable = terminal.onData((input) => {
-      if (!inputEnabled) return
-      void sendSessionInput(sessionId, input)
+      if (!disposed) sendInput.current?.(input)
     })
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       if (cols > 0 && rows > 0) {
@@ -65,10 +68,30 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
       .configureLogging(LogLevel.Warning)
       .build()
 
+    const setJoined = (acknowledged: boolean, detail?: string) => {
+      if (disposed) return
+      joined = acknowledged
+      terminal.options.disableStdin = !running || !joined
+      sendInput.current = running && joined ? (input) => {
+        if (disposed || connection.state !== HubConnectionState.Connected) return
+        void sendSessionInput(sessionId, input).catch((error: unknown) => {
+          if (!disposed) {
+            const detail = getApiErrorMessage(error, 'Terminal input could not be sent.')
+            setTerminalConnection({ sessionId, generation, joined, detail })
+          }
+        })
+      } : null
+      setTerminalConnection({ sessionId, generation, joined, detail })
+    }
+
     const join = async () => {
       if (disposed || connection.state !== HubConnectionState.Connected) return
-      await connection.invoke('JoinGroup', groupName)
-      joined = true
+      try {
+        await connection.invoke('JoinGroup', groupName)
+        if (connection.state === HubConnectionState.Connected) setJoined(true)
+      } catch (error) {
+        setJoined(false, error instanceof Error ? error.message : 'Terminal attachment was refused.')
+      }
     }
 
     const applyDelta = (payload: AgentTextDeltaPayload) => {
@@ -114,7 +137,10 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
     }
 
     connection.on('AgentTextDelta', onDelta)
+    connection.onreconnecting(() => setJoined(false))
+    connection.onclose(() => setJoined(false, 'Terminal connection closed.'))
     connection.onreconnected(() => {
+      setJoined(false)
       void (async () => {
         await join()
         await replayBacklog(true)
@@ -134,7 +160,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
         await connection.start()
         await join()
       } catch {
-        // Backlog remains useful even if the live connection is unavailable.
+        setJoined(false, 'Terminal connection is unavailable.')
       }
 
       await replayBacklog(false)
@@ -142,6 +168,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
 
     return () => {
       disposed = true
+      sendInput.current = null
       resizeObserver.disconnect()
       dataDisposable.dispose()
       resizeDisposable.dispose()
@@ -153,7 +180,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
       }
       terminal.dispose()
     }
-  }, [inputEnabled, sessionId])
+  }, [generation, running, sessionId])
 
   return (
     <Stack gap="xs" h={fill ? '100%' : undefined} style={{ minHeight: 0 }}>
@@ -171,7 +198,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
       }}
     >
       <Box ref={hostRef} h="100%" />
-      {!inputEnabled && (
+      {!running && (
         <Box
           data-testid="session-terminal-inactive-overlay"
           style={{
@@ -199,8 +226,14 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
         </Box>
       )}
     </Box>
+      {running && (!inputEnabled || terminalConnection?.detail) && (
+        <Text size="xs" c="dimmed" role="status">
+          {terminalConnection?.sessionId === sessionId && terminalConnection.detail
+            ? terminalConnection.detail : 'Waiting for terminal attachment.'}
+        </Text>
+      )}
       {showKeypad && inputEnabled && (
-        <TerminalKeypad onKey={(sequence) => void sendSessionInput(sessionId, sequence)} />
+        <TerminalKeypad onKey={(sequence) => sendInput.current?.(sequence)} />
       )}
     </Stack>
   )

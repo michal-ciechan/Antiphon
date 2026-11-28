@@ -10,6 +10,35 @@ public sealed class SessionTerminalAttachments
     private readonly object _gate = new();
     private readonly Dictionary<Guid, HashSet<string>> _subscribers = [];
     private readonly HashSet<Guid> _stopping = [];
+    private readonly Dictionary<Guid, int> _inputWriters = [];
+
+    public const string StopInFlightMessage = "This session is being stopped or awaiting confirmation of exit.";
+
+    public IDisposable? TryBeginInput(Guid sessionId)
+    {
+        lock (_gate)
+        {
+            if (_stopping.Contains(sessionId)) return null;
+            _inputWriters[sessionId] = _inputWriters.GetValueOrDefault(sessionId) + 1;
+            return new InputLease(this, sessionId);
+        }
+    }
+
+    private void EndInput(Guid sessionId)
+    {
+        lock (_gate)
+        {
+            var remaining = _inputWriters[sessionId] - 1;
+            if (remaining == 0) _inputWriters.Remove(sessionId);
+            else _inputWriters[sessionId] = remaining;
+        }
+    }
+
+    private sealed class InputLease(SessionTerminalAttachments owner, Guid sessionId) : IDisposable
+    {
+        private SessionTerminalAttachments? _owner = owner;
+        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.EndInput(sessionId);
+    }
 
     public bool TryAttach(Guid sessionId, string connection)
     {
@@ -48,13 +77,13 @@ public sealed class SessionTerminalAttachments
     public bool IsAttached(Guid sessionId)
     {
         lock (_gate)
-            return _subscribers.ContainsKey(sessionId);
+            return _subscribers.ContainsKey(sessionId) || _inputWriters.ContainsKey(sessionId);
     }
 
     internal bool TryBeginStop(Guid sessionId)
     {
         lock (_gate)
-            return !_subscribers.ContainsKey(sessionId) && _stopping.Add(sessionId);
+            return !_subscribers.ContainsKey(sessionId) && !_inputWriters.ContainsKey(sessionId) && _stopping.Add(sessionId);
     }
 
     internal void EndStop(Guid sessionId)

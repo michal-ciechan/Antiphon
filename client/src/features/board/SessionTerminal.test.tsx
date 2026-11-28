@@ -58,6 +58,8 @@ const signalrMock = vi.hoisted(() => ({
     off: vi.fn(function (this: { handlers: Map<string, (payload: unknown) => void> }, event: string) {
       this.handlers.delete(event)
     }),
+    onreconnecting: () => {},
+    onclose: () => {},
     onreconnected: vi.fn(function (this: { reconnected?: () => void }, handler: () => void) {
       this.reconnected = handler
     }),
