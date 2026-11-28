@@ -233,8 +233,13 @@ export async function resumeSession(sessionId: string, mode: AgentSessionResumeM
   return apiPost<AgentSessionResumeResult>(`/sessions/${sessionId}/resume`, { mode })
 }
 
-export async function stopSession(sessionId: string) {
-  return apiPost<void>(`/sessions/${sessionId}/kill`, {})
+export async function stopSession({ sessionId, reason, operatorToken }: {
+  sessionId: string
+  reason: string
+  operatorToken: string
+}) {
+  return apiPost<void>(`/sessions/${sessionId}/kill`, { reason },
+    { 'X-Antiphon-Operator-Token': operatorToken })
 }
 
 export function useResumeSession(boardId: string) {

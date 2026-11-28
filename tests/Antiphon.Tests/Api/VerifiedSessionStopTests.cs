@@ -18,6 +18,8 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Shouldly;
@@ -30,6 +32,15 @@ public sealed class VerifiedSessionStopTests
 {
     [Test]
     public Task Stop_requires_the_scoped_orchestrator_credential() => RunStopAsync("invalid-token");
+
+    [Test]
+    [Arguments("no-token")]
+    [Arguments("worker-token")]
+    [Arguments("other-workspace")]
+    public Task Stop_refuses_an_unscoped_caller(string scenario) => RunStopAsync(scenario);
+
+    [Test]
+    public Task Legacy_kill_records_authenticated_operator_and_outcome() => RunStopAsync("legacy-operator");
 
     [Test]
     public Task Legacy_kill_requires_the_operator_credential() => RunStopAsync("legacy-no-operator");
@@ -74,6 +85,17 @@ public sealed class VerifiedSessionStopTests
             AgentSessionId = id, Sequence = 1, Kind = TranscriptKinds.TurnEnd,
             Timestamp = session.StartedAt, CreatedAt = session.StartedAt,
         });
+        var token = Guid.NewGuid().ToString("N");
+        var callerId = Guid.NewGuid();
+        db.AgentTasks.Add(new AgentTask
+        {
+            Id = callerId, RootTaskId = callerId,
+            Kind = scenario == "worker-token" ? AgentTaskKind.Worker : AgentTaskKind.Orchestrator,
+            Status = AgentTaskStatus.Working,
+            WorkingDirectory = scenario == "other-workspace" ? Path.Combine(session.Cwd, "other") : session.Cwd,
+            TokenHash = AgentTaskService.HashToken(token),
+            CreatedAt = session.StartedAt,
+        });
         await db.SaveChangesAsync();
         await db.Entry(session).ReloadAsync();
         var generation = session.StartedAt;
@@ -91,6 +113,16 @@ public sealed class VerifiedSessionStopTests
         builder.Logging.ClearProviders();
         builder.Services.AddScoped(_ => harness.Scope.ServiceProvider.GetRequiredService<AgentSessionService>());
         builder.Services.AddScoped(_ => harness.CreateObserverContext());
+        builder.Services.AddScoped(sp => new AgentTaskService(sp.GetRequiredService<AppDbContext>(),
+            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings()), harness.EventBus, new RecordingSessionStopper(),
+            TimeProvider.System, NullLogger<AgentTaskService>.Instance));
+        var operatorTokenPath = Path.Combine(harness.TempRoot, "test-stop-operator-token");
+        builder.Services.Configure<PhoneHomeRunnerSettings>(settings => settings.OperatorTokenPath = operatorTokenPath);
+        builder.Services.AddScoped(sp =>
+            (ICurrentUser)sp.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>()
+                .HttpContext!.Items["CurrentUser"]!);
+        builder.Services.AddHttpContextAccessor();
         builder.Services.AddSingleton(harness.Runtime);
         builder.Services.AddSingleton(harness.Queue);
         builder.Services.AddSingleton(Options.Create(new AgentSessionSettings()));
@@ -99,13 +131,17 @@ public sealed class VerifiedSessionStopTests
         builder.Services.AddScoped<VerifiedSessionStopService>();
         await using var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
+        app.UseMiddleware<CurrentUserMiddleware>();
         app.MapGroup("/api/sessions").MapSessionKill();
         await app.StartAsync();
         if (scenario == "browser")
             app.Services.GetRequiredService<SessionTerminalAttachments>().TryAttach(id, "open-terminal").ShouldBeTrue();
         using var client = app.GetTestClient();
-        if (scenario == "invalid-token")
-            client.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, "invalid-stop-test-token");
+        if (scenario == "legacy-operator")
+            client.DefaultRequestHeaders.Add(OperatorTokenFile.Header, OperatorTokenFile.ReadOrCreate(operatorTokenPath));
+        else if (scenario != "no-token")
+            client.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader,
+                scenario == "invalid-token" ? "invalid-stop-test-token" : token);
         await using (var inspection = app.Services.CreateAsyncScope())
         {
             var snapshot = await inspection.ServiceProvider.GetRequiredService<VerifiedSessionStopService>()
@@ -120,7 +156,7 @@ public sealed class VerifiedSessionStopTests
         var path = $"/api/sessions/{id}/kill?expectedGeneration={Uri.EscapeDataString(expected.ToString("O"))}&expectedTurnEndSequence=1";
         if (!unowned)
             path += $"&expectedOwnerId={agent.Id}";
-        if (scenario == "legacy-no-operator")
+        if (scenario is "legacy-no-operator" or "legacy-operator")
             path = $"/api/sessions/{id}/kill";
 
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -166,17 +202,30 @@ public sealed class VerifiedSessionStopTests
         }
         else
         {
-            response = await client.PostAsync(path, null, bound.Token);
+            response = await client.PostAsJsonAsync(path, new { reason = "Retire the verified idle seat" }, bound.Token);
         }
 
         using (response)
         {
             await db.Entry(session).ReloadAsync();
-            if (scenario is "invalid-token" or "legacy-no-operator")
+            if (scenario is "invalid-token" or "no-token" or "worker-token" or "other-workspace" or "legacy-no-operator")
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
                 runner.KillGenerationCalls.ShouldBeEmpty();
                 session.Status.ShouldBe(SessionStatus.Running);
+            }
+            else if (scenario == "legacy-operator")
+            {
+                response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+                runner.KillCalls.ShouldBe(1);
+                runner.KillGenerationCalls.ShouldBeEmpty();
+                session.Status.ShouldBe(SessionStatus.Stopped);
+                var entry = await db.AuditRecords.SingleAsync(a => a.EventType == AuditEventType.SessionStop);
+                entry.Summary.ShouldContain("operator:admin");
+                entry.Summary.ShouldContain(generation.ToString("O"));
+                entry.Summary.ShouldContain("Retire the verified idle seat");
+                entry.Summary.ShouldContain("Outcome: Exited");
+                return;
             }
             else if (scenario == "idle")
             {
@@ -186,6 +235,12 @@ public sealed class VerifiedSessionStopTests
                 readback.GetProperty("openTaskId").ValueKind.ShouldBe(JsonValueKind.Null);
                 runner.KillGenerationCalls.ShouldBe([(id, generation)]);
                 session.Status.ShouldBe(SessionStatus.Stopped);
+                readback.GetProperty("generation").GetDateTime().ShouldBe(generation);
+                var entry = await db.AuditRecords.SingleAsync(a => a.EventType == AuditEventType.SessionStop);
+                entry.Summary.ShouldContain($"task:{callerId:D}");
+                entry.Summary.ShouldContain(generation.ToString("O"));
+                entry.Summary.ShouldContain("Retire the verified idle seat");
+                entry.Summary.ShouldContain("Outcome: Exited");
             }
             else
             {

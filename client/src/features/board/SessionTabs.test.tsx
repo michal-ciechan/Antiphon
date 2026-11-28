@@ -152,6 +152,10 @@ describe('SessionTabs', () => {
 
     expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(postSpy).not.toHaveBeenCalled()
+    await userEvent.type(screen.getByLabelText('Reason'), 'Retire the seat')
+    await userEvent.type(screen.getByLabelText('Operator token'), 'test-operator-token')
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm stop' }))
 
     await waitFor(() => expect(postSpy).toHaveBeenCalled())
   })

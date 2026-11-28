@@ -8,6 +8,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.Server.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
@@ -940,7 +941,14 @@ public class BoardE2ETests
     {
         try
         {
-            await _appFixture.HttpClient.PostAsJsonAsync($"/api/sessions/{sessionId}/kill", new { }, JsonOptions);
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/sessions/{sessionId}/kill")
+            {
+                Content = JsonContent.Create(new { reason = "Clean up the isolated browser test session" }, options: JsonOptions),
+            };
+            request.Headers.Add(OperatorTokenFile.Header,
+                OperatorTokenFile.ReadOrCreate(Path.Combine(_appFixture.OwnedWorkspace, "operator-token")));
+            using var response = await _appFixture.HttpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
             await Task.Delay(500);
         }
         catch

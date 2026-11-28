@@ -2014,6 +2014,13 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         await SyncTrackedSessionAfterIsolatedKillAsync(sessionId, ct);
     }
 
+    public async Task KillByOperatorAsync(Guid sessionId, string actor, string reason, CancellationToken ct)
+    {
+        await using var isolated = CreateIsolatedDbContext();
+        await KillOnAsync(isolated, sessionId, SessionTerminationSource.OperatorRequest, ct, actor, reason);
+        await SyncTrackedSessionAfterIsolatedKillAsync(sessionId, ct);
+    }
+
     /// <summary>
     /// A fresh context with the same options as <see cref="_db"/> so this method's two
     /// <c>SaveChangesAsync</c> calls cannot commit a caller's uncommitted entities.
@@ -2083,7 +2090,8 @@ public sealed class AgentSessionService : IDelegateSessionStopper
     }
 
     private async Task KillOnAsync(
-        AppDbContext db, Guid sessionId, SessionTerminationSource source, CancellationToken ct)
+        AppDbContext db, Guid sessionId, SessionTerminationSource source, CancellationToken ct,
+        string? actor = null, string? reason = null)
     {
         var session = await db.AgentSessions.FirstOrDefaultAsync(s => s.Id == sessionId, ct)
             ?? throw new NotFoundException(nameof(AgentSession), sessionId);
@@ -2098,6 +2106,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
 
         session.Status = SessionStatus.Stopping;
         session.LastSeenAt = UtcNow();
+        var audit = actor is null ? null : SessionStopAudit.Begin(db, sessionId, session.StartedAt, actor, reason!, session.LastSeenAt);
         await db.SaveChangesAsync(ct);
 
         bool killed;
@@ -2114,6 +2123,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             // Stopping is already durable. Caller cancellation cannot erase the outstanding kill:
             // remote reconciliation needs its generation intent just as it does after transport loss.
+            if (audit is not null) SessionStopAudit.SetOutcome(audit, "Exit unconfirmed");
             await RecordUndeliveredKillAsync(db, session, ex);
             throw;
         }
@@ -2122,12 +2132,14 @@ public sealed class AgentSessionService : IDelegateSessionStopper
         {
             // A kill response is not an exit. Retain the adapter, attempt and workspace ownership
             // until a later retry or exit observer confirms the process is gone.
+            if (audit is not null) SessionStopAudit.SetOutcome(audit, "Exit unconfirmed");
             await RecordUndeliveredKillAsync(db, session,
                 new InvalidOperationException("Agent process did not exit within the configured grace period."));
             return;
         }
 
         var exitReason = runnerSession.ExitReason;
+        if (audit is not null) SessionStopAudit.SetOutcome(audit, "Exited");
         SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent);
         await _runtime.DisposeSessionAsync(sessionId);
 

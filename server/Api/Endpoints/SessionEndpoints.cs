@@ -6,6 +6,7 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -186,25 +187,41 @@ public static class SessionEndpoints
             Guid? expectedLastTaskId,
             Guid? expectedLastTaskRevision,
             long? expectedTurnEndSequence,
+            [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] SessionStopReason? request,
+            AgentTaskService tasks,
+            IOptions<PhoneHomeRunnerSettings> settings,
+            ICurrentUser user,
             AgentSessionService service,
             VerifiedSessionStopService stops,
             CancellationToken cancellationToken) =>
         {
             var query = http.Request.Query;
-            if (http.Request.Headers.ContainsKey(AgentTaskEndpoints.TokenHeader)
-                || query.ContainsKey(nameof(expectedGeneration)) || query.ContainsKey(nameof(expectedOwnerId))
+            if (query.ContainsKey(nameof(expectedGeneration)) || query.ContainsKey(nameof(expectedOwnerId))
                 || query.ContainsKey(nameof(expectedLastTaskId)) || query.ContainsKey(nameof(expectedLastTaskRevision))
                 || query.ContainsKey(nameof(expectedTurnEndSequence)))
             {
+                var caller = await tasks.AuthenticateAsync(http.Request.Headers[AgentTaskEndpoints.TokenHeader].FirstOrDefault(),
+                    cancellationToken);
+                if (!caller.MayDelegate)
+                    throw new ForbiddenException("A verified stop requires an orchestrator credential.", "session_stop_principal_denied");
+
                 if (expectedGeneration is not { } generation || expectedTurnEndSequence is not long sequence || sequence <= 0
                     || (expectedLastTaskId is null) != (expectedLastTaskRevision is null))
                     throw new ValidationException("stopPreconditions", "Supply the generation and TurnEnd sequence, and pair the last task ID with its revision.");
+                var authority = await stops.ResolveAuthorityAsync(caller,
+                    caller.Task?.ProjectId ?? await tasks.DeriveCallerProjectAsync(caller, cancellationToken), cancellationToken);
                 return Results.Ok(await stops.StopAsync(id, new(generation, expectedOwnerId,
-                    expectedLastTaskId, expectedLastTaskRevision, sequence), cancellationToken));
+                    expectedLastTaskId, expectedLastTaskRevision, sequence), authority,
+                    SessionStopAudit.Reason(request?.Reason, "Verified idle seat release"), cancellationToken));
             }
-            await service.KillAsync(id, SessionTerminationSource.OperatorRequest, cancellationToken);
+
+            OperatorCredential.Require(http, settings.Value, "An unconditional session kill requires the operator token.");
+            await service.KillByOperatorAsync(id, $"operator:{user.UserName}",
+                SessionStopAudit.Reason(request?.Reason, "Operator requested unconditional session kill"), cancellationToken);
             return Results.NoContent();
         });
+
+    public sealed record SessionStopReason(string? Reason);
 
     /// <summary>
     /// CARD-0650: audited operator release of an expectation-watchdog composer hold. Types nothing.

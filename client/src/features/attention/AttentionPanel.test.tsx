@@ -705,6 +705,9 @@ describe('AttentionPanel', () => {
     expect(await screen.findByText('Kill session cefed08a?')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Leave it running' })).toBeInTheDocument()
 
+    expect(screen.getByRole('button', { name: 'Kill session cefed08a' })).toBeDisabled()
+    await userEvent.type(screen.getByLabelText('Reason'), 'Retire the idle seat')
+    await userEvent.type(screen.getByLabelText('Operator token'), 'test-operator-token')
     await userEvent.click(screen.getByRole('button', { name: 'Kill session cefed08a' }))
     await waitFor(() => expect(killed).toEqual(['kill']))
   })

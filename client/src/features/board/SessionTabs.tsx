@@ -7,6 +7,7 @@ import { getApiErrorMessage } from '../../api/client'
 import type { AgentSessionResumeMode } from '../../api/sessions'
 import { useResumeSession, useStopSession } from '../../api/sessions'
 import { SessionContextBadge } from '../agents/SessionContextBadge'
+import { OperatorSessionStopDialog } from '../agents/OperatorSessionStopDialog'
 import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
 import { loadSessionTerminal } from './sessionTerminalLoader'
 
@@ -33,6 +34,7 @@ const CLAUDE_SESSION_NOT_FOUND_TEXT = 'Claude resume session was not found'
 export function SessionTabs({ boardId, sessions, compact = false, fill = false }: SessionTabsProps) {
   const resumeSession = useResumeSession(boardId)
   const stopSession = useStopSession(boardId)
+  const [stopTarget, setStopTarget] = useState<string | null>(null)
   const terminalSessions = useMemo(
     () => sessions.filter((session) => session.id && session.cwd.trim().length > 0),
     [sessions],
@@ -160,17 +162,7 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
                     color="red"
                     loading={stopSession.isPending}
                     aria-label="Stop"
-                    onClick={() => {
-                      stopSession.mutate(selectedSession.id, {
-                        onSuccess: () => notifications.show({ color: 'green', message: 'Session stopped' }),
-                        onError: (error) => {
-                          notifications.show({
-                            color: 'red',
-                            message: error instanceof Error ? error.message : 'Stop failed',
-                          })
-                        },
-                      })
-                    }}
+                    onClick={() => setStopTarget(selectedSession.id)}
                   >
                     <TbPlayerStop size={14} />
                   </ActionIcon>
@@ -182,17 +174,7 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
                   color="red"
                   leftSection={<TbPlayerStop size={12} />}
                   loading={stopSession.isPending}
-                  onClick={() => {
-                    stopSession.mutate(selectedSession.id, {
-                      onSuccess: () => notifications.show({ color: 'green', message: 'Session stopped' }),
-                      onError: (error) => {
-                        notifications.show({
-                          color: 'red',
-                          message: error instanceof Error ? error.message : 'Stop failed',
-                        })
-                      },
-                    })
-                  }}
+                  onClick={() => setStopTarget(selectedSession.id)}
                 >
                   Stop
                 </Button>
@@ -241,6 +223,19 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
             </Group>
           </Stack>
         </Alert>
+      )}
+      {stopTarget && (
+        <OperatorSessionStopDialog title={`Stop session ${stopTarget.slice(0, 8)}?`} confirmLabel="Confirm stop"
+          pending={stopSession.isPending} onClose={() => setStopTarget(null)}
+          onConfirm={(reason, operatorToken) => {
+            stopSession.mutate({ sessionId: stopTarget, reason, operatorToken }, {
+              onSuccess: () => {
+                setStopTarget(null)
+                notifications.show({ color: 'green', message: 'Session stop requested' })
+              },
+              onError: (error) => notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Stop failed') }),
+            })
+          }} />
       )}
       {selectedSession && (
         <Box style={{ flex: fill ? 1 : undefined, minHeight: fill ? 0 : undefined }}>

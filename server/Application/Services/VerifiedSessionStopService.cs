@@ -36,9 +36,55 @@ public sealed class VerifiedSessionStopService(
             IsProtected(session, owners, task), runner?.Status);
     }
 
-    public async Task<VerifiedSessionStopReceipt> StopAsync(
-        Guid id, VerifiedSessionStopRequest expected, CancellationToken ct)
+    public sealed record Authority(string Actor, Guid? ProjectId, Guid? BoardId, Guid? CardId, IReadOnlyList<string> Roots);
+
+    public async Task<Authority> ResolveAuthorityAsync(AgentTaskService.Caller caller, Guid? projectId, CancellationToken ct)
     {
+        var boardId = caller.BoardId;
+        var cardId = caller.Task?.CardId;
+        if (caller.Task is null && caller.SessionId is Guid sourceId)
+        {
+            var source = await db.AgentSessions.AsNoTracking()
+                .SingleOrDefaultAsync(s => s.Id == sourceId && s.Status == SessionStatus.Running, ct);
+            if (source is null) throw ScopeDenied();
+            cardId = source.CardId;
+            var key = sourceId.ToString("D");
+            var agent = await KeepSixService.StandingOrchestrators(db)
+                .Where(a => a.PersistentSessionId != null && a.PersistentSessionId.ToLower() == key)
+                .Select(a => new { a.BoardId }).SingleOrDefaultAsync(ct);
+            if (agent is null && cardId is null) throw ScopeDenied();
+            boardId ??= agent?.BoardId;
+        }
+
+        if (cardId is Guid card)
+            boardId ??= await db.Cards.AsNoTracking().Where(c => c.Id == card)
+                .Select(c => (Guid?)c.BoardId).SingleOrDefaultAsync(ct);
+        if (projectId is null && boardId is Guid board)
+            projectId = await db.Boards.AsNoTracking().Where(b => b.Id == board)
+                .Select(b => (Guid?)b.ProjectId).SingleOrDefaultAsync(ct);
+
+        var roots = new[] { caller.Task?.RepoPath ?? caller.WorkingDirectory }.Concat(caller.ExtraAllowedRoots ?? [])
+            .Where(root => Path.IsPathFullyQualified(root) || WorkingDirectoryIdentity.IsWindowsPath(root)).ToArray();
+        if (roots.Length == 0) throw ScopeDenied();
+
+        var actor = caller.Task is { } task ? $"task:{task.Id:D}"
+            : caller.CapabilityId is { } cap ? $"capability:{cap:D}"
+            : caller.SessionId is { } session ? $"session:{session:D}"
+            : throw ScopeDenied();
+        return new Authority(actor, projectId, boardId, cardId, roots);
+    }
+
+    public async Task<VerifiedSessionStopReceipt> StopAsync(
+        Guid id, VerifiedSessionStopRequest expected, Authority authority, string reason, CancellationToken ct)
+    {
+        var target = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == id, ct)
+            ?? throw ScopeDenied();
+        var targetKey = id.ToString("D");
+        var targetOwners = await db.Agents.AsNoTracking()
+            .Where(a => a.PersistentSessionId != null && a.PersistentSessionId.ToLower() == targetKey).Take(2).ToListAsync(ct);
+        await RequireScopeAsync(authority, target, await LatestTaskAsync(id, ct),
+            targetOwners.Count == 1 ? targetOwners[0] : null, ct);
+
         if (!attachments.TryBeginStop(id))
             throw new ConflictException("The seat has a browser attachment or a stop in flight.", "session_stop_attached");
         try
@@ -47,7 +93,7 @@ public sealed class VerifiedSessionStopService(
             await gate.WaitAsync(ct);
             try
             {
-                return await StopUnderFenceAsync(id, expected, ct);
+                return await StopUnderFenceAsync(id, expected, authority, reason, ct);
             }
             finally { gate.Release(); }
         }
@@ -55,7 +101,7 @@ public sealed class VerifiedSessionStopService(
     }
 
     private async Task<VerifiedSessionStopReceipt> StopUnderFenceAsync(
-        Guid id, VerifiedSessionStopRequest expected, CancellationToken ct)
+        Guid id, VerifiedSessionStopRequest expected, Authority authority, string reason, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         // Warm dispatch locks the previous task, then takes KEY SHARE on the session before
@@ -68,20 +114,18 @@ public sealed class VerifiedSessionStopService(
         var session = await db.AgentSessions.FromSqlInterpolated($"""
             SELECT * FROM "AgentSessions" WHERE "Id" = {id} FOR UPDATE
             """).SingleOrDefaultAsync(ct) ?? throw new NotFoundException(nameof(AgentSession), id);
-        if (!SessionGeneration.Equal(session.StartedAt, expected.ExpectedGeneration)
-            || session.Status != SessionStatus.Running || await OpenTaskAsync(id, ct) is not null)
-            throw Changed();
-
         var task = await LatestTaskAsync(id, ct);
-        if (task?.Id != expected.ExpectedLastTaskId || task?.ConcurrencyToken != expected.ExpectedLastTaskRevision
-            || task is not null && (task.CompletedAt is null || !AgentTaskService.IsSettled(task.Status)))
-            throw Changed();
-
         var key = id.ToString("D");
         var owners = await db.Agents.FromSqlInterpolated($"""
             SELECT * FROM "Agents" WHERE lower("PersistentSessionId") = {key} FOR UPDATE
             """).AsNoTracking().ToListAsync(ct);
         var owner = owners.Count == 1 ? owners[0] : null;
+        await RequireScopeAsync(authority, session, task, owner, ct);
+        if (!SessionGeneration.Equal(session.StartedAt, expected.ExpectedGeneration)
+            || session.Status != SessionStatus.Running || await OpenTaskAsync(id, ct) is not null
+            || task?.Id != expected.ExpectedLastTaskId || task?.ConcurrencyToken != expected.ExpectedLastTaskRevision
+            || task is not null && (task.CompletedAt is null || !AgentTaskService.IsSettled(task.Status)))
+            throw Changed();
         if (IsProtected(session, owners, task) || owner?.Id != expected.ExpectedOwnerId
             || owner is { Status: not AgentStatus.Idle })
             throw Changed();
@@ -97,14 +141,36 @@ public sealed class VerifiedSessionStopService(
                     || m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0 && m.DeliveryVerdict == null), ct))
             throw Changed();
 
-        var requested = await runtime.KillGenerationAsync(id, expected.ExpectedGeneration,
-            TimeSpan.FromMilliseconds(Math.Max(100, settings.Value.KillGraceMs)), ct);
-        var exited = await ReadRunnerAsync(id, ct);
+        var audit = SessionStopAudit.Begin(db, id, session.StartedAt, authority.Actor, reason, clock.GetUtcNow().UtcDateTime);
+        SessionRunnerSessionDto? exited;
+        bool requested;
+        try
+        {
+            requested = await runtime.KillGenerationAsync(id, expected.ExpectedGeneration,
+                TimeSpan.FromMilliseconds(Math.Max(100, settings.Value.KillGraceMs)), ct);
+            exited = await ReadRunnerAsync(id, ct);
+        }
+        catch
+        {
+            await RecordUnconfirmedAsync();
+            throw;
+        }
+
         if (!requested || exited is not { Status: "Exited", AcceptedStartedAt: { } generation }
             || exited.SessionId != id || !SessionGeneration.Equal(generation, expected.ExpectedGeneration)
             || await OpenTaskAsync(id, ct) is not null)
+        {
+            await RecordUnconfirmedAsync();
             throw new ConflictException("The runner did not confirm exit for the verified unowned generation.",
                 "session_stop_exit_unconfirmed");
+        }
+
+        async Task RecordUnconfirmedAsync()
+        {
+            SessionStopAudit.SetOutcome(audit, "Exit unconfirmed");
+            await db.SaveChangesAsync(CancellationToken.None);
+            await tx.CommitAsync(CancellationToken.None);
+        }
 
         // Publish Stopped before releasing the dispatch fence. A waiting claimant then sees
         // the terminal row even if the runner exit event has yet to reach the server.
@@ -114,11 +180,38 @@ public sealed class VerifiedSessionStopService(
         session.FailureReason = null;
         session.EndedAt = clock.GetUtcNow().UtcDateTime;
         session.LastSeenAt = session.EndedAt.Value;
+        SessionStopAudit.SetOutcome(audit, "Exited");
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         await runtime.DisposeSessionAsync(id);
         return new(id, generation, "Exited", null);
     }
+
+    private async Task RequireScopeAsync(
+        Authority authority, AgentSession session, AgentTask? task, Agent? owner, CancellationToken ct)
+    {
+        var cardId = session.CardId ?? task?.CardId;
+        var card = cardId is Guid id
+            ? await db.Cards.AsNoTracking().Where(c => c.Id == id)
+                .Select(c => new { c.BoardId, c.Board.ProjectId }).SingleOrDefaultAsync(ct)
+            : null;
+        var projectId = card?.ProjectId ?? task?.ProjectId ?? owner?.PoolProjectId;
+        var boardId = card?.BoardId ?? owner?.BoardId;
+        if (authority.CardId is Guid cardScope && cardScope != cardId
+            || authority.BoardId is Guid boardScope && boardScope != boardId
+            || projectId is not null && projectId != authority.ProjectId
+            || projectId is null && authority.ProjectId is not null && (task is not null || owner is not null)
+            || !authority.Roots.Any(root => WithinWorkspace(task?.RepoPath ?? session.Cwd, root)))
+            throw ScopeDenied();
+    }
+
+    private static bool WithinWorkspace(string path, string root) =>
+        WorkingDirectoryIdentity.Same(path, root)
+        || Path.IsPathFullyQualified(path) && Path.IsPathFullyQualified(root)
+            && DelegationWorkspaceResolver.IsWithinRoot(path, root);
+
+    private static ForbiddenException ScopeDenied() =>
+        new("Stopping this session requires an orchestrator credential scoped to its workspace and project.", "session_stop_scope_denied");
 
     private Task<AgentTask?> LatestTaskAsync(Guid id, CancellationToken ct) =>
         db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == id)

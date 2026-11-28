@@ -9,7 +9,6 @@ import {
   Collapse,
   Group,
   Loader,
-  Modal,
   Paper,
   Stack,
   Text,
@@ -41,6 +40,7 @@ import { formatCost, formatDuration } from '../delegations/taskVisuals'
 import { BlockedReplyRow } from './BlockedReplyRow'
 import { AttentionInspectionDrawer } from './AttentionInspectionDrawer'
 import { AbandonMessageDialog } from '../agents/AbandonMessageDialog'
+import { OperatorSessionStopDialog } from '../agents/OperatorSessionStopDialog'
 import {
   ATTENTION_GROUPS,
   ageSeconds,
@@ -379,7 +379,7 @@ function AttentionRowActions({
   const dropMessage = useMutation({
     mutationFn: () => cancelQueuedMessage(item.sessionId!, item.messageId!),
   })
-  const kill = useMutation({ mutationFn: () => stopSession(item.sessionId!) })
+  const kill = useMutation({ mutationFn: stopSession })
   const clearHold = useClearModelAvailabilityHold()
 
   const pending =
@@ -497,46 +497,23 @@ function AttentionRowActions({
           onDone={async () => { await queryClient.invalidateQueries({ queryKey: attentionKeys.all }) }} />
       )}
 
-      <Modal
-        opened={killAsked}
-        onClose={() => setKillAsked(false)}
-        title={`Kill session ${shortSession}?`}
-        centered
-      >
-        <Stack gap="sm">
-          <Text size="sm">
-            <Code>{shortSession}</Code> — {item.title}
-          </Text>
+      {killAsked && item.sessionId && (
+        <OperatorSessionStopDialog title={`Kill session ${shortSession}?`}
+          confirmLabel={`Kill session ${shortSession}`} cancelLabel="Leave it running"
+          pending={kill.isPending} onClose={() => setKillAsked(false)}
+          onConfirm={(reason, operatorToken) => kill.mutate({ sessionId: item.sessionId!, reason, operatorToken }, {
+            ...settle(`Stop requested for session ${shortSession}`, 'Could not kill the session'),
+            onSettled: () => setKillAsked(false),
+          })}>
+          <Text size="sm"><Code>{shortSession}</Code> — {item.title}</Text>
           {item.evidence && (
-            <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
-              {item.evidence}
-            </Text>
+            <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>{item.evidence}</Text>
           )}
           <Alert color="warning" variant="light">
-            The runner is still running this. The live process may be the side that is right — the
-            database row is the other side of the disagreement, and killing ends whatever the session
-            is in the middle of.
+            The runner still reports a live process. Killing it ends any work in progress.
           </Alert>
-          <Group justify="flex-end" gap="xs">
-            <Button size="xs" variant="subtle" onClick={() => setKillAsked(false)}>
-              Leave it running
-            </Button>
-            <Button
-              size="xs"
-              color="danger"
-              loading={kill.isPending}
-              onClick={() =>
-                kill.mutate(undefined, {
-                  ...settle(`Killed session ${shortSession}`, 'Could not kill the session'),
-                  onSettled: () => setKillAsked(false),
-                })
-              }
-            >
-              Kill session {shortSession}
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
+        </OperatorSessionStopDialog>
+      )}
     </Stack>
   )
 }
