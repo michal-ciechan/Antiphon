@@ -1233,7 +1233,7 @@ POST   /api/review/threads/{threadId}/comments | /dispatch | /resolve
 | Method | Route | Contract |
 |---|---|---|
 | GET | `/api/review-runs` | Filter by `status`, `repo`, `stage` or `q`. |
-| POST | `/api/review-runs` | Intake `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub `owner/name` is case-insensitive and a PR URL or `owner/name/number` can supply the number. Returns the run detail with `existing: false` (201) or the same detail with `existing: true` (200) while the PR has a run in any status other than `Closed`. |
+| POST | `/api/review-runs` | Intake `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub `owner/name` is case-insensitive and a PR URL or `owner/name/number` can supply the number. Returns the run detail with `existing: false` (201) on creation or `existing: true` (200) for an open run with the verified GitHub identity. An unresolved historical run can hold intake with 409 `legacy_review_run_open`, its `legacyRunId` and a recovery pointer. |
 | GET | `/api/review-runs/{id}` | Get run detail and its `concurrencyToken`. |
 | POST | `/api/review-runs/{id}/refresh` | Re-read the code host. A failed run rechecks on the same run ID. |
 | POST | `/api/review-runs/{id}/rounds` | Request a further round on the same run. |

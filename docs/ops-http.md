@@ -150,7 +150,7 @@ The `delegate`, `status-snapshot`, `checkpoint-task` and `card` commands (`scrip
 
 | Need | Method | Path |
 |---|---|---|
-| Review runs | GET / POST | `/api/review-runs` lists or starts reviews. GitHub intake returns 200 `existing: true` for the current run, including Failed and Merged, and returns 201 `existing: false` when it creates a run. |
+| Review runs | GET / POST | `/api/review-runs` lists or starts reviews. GitHub intake returns 200 `existing: true` for an open run with the verified identity, including Failed and Merged, or 201 `existing: false` when it creates a run. 409 `legacy_review_run_open` includes the historical `legacyRunId` and a recovery pointer. |
 | Close or retry a review run | GET / POST | Get `/api/review-runs/{id}` for the token. POST `/api/review-runs/{id}/close` with `{ concurrencyToken, reason }`. The response includes the recorded actor, reason and time. Use `/refresh` or `/rounds` to continue an existing run. |
 | Every agent, with its live session | GET | `/api/agents` |
 | Session-state cache/process diagnostics (CARD-0701) | GET | `/api/diagnostics/session-state` - cache hits/loads/faults/evictions/pressure, ingest calls and committed rows, tagged EF read-attempt counters, process CPU/memory/GC, live/unknown counts, resolved driver/provider versions and sanitized pool flags. `promptSpan` adds the prompt-span outcome counters (bypass, cold, hit, tail, full read after a failed proof, too large to store) and the prompt-cache entry and character counts (CARD-1987). Metadata only; does not pull transcripts. |
@@ -299,6 +299,8 @@ Invoke-RestMethod "$api/api/agents/$agentId/start" -Method Post -Headers $h `
 ### Close a review run from a shell
 
 `scripts/antiphon review-run close <run-id> --reason-file <path>` reads the current run token and sends the close. Use `--reason <text>` for a short reason or `--token <number>` to compare against a version already read. The command uses `ANTIPHON_API`. A GitHub sign-in deployment requires its session cookie, which the command accepts from a private `--cookie-file` containing the Cookie header value. The close uses the signed-in actor and repository write grant.
+
+For `legacy_review_run_open`, use the returned `legacyRunId` to inspect the historical run before closing it. Once an authorized operator closes it, manual intake can start a review with a verified repository ID. Automatic intake stays held for the matching legacy history. [Recover an unresolved GitHub run](features/012-review-engine/api.md#recover-an-unresolved-github-run)
 
 ## Caller handoff and Review correction routes (CARD-1303 R10)
 
