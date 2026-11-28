@@ -34,6 +34,85 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed class ChannelOutboundRecoveryTests
 {
+    [Test]
+    public async Task ContendedConversionCreateRetainsTheFrozenDelivery()
+    {
+        using var directory = new DelegationWorktreeTests.TemporaryDirectory("admission-conversion");
+        var root = directory.Path;
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(
+            TestDbFixture.CreateDbContextOptions(schema.ConnectionString)).AddInterceptors(waiter).Options));
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var projectId = Guid.NewGuid();
+        var boardId = Guid.NewGuid();
+        var inbound = Guid.NewGuid();
+        var converter = Guid.NewGuid();
+        var channel = Guid.NewGuid();
+        var delivery = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var store = new ChannelOutboundFileStore(Path.Combine(root, "store"));
+        var frozen = await store.StageAsync(delivery, new ChannelReply
+        {
+            Channel = "fake", ConversationId = "thread", Text = "source to convert",
+        }, CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(frozen.ReplyPath)!, "request.json"), "{}");
+        db.Projects.Add(new Project { Id = projectId, Name = "conversion", CreatedAt = now, UpdatedAt = now });
+        db.Boards.Add(new Board { Id = boardId, ProjectId = projectId, Name = "conversion", CreatedAt = now, UpdatedAt = now });
+        foreach (var (id, name) in new[] { (inbound, "inbound"), (converter, "converter") })
+            db.Agents.Add(new Agent { Id = id, BoardId = boardId, Name = name, Slug = name,
+                WorkingDirectory = root, Kind = AgentKind.ClaudeCode, CreatedAt = now, UpdatedAt = now });
+        db.ChatChannels.Add(new ChatChannel { Id = channel, AgentId = inbound, Provider = "fake",
+            ExternalId = "room", CreatedAt = now, UpdatedAt = now });
+        db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
+        {
+            Id = delivery, SourceKey = "source", ChannelId = channel, ProjectId = projectId,
+            InboundAgentId = inbound, ConverterAgentId = converter, SourceSessionId = Guid.NewGuid(),
+            SendKind = "main", ProfileName = "test", PromptText = "Convert the source.",
+            PromptRevision = new string('a', 64), Trigger = "EveryAgentReply",
+            InputPath = frozen.ReplyPath, InputSha256 = frozen.ReplySha256,
+            State = ChannelOutboundDeliveryState.Pending, CreatedAt = now, DeadlineAt = now.AddMinutes(2),
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var journal = new WorkspaceReservationJournal(provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System, admissionSettings: Options.Create(new WorkspaceAdmissionSettings { LockTimeoutMilliseconds = 100 }));
+        var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
+            Options.Create(new DelegationSettings { AllowedRoots = [root] }), new MockEventBus(),
+            new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance,
+            workspaceUse: new WorkspaceUseAdmission(journal, db));
+        var producer = new FakeAntiphonMessagingClient();
+        var pump = new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks), store, producer,
+            Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
+            NullLogger<ChannelOutboundDeliveryPump>.Instance);
+
+        await using var holder = new Npgsql.NpgsqlConnection(schema.ConnectionString);
+        await holder.OpenAsync();
+        await using var transaction = await WorkspaceAdmissionWaitProbe.HoldAsync(holder);
+        var tick = pump.TickAsync(CancellationToken.None);
+        await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var stayedPending = await WorkspaceAdmissionWaitProbe.StillWaitingAsync(tick);
+        await using var verify = new AppDbContext(TestDbFixture.CreateDbContextOptions(schema.ConnectionString));
+        var during = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == delivery);
+        var publishedEarly = producer.SentReplies.Count;
+        await transaction.RollbackAsync();
+
+        stayedPending.ShouldBeTrue();
+        during.State.ShouldBe(ChannelOutboundDeliveryState.Pending);
+        during.ConversionTaskId.ShouldBeNull();
+        during.ConversionOutcome.ShouldBeNull();
+        publishedEarly.ShouldBe(0);
+        await tick;
+        var after = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == delivery);
+        after.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
+        after.InputSha256.ShouldBe(frozen.ReplySha256);
+        after.ConversionTaskId.ShouldBe((await verify.AgentTasks.SingleAsync(t => t.OutboundDeliveryId == delivery)).Id);
+        producer.SentReplies.ShouldBeEmpty();
+    }
+
     // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test starts a probe. A run of
     // only this class's probe-free tests on a fresh build pays the one-off generation (about 25 s) too.
     [Before(Class)]

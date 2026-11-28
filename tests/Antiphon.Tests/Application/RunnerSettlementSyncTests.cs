@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -10,6 +11,7 @@ using Antiphon.Server.Infrastructure.Git;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -898,6 +900,50 @@ public sealed class RunnerSettlementSyncTests
         (await world.HeadAsync()).ShouldBe(world.Baseline);
         (await world.HasObjectAsync(s)).ShouldBeFalse();
         await held!.DisposeAsync();
+    }
+
+    [Test]
+    public async Task AdmissionDeferralKeepsTheOriginalRepositoryLeaseDeadline()
+    {
+        await using var world = await SyncWorld.CreateAsync();
+        await world.RunnerPushAsync("lease-admission.txt", "runner");
+        await using var lease = await world.Leases.TryAcquireAsync(world.Desktop, CancellationToken.None);
+        lease.ShouldNotBeNull();
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var probe = new WorkspaceAdmissionWaitProbe();
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AppDbContext(new DbContextOptionsBuilder<AppDbContext>(
+            TestDbFixture.CreateDbContextOptions(schema.ConnectionString)).AddInterceptors(probe).Options));
+        await using var provider = services.BuildServiceProvider();
+        var journal = new WorkspaceReservationJournal(provider.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        var clock = new FakeTimeProvider();
+        var ct = CancellationToken.None;
+
+        var first = new LeaseBusySignal();
+        var initial = world.Service(clock, journal, first.Observe).SyncAsync(world.Task, ct);
+        await first.First.WaitAsync(SliceReturnGuard);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        (await initial.WaitAsync(SliceReturnGuard)).Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseWaiting);
+
+        // A typed admission refusal is held at the admission boundary to exercise the fallback
+        // after the strict Background policy makes the production path wait behind PostgreSQL.
+        clock.Advance(TimeSpan.FromSeconds(105));
+        probe.Refuse = true;
+        var deferred = await world.Service(clock, journal).SyncAsync(world.Task, ct);
+        deferred.Reason.ShouldBe(WorkspaceAdmissionBusyException.ProblemCode);
+        probe.Refuse = false;
+
+        var last = new LeaseBusySignal();
+        var resumed = world.Service(clock, journal, last.Observe).SyncAsync(world.Task, ct);
+        await last.First.WaitAsync(SliceReturnGuard);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        // A reset clock would require a full slice. Let that path finish so it fails the
+        // verdict assertion rather than leaving a pending sync.
+        var result = await resumed.WaitAsync(SliceReturnGuard);
+        result.Reason.ShouldBe(RemoteSettlementSyncReasons.LeaseBusy);
+        (await world.HeadAsync()).ShouldBe(world.Baseline);
+        await lease!.DisposeAsync();
+        (await world.Service(clock, journal).SyncAsync(world.Task, ct)).Confirmed.ShouldBeTrue();
     }
 
     [Test]

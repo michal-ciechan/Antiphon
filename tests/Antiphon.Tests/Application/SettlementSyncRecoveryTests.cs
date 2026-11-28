@@ -1111,6 +1111,48 @@ public sealed class SettlementSyncRecoveryTests
             .GetAsync(world.TaskId, CancellationToken.None);
     }
 
+    [Test]
+    public async Task CrashingWhileAwaitingAdmissionDoesNotSpendTheOnlySyncAttempt()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(fenced: true);
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        world.Interceptors.Add(waiter);
+        await world.RestartServicesAsync();
+        var source = await world.Git.RunnerPushAsync("pre-sync-crash.txt", "settled");
+        await SeedAsync(world, source, evidence: "no sync began");
+        var before = await HistoryAsync(world);
+        var settings = world.Services.GetRequiredService<IOptions<DelegationSettings>>().Value;
+        settings.RunnerSyncDebtMaxAttempts = 1;
+
+        await using var holder = new Npgsql.NpgsqlConnection(world.Schema.ConnectionString);
+        await holder.OpenAsync();
+        await using (var transaction = await WorkspaceAdmissionWaitProbe.HoldAsync(holder))
+        {
+            using var killed = new CancellationTokenSource();
+            await using var scope = world.Services.CreateAsyncScope();
+            var recovery = scope.ServiceProvider.GetRequiredService<SettlementSyncRecoveryService>();
+            var sweep = recovery.SweepAsync(killed.Token);
+            await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            var contended = await DebtAsync(world);
+            killed.Cancel();
+            await Should.ThrowAsync<OperationCanceledException>(() => sweep);
+            contended.State.ShouldBe(AgentTaskSyncDebtState.Pending);
+            contended.Attempts.ShouldBe(0);
+            (await DebtAsync(world)).Attempts.ShouldBe(0);
+            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        }
+
+        await world.RestartServicesAsync();
+        world.Services.GetRequiredService<IOptions<DelegationSettings>>().Value.RunnerSyncDebtMaxAttempts = 1;
+        world.DebtClock.Advance(TimeSpan.FromMinutes(1));
+        (await world.SweepSettlementSyncAsync()).ShouldBe(1);
+        var ready = await DebtAsync(world);
+        ready.State.ShouldBe(AgentTaskSyncDebtState.Ready);
+        ready.Attempts.ShouldBe(1);
+        (await world.Git.HeadAsync()).ShouldBe(source);
+        (await HistoryAsync(world)).ShouldBe(before);
+    }
+
     private static async Task AssertCrashRecoversAsync(string cut)
     {
         await using var world = await RunnerSettlementWorld.CreateAsync();

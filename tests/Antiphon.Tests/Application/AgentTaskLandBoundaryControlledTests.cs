@@ -1,8 +1,11 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Shouldly;
 using TUnit.Core;
 
@@ -11,6 +14,54 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class AgentTaskLandBoundaryControlledTests
 {
+    [Test]
+    public async Task ContendedMergeHelperKeepsTheSameLandRequestPending()
+    {
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        await using var h = new LandingProtocolHarness { WorkspaceFence = true };
+        h.Interceptors.Add(waiter);
+        h.ConfigureServices = services =>
+            services.AddSingleton(Options.Create(new WorkspaceAdmissionSettings { LockTimeoutMilliseconds = 100 }));
+        await h.InitializeAsync();
+        await h.AddSourceAsync();
+        var request = await h.RequestAsync();
+        waiter.Reset();
+        h.Git.BeforeCommand = (_, args) => Task.FromResult<LandingGitResult?>(args switch
+        {
+            ["diff", "--name-only", "--diff-filter=U", "-z"] => new(0, "conflict.cs\0", ""),
+            _ when args.Contains("rebase") && !args.Contains("--abort") => new(1, "", "content conflict"),
+            _ => null,
+        });
+
+        await using var holder = new Npgsql.NpgsqlConnection(h.Schema.ConnectionString);
+        await holder.OpenAsync();
+        await using var transaction = await WorkspaceAdmissionWaitProbe.HoldAsync(holder);
+        var land = RunAsWorkerAsync();
+        await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var stayedPending = await WorkspaceAdmissionWaitProbe.StillWaitingAsync(land);
+        await using var db = h.CreateContext();
+        var whileHeld = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        var noChild = !await db.AgentTasks.AnyAsync(t => t.ParentTaskId == h.Git.TaskId);
+        await transaction.RollbackAsync();
+
+        stayedPending.ShouldBeTrue();
+        whileHeld.IsPending.ShouldBeTrue();
+        whileHeld.State.ShouldNotBe(LandRequestState.NeedsResolution);
+        noChild.ShouldBeTrue();
+        await land;
+        var resolved = await db.AgentTaskLandRequests.AsNoTracking().SingleAsync(r => r.Id == request.RequestId);
+        resolved.State.ShouldBe(LandRequestState.NeedsResolution);
+        (await db.AgentTasks.SingleAsync(t => t.ParentTaskId == h.Git.TaskId)).Role.ShouldBe(AgentTaskRole.Merge);
+        (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == h.Git.TaskId
+            && e.Type == AgentTaskEventType.LandRefused)).ShouldBeFalse();
+
+        async Task RunAsWorkerAsync()
+        {
+            try { await h.RunAsync(); }
+            catch (Exception ex) { await h.FailAsync(ex); }
+        }
+    }
+
     [Test]
     [Arguments("remote", "advance", false)]
     [Arguments("remote", "dirty", false)]

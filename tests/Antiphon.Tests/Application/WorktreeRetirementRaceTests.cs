@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -90,6 +91,52 @@ public sealed class WorktreeRetirementRaceTests
         (await world.ActiveSessionLaunchIdsAsync(session.Id)).ShouldHaveSingleItem();
     }
 
+    [Test]
+    public async Task ContendedLaunchKeepsItsExactGenerationPastTheReconciliationGrace()
+    {
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        await using var world = await RaceWorld.CreateAsync(interceptor: waiter, configure: services =>
+        {
+            services.AddSingleton(Options.Create(new WorkspaceAdmissionSettings { LockTimeoutMilliseconds = 100 }));
+            services.AddScoped<IAlertService, AlertService>();
+            services.AddSingleton<IAlertRouter, NullAlertRouter>();
+        });
+        world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
+        var session = await world.SeedInteractiveSessionAsync();
+        var generation = await world.OwnStandingLaunchAsync(session.Id);
+        var ct = CancellationToken.None;
+
+        await using var holder = new NpgsqlConnection(world.Schema.ConnectionString);
+        await holder.OpenAsync(ct);
+        await using (var transaction = await HoldAdmissionAsync(holder))
+        {
+            world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
+            await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            var settings = new SessionReconciliationSettings { CensusAlertEnabled = false };
+            var clock = new FakeTimeProvider(new DateTimeOffset(generation.AddMilliseconds(settings.StartingGraceMs + 1)));
+            await using var scope = world.Provider.CreateAsyncScope();
+            await using var db = world.CreateDb();
+            var reconciliation = new SessionReconciliationService(db, new BridgeQueueHarness.EmptyRunnerClient(),
+                world.Provider.GetRequiredService<IEventBus>(), scope.ServiceProvider.GetRequiredService<IAlertService>(),
+                new RunnerReachabilityState(), new SessionReAdoptionState(), new SessionGenerationCompatState(),
+                new HerdrPendingAlertState(), new PtyHostCensusProbe(), new PtyHostCensusAlertState(),
+                Options.Create(settings), clock, NullLogger<SessionReconciliationService>.Instance, world.LaunchQueue);
+            await reconciliation.ScanAsync(ct);
+            var pending = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session.Id, ct);
+            pending.Status.ShouldBe(SessionStatus.Starting);
+            pending.StartedAt.ShouldBe(generation);
+            pending.FailureReason.ShouldBeNull();
+            world.Adapter.Started.ShouldBeFalse();
+        }
+
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, ct);
+        await using var verify = world.CreateDb();
+        var stored = await verify.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session.Id, ct);
+        stored.Status.ShouldBe(SessionStatus.Running, stored.FailureReason);
+        stored.StartedAt.ShouldBe(generation);
+        (await world.ActiveSessionLaunchIdsAsync(session.Id)).ShouldHaveSingleItem();
+    }
+
     private static async Task<NpgsqlTransaction> HoldAdmissionAsync(NpgsqlConnection connection)
     {
         var transaction = await connection.BeginTransactionAsync();
@@ -112,13 +159,22 @@ public sealed class WorktreeRetirementRaceTests
     }
 
     [Test]
-    public async Task ContendedCreateAndReplyReachTheRecipientDespiteAnEnqueueFailure()
+    public Task ContendedCreateAndReplyReachTheRecipientDespiteAnEnqueueFailure() =>
+        ExerciseReplyRecoveryAsync(crashAfterCommit: false);
+
+    [Test]
+    public Task CommittedReplyRecoversThroughABusyRecipientToItsTranscript() =>
+        ExerciseReplyRecoveryAsync(crashAfterCommit: true);
+
+    private static async Task ExerciseReplyRecoveryAsync(bool crashAfterCommit)
     {
         const string goal = "Produce the admission contention report";
         const string answer = "Use the second option.\nKeep the complete reply.";
         var ct = CancellationToken.None;
         var fault = new ReplyQueueInsertFault(answer);
-        await using var world = await RaceWorld.CreateAsync(interceptor: fault);
+        await using var world = await RaceWorld.CreateAsync(
+            services => services.AddSingleton(Options.Create(new SupervisionSettings { DeliveryVerification = new() { StrandedAgeSeconds = 0 } })),
+            interceptor: fault);
         world.Adapter.WithClaudeDialogObservation();
         world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
         world.Adapter.OnSubmitted = body => AppendAsync(world.Adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, body);
@@ -194,7 +250,50 @@ public sealed class WorktreeRetirementRaceTests
         fault.Armed.ShouldBeFalse("the real queue insert was interrupted");
         await AssertBlockedAndUnqueuedAsync();
 
-        await world.Replies.AnswerAsync(created.Id, answer, ct);
+        if (crashAfterCommit)
+        {
+            fault.CrashAfterCommit = true;
+            (await Should.ThrowAsync<IOException>(() => world.Replies.AnswerAsync(created.Id, answer, ct)))
+                .Message.ShouldBe(ReplyQueueInsertFault.Crash);
+            fault.CrashAfterCommit.ShouldBeFalse();
+
+            Guid acceptedRowId;
+            await using (var verify = world.CreateDb())
+            {
+                var task = await verify.AgentTasks.SingleAsync(t => t.Id == created.Id, ct);
+                task.Status.ShouldBe(AgentTaskStatus.Working);
+                var reply = await verify.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == created.Id
+                    && e.Type == AgentTaskEventType.Replied, ct);
+                var pending = await verify.SessionQueuedMessages.SingleAsync(m =>
+                    m.ConversationKey == AgentTaskInputService.ConversationKey(created.Id, reply.Id), ct);
+                pending.AgentSessionId.ShouldBe(recipient);
+                pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+                pending.DeliveryAttempts.ShouldBe(0);
+                acceptedRowId = pending.Id;
+                (await verify.TranscriptEntries.AnyAsync(t =>
+                    t.Kind == TranscriptKinds.UserPrompt && t.Text!.Contains(answer), ct)).ShouldBeFalse();
+            }
+
+            // Rehydrate the queue worker without the producer's per-instance state. The runner
+            // stays live, first serving a different turn and then returning to the idle prompt.
+            await using var recoveryScope = world.Provider.CreateAsyncScope();
+            var recovered = ActivatorUtilities.CreateInstance<SessionMessageQueueService>(recoveryScope.ServiceProvider);
+            await AppendAsync(recipient, TranscriptKinds.UserPrompt, "Separate recipient work in progress");
+            (await recovered.FlushStrandedQueuesAsync(ct)).ShouldBe(0);
+            await using (var verify = world.CreateDb())
+            {
+                var pending = await verify.SessionQueuedMessages.SingleAsync(m => m.Id == acceptedRowId, ct);
+                pending.Status.ShouldBe(QueuedMessageStatus.Pending);
+                pending.DeliveryAttempts.ShouldBe(0);
+                (await verify.TranscriptEntries.AnyAsync(t =>
+                    t.Kind == TranscriptKinds.UserPrompt && t.Text!.Contains(answer), ct)).ShouldBeFalse();
+            }
+            await AppendAsync(recipient, TranscriptKinds.TurnEnd, null);
+            (await recovered.FlushStrandedQueuesAsync(ct)).ShouldBe(1);
+            (await recovered.FlushStrandedQueuesAsync(ct)).ShouldBe(0);
+        }
+        else
+            await world.Replies.AnswerAsync(created.Id, answer, ct);
         await using (var db = world.CreateDb())
         {
             var replied = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == created.Id
@@ -224,7 +323,21 @@ public sealed class WorktreeRetirementRaceTests
     private sealed class ReplyQueueInsertFault(string reply) : SaveChangesInterceptor
     {
         public const string Message = "fixture lost the reply queue insert";
+        public const string Crash = "fixture lost the producer immediately after Reply committed";
         public bool Armed { get; set; }
+        public bool CrashAfterCommit { get; set; }
+
+        public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData,
+            int result, CancellationToken cancellationToken = default)
+        {
+            if (CrashAfterCommit && eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.Entity.Body.Contains(reply, StringComparison.Ordinal)))
+            {
+                CrashAfterCommit = false;
+                throw new IOException(Crash);
+            }
+            return ValueTask.FromResult(result);
+        }
 
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
             InterceptionResult<int> result, CancellationToken cancellationToken = default)

@@ -484,6 +484,58 @@ public class AgentTaskDeadSessionReconciliationTests
     }
 
     [Test]
+    [ParallelLimiter<GitProcessSpawnLimit>]
+    public async Task ContendedCommitHelperDoesNotFailTheCompletedReport()
+    {
+        using var repo = new ScratchGitRepo("admission-commit-helper");
+        await repo.CommitFileAsync("work.txt", "base");
+        await File.WriteAllTextAsync(Path.Combine(repo.Path, "work.txt"), "delegate edits");
+        await using var scenario = new Scenario();
+        var task = await scenario.AddTaskAsync(AgentTaskStatus.Dispatched, SessionStatus.Stopped,
+            workingDirectory: repo.Path, repoPath: repo.Path);
+        await scenario.AddMarkedReportAsync(task.SessionId, task.Id);
+        await using var db = CreateContext();
+        await db.AgentTasks.Where(t => t.Id == task.Id)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(t => t.CommitOnSettle, CommitOnSettlePolicy.Agent));
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        var harness = scenario.HarnessWithAdmission(waiter, task.SessionId);
+        await harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        harness.Clock.Advance(TimeSpan.FromMinutes(5));
+
+        await using var holder = new Npgsql.NpgsqlConnection(db.Database.GetConnectionString());
+        await holder.OpenAsync();
+        await using var transaction = await WorkspaceAdmissionWaitProbe.HoldAsync(holder);
+        var sweep = harness.Dispatcher.FailDeadSessionTasksAsync(CancellationToken.None);
+        await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var stayedPending = await WorkspaceAdmissionWaitProbe.StillWaitingAsync(sweep);
+        var during = await scenario.ReadTaskAsync(task.Id);
+        var noChild = !await db.AgentTasks.AnyAsync(t => t.ParentTaskId == task.Id);
+        await transaction.RollbackAsync();
+
+        try
+        {
+            stayedPending.ShouldBeTrue();
+            during.Status.ShouldBe(AgentTaskStatus.Dispatched);
+            during.FailureReason.ShouldBeNull();
+            noChild.ShouldBeTrue();
+            await sweep;
+            var completed = await scenario.ReadTaskAsync(task.Id);
+            completed.Status.ShouldBe(AgentTaskStatus.Succeeded);
+            completed.ReportEvidence.ShouldBe(AgentTaskReportEvidence.Marked);
+            (await db.AgentTasks.SingleAsync(t => t.ParentTaskId == task.Id)).Role.ShouldBe(AgentTaskRole.Commit);
+            (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == task.Id
+                && e.Type == AgentTaskEventType.Failed)).ShouldBeFalse();
+        }
+        finally
+        {
+            await sweep;
+            var children = db.AgentTasks.Where(t => t.ParentTaskId == task.Id);
+            await db.AgentTaskEvents.Where(e => children.Any(t => t.Id == e.AgentTaskId)).ExecuteDeleteAsync();
+            await children.ExecuteDeleteAsync();
+        }
+    }
+
+    [Test]
     public async Task a_stopped_session_with_transcript_but_no_report_still_fails()
     {
         await using var scenario = new Scenario();
@@ -844,7 +896,13 @@ public class AgentTaskDeadSessionReconciliationTests
             HarnessWithProjectsRoot(
                 Path.Combine(Path.GetTempPath(), "antiphon-deadsession-no-jsonl"), gone);
 
-        public Harness HarnessWithProjectsRoot(string claudeProjectsRoot, params Guid[] gone)
+        public Harness HarnessWithProjectsRoot(string claudeProjectsRoot, params Guid[] gone) =>
+            BuildHarness(claudeProjectsRoot, null, gone);
+
+        public Harness HarnessWithAdmission(WorkspaceAdmissionWaitProbe waiter, params Guid[] gone) =>
+            BuildHarness(Path.Combine(Path.GetTempPath(), "antiphon-deadsession-no-jsonl"), waiter, gone);
+
+        private Harness BuildHarness(string claudeProjectsRoot, WorkspaceAdmissionWaitProbe? waiter, Guid[] gone)
         {
             var stopper = new RecordingSessionStopper();
             var runner = new FakeRunnerClient();
@@ -856,7 +914,13 @@ public class AgentTaskDeadSessionReconciliationTests
 
             var services = new ServiceCollection();
             services.AddLogging();
-            services.AddDbContext<AppDbContext>(o => o.UseNpgsql(TestDbFixture.ConnectionString));
+            services.AddDbContext<AppDbContext>(o =>
+            {
+                o.UseNpgsql(TestDbFixture.ConnectionString);
+                if (waiter is not null) o.AddInterceptors(waiter);
+            });
+            if (waiter is not null)
+                services.AddSingleton(Options.Create(new WorkspaceAdmissionSettings { LockTimeoutMilliseconds = 100 }));
             services.AddSingleton<IEventBus, MockEventBus>();
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton(Options.Create(new SupervisionSettings()));

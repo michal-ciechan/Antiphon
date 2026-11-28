@@ -25,6 +25,8 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
     public TimeProvider Clock { get; set; } = TimeProvider.System;
+    public bool WorkspaceFence { get; init; }
+    public List<IInterceptor> Interceptors { get; } = [];
     public AgentTaskLandQueue Queue { get; private set; } = new();
     public ControlledVerifier Verifier { get; } = new();
     public SaveFault Fault { get; } = new();
@@ -99,7 +101,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     }
 
     public AppDbContext CreateContext() => new(new DbContextOptionsBuilder<AppDbContext>(
-        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(Fault, new TransactionFault(Fault)).Options);
+        TestDbFixture.CreateDbContextOptions(Schema.ConnectionString)).AddInterceptors(Fault, new TransactionFault(Fault)).AddInterceptors(Interceptors).Options);
 
     public Task<LandRunResult> RunAsync() => RunAsync(CancellationToken.None);
 
@@ -133,14 +135,16 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
     {
         var tasks = new AgentTaskService(db, new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
             Options.Create(new DelegationSettings { MaxTasksPerRoot = 40, MaxDepth = 5 }), Events,
-            new RecordingSessionStopper(), Clock, NullLogger<AgentTaskService>.Instance);
+            new RecordingSessionStopper(), Clock, NullLogger<AgentTaskService>.Instance,
+            workspaceUse: WorkspaceFence ? services.GetRequiredService<WorkspaceUseAdmission>() : null);
         var git = services.GetRequiredService<ILandingGit>();
         return new AgentTaskLandService(db, services.GetRequiredService<DelegationWorktreeService>(),
             tasks, Queue, Messages!, Events, Clock,
             Options.Create(LandSettings), Logger,
             services.GetRequiredService<AgentTaskLandingProtocol>(),
             Services.GetRequiredService<IRepositoryMutationLease>(), git,
-            gitSettings: Options.Create(new GitSettings()));
+            gitSettings: Options.Create(new GitSettings()),
+            workspaceUse: WorkspaceFence ? services.GetRequiredService<WorkspaceUseAdmission>() : null);
     }
 
     public ILandingGit RegisteredGit => Services.GetRequiredService<ILandingGit>();

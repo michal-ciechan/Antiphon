@@ -528,6 +528,55 @@ public class AgentSessionLaunchFailureTests
     /// save) fell through to a dispose-only cleanup and leaked exactly the same way.
     /// </summary>
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ContendedCardLaunchOrDirectResumeDoesNotFail(bool resume)
+    {
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true, PromptOutput = "work complete" };
+        await using var fixture = await LaunchFixture.CreateAsync(adapter, db => db.AddInterceptors(waiter), services =>
+        {
+            services.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+            services.AddScoped<WorkspaceUseAdmission>();
+            services.AddSingleton(Options.Create(new WorkspaceAdmissionSettings { LockTimeoutMilliseconds = 100 }));
+        });
+        var cardId = await fixture.CreateCardAsync();
+        await using var db = LaunchFixture.CreateContext();
+        if (resume)
+        {
+            await db.AgentSessions.Where(s => s.Id == fixture.SessionId).ExecuteUpdateAsync(setters => setters
+                .SetProperty(s => s.CardId, cardId)
+                .SetProperty(s => s.Status, SessionStatus.Stopped));
+        }
+
+        await using var holder = new NpgsqlConnection(db.Database.GetConnectionString());
+        await holder.OpenAsync();
+        await using var transaction = await WorkspaceAdmissionWaitProbe.HoldAsync(holder);
+        Task operation = resume
+            ? fixture.Services.GetRequiredService<AgentSessionService>().ResumeAsync(fixture.SessionId,
+                new AgentLaunchSpec("fake", AgentKind.ClaudeCode, "fake", [], new Dictionary<string, string>(),
+                    fixture.Workspace, 120, 30), AgentSessionResumeMode.New, CancellationToken.None)
+            : fixture.StartCardSessionAsync(cardId, "do the work");
+        await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var stayedPending = await WorkspaceAdmissionWaitProbe.StillWaitingAsync(operation);
+        var whileHeld = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.CardId == cardId);
+        var launchStartedEarly = adapter.Started;
+        await transaction.RollbackAsync();
+
+        stayedPending.ShouldBeTrue(operation.Exception?.GetBaseException().Message);
+        whileHeld.Status.ShouldBe(SessionStatus.Starting);
+        whileHeld.FailureReason.ShouldBeNull();
+        launchStartedEarly.ShouldBeFalse();
+        await operation;
+        var launched = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.CardId == cardId);
+        launched.Status.ShouldBe(SessionStatus.Running);
+        launched.StartedAt.ShouldBe(whileHeld.StartedAt);
+        launched.FailureReason.ShouldBeNull();
+        if (!resume)
+            (await db.RunAttempts.AsNoTracking().SingleAsync(a => a.CardId == cardId)).Phase.ShouldBe(RunPhase.Succeeded);
+    }
+
+    [Test]
     public async Task Card_launch_failure_outside_the_timeout_branches_kills_before_disposing()
     {
         var adapter = new FakeAgentProtocolAdapter

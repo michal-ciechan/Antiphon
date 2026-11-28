@@ -4,6 +4,7 @@ using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -116,6 +117,47 @@ public class AgentSessionInterruptedLaunchResumeTests
             i => i.AgentId == fixture.AgentId && i.Kind == AgentIncidentKind.LaunchInterruptedByRestart);
         incident.Severity.ShouldBe(AlertSeverity.Warning);
         runner.Killed.ShouldBeEmpty();
+    }
+
+    [Test]
+    public async Task ContendedRestartAttachmentRetainsTheRunnerProcess()
+    {
+        var waiter = new WorkspaceAdmissionWaitProbe();
+        var adapter = new FakeAgentProtocolAdapter { ReadyResult = true };
+        var runner = new RecordingKillRunner();
+        await using var fixture = await ResumeFixture.CreateAsync(adapter, runner, dispatchedTask: true, waiter);
+        adapter.RegisterOnStart = fixture.Runtime;
+        adapter.OnSubmitted = async submitted =>
+        {
+            await fixture.InsertTranscriptAsync(TranscriptKinds.UserPrompt, submitted);
+            await fixture.InsertTranscriptAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
+        };
+        var brief = await fixture.SeedPendingBriefAsync();
+
+        await using var db = ResumeFixture.CreateContext();
+        var before = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.SessionId);
+        await using var holder = new Npgsql.NpgsqlConnection(db.Database.GetConnectionString());
+        await holder.OpenAsync();
+        await using var transaction = await WorkspaceAdmissionWaitProbe.HoldAsync(holder);
+        var resume = fixture.ResumeAsync();
+        await waiter.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        var stayedPending = await WorkspaceAdmissionWaitProbe.StillWaitingAsync(resume);
+        var whileHeld = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.SessionId);
+        await transaction.RollbackAsync();
+
+        stayedPending.ShouldBeTrue(resume.Exception?.GetBaseException().Message);
+        whileHeld.Status.ShouldBe(SessionStatus.Starting);
+        whileHeld.StartedAt.ShouldBe(before.StartedAt);
+        whileHeld.FailureReason.ShouldBeNull();
+        await resume;
+        var attached = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == fixture.SessionId);
+        attached.Status.ShouldBe(SessionStatus.Running);
+        attached.StartedAt.ShouldBe(before.StartedAt);
+        adapter.Attached.ShouldBeTrue();
+        adapter.Killed.ShouldBeFalse();
+        runner.Killed.ShouldBeEmpty();
+        (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == brief))
+            .Status.ShouldBe(QueuedMessageStatus.Sent);
     }
 
     [Test]
@@ -341,11 +383,12 @@ public class AgentSessionInterruptedLaunchResumeTests
         public static async Task<ResumeFixture> CreateAsync(
             IAgentProtocolAdapter adapter,
             RecordingKillRunner? runner,
-            bool dispatchedTask)
+            bool dispatchedTask, WorkspaceAdmissionWaitProbe? waiter = null)
         {
             var harness = await ClaudeDialogFixture.CreateBridgeAsync(new BridgeQueueHarness.HarnessOptions
             {
                 AlwaysOn = false,
+                ConfigureDbContext = waiter is null ? null : db => db.AddInterceptors(waiter),
                 ConfigureServices = s =>
                 {
                     s.AddSingleton(Options.Create(new GrokRulesSettings()));
@@ -354,6 +397,12 @@ public class AgentSessionInterruptedLaunchResumeTests
                         adapter is FakeAgentProtocolAdapter fake ? fake.WithClaudeDialogObservation() : adapter));
                     if (runner is not null)
                         s.AddSingleton<ISessionRunnerClient>(runner);
+                    if (waiter is not null)
+                    {
+                        s.AddScoped<IWorkspaceReservationJournal, WorkspaceReservationJournal>();
+                        s.AddScoped<WorkspaceUseAdmission>();
+                        s.AddSingleton(Options.Create(new WorkspaceAdmissionSettings { LockTimeoutMilliseconds = 100 }));
+                    }
                 },
             });
 
