@@ -150,7 +150,7 @@ public class ReviewPublishSummaryTests
         body.ShouldContain("https&#58;&#8203;&#47;&#47;example&#46;&#8203;test &#123;&#123;round&#125;&#125;");
         body.ShouldContain("path&#96; &#60;x&#62;");
         body.ShouldContain("1 findings were disproved by the verifier and dropped.");
-        foreach (var raw in new[] { "<b>", "@someone", "#123", "https://example.test", "{{round}}", "UNBOUND_" })
+        foreach (var raw in new[] { "<b>", "@someone", " #123 ", "https://example.test", "{{round}}", "UNBOUND_" })
             body.ShouldNotContain(raw);
         walk.Warnings.ShouldBeEmpty();
     }
