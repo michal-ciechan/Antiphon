@@ -191,7 +191,8 @@ public sealed class TimingJournalTests : CheckpointTestBase
                     ? Directory.EnumerateFiles(spool).FirstOrDefault(path => new FileInfo(path).Length > 0) ?? ""
                     : "";
             } while (partial.Length == 0);
-            partial.ShouldEndWith(".tmp", "the finalized stage name stays absent during the write");
+            partial.EndsWith(".tmp", StringComparison.Ordinal).ShouldBeTrue(
+                "the finalized stage name stays absent during the write");
             Directory.GetFiles(spool, "*.json").ShouldBeEmpty();
         }
         finally

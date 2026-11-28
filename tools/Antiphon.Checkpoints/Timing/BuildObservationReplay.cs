@@ -36,8 +36,13 @@ internal static class BuildObservationReplay
     private const int TaskEntryLimit = TaskShardLimit * (2 * CheckpointBuildObservation.EventLimit + 8);
     internal const string BatchFile = "batch.pending";
 
-    internal static Task<FileStream> LockTaskAsync(string runDirectory, CancellationToken cancellationToken) =>
-        TimingJournal.LockAsync(Path.Combine(TaskRoot(runDirectory), ".build-observation.lock"), cancellationToken);
+    internal static Task<FileStream> LockTaskAsync(string runDirectory, CancellationToken cancellationToken)
+    {
+        var root = TaskRoot(runDirectory);
+        if ((File.GetAttributes(root) | File.GetAttributes(runDirectory)).HasFlag(FileAttributes.ReparsePoint))
+            throw new TimingRootException("linked-observation-root");
+        return TimingJournal.LockAsync(Path.Combine(root, ".build-observation.lock"), cancellationToken);
+    }
 
     internal static async Task<BuildObservationRead> ReadAsync(string ownedRunDirectory, CancellationToken cancellationToken)
     {

@@ -279,6 +279,7 @@ public sealed class TimingJournal
             var files = Directory.EnumerateFiles(root, "events.jsonl", new EnumerationOptions
             {
                 RecurseSubdirectories = true,
+                IgnoreInaccessible = false,
                 AttributesToSkip = byteLimit.HasValue ? FileAttributes.ReparsePoint : 0,
                 MaxRecursionDepth = byteLimit.HasValue ? 4 : int.MaxValue,
             }).Take(byteLimit.HasValue ? BuildObservationReplay.TaskShardLimit + 1 : int.MaxValue)
