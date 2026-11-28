@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -19,7 +22,7 @@ namespace Antiphon.Server.Infrastructure.Review;
 /// sign-in. The Claude Code nesting markers are removed from the child's environment so a server started
 /// from a Claude session can still run it. The prompt is never logged and never put in an exception.
 /// </summary>
-public sealed class ClaudeCliProcess(IOptions<ReviewAgentSettings> settings, ILogger<ClaudeCliProcess> logger) : IClaudeCli
+public sealed partial class ClaudeCliProcess(IOptions<ReviewAgentSettings> settings, ILogger<ClaudeCliProcess> logger) : IClaudeCli
 {
     /// <summary>The variables a parent Claude Code session sets that would make the child think it is nested.</summary>
     public static readonly IReadOnlyList<string> NestingMarkers =
@@ -44,13 +47,16 @@ public sealed class ClaudeCliProcess(IOptions<ReviewAgentSettings> settings, ILo
         }
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException or FileNotFoundException or DirectoryNotFoundException)
         {
-            throw new ClaudeCliException($"'{command}' could not be started in {request.WorkingDirectory}: {ex.Message}. " +
-                "Set Review:Agents:Cli:Command to the claude executable.");
+            var reason = ex is FileNotFoundException or DirectoryNotFoundException or Win32Exception { NativeErrorCode: 2 or 3 }
+                ? "the executable or its directory was not found"
+                : "the server could not launch the executable";
+            throw new ClaudeCliException($"'{Excerpt(RedactDiagnostic(Path.GetFileName(command)))}' could not be started: {reason}. " +
+                "Set Review:Agents:Cli:Command to the claude executable on the server.", ClaudeCliFailureKind.Start);
         }
 
         if (outcome.TimedOut)
-            throw new ClaudeCliException($"claude -p ({request.Model}) did not finish within {Describe(request.Timeout)}; its process tree was killed.",
-                timedOut: true);
+            throw new ClaudeCliException($"claude -p did not finish within {Describe(request.Timeout)}. Its process tree was killed.",
+                ClaudeCliFailureKind.Timeout);
         var result = Parse(outcome.ExitCode, outcome.StandardOutput, outcome.StandardError);
         logger.LogInformation("claude -p {Model} answered in {Elapsed:0.0}s as {ResolvedModel} ({InputTokens} in, {OutputTokens} out, ${Cost})",
             request.Model, Stopwatch.GetElapsedTime(started).TotalSeconds, result.Model, result.InputTokens, result.OutputTokens, result.CostUsd);
@@ -70,32 +76,30 @@ public sealed class ClaudeCliProcess(IOptions<ReviewAgentSettings> settings, ILo
 
     /// <summary>
     /// Reads the <c>--output-format json</c> result. A non-zero exit, <c>is_error: true</c>, no JSON object
-    /// or no <c>result</c> text is a <see cref="ClaudeCliException"/> carrying the CLI's own error text.
+    /// or no <c>result</c> text is a <see cref="ClaudeCliException"/> with a bounded, redacted diagnostic.
     /// </summary>
     public static ClaudeCliResult Parse(int exitCode, string stdout, string stderr)
     {
         var root = ReadResult(stdout);
-        if (root is null)
+        var text = Text(root?["result"]);
+        var isError = root?["is_error"] is JsonValue e && e.TryGetValue<bool>(out var flag) && flag;
+        if (root is null || isError || exitCode != 0)
         {
-            var said = Excerpt(string.IsNullOrWhiteSpace(stderr) ? stdout : stderr);
-            throw new ClaudeCliException(exitCode == 0
-                ? $"claude -p printed no JSON result: {said}"
-                : $"claude -p exited with code {exitCode} and no JSON result: {said}");
-        }
+            var exit = exitCode == 0 ? "" : $" (exit {exitCode})";
+            var apiStatus = (root?["api_error_status"] as JsonValue)?.ToString();
+            var errorText = isError ? text : null;
+            if (apiStatus is "401" or "403" || IsAuthenticationError(stderr) || IsAuthenticationError(root is null ? stdout : errorText))
+            {
+                var reason = apiStatus is "401" or "403" ? $"API {apiStatus} rejected the credentials." : "Not logged in or credentials rejected.";
+                throw new ClaudeCliException($"claude -p authentication failed{exit}. {reason} " +
+                    "Open Claude Code on the server and sign in with /login.", ClaudeCliFailureKind.Authentication);
+            }
 
-        var text = root["result"] is JsonValue r && r.TryGetValue<string>(out var t) ? t : null;
-        var isError = root["is_error"] is JsonValue e && e.TryGetValue<bool>(out var flag) && flag;
-        if (isError || exitCode != 0)
-        {
-            var details = new List<string>();
-            if (exitCode != 0)
-                details.Add($"exit {exitCode}");
-            if (Text(root["subtype"]) is { } subtype)
-                details.Add(subtype);
-            if (root["api_error_status"] is JsonValue status && status.ToString() is { Length: > 0 } code && code != "null")
-                details.Add($"API {code}");
-            var why = isError && !string.IsNullOrWhiteSpace(text) ? text : string.IsNullOrWhiteSpace(stderr) ? text : stderr;
-            throw new ClaudeCliException($"claude -p failed ({string.Join(", ", details)}): {Excerpt(why)}");
+            var failure = root is null ? "printed no JSON result" : "reported an error";
+            // Plain stdout may contain an incomplete answer. Only stderr or a structured error result is diagnostic text.
+            var diagnostic = SafeDiagnostic(string.IsNullOrWhiteSpace(stderr) ? errorText : stderr);
+            throw new ClaudeCliException($"claude -p {failure}{exit}: {diagnostic}",
+                exitCode == 0 ? ClaudeCliFailureKind.Unavailable : ClaudeCliFailureKind.Exit);
         }
 
         if (string.IsNullOrWhiteSpace(text))
@@ -165,6 +169,66 @@ public sealed class ClaudeCliProcess(IOptions<ReviewAgentSettings> settings, ILo
         : 0m;
 
     private static string? Text(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) && s.Length > 0 ? s : null;
+
+    private static bool IsAuthenticationError(string? text) => text is not null && AuthenticationError().IsMatch(AnsiEscape().Replace(text, ""));
+
+    private static string SafeDiagnostic(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return Excerpt(null);
+
+        // Remove whole values before clipping. The final projection emits only fixed reasons,
+        // so identifiers and credential formats unknown to the first pass also stay private.
+        var excerpt = Excerpt(RedactDiagnostic(text));
+        var reason = PublicDiagnosticReason().Match(excerpt);
+        if (reason.Groups["overload"].Success)
+            return "CLI backend overloaded";
+        if (reason.Groups["rateLimit"].Success)
+            return "CLI request rate limited";
+        if (reason.Groups["network"].Success)
+            return "CLI backend connection failed";
+        if (reason.Groups["unknownOption"].Success)
+            return "CLI reported an unknown option";
+        return "CLI output contained no recognized public diagnostic.";
+    }
+
+    private static string RedactDiagnostic(string text)
+    {
+        var plain = AnsiEscape().Replace(text, "");
+        plain = new string(plain.Where(c => c is '\r' or '\n' or '\t'
+            || (!char.IsControl(c) && char.GetUnicodeCategory(c) != UnicodeCategory.Format)).ToArray());
+        var scrubbed = SensitiveDiagnosticText().Replace(plain, "[redacted]");
+        return new DiagnosticsRedactor(includePaths: false).Redact(scrubbed);
+    }
+
+    [GeneratedRegex(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1B]*(?:\x07|\x1B\\))")]
+    private static partial Regex AnsiEscape();
+
+    [GeneratedRegex(@"^\s*(?:error:\s*)?(?:not logged in\b|please run /login\b|invalid api key\b|authentication (?:failed|required)\b|oauth token (?:has )?expired\b|api error:\s*(?:401|403)\b)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Multiline)]
+    private static partial Regex AuthenticationError();
+
+    [GeneratedRegex("""
+        \b(?:[\w-]*[-_])?(?:authorization|cookie)["']?[ \t]*[:=][ \t]*
+            (?:"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*)
+        | \b(?:bearer|basic)[ \t]+[^\r\n]+
+        | \b[\w-]*(?:key|token|secret|password|account(?:[_-]?id)?|user(?:[_-]?name|[_-]?id))["']?[ \t]*[:=][ \t]*
+            (?:"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|[^\s,;}\]]+)
+        | \b[a-z][a-z0-9+.-]*://[^\s/?#<>]+@
+        | \b[\w.%+'-]+@[\w.-]+
+        | \b(?:sk-|ghp_|gho_|github_pat_|xox[a-z]*-)[a-z0-9_-]+
+        | \b(?:eyj[a-z0-9_-]*|e30)\.[a-z0-9_-]+\.[a-z0-9_-]+\b
+        | [a-z0-9_+/-]{32,}={0,2}
+        | (?:[a-z]:[\\/]users[\\/]|/(?:home|users)/)[^\\/\s"']+
+        """, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.IgnorePatternWhitespace | RegexOptions.NonBacktracking)]
+    private static partial Regex SensitiveDiagnosticText();
+
+    [GeneratedRegex(
+        @"\b(?:(?<overload>(?:529|overloaded))|(?<rateLimit>(?:429|rate[ -]limit(?:ed)?))|"
+        + @"(?<network>(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|connection (?:refused|reset)))|"
+        + @"(?<unknownOption>unknown option))\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex PublicDiagnosticReason();
 
     public static string Excerpt(string? text)
     {

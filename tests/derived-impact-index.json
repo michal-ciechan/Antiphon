@@ -1692,9 +1692,9 @@
     },
     {
       "path": "server/Infrastructure/Data/AppDbContext.cs",
-      "classes": 622,
+      "classes": 623,
       "reason": "cap",
-      "owed": 597,
+      "owed": 598,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PhoneHomeQueuedTurnTests",
@@ -1708,9 +1708,9 @@
     },
     {
       "path": "server/Infrastructure/Data/HostLoadModel.cs",
-      "classes": 622,
+      "classes": 623,
       "reason": "cap",
-      "owed": 597,
+      "owed": 598,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PhoneHomeQueuedTurnTests",
@@ -1724,9 +1724,9 @@
     },
     {
       "path": "server/Infrastructure/Data/ReviewEngineModel.cs",
-      "classes": 622,
+      "classes": 623,
       "reason": "cap",
-      "owed": 597,
+      "owed": 598,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
         "PhoneHomeQueuedTurnTests",
@@ -2405,9 +2405,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandReceiptScanHarness.cs",
-      "classes": 589,
+      "classes": 591,
       "reason": "cap",
-      "owed": 564,
+      "owed": 566,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskPipelineStatusTests",
@@ -2469,9 +2469,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/MockEventBus.cs",
-      "classes": 227,
+      "classes": 228,
       "reason": "cap",
-      "owed": 202,
+      "owed": 203,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandQueueAgingTests",
@@ -2533,9 +2533,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 533,
+      "classes": 534,
       "reason": "cap",
-      "owed": 508,
+      "owed": 509,
       "first": [
         "ChannelOutboundRecoveryTests",
         "PhoneHomeStrandedQueueTests",
@@ -4814,6 +4814,12 @@
       ]
     },
     {
+      "path": "server/Api/ReviewChainRegistration.cs",
+      "classes": [
+        "ClaudeCliFailureTests"
+      ]
+    },
+    {
       "path": "server/Application/Core/AgentTaskLandingState.cs",
       "classes": [
         "AgentTaskDispatchBaseGuardTests",
@@ -6477,6 +6483,7 @@
     {
       "path": "server/Application/Interfaces/IClaudeCli.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliTransportTests",
         "ReviewMirrorCheckoutGitTests",
         "ReviewMirrorCheckoutTests"
@@ -6497,12 +6504,14 @@
     {
       "path": "server/Application/Interfaces/ICompletionModel.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "CompletionModelTests"
       ]
     },
     {
       "path": "server/Application/Interfaces/IDecisionModel.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliLiveTests",
         "ClaudeCliTransportTests",
         "CompletionModelTests",
@@ -6801,16 +6810,26 @@
       ]
     },
     {
+      "path": "server/Application/Review/CodeHostRouter.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/Decisions/CompletionChain.cs",
       "classes": [
-        "CompletionModelTests"
+        "ClaudeCliFailureTests",
+        "CompletionModelTests",
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
       "path": "server/Application/Review/Decisions/DecisionChain.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliTransportTests",
-        "DecisionChainTests"
+        "DecisionChainTests",
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
@@ -6827,6 +6846,18 @@
       ]
     },
     {
+      "path": "server/Application/Review/Execution/ReviewReviewSteps.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Execution/ReviewWalk.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/ReviewDiffAnchors.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
@@ -6839,9 +6870,21 @@
       ]
     },
     {
+      "path": "server/Application/Review/ReviewFindingSync.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/ReviewGrouping.cs",
       "classes": [
         "ReviewRoundsPolicyTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewIntake.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
@@ -6876,9 +6919,27 @@
       ]
     },
     {
+      "path": "server/Application/Review/ReviewWorkflowExecutor.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/ReviewWorkflowService.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
+      ]
+    },
+    {
       "path": "server/Application/Review/SelectedReviewAgentRunner.cs",
       "classes": [
         "ClaudeCliTransportTests"
+      ]
+    },
+    {
+      "path": "server/Application/Review/Workflows/ReviewWorkflow.cs",
+      "classes": [
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
@@ -13357,9 +13418,11 @@
     {
       "path": "server/Application/Settings/ReviewAgentSettings.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliLiveTests",
         "ClaudeCliTransportTests",
         "ProductionRunnerIsolationTests",
+        "ReviewCliFailureWorkflowTests",
         "ReviewMirrorCheckoutTests"
       ]
     },
@@ -13374,6 +13437,7 @@
       "classes": [
         "GitHubCodeHostTests",
         "GitHubThreadResolutionTests",
+        "ReviewCliFailureWorkflowTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
         "ReviewLiveGitHubTests",
@@ -13383,11 +13447,13 @@
     {
       "path": "server/Application/Settings/ReviewDecisionSettings.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliLiveTests",
         "ClaudeCliTransportTests",
         "CompletionModelTests",
         "DecisionChainTests",
         "ReviewCheckParserTests",
+        "ReviewCliFailureWorkflowTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
         "ReviewLiveGitHubTests",
@@ -13398,6 +13464,7 @@
     {
       "path": "server/Application/Settings/ReviewPolicySettings.cs",
       "classes": [
+        "ReviewCliFailureWorkflowTests",
         "ReviewEndToEndApiTests",
         "ReviewLiveGitHubTests",
         "ReviewRoundsPolicyTests"
@@ -15086,6 +15153,7 @@
     {
       "path": "server/Domain/Entities/ReviewEngine.cs",
       "classes": [
+        "ReviewCliFailureWorkflowTests",
         "ReviewRoundsPolicyTests"
       ]
     },
@@ -17050,15 +17118,19 @@
     {
       "path": "server/Infrastructure/Review/ClaudeCliModels.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliLiveTests",
-        "ClaudeCliTransportTests"
+        "ClaudeCliTransportTests",
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
       "path": "server/Infrastructure/Review/ClaudeCliProcess.cs",
       "classes": [
+        "ClaudeCliFailureTests",
         "ClaudeCliLiveTests",
         "ClaudeCliTransportTests",
+        "ReviewCliFailureWorkflowTests",
         "ReviewMirrorCheckoutGitTests",
         "ReviewMirrorCheckoutTests"
       ]
@@ -25810,6 +25882,7 @@
     {
       "path": "tests/Antiphon.Tests/Review/ReviewEndToEndFakes.cs",
       "classes": [
+        "ReviewCliFailureWorkflowTests",
         "ReviewDelegationRunnerApiTests",
         "ReviewEndToEndApiTests",
         "ReviewLiveGitHubTests",
@@ -25820,6 +25893,13 @@
       "path": "tests/Antiphon.Tests/Review/ReviewLiveGitHubTests.cs",
       "classes": [
         "ReviewEngineScriptsTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/Review/ReviewTestLog.cs",
+      "classes": [
+        "ClaudeCliFailureTests",
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
@@ -28648,7 +28728,8 @@
         "C1677TempFamilyRegistryTests",
         "C1677TempSweepNativeTests",
         "C1677TempSweepTests",
-        "RemoteControlRecoveryPtyIntegrationTests"
+        "RemoteControlRecoveryPtyIntegrationTests",
+        "ReviewCliFailureWorkflowTests"
       ]
     },
     {
