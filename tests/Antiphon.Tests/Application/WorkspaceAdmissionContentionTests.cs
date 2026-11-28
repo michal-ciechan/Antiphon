@@ -22,6 +22,36 @@ namespace Antiphon.Tests.Application;
 public sealed class WorkspaceAdmissionContentionTests
 {
     [Test]
+    public async Task DefaultBackgroundAdmissionDoesNotTranslatePostgresLockTimeout()
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var waiter = new NpgsqlConnectionStringBuilder(schema.ConnectionString)
+        {
+            Options = "-c lock_timeout=150ms",
+        };
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AppDbContext(TestDbFixture.CreateDbContextOptions(waiter.ConnectionString)));
+        await using var provider = services.BuildServiceProvider();
+        var journal = new WorkspaceReservationJournal(provider.GetRequiredService<IServiceScopeFactory>(),
+            TimeProvider.System);
+        var command = new WorkspaceReservationCommand(
+            WorkspaceReservationKey.For(Path.GetTempPath(), "background-admission-test", null),
+            WorkspaceReservationKind.Launch);
+
+        await using var holder = new NpgsqlConnection(schema.ConnectionString);
+        await holder.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+        await using var takeLock = new NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
+        await takeLock.ExecuteNonQueryAsync();
+
+        var timeout = await Should.ThrowAsync<PostgresException>(() => journal.TryAdmitConsumerAsync(command, default));
+        timeout.SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable);
+
+        await transaction.RollbackAsync();
+        (await journal.TryAdmitConsumerAsync(command, default)).Accepted.ShouldBeTrue();
+    }
+
+    [Test]
     [Arguments(false)]
     [Arguments(true)]
     public async Task AdmissionUsesTheShorterTimeoutAndRecordsWaitAndHold(bool shorterSessionTimeout)
