@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Review.Workflows;
@@ -30,6 +31,7 @@ public sealed record WorkflowValidation(IReadOnlyList<WorkflowDiagnostic> Diagno
 public static class ReviewWorkflowValidator
 {
     public const int MaxAutoRetries = 3;
+    private const int MaxDiagnostics = 100;
 
     public static class Codes
     {
@@ -70,7 +72,9 @@ public static class ReviewWorkflowValidator
         ReviewWorkflowChainNames? chains = null,
         Func<WorkflowNode, bool>? continuesOnFailure = null)
     {
-        var diagnostics = ValidateStructure(workflow).Diagnostics.ToList();
+        var diagnostics = new DiagnosticList();
+        var graph = new ValidationGraph(workflow);
+        ValidateStructure(graph, diagnostics);
         var childIds = workflow.Nodes.Where(node => node.Kind == ReviewNodeKind.FanOut)
             .Select(node => node.StringParam("node")).OfType<string>().ToHashSet(StringComparer.Ordinal);
 
@@ -93,7 +97,7 @@ public static class ReviewWorkflowValidator
                 case ReviewNodeKind.Gate or ReviewNodeKind.Wait or ReviewNodeKind.FanOut:
                     if (node.Run is not null)
                         diagnostics.Add(Error(Codes.KindMismatch, $"Node '{node.Id}' is handled by its kind and cannot name a step.", [node.Id]));
-                    ValidateControlNode(workflow, node, diagnostics);
+                    ValidateControlNode(graph, node, diagnostics);
                     break;
                 default:
                     if (contract is null)
@@ -103,7 +107,7 @@ public static class ReviewWorkflowValidator
                     break;
             }
 
-            ValidateParameters(workflow, node, contract, chains, continuesOnFailure, diagnostics);
+            ValidateParameters(graph, node, contract, chains, continuesOnFailure, diagnostics);
         }
 
         var routes = new HashSet<(string NodeId, string? Label)>();
@@ -112,7 +116,7 @@ public static class ReviewWorkflowValidator
             if (childIds.Contains(edge.To) || childIds.Contains(edge.From) || (edge.Overflow is { } overflow && childIds.Contains(overflow)))
                 diagnostics.Add(Error(Codes.ChildOnly, "Fan-out child nodes must run through their parent fan-out.", [edge.From, edge.To], edge));
 
-            IReadOnlyList<string?> labels = edge.Labels.Count == 0 ? [null] : edge.Labels;
+            IReadOnlyList<string?> labels = edge.Labels.Count == 0 ? new string?[] { null } : edge.Labels;
             foreach (var label in labels.Distinct(StringComparer.Ordinal))
             {
                 if (!routes.Add((edge.From, label)))
@@ -120,13 +124,20 @@ public static class ReviewWorkflowValidator
                         [edge.From, edge.To], edge));
             }
         }
-        return new WorkflowValidation(diagnostics);
+        return diagnostics.Result();
     }
 
     // Structural checks are also exercised in isolation on the small cycle and gate fixtures.
     internal static WorkflowValidation ValidateStructure(WorkflowDefinition workflow)
     {
-        var diagnostics = new List<WorkflowDiagnostic>();
+        var diagnostics = new DiagnosticList();
+        ValidateStructure(new ValidationGraph(workflow), diagnostics);
+        return diagnostics.Result();
+    }
+
+    private static void ValidateStructure(ValidationGraph graph, DiagnosticList diagnostics)
+    {
+        var workflow = graph.Definition;
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (var node in workflow.Nodes)
         {
@@ -151,16 +162,15 @@ public static class ReviewWorkflowValidator
                 bounded.Add(node.Id);
         }
 
-        ValidateEdges(workflow, diagnostics);
+        ValidateEdges(graph, diagnostics);
         ValidateSections(workflow, ids, diagnostics);
-        ValidateCycles(workflow, ids, bounded, diagnostics);
-        return new WorkflowValidation(diagnostics);
+        ValidateCycles(graph, ids, bounded, diagnostics);
     }
 
     private static bool ValidNodeId(string? id) => !string.IsNullOrEmpty(id) && char.IsAsciiLetter(id[0])
         && id.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
-    private static void ValidateControlNode(WorkflowDefinition workflow, WorkflowNode node, List<WorkflowDiagnostic> diagnostics)
+    private static void ValidateControlNode(ValidationGraph graph, WorkflowNode node, DiagnosticList diagnostics)
     {
         var invalid = node.Kind switch
         {
@@ -171,7 +181,7 @@ public static class ReviewWorkflowValidator
             ReviewNodeKind.Wait => node.ListParam("on") is var events && (events.Count == 0
                 || events.Any(evt => evt is not ("push" or "merge" or "close" or "base-moved" or "recheck" or "update-requested"))),
             ReviewNodeKind.FanOut => (node.StringParam("over") is { } over && over != "groups")
-                || (workflow.Node(node.StringParam("node") ?? "") is { } child && (child.Kind != ReviewNodeKind.Agent || child.Run is not null)),
+                || (graph.Node(node.StringParam("node") ?? "") is { } child && (child.Kind != ReviewNodeKind.Agent || child.Run is not null)),
             _ => false,
         };
         if (invalid)
@@ -179,14 +189,14 @@ public static class ReviewWorkflowValidator
     }
 
     private static void ValidateParameters(
-        WorkflowDefinition workflow,
+        ValidationGraph graph,
         WorkflowNode node,
         ReviewStepContract? contract,
         ReviewWorkflowChainNames? chains,
         Func<WorkflowNode, bool>? continuesOnFailure,
-        List<WorkflowDiagnostic> diagnostics)
+        DiagnosticList diagnostics)
     {
-        if (node.Kind == ReviewNodeKind.Join && workflow.Node(node.StringParam("from") ?? "review") is { } joined
+        if (node.Kind == ReviewNodeKind.Join && graph.Node(node.StringParam("from") ?? "review") is { } joined
             && joined.Kind != ReviewNodeKind.FanOut)
             diagnostics.Add(Error(Codes.InvalidParameter, $"Join '{node.Id}' must gather a fan-out.", [node.Id]));
 
@@ -208,7 +218,7 @@ public static class ReviewWorkflowValidator
                 if (!contract.Outputs.Contains(output, StringComparer.Ordinal) && output != fallback)
                     diagnostics.Add(Error(Codes.UnsupportedOutput, $"Step '{node.Run}' cannot emit '{output}'.", [node.Id]));
             }
-            foreach (var edge in workflow.Edges.Where(edge => edge.From == node.Id))
+            foreach (var edge in graph.Outgoing(node.Id))
             {
                 foreach (var label in edge.Labels.Where(label => !contract.Outputs.Contains(label, StringComparer.Ordinal) && label != fallback))
                     diagnostics.Add(Error(Codes.UnsupportedOutput, $"Step '{node.Run}' cannot take an edge for '{label}'.", [node.Id], edge));
@@ -229,25 +239,24 @@ public static class ReviewWorkflowValidator
         }
         foreach (var id in inputs.Cast<string>().Distinct(StringComparer.Ordinal))
         {
-            var producer = workflow.Node(id);
-            if (producer is null || !ProducerAvailable(workflow, producer, node, continuesOnFailure))
+            var producer = graph.Node(id);
+            if (producer is null || !ProducerAvailable(graph, producer, node, continuesOnFailure))
                 diagnostics.Add(Error(Codes.UnavailableInput, $"Input '{id}' is not available on every path to '{node.Id}'.", [node.Id]));
         }
     }
 
     private static bool ProducerAvailable(
-        WorkflowDefinition workflow, WorkflowNode producer, WorkflowNode consumer, Func<WorkflowNode, bool>? continuesOnFailure)
+        ValidationGraph graph, WorkflowNode producer, WorkflowNode consumer, Func<WorkflowNode, bool>? continuesOnFailure)
     {
-        if (producer.Id == consumer.Id || workflow.Nodes.FirstOrDefault() is not { } first)
+        if (producer.Id == consumer.Id || graph.Definition.Nodes.FirstOrDefault() is not { } first)
             return false;
 
-        var entry = workflow.Nodes.FirstOrDefault(node => node.Run == "Intake")?.Id ?? first.Id;
-        var routes = workflow.Edges.ToLookup(edge => edge.From, StringComparer.Ordinal);
+        var entry = graph.Definition.Nodes.FirstOrDefault(node => node.Run == "Intake")?.Id ?? first.Id;
         var producerCanFail = continuesOnFailure?.Invoke(producer) ?? producer.StringParam("onFailure") == "continue";
         var fallback = producer.StringParam("fallback");
         var failedExit = producerCanFail
-            ? routes[producer.Id].FirstOrDefault(edge => fallback is not null && edge.Labels.Contains(fallback, StringComparer.Ordinal))
-                ?? routes[producer.Id].FirstOrDefault(edge => edge.Labels.Count == 0)
+            ? graph.Outgoing(producer.Id).FirstOrDefault(edge => fallback is not null && edge.Labels.Contains(fallback, StringComparer.Ordinal))
+                ?? graph.Outgoing(producer.Id).FirstOrDefault(edge => edge.Labels.Count == 0)
             : null;
         var visited = new HashSet<(string Id, bool Produced)>();
         var pending = new Stack<(string Id, bool Produced)>();
@@ -264,7 +273,7 @@ public static class ReviewWorkflowValidator
                 reached = true;
                 continue;
             }
-            foreach (var edge in routes[state.Id])
+            foreach (var edge in graph.Outgoing(state.Id))
             {
                 Push(edge, state.Produced || state.Id == producer.Id);
                 if (ReferenceEquals(edge, failedExit))
@@ -281,7 +290,7 @@ public static class ReviewWorkflowValidator
         }
     }
 
-    private static void ValidateNode(WorkflowNode node, HashSet<string> ids, List<WorkflowDiagnostic> diagnostics)
+    private static void ValidateNode(WorkflowNode node, HashSet<string> ids, DiagnosticList diagnostics)
     {
         if (string.IsNullOrWhiteSpace(node.Description))
             diagnostics.Add(Warning(Codes.MissingDescription, $"Node '{node.Id}' has no description.", [node.Id]));
@@ -334,11 +343,11 @@ public static class ReviewWorkflowValidator
         }
     }
 
-    private static void ValidateEdges(WorkflowDefinition workflow, List<WorkflowDiagnostic> diagnostics)
+    private static void ValidateEdges(ValidationGraph graph, DiagnosticList diagnostics)
     {
-        foreach (var edge in workflow.Edges)
+        foreach (var edge in graph.Definition.Edges)
         {
-            var source = workflow.Node(edge.From);
+            var source = graph.Node(edge.From);
             if (source is not null && edge.Labels.Count > 0)
             {
                 var allowed = source.Kind switch
@@ -366,7 +375,7 @@ public static class ReviewWorkflowValidator
                     diagnostics.Add(Error(Codes.MissingOverflow,
                         $"Edge {edge.From} -> {edge.To} has maxIterations but no overflow gate to open over the limit (D-2).", [edge.From, edge.To], edge));
                 }
-                else if (workflow.Node(edge.Overflow) is not { } overflow)
+                else if (graph.Node(edge.Overflow) is not { } overflow)
                 {
                     diagnostics.Add(Error(Codes.UnknownNode, $"Edge {edge.From} -> {edge.To} overflows to unknown node '{edge.Overflow}'.", [edge.Overflow], edge));
                 }
@@ -383,7 +392,7 @@ public static class ReviewWorkflowValidator
         }
     }
 
-    private static void ValidateSections(WorkflowDefinition workflow, HashSet<string> ids, List<WorkflowDiagnostic> diagnostics)
+    private static void ValidateSections(WorkflowDefinition workflow, HashSet<string> ids, DiagnosticList diagnostics)
     {
         var owner = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var section in workflow.Sections)
@@ -401,81 +410,101 @@ public static class ReviewWorkflowValidator
     }
 
     /// <summary>
-    /// Design 3.2: every cycle must contain a gate or wait node, or an edge with maxIterations. Remove
-    /// those nodes and edges; any strongly connected component left with a cycle breaks the rule.
+    /// Design 3.2: remove gates and waits that break cycles, and iteration-limited edges.
+    /// Find strongly connected components of the remaining graph using an explicit DFS stack.
     /// </summary>
-    private static void ValidateCycles(WorkflowDefinition workflow, HashSet<string> ids, HashSet<string> bounded, List<WorkflowDiagnostic> diagnostics)
+    private static void ValidateCycles(ValidationGraph graph, HashSet<string> ids, HashSet<string> bounded, DiagnosticList diagnostics)
     {
-        var edges = workflow.Edges
-            .Where(e => e.MaxIterations is null && ids.Contains(e.From) && ids.Contains(e.To)
-                && !bounded.Contains(e.From) && !bounded.Contains(e.To))
-            .ToList();
-        var outgoing = edges.GroupBy(e => e.From).ToDictionary(g => g.Key, g => g.Select(e => e.To).Distinct().ToList(), StringComparer.Ordinal);
-
-        foreach (var component in StronglyConnected(ids.Where(id => !bounded.Contains(id)).ToList(), outgoing))
-        {
-            var members = component.ToHashSet(StringComparer.Ordinal);
-            var inside = edges.Where(e => members.Contains(e.From) && members.Contains(e.To)).ToList();
-            if (inside.Count == 0)
-                continue;
-            var closing = inside.Last();
-            diagnostics.Add(Error(Codes.UnboundedCycle,
-                $"The cycle through {string.Join(" -> ", component)} has no gate or wait node and no maxIterations; insert a gate or add an iteration limit on {closing.From} -> {closing.To}.",
-                component, closing));
-        }
-    }
-
-    private static List<List<string>> StronglyConnected(List<string> nodes, Dictionary<string, List<string>> outgoing)
-    {
-        var index = 0;
         var indices = new Dictionary<string, int>(StringComparer.Ordinal);
         var low = new Dictionary<string, int>(StringComparer.Ordinal);
         var onStack = new HashSet<string>(StringComparer.Ordinal);
-        var stack = new Stack<string>();
-        var result = new List<List<string>>();
-        var allowed = nodes.ToHashSet(StringComparer.Ordinal);
+        var componentStack = new Stack<string>();
+        var search = new Stack<(string Id, int NextEdge)>();
 
-        void Connect(string v)
+        foreach (var root in ids)
         {
-            indices[v] = low[v] = index++;
-            stack.Push(v);
-            onStack.Add(v);
-            foreach (var w in outgoing.GetValueOrDefault(v) ?? [])
+            if (bounded.Contains(root) || indices.ContainsKey(root))
+                continue;
+
+            Discover(root);
+            while (search.TryPop(out var frame))
             {
-                if (!allowed.Contains(w))
+                var outgoing = graph.Outgoing(frame.Id);
+                if (frame.NextEdge < outgoing.Count)
+                {
+                    search.Push((frame.Id, frame.NextEdge + 1));
+                    var edge = outgoing[frame.NextEdge];
+                    if (edge.MaxIterations is not null || !ids.Contains(edge.To) || bounded.Contains(edge.To))
+                        continue;
+
+                    if (!indices.ContainsKey(edge.To))
+                        Discover(edge.To);
+                    else if (onStack.Contains(edge.To))
+                        low[frame.Id] = Math.Min(low[frame.Id], indices[edge.To]);
                     continue;
-                if (!indices.ContainsKey(w))
-                {
-                    Connect(w);
-                    low[v] = Math.Min(low[v], low[w]);
                 }
-                else if (onStack.Contains(w))
+
+                if (search.TryPeek(out var parent))
+                    low[parent.Id] = Math.Min(low[parent.Id], low[frame.Id]);
+                if (low[frame.Id] != indices[frame.Id])
+                    continue;
+
+                var component = new List<string>();
+                string id;
+                do
                 {
-                    low[v] = Math.Min(low[v], indices[w]);
+                    id = componentStack.Pop();
+                    onStack.Remove(id);
+                    component.Add(id);
+                } while (id != frame.Id);
+
+                component.Reverse();
+                var members = component.ToHashSet(StringComparer.Ordinal);
+                var closing = component.SelectMany(graph.Outgoing)
+                    .LastOrDefault(edge => edge.MaxIterations is null && members.Contains(edge.To));
+                if (closing is not null)
+                {
+                    diagnostics.Add(Error(Codes.UnboundedCycle,
+                        $"The cycle through {string.Join(" -> ", component)} has no gate or wait node and no maxIterations; insert a gate or add an iteration limit on {closing.From} -> {closing.To}.",
+                        component, closing));
                 }
             }
-
-            if (low[v] != indices[v])
-                return;
-            var component = new List<string>();
-            string popped;
-            do
-            {
-                popped = stack.Pop();
-                onStack.Remove(popped);
-                component.Add(popped);
-            } while (popped != v);
-            component.Reverse();
-            result.Add(component);
         }
 
-        foreach (var node in nodes)
+        void Discover(string id)
         {
-            if (!indices.ContainsKey(node))
-                Connect(node);
+            indices[id] = low[id] = indices.Count;
+            onStack.Add(id);
+            componentStack.Push(id);
+            search.Push((id, 0));
+        }
+    }
+
+    private sealed class ValidationGraph(WorkflowDefinition definition)
+    {
+        private readonly Dictionary<string, WorkflowNode> _nodes = definition.Nodes
+            .DistinctBy(node => node.Id, StringComparer.Ordinal).ToDictionary(node => node.Id, StringComparer.Ordinal);
+        private readonly Dictionary<string, WorkflowEdge[]> _outgoing = definition.Edges
+            .GroupBy(edge => edge.From, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+
+        public WorkflowDefinition Definition { get; } = definition;
+        public WorkflowNode? Node(string id) => _nodes.GetValueOrDefault(id);
+        public IReadOnlyList<WorkflowEdge> Outgoing(string id) => _outgoing.GetValueOrDefault(id) ?? [];
+    }
+
+    private sealed class DiagnosticList
+    {
+        private readonly List<WorkflowDiagnostic> _items = [];
+
+        public void Add(WorkflowDiagnostic diagnostic)
+        {
+            if (_items.Count >= MaxDiagnostics)
+                throw new ValidationException("graph", $"A workflow may report at most {MaxDiagnostics} diagnostics.", "workflow_diagnostic_limit");
+            _items.Add(diagnostic);
         }
 
-        return result;
+        public WorkflowValidation Result() => new(_items);
     }
 
     /// <summary>A gate breaks a cycle only while autoRetries is absent or a whole number from 0 to 3 (design 3.2).</summary>

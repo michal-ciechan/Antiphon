@@ -50,25 +50,95 @@ public sealed class ReviewWorkflowService
         Converters = { new CandidateNodeKindConverter() },
     };
 
-    public static WorkflowGraphDto ReadCandidate(JsonElement body)
+    private const int MaxNodes = 256;
+    private const int MaxEdges = 1024;
+    private const int MaxSections = 256;
+    private const int MaxJsonValues = 16_384;
+    private const int MaxTextLength = 4096;
+    // The params object is three levels below the graph root.
+    private const int MaxCandidateDepth = 3 + 16;
+
+    public static WorkflowDefinition ReadCandidate(JsonElement body)
     {
         try
         {
+            if (body.ValueKind != JsonValueKind.Object)
+                throw InvalidGraph();
+
+            var remaining = MaxJsonValues;
+            ValidateJson(body, 0, ref remaining);
             var graph = body.Deserialize<WorkflowGraphDto>(CandidateJsonOptions);
             if (graph is not null && graph.Nodes?.Any(node => node is null) != true
-                && graph.Edges?.Any(edge => edge is null) != true && graph.Sections?.Any(section => section is null) != true)
-                return graph;
+                && graph.Edges?.Any(edge => edge is null) != true
+                && graph.Sections?.Any(section => section is null || section.NodeIds?.Any(id => id is null) == true) != true)
+                return FromDto(graph);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
         {
-            // Invalid graph envelope. Unsupported kinds are represented in the decoded graph.
+            // Binding and parameter conversion both belong to the candidate's input boundary.
         }
-        throw new BadRequestException("Expected a workflow graph with node, edge and section objects.");
+        throw InvalidGraph();
     }
 
-    public WorkflowValidationDto Validate(WorkflowGraphDto graph)
+    private static BadRequestException InvalidGraph() =>
+        new("Expected a workflow graph with node, edge and section objects and unique JSON keys.");
+
+    private static void LimitCollection(JsonElement collection, string name, int limit)
     {
-        var definition = FromDto(graph);
+        if (collection.ValueKind == JsonValueKind.Array && collection.GetArrayLength() > limit)
+            throw GraphLimit($"A workflow may contain at most {limit} {name}.");
+    }
+
+    private static ValidationException GraphLimit(string detail) => new("graph", detail, "workflow_graph_limit");
+
+    private static void ValidateJson(JsonElement value, int depth, ref int remaining)
+    {
+        if (--remaining < 0)
+            throw GraphLimit($"A workflow may contain at most {MaxJsonValues} JSON values.");
+        if (depth > MaxCandidateDepth)
+            throw new ValidationException("graph", "Workflow parameters may nest up to 16 levels.", "workflow_parameter_limit");
+
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                // The graph and graph-item DTOs bind case-insensitively. Parameter maps preserve case.
+                var keys = new HashSet<string>(depth is 0 or 2 ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+                foreach (var property in value.EnumerateObject())
+                {
+                    var name = property.Name;
+                    LimitText(name);
+                    if (!keys.Add(name))
+                        throw InvalidGraph();
+                    if (depth == 0)
+                    {
+                        switch (name.ToLowerInvariant())
+                        {
+                            case "nodes": LimitCollection(property.Value, "nodes", MaxNodes); break;
+                            case "edges": LimitCollection(property.Value, "edges", MaxEdges); break;
+                            case "sections": LimitCollection(property.Value, "sections", MaxSections); break;
+                        }
+                    }
+                    ValidateJson(property.Value, depth + 1, ref remaining);
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in value.EnumerateArray())
+                    ValidateJson(item, depth + 1, ref remaining);
+                break;
+            case JsonValueKind.String:
+                LimitText(value.GetString()!);
+                break;
+        }
+    }
+
+    private static void LimitText(string value)
+    {
+        if (value.Length > MaxTextLength)
+            throw GraphLimit($"Workflow text may contain at most {MaxTextLength} characters per value.");
+    }
+
+    public WorkflowValidationDto Validate(WorkflowDefinition definition)
+    {
         var decisions = _decisions.Value.Chains;
         var completions = _completions.Value.Chains;
         var completionNames = completions.Keys.ToHashSet(completions.Comparer);
