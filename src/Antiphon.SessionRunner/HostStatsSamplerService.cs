@@ -67,6 +67,9 @@ public sealed class HostStatsSamplerService : BackgroundService
         _logger = logger;
         _history = history;
         _processTable = processTable;
+#if C1514_SAMPLER_CALIBRATION
+        _calibrationCpuMilliseconds = ReadCalibrationCpuMilliseconds();
+#endif
     }
 
     public Task SampleOnceAsync(CancellationToken ct = default, bool logTick = true)
@@ -120,8 +123,48 @@ public sealed class HostStatsSamplerService : BackgroundService
                 : Stopwatch.GetElapsedTime(tickStarted).TotalMilliseconds;
             _logger.LogDebug("HOST_LOAD_TICK elapsedMs={ElapsedMs}", elapsedMs);
         }
+#if C1514_SAMPLER_CALIBRATION
+        BurnCalibrationCpu(ct);
+#endif
         return Task.CompletedTask;
     }
+
+#if C1514_SAMPLER_CALIBRATION
+    internal const string CalibrationCpuVariable = "ANTIPHON_C1514_EXTRA_CPU_MS";
+    private readonly double _calibrationCpuMilliseconds;
+
+    private static double ReadCalibrationCpuMilliseconds()
+    {
+        var value = Environment.GetEnvironmentVariable(CalibrationCpuVariable);
+        if (value is null)
+            return 0;
+        if (!OperatingSystem.IsWindows() ||
+            !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var milliseconds) ||
+            !double.IsFinite(milliseconds) || milliseconds < 0 || milliseconds > 100)
+            throw new InvalidOperationException($"{CalibrationCpuVariable} requires 0 to 100 CPU milliseconds on Windows.");
+        return milliseconds;
+    }
+
+    // Inject after tick telemetry so the separate 25 ms latency gate does not mask
+    // the one-core CPU budget under calibration.
+    private void BurnCalibrationCpu(CancellationToken ct)
+    {
+        if (_calibrationCpuMilliseconds == 0)
+            return;
+
+        static double ReadCpu() => ThreadCpuMilliseconds()
+            ?? throw new InvalidOperationException("Calibration requires the Windows thread CPU clock.");
+        var start = ReadCpu();
+        var wallStart = Stopwatch.GetTimestamp();
+        while (ReadCpu() - start < _calibrationCpuMilliseconds)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (Stopwatch.GetElapsedTime(wallStart) > TimeSpan.FromSeconds(2))
+                throw new TimeoutException("Calibration could not consume the requested CPU time.");
+            Thread.SpinWait(64);
+        }
+    }
+#endif
 
     /// <summary>CARD-1884. Reads the process table off the tick and publishes the cached ranking.</summary>
     internal void ScanTopConsumers()
