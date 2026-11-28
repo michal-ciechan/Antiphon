@@ -510,9 +510,12 @@ const c1270EditorCases = [
 
 describe('C1270 cell editor after a failed read', () => {
   it.each(c1270EditorCases.flatMap(c => (['Medium', 'Easy'] as const).map(tier => ({ ...c, tier }))))(
-    'C1270 V-2 editor after a $label read failure on $tier', async ({ read, cell: makeCell, tier }) => {
+    'C1270 V-2 editor after a $label read failure on $tier', async ({ read, label, cell: makeCell, tier }) => {
       const put = vi.fn()
-      serveRouting({ list: planCellList(tier), effective: { Plan: { ...planEffective, chains: [makeCell(tier)] } } })
+      // Keep an earlier tier in one save case to catch a PUT that always targets the first cell.
+      const nonFirstTierSave = label === 'chain' && tier === 'Easy'
+      const list: ComplexityChainListDto = nonFirstTierSave ? { ...listDto, roles: ['Plan'] } : planCellList(tier)
+      serveRouting({ list, effective: { Plan: { ...planEffective, chains: [makeCell(tier)] } } })
       server.use(http.put('/api/complexity-chains/:role/:complexity', async ({ params, request }) => {
         put(`${params.role}/${params.complexity}`, await request.json())
         return HttpResponse.json(chain(tier, { role: 'Plan' }))
@@ -520,6 +523,10 @@ describe('C1270 cell editor after a failed read', () => {
       renderWithProviders(<RoutingSettingsTab />)
 
       const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
+      if (nonFirstTierSave) {
+        const firstCell = screen.getByTestId('routing-matrix-cell-Plan-Hard')
+        expect(firstCell.compareDocumentPosition(cell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0)
+      }
       await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
       const editor = await screen.findByTestId('routing-cell-editor')
       const reason = within(editor).getByLabelText('Reason (optional)')
