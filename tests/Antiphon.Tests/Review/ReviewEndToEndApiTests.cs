@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -449,9 +450,11 @@ public partial class ReviewEndToEndApiTests(ReviewEndToEndApiTests.Factory facto
         public ScriptedDecisions Decisions { get; } = new();
         public ScriptedReviewer Reviewer { get; } = new();
         public ScriptedCompletions Completions { get; } = new();
+        internal VerifyCommitCut VerifyCut { get; } = new();
 
         protected override void ApplyTestOverrides(IServiceCollection services)
         {
+            services.AddDbContext<AppDbContext>(options => options.AddInterceptors(VerifyCut));
             services.RemoveAll<ICodeHost>();
             services.AddSingleton<ICodeHost>(Host);
             services.RemoveAll<IDecisionModel>();

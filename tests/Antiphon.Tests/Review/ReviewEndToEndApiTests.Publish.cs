@@ -443,6 +443,21 @@ public partial class ReviewEndToEndApiTests
     {
         using var deadline = new CancellationTokenSource(StepTimeout);
         var ct = deadline.Token;
+        var run = await SeedPublishAsync(number, graph, rows, hasPr, arrange, ct);
+        var executor = factory.Services.GetServices<IHostedService>().OfType<ReviewWorkflowExecutor>().Single();
+        await executor.RunPendingAsync(ct);
+
+        // The hosted poll can win the claim. Read through a fresh scope until its walk is parked.
+        await using var reader = factory.Services.CreateAsyncScope();
+        var states = reader.ServiceProvider.GetRequiredService<AppDbContext>().ReviewRuns.AsNoTracking().Where(r => r.Id == run.Id);
+        while (await states.Select(r => r.Status).SingleAsync(ct) is ReviewRunStatus.Queued or ReviewRunStatus.Running)
+            await Task.Delay(25, ct);
+        return run.Id;
+    }
+
+    private async Task<ReviewRun> SeedPublishAsync(int number, WorkflowDefinition graph, List<ReviewNodeExecution> rows,
+        bool hasPr, Action<ReviewRun>? arrange, CancellationToken ct)
+    {
         var now = DateTime.UtcNow;
         graph = graph with { Name = $"publish-fixture-{Guid.NewGuid():N}" };
         var revision = new ReviewWorkflowRevision { Id = Guid.NewGuid(), Name = graph.Name, Hash = graph.Hash(), CreatedAt = now };
@@ -462,22 +477,11 @@ public partial class ReviewEndToEndApiTests
             Nodes = rows,
         };
         arrange?.Invoke(run);
-        await using (var seed = factory.Services.CreateAsyncScope())
-        {
-            var db = seed.ServiceProvider.GetRequiredService<AppDbContext>();
-            db.ReviewWorkflowRevisions.Add(revision);
-            db.ReviewRuns.Add(run);
-            await db.SaveChangesAsync(ct);
-        }
-
-        var executor = factory.Services.GetServices<IHostedService>().OfType<ReviewWorkflowExecutor>().Single();
-        await executor.RunPendingAsync(ct);
-
-        // The hosted poll can win the claim. Read through a fresh scope until its walk is parked.
-        await using var reader = factory.Services.CreateAsyncScope();
-        var states = reader.ServiceProvider.GetRequiredService<AppDbContext>().ReviewRuns.AsNoTracking().Where(r => r.Id == run.Id);
-        while (await states.Select(r => r.Status).SingleAsync(ct) is ReviewRunStatus.Queued or ReviewRunStatus.Running)
-            await Task.Delay(25, ct);
-        return run.Id;
+        await using var seed = factory.Services.CreateAsyncScope();
+        var db = seed.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.ReviewWorkflowRevisions.Add(revision);
+        db.ReviewRuns.Add(run);
+        await db.SaveChangesAsync(ct);
+        return run;
     }
 }
