@@ -457,9 +457,9 @@
       "reason": "cap",
       "owed": 5,
       "first": [
+        "C1964RecoveryPumpStallTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeDeferredKillTests",
-        "PhoneHomeDirectoryTests",
         "PhoneHomePendingInventoryTests",
         "StandingSessionSelectionTests"
       ]
@@ -1382,9 +1382,9 @@
     },
     {
       "path": "server/Application/Settings/PhoneHomeRunnerSettings.cs",
-      "classes": 60,
+      "classes": 61,
       "reason": "cap",
-      "owed": 35,
+      "owed": 36,
       "first": [
         "PipelineHandoffPilotTests",
         "RunnerCodexCliEvidenceTests",
@@ -1697,10 +1697,10 @@
       "owed": 597,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
+        "PhoneHomeQueuedTurnTests",
         "PostLandMutationDeliveryTests",
         "RolePolicyToolBundleDispatchTests",
         "CapacityLockOrderTests",
-        "PhoneHomeQueuedTurnTests",
         "SessionQueueReceiptPlumbingTests",
         "AgentTaskLandQueueAgingTests",
         "PostLandMutationWorktreeTests"
@@ -1713,10 +1713,10 @@
       "owed": 597,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
+        "PhoneHomeQueuedTurnTests",
         "PostLandMutationDeliveryTests",
         "RolePolicyToolBundleDispatchTests",
         "CapacityLockOrderTests",
-        "PhoneHomeQueuedTurnTests",
         "SessionQueueReceiptPlumbingTests",
         "AgentTaskLandQueueAgingTests",
         "PostLandMutationWorktreeTests"
@@ -1729,10 +1729,10 @@
       "owed": 597,
       "first": [
         "ChannelOutboundDispatchIntegrationTests",
+        "PhoneHomeQueuedTurnTests",
         "PostLandMutationDeliveryTests",
         "RolePolicyToolBundleDispatchTests",
         "CapacityLockOrderTests",
-        "PhoneHomeQueuedTurnTests",
         "SessionQueueReceiptPlumbingTests",
         "AgentTaskLandQueueAgingTests",
         "PostLandMutationWorktreeTests"
@@ -1869,11 +1869,11 @@
     },
     {
       "path": "src/Antiphon.SessionRunner.Contracts/PhoneHomeContracts.cs",
-      "classes": 113,
+      "classes": 114,
       "reason": "cap",
-      "owed": 88,
+      "owed": 89,
       "first": [
-        "PhoneHomeDirectoryTests",
+        "C1677TempSweepDispatchTests",
         "MultiRunnerDirectoryTests",
         "PhoneHomeSpillTransportTests",
         "C1677RetentionServerTests",
@@ -2488,14 +2488,14 @@
       "reason": "cap",
       "owed": 45,
       "first": [
+        "SessionMessageQueuePhoneHomeDropTests",
         "C1960QuarantineReleaseRouteTests",
         "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
         "HostStatsPollServiceTests",
         "PhoneHomeDeferredKillTests",
         "PhoneHomeSpillTransportTests",
-        "PhoneHomeTranscriptIncidentTests",
-        "RunnerCapacityEndpointTests"
+        "PhoneHomeTranscriptIncidentTests"
       ]
     },
     {
@@ -2541,9 +2541,9 @@
         "RunnerSlotEndpointTests",
         "AgentTaskLandMonitoringTests",
         "AgentTaskPoolTests",
+        "PhoneHomeQueuedTurnTests",
         "ComplexityDispatcherTests",
-        "DefaultRunnerRerouteTests",
-        "AgentTaskCardBindingTests"
+        "DefaultRunnerRerouteTests"
       ]
     },
     {
@@ -6333,11 +6333,11 @@
         "ApiKeyStoreTests",
         "C0824RefOnlyCleanupTests",
         "C1744G2PlacementTests",
-        "C1964RecoveryPumpStallTests",
         "DefaultRunnerPinTests",
         "DelegationDispatchRecoveryBoundaryTests",
         "GatedCommitServiceTests",
         "GhostSeatReleaseTests",
+        "PhoneHomeDirectoryTests",
         "PhoneHomeImmediateSendTests",
         "PhoneHomeQueuedTurnTests",
         "PhoneHomeRollingRunnerTests",
@@ -10768,6 +10768,7 @@
         "MultiRunnerRecoveryTests",
         "PhoneHomeDeferredKillTests",
         "PhoneHomeEventPumpTests",
+        "PhoneHomeQueuedTurnTests",
         "PhoneHomeRecoveryEligibilityTests",
         "PhoneHomeStrandedQueueTests",
         "PhoneHomeTranscriptIncidentTests"
@@ -15840,6 +15841,7 @@
         "DispatcherRemotePrepStarvationTests",
         "GrokRulesReadyOrderingTests",
         "PhoneHomeBackpressureTests",
+        "PhoneHomeCloseRaceTests",
         "PhoneHomeConnectionTests",
         "PhoneHomeDeferredKillTests",
         "PhoneHomeReadAdmissionTests",
@@ -19431,7 +19433,6 @@
         "C0824WorkspaceSlotRoleGateTests",
         "C0824WorkspaceSlotServerTests",
         "C1677RetentionDispatchTests",
-        "C1677TempSweepDispatchTests",
         "ClaudeCredentialProbeDispatcherTests",
         "CodexPhoneHomeCreateTests",
         "DefaultRunnerPinTests",
@@ -19440,6 +19441,7 @@
         "PhoneHomeCommandDispatcherTests",
         "PhoneHomeConnectionServiceTests",
         "PhoneHomeConnectionTests",
+        "PhoneHomeDirectoryTests",
         "PhoneHomeRollingRunnerTests",
         "PhoneHomeStrandedQueueTests",
         "PhoneHomeTaskDispatchProjectionTests",
@@ -22840,7 +22842,10 @@
       "classes": [
         "Card1619RunnerExitTests",
         "PhoneHomeBackpressureTests",
-        "PhoneHomeConnectionServiceTests"
+        "PhoneHomeCloseRaceTests",
+        "PhoneHomeConnectionServiceTests",
+        "PhoneHomeDirectoryTests",
+        "PhoneHomeQueuedTurnTests"
       ]
     },
     {
@@ -28407,6 +28412,7 @@
         "MultiRunnerRecoveryTests",
         "PhoneHomeBackpressureTests",
         "PhoneHomeConnectionTests",
+        "PhoneHomeDirectoryTests",
         "PhoneHomeEventPumpTests",
         "PhoneHomeLaunchTransportTests",
         "PhoneHomeRecoveryEligibilityTests",
@@ -28422,7 +28428,6 @@
         "RunnerEligibilityObserverTests",
         "RunnerSlotEndpointTests",
         "RunnerStateAlarmExclusionTests",
-        "SessionMessageQueuePhoneHomeDropTests",
         "TaskPlatformDispatchTests"
       ]
     },
