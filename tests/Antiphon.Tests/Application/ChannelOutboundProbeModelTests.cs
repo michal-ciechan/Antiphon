@@ -6,10 +6,8 @@ using TUnit.Core;
 
 namespace Antiphon.Tests.Application;
 
-// The channel-outbound probes use the compiled model the probe generates from its own build (ProbeGeneratedModel),
-// and fall back to building the model themselves when there is none: slower, not different. This makes that
-// fallback a red test instead of a silent slowdown. The generator publishes the model only when it matches the
-// runtime model (ProbeModelComparison, pinned by ProbeModelComparisonTests).
+// The build publishes its artifact after model parity verification. A missing or mismatched
+// stage fails this guard even when the runtime generator could recover.
 [Category("Integration")]
 [Category("Slow")]
 [ParallelLimiter<ProcessSpawnLimit>]
@@ -18,9 +16,10 @@ public sealed class ChannelOutboundProbeModelTests
     [Test]
     public async Task Probe_publishes_a_compiled_model_matching_its_runtime_model()
     {
-        var result = await ProbeGeneratedModel.ResultAsync();
-        result.Path.ShouldNotBeNull(result.Detail);
-        File.Exists(result.Path).ShouldBeTrue(result.Path);
+        var staged = await ProbeGeneratedModel.RequireSelectedStagedArtifactAsync();
+        var probe = await RunModelProbeAsync(staged);
+        probe.ExitCode.ShouldBe(0, probe.Stderr);
+        probe.Stderr.ShouldContain(ProbeModel.LoadedModelLabel + ProbeModel.ReadModuleVersionId(staged));
     }
 
     // A model the parent gives but the probe cannot load fails the probe at its start (only the exception type on
@@ -34,12 +33,27 @@ public sealed class ChannelOutboundProbeModelTests
         {
             var notAModel = Path.Combine(root, "not-a-model.dll");
             await File.WriteAllTextAsync(notAModel, "not an assembly");
-            var config = Path.Combine(root, "probe.json");
+            var probe = await RunModelProbeAsync(notAModel);
+            probe.ExitCode.ShouldBe(1);
+            probe.Stderr.ShouldContain("model-not-loaded not-a-model.dll BadImageFormatException");
+            probe.Stderr.ShouldNotContain("not an assembly");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static async Task<(int ExitCode, string Stderr)> RunModelProbeAsync(string modelPath)
+    {
+        var config = Path.GetTempFileName();
+        try
+        {
             await File.WriteAllTextAsync(config, JsonSerializer.Serialize(new
             {
-                ConnectionString = "Host=unused", StoreRoot = root, DeliveryId = Guid.NewGuid(),
-                EvidencePath = Path.Combine(root, "evidence"), MarkerPath = Path.Combine(root, "marker"),
-                Barrier = (string?)null, ClockOffsetSeconds = 0, Mode = "unified", CompiledModelPath = notAModel,
+                ConnectionString = "Host=unused", StoreRoot = Path.GetDirectoryName(config), DeliveryId = Guid.NewGuid(),
+                EvidencePath = config + ".evidence", MarkerPath = config + ".marker",
+                Barrier = (string?)null, ClockOffsetSeconds = 0, Mode = "model-identity", CompiledModelPath = modelPath,
             }));
             var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, RedirectStandardError = true };
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe",
@@ -59,16 +73,13 @@ public sealed class ChannelOutboundProbeModelTests
                 using var exited = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 try { await probe.WaitForExitAsync(exited.Token); } catch (OperationCanceledException) { }
                 _ = stderr.ContinueWith(t => t.Exception, TaskScheduler.Default);
-                throw new TimeoutException("the probe did not exit within 60 s of a model that does not load");
+                throw new TimeoutException("the model identity probe did not exit within 60 s");
             }
-            probe.ExitCode.ShouldBe(1);
-            var output = await stderr;
-            output.ShouldContain("model-not-loaded not-a-model.dll BadImageFormatException");
-            output.ShouldNotContain("not an assembly");
+            return (probe.ExitCode, await stderr);
         }
         finally
         {
-            try { Directory.Delete(root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            File.Delete(config);
         }
     }
 }

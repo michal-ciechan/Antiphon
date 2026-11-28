@@ -279,9 +279,11 @@ public sealed class WorktreeResidueRecoveryTests
         var ready = Path.Combine(h.Fixture.Root, "worker-ready.json");
         var namedWorktree = SettledRemovalHarness.NamedWorktreePath(h);
         AssertRetirementAdmission(h, cut, ready);
-        // The model generator itself launches a process, so prepare it under this case's
-        // shared ProcessSpawnLimit seat before starting the retirement worker.
+        // Check the stage and model parity before either child starts.
+        var stagedModel = ProbeGeneratedModel.RequireStagedArtifact();
+        var modelWitness = ProbeModel.LoadedModelLabel + ProbeModel.ReadModuleVersionId(stagedModel);
         var useCompiledModel = await WorktreeRetirementCrashWorker.PrepareCompiledModelAsync();
+        useCompiledModel.ShouldBeTrue("the retirement worker must use the verified staged model");
         // Prepare the operator's release request on the fixture's warm context. The
         // worker still checks the revision and all release conditions against the store.
         ReleaseWorktreeRetirementRequest releaseBody;
@@ -348,6 +350,7 @@ public sealed class WorktreeResidueRecoveryTests
 
             worker.Process.Kill(entireProcessTree: false);
             await worker.Process.WaitForExitAsync();
+            (await worker.Stderr).ShouldContain(modelWitness);
 
             var resumeReady = Path.Combine(h.Fixture.Root, "worker-ready-resume.json");
             var resumeRequest = new WorktreeRetirementCrashWorker.Request(
@@ -361,6 +364,7 @@ public sealed class WorktreeResidueRecoveryTests
                 using var resumeBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
                 await resumed.Process.WaitForExitAsync(resumeBudget.Token);
                 resumed.Process.ExitCode.ShouldBe(0, await resumed.Stderr);
+                (await resumed.Stderr).ShouldContain(modelWitness);
             }
             finally
             {

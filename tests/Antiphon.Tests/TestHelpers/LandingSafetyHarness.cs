@@ -213,6 +213,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         {
             await using var scope = h.Services.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            ProbeModel.ReportLoadedModel(db);
             var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
             var release = await db.TaskWorktreeRetirements.SingleOrDefaultAsync(r => r.TaskId == taskId && r.Active);
             if (release is null)
@@ -230,6 +231,7 @@ internal sealed class LandingSafetyHarness : IAsyncDisposable
         await using (var scope = h.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            ProbeModel.ReportLoadedModel(db);
             var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
             var body = releaseBody ?? throw new InvalidOperationException("Missing retirement release request");
             if (cut.StartsWith("release-", StringComparison.Ordinal))

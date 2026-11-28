@@ -46,9 +46,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [After(Test)]
     public Task DrainWorldDisposalsAsync() => UnifiedOutboundTransport.DrainDisposalsAsync();
 
-    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test's own deadline starts.
+    // Check the verified stage before any scenario can start a probe.
     [Before(Class)]
-    public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
+    public static Task ProbeModelAsync() => ProbeGeneratedModel.RequireSelectedStagedArtifactAsync();
 
     // Disposed once both C519 classes have finished (else after the assembly), never by one class alone.
     [After(Class)]

@@ -36,13 +36,22 @@ internal static class ProbeGeneratedModel
 
     public static async Task<string?> PathAsync() => (await Generated.Value).Path;
 
-    // A child consumes the parent's verified cache entry without spawning another generator.
-    internal static string CachedPath()
+    // Build verification must fail if the stage is incomplete, even if runtime generation can recover.
+    internal static string RequireStagedArtifact()
     {
         var probe = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe");
         var key = ProbeModel.BuildKey(probe);
         return ProbeModel.FindBuiltArtifact(probe, key)
-            ?? Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe-model", key, ProbeModel.AssemblyName + ".dll");
+            ?? throw new InvalidOperationException("Missing or mismatched staged verified probe model for build " + key);
+    }
+
+    internal static async Task<string> RequireSelectedStagedArtifactAsync()
+    {
+        var staged = RequireStagedArtifact();
+        var result = await ResultAsync();
+        if (!string.Equals(result.Path, staged, StringComparison.Ordinal))
+            throw new InvalidOperationException("Probe model selection did not use the verified stage: " + result.Detail);
+        return staged;
     }
 
     /// <summary>

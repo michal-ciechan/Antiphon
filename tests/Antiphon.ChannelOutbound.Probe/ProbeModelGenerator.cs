@@ -54,7 +54,8 @@ public static class ProbeModelGenerator
         var exitCode = Run(output);
         if (exitCode == 0)
         {
-            File.WriteAllText(identity + ".tmp", key);
+            var image = Path.Combine(output, ProbeModel.AssemblyName + ".dll");
+            File.WriteAllText(identity + ".tmp", ProbeModel.ArtifactIdentity(key, image));
             File.Move(identity + ".tmp", identity, overwrite: true);
         }
         return exitCode;

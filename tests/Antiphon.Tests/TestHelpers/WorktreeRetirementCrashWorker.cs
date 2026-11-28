@@ -54,9 +54,7 @@ internal static class WorktreeRetirementCrashWorker
         using var span = TestTrace.ChunkSpan("retirement worker prepare compiled model");
         try
         {
-            var path = await ProbeGeneratedModel.PathAsync();
-            if (path is null)
-                return false;
+            var path = await ProbeGeneratedModel.RequireSelectedStagedArtifactAsync();
 
             var options = TestDbFixture.CreateDbContextOptions("Host=unused");
             using var runtime = new AppDbContext(options);
@@ -110,7 +108,7 @@ internal static class WorktreeRetirementCrashWorker
 
         CrashWorkerProcess.WriteStdoutSentinel();
         var model = Environment.GetEnvironmentVariable(CompiledModelVariable) == "1"
-            ? LoadCompiledModel(ProbeGeneratedModel.CachedPath())
+            ? LoadCompiledModel(ProbeGeneratedModel.RequireStagedArtifact())
             : null;
         await LandingSafetyHarness.RunRetirementCrashWorkerAsync(
             Path.GetFullPath(request.Root), request.TaskId, request.Cut, Path.GetFullPath(request.Ready), model, request.Release);

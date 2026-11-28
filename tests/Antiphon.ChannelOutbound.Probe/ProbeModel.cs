@@ -19,6 +19,7 @@ internal static class ProbeModel
     internal const string AssemblyName = GeneratedNamespace;
     internal const string BuiltDirectory = "verified-model";
     internal const string IdentityFile = "model.identity";
+    internal const string LoadedModelLabel = "model-identity ";
 
     internal static string? FindBuiltArtifact(string probeDirectory, string key)
     {
@@ -26,13 +27,27 @@ internal static class ProbeModel
         var image = Path.Combine(directory, AssemblyName + ".dll");
         try
         {
-            return File.Exists(image) && File.ReadAllText(Path.Combine(directory, IdentityFile)) == key
+            return File.Exists(image) && File.ReadAllText(Path.Combine(directory, IdentityFile)) == ArtifactIdentity(key, image)
                 ? image : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return null;
         }
+    }
+
+    internal static string ArtifactIdentity(string key, string image)
+    {
+        using var stream = File.OpenRead(image);
+        return key + "\n" + Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    internal static Guid ReadModuleVersionId(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var pe = new PEReader(stream);
+        var metadata = pe.GetMetadataReader();
+        return metadata.GetGuid(metadata.GetModuleDefinition().Mvid);
     }
 
     // A build or runtime cache is valid only for the probe, its model assemblies and its provider.
@@ -46,10 +61,7 @@ internal static class ProbeModel
                      "Npgsql.dll",
                  })
         {
-            using var stream = File.OpenRead(Path.Combine(probeDirectory, name));
-            using var pe = new PEReader(stream);
-            var metadata = pe.GetMetadataReader();
-            mvids.Append(name).Append('=').Append(metadata.GetGuid(metadata.GetModuleDefinition().Mvid)).Append('\n');
+            mvids.Append(name).Append('=').Append(ReadModuleVersionId(Path.Combine(probeDirectory, name))).Append('\n');
         }
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mvids.ToString())))[..16].ToLowerInvariant();
     }
@@ -79,6 +91,9 @@ internal static class ProbeModel
 
     public static DbContextOptionsBuilder WithProbeModel(this DbContextOptionsBuilder builder) =>
         _model is null ? builder : builder.UseModel(_model);
+
+    internal static void ReportLoadedModel(AppDbContext db) =>
+        ProbeLog.Phase(LoadedModelLabel + db.Model.GetType().Module.ModuleVersionId);
 
     public static IModel Load(System.Reflection.Assembly generated) =>
         (IModel)generated.GetType(GeneratedNamespace + ".AppDbContextModel", throwOnError: true)!

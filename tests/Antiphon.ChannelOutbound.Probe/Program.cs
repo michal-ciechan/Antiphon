@@ -39,6 +39,11 @@ try
         options.AddInterceptors(new RefusingCommitInterceptor(
             Path.Combine(Path.GetDirectoryName(config.MarkerPath)!, "commit-injected")));
     await using var db = new AppDbContext(options.Options);
+    if (config.Mode == "model-identity")
+    {
+        ProbeModel.ReportLoadedModel(db);
+        return 0;
+    }
     Func<string, Guid, CancellationToken, Task> barrier = async (point, id, ct) =>
     {
         if (point != config.Barrier || (config.DeliveryId != Guid.Empty && id != config.DeliveryId)) return;
