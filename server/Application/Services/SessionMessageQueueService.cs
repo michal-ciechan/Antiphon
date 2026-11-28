@@ -1780,7 +1780,7 @@ public sealed partial class SessionMessageQueueService
                     firstInputDeadlineAt: FirstInputDeadline([message]),
                     pointerAttempt: PointerFor(await TryGetSessionKindAsync(sessionId, ct), message),
                     resumeNote: StandingResumeNote.IsNote(message),
-                    channelDelivery: message.Origin == QueuedMessageOrigin.Channel,
+                    channelAttempt: message.Origin == QueuedMessageOrigin.Channel ? [message] : null,
                     claimedGeneration: message.LastDeliveryGeneration);
             }
             catch (OptionalBriefExpiredException)
@@ -3099,7 +3099,7 @@ public sealed partial class SessionMessageQueueService
                 ? sessionGeneration : await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
                 pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration),
-                resumeNote: StandingResumeNote.IsNote(head), channelDelivery: channelDelivery,
+                resumeNote: StandingResumeNote.IsNote(head), channelAttempt: channelDelivery ? run : null,
                 claimedGeneration: sessionGeneration);
         }
         catch (OptionalBriefExpiredException)
@@ -3421,7 +3421,7 @@ public sealed partial class SessionMessageQueueService
 
             TranscriptConfirm match;
             if (m.Origin == QueuedMessageOrigin.Channel)
-                match = await FindOwningChannelReceiptAsync(db, m, tolerance, ct);
+                match = await FindOwningChannelReceiptAsync(db, [m], tolerance, ct);
             else if (pointer)
             {
                 if (currentGeneration is not { } generation || DeliveryGenerationChanged(m, generation)) continue;
@@ -3665,8 +3665,11 @@ public sealed partial class SessionMessageQueueService
                     || (s.AgentKind != AgentKind.ClaudeCode && s.AgentKind != AgentKind.Codex))));
 
     private async Task<TranscriptConfirm> FindOwningChannelReceiptAsync(
-        AppDbContext db, SessionQueuedMessage message, TimeSpan tolerance, CancellationToken ct)
+        AppDbContext db, IReadOnlyList<SessionQueuedMessage> attempt, TimeSpan tolerance, CancellationToken ct,
+        string? wire = null)
     {
+        // A live batch has one wire and one receipt floor. Recovery may inspect one member at a time.
+        var message = attempt[0];
         var prompts = db.TranscriptEntries.AsNoTracking()
             .Where(t => t.AgentSessionId == message.AgentSessionId && t.Kind == TranscriptKinds.UserPrompt);
         if (message.LastDeliveryBaselineSequence is { } floor)
@@ -3680,12 +3683,23 @@ public sealed partial class SessionMessageQueueService
 
         foreach (var prompt in await prompts.OrderBy(t => t.Sequence).ToListAsync(ct))
         {
-            if (ChannelPromptCorrelation.Matches(message, prompt, tolerance, out _)
-                && (await ChannelPromptCorrelation.MatchChannelRowsAsync(db, prompt, tolerance, _logger, message.Id, ct))
-                    .Any(row => row.Id == message.Id))
+            if ((wire is not null && !PromptSubmissionMatch.IsCompleteIn(wire, prompt.Text ?? ""))
+                || !attempt.All(row => ChannelPromptCorrelation.Matches(row, prompt, tolerance, out _)))
+                continue;
+            var owners = await ChannelPromptCorrelation.MatchChannelRowsAsync(db, prompt, tolerance, _logger, message.Id, ct);
+            if (attempt.All(member => owners.Any(row => row.Id == member.Id)))
                 return new TranscriptConfirm(true, true, prompt.Text);
         }
         return TranscriptConfirm.None;
+    }
+
+    private async Task<TranscriptConfirm> FindLiveChannelReceiptAsync(
+        IReadOnlyList<SessionQueuedMessage> attempt, string wire, CancellationToken ct)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var tolerance = TimeSpan.FromSeconds(Math.Max(0, _verification.UnobservableBaselineConfirmClockToleranceSeconds));
+        return await FindOwningChannelReceiptAsync(db, attempt, tolerance, ct, wire);
     }
 
     private async Task<FlushResult?> ReconcileUnknownInputLockedAsync(
@@ -3959,7 +3973,9 @@ public sealed partial class SessionMessageQueueService
             outcome = await WaitForTranscriptConfirmAsync(
                 sessionId, body, baseline, submitBaseline.Sequence, before.RenderedScreen, kind,
                 ct, ceilings, unobservableFrom, firstInputDeadlineAt: FirstInputDeadline(run), pointerAttempt: pointerAttempt,
-                resumeNote: StandingResumeNote.IsNote(head), guardRecoveryEnter: kind == AgentKind.ClaudeCode);
+                resumeNote: StandingResumeNote.IsNote(head),
+                channelAttempt: head.Origin == QueuedMessageOrigin.Channel ? run : null,
+                guardRecoveryEnter: kind == AgentKind.ClaudeCode);
             outcome = outcome with { PointerConsumed = pointerAttempt is not null };
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -4394,8 +4410,9 @@ public sealed partial class SessionMessageQueueService
         // CARD-0650 D-7: the watchdog's direct send disables both overlay arms (S6 proactive Esc,
         // S5 Esc-and-retype). Every existing caller keeps the default.
         bool overlayRecovery = true, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
-        bool channelDelivery = false, DateTime? claimedGeneration = null)
+        IReadOnlyList<SessionQueuedMessage>? channelAttempt = null, DateTime? claimedGeneration = null)
     {
+        var channelDelivery = channelAttempt is not null;
         if (channelDelivery && claimedGeneration is null)
             return DeliveryOutcome.Of(DeliveryVerdict.ModalBlocked, ConditionalInputOutcomes.GenerationMismatch);
         if (pointerAttempt is not null || channelDelivery) overlayRecovery = false;
@@ -4689,7 +4706,7 @@ public sealed partial class SessionMessageQueueService
                 return await WaitForTranscriptConfirmAsync(
                     sessionId, trimmed, baseline, submitBaseline.Sequence, submitBaseline.Screen, kind,
                     ct, ceilings, unobservableConfirmFrom, firstInputDeadlineAt, resumeNote: resumeNote,
-                    channelDelivery: channelDelivery);
+                    channelAttempt: channelAttempt);
             }
 
             // TranscriptConfirmEnabled off: legacy screen-only path (unchanged).
@@ -4747,8 +4764,9 @@ public sealed partial class SessionMessageQueueService
         string screenBeforeSubmit, AgentKind? kind, CancellationToken ct,
         PtyDeliveryCeilings? ceilings = null, DateTime? unobservableConfirmFrom = null,
         DateTime? firstInputDeadlineAt = null, PointerAttempt? pointerAttempt = null, bool resumeNote = false,
-        bool channelDelivery = false, bool guardRecoveryEnter = false)
+        IReadOnlyList<SessionQueuedMessage>? channelAttempt = null, bool guardRecoveryEnter = false)
     {
+        var channelDelivery = channelAttempt is not null;
         var strong = PromptSubmissionMatch.RequiresTextMatch(body);
         var fullInline = resumeNote || await RequiresCompleteSpecialistPromptAsync(sessionId, body, ct);
         var observable = baseline.Observable;
@@ -4772,12 +4790,14 @@ public sealed partial class SessionMessageQueueService
 
         while (true)
         {
-            var match = pointerAttempt is not null
+            var match = channelAttempt is not null
+                ? await FindLiveChannelReceiptAsync(channelAttempt, body, ct)
+                : pointerAttempt is not null
                 ? await ReadPointerReceiptAsync(sessionId, body, pointerAttempt, ct)
                 : observable
-                ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct, resumeNote, channelDelivery)
+                ? await TryFindConfirmingRecordAsync(sessionId, body, baseline.MaxSequence, ct, resumeNote)
                 : await TryFindUnobservableConfirmingRecordAsync(
-                    sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct, resumeNote, channelDelivery);
+                    sessionId, body, unobservableConfirmFrom ?? DateTime.MinValue, ct, resumeNote);
             if (match.Identity)
             {
                 if (!match.Complete)
@@ -5001,21 +5021,20 @@ public sealed partial class SessionMessageQueueService
     /// timestamps are never evidence.
     /// </summary>
     private async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
-        Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct, bool requireCompleteUserPrompt = false,
-        bool requireSubmittedUserPrompt = false)
+        Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct, bool requireCompleteUserPrompt = false)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await TryFindUnobservableConfirmingRecordAsync(db, sessionId, body, confirmFrom, ct,
-            requireCompleteUserPrompt, requireSubmittedUserPrompt);
+            requireCompleteUserPrompt);
     }
 
     private static async Task<TranscriptConfirm> TryFindUnobservableConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, DateTime confirmFrom, CancellationToken ct,
-        bool requireCompleteUserPrompt = false, bool requireSubmittedUserPrompt = false)
+        bool requireCompleteUserPrompt = false)
     {
         var fullInline = requireCompleteUserPrompt || await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
-        var channelPrompt = requireSubmittedUserPrompt || await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
+        var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var candidates = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
@@ -5203,21 +5222,20 @@ public sealed partial class SessionMessageQueueService
     // A fresh scope per poll: this runs outside any caller's DbContext and must see rows the
     // transcript ingestion path is committing from its own scope, concurrently.
     private async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
-        Guid sessionId, string body, long baselineSequence, CancellationToken ct, bool requireCompleteUserPrompt = false,
-        bool requireSubmittedUserPrompt = false)
+        Guid sessionId, string body, long baselineSequence, CancellationToken ct, bool requireCompleteUserPrompt = false)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return await TryFindConfirmingRecordAsync(db, sessionId, body, baselineSequence, ct,
-            requireCompleteUserPrompt, requireSubmittedUserPrompt);
+            requireCompleteUserPrompt);
     }
 
     private static async Task<TranscriptConfirm> TryFindConfirmingRecordAsync(
         AppDbContext db, Guid sessionId, string body, long baselineSequence, CancellationToken ct,
-        bool requireCompleteUserPrompt = false, bool requireSubmittedUserPrompt = false)
+        bool requireCompleteUserPrompt = false)
     {
         var fullInline = requireCompleteUserPrompt || await RequiresCompleteSpecialistPromptAsync(db, sessionId, body, ct);
-        var channelPrompt = requireSubmittedUserPrompt || await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
+        var channelPrompt = await RequiresSubmittedChannelPromptAsync(db, sessionId, body, ct);
         var texts = await db.TranscriptEntries
             .AsNoTracking()
             .Where(t => t.AgentSessionId == sessionId
