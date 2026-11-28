@@ -143,7 +143,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
             h.Fixture.Git.Trace.ShouldNotContain(a => a[0] == "push" || a.Contains("rebase") || a.Contains("remove"));
             await h.Fixture.AssertRemoteSourceAsync();
 
-            await using (var other = new LandingSafetyHarness())
+            await using (var other = NewClaimHarness())
             {
                 await other.InitializeAsync();
                 await other.AddSourceAsync();
