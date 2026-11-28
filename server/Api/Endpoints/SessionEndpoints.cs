@@ -3,7 +3,6 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
-using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
 using Microsoft.AspNetCore.Mvc;
@@ -175,11 +174,14 @@ public static class SessionEndpoints
             Guid id,
             SendSessionInputRequest request,
             SessionTerminalAttachments attachments,
+            AppDbContext db,
             AgentSessionService service,
             CancellationToken cancellationToken) =>
         {
             using var input = attachments.TryBeginInput(id)
                 ?? throw new ConflictException(SessionTerminalAttachments.StopInFlightMessage, "session_stop_in_flight");
+            if (await SessionStopAudit.IsPendingAsync(db, id, cancellationToken))
+                throw new ConflictException(SessionTerminalAttachments.StopInFlightMessage, "session_stop_in_flight");
             await service.SendInputAsync(id, request.Input, cancellationToken);
             return Results.NoContent();
         });

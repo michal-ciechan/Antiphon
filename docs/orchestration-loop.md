@@ -110,13 +110,16 @@ Claude attachment cannot currently be verified for this procedure.
    Pass `generation`, `ownerId`, `lastTaskId`, `lastTaskRevision` and `turnEndSequence` as
    `expectedGeneration`, `expectedOwnerId`, `expectedLastTaskId`, `expectedLastTaskRevision`
    and `expectedTurnEndSequence` query parameters. Omit null IDs. The server checks the
-   binding under the dispatch fence and returns 409 on a change.
+   binding under the dispatch fence and returns 409 on a change. Include a JSON `reason`
+   for the stop audit if the default verified idle seat release reason needs more detail.
 4. Require the receipt to show the same generation, `status: Exited` and `openTaskId: null`.
    Confirm the slot state again. Record the session, slot, task, verification time and
    outcome on the card or in the report.
 
-Unknown evidence or a refusal requires fresh verification before any stop. The
-unconditional kill, operator slot release and runner-wide `--kill-sessions` remain human-only.
+Unknown evidence or a refusal requires fresh verification before any stop. An unconfirmed
+exit keeps the generation out of warm reuse and appears in Attention until the same generation
+is observed exited. The unconditional kill requires `X-Antiphon-Operator-Token`. It, operator
+slot release and runner-wide `--kill-sessions` remain human-only.
 
 ---
 

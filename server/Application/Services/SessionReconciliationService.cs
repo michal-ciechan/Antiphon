@@ -214,6 +214,8 @@ public sealed class SessionReconciliationService
             await _db.Entry(row).ReloadAsync(ct);
             if (row.Status is not (SessionStatus.Stopped or SessionStatus.Failed)
                 || !SessionGeneration.Equal(snapshot.AcceptedStartedAt, row.StartedAt)) continue;
+            if (await TryResolveVerifiedStopAsync(row, snapshot, now, ct))
+                continue;
             if (!SessionExitEvidence.Apply(row, snapshot.ExitCode, snapshot.ExitSignal, snapshot.ExitStopIntent))
                 _logger.LogWarning("Conflicting terminal exit snapshot for session {SessionId}; retaining first evidence", row.Id);
         }
@@ -236,6 +238,22 @@ public sealed class SessionReconciliationService
             await _db.Entry(session).ReloadAsync(ct);
             if (!LiveStatuses.Contains(session.Status))
                 continue;
+            // Running inventory left the row alone before the stop-intent check too. Avoid a
+            // per-session audit lookup unless this inventory could otherwise close the row.
+            var snapshot = runnerById.GetValueOrDefault(session.Id);
+            if (snapshot is not null && !string.Equals(snapshot.Status, "Exited", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var stop = await SessionStopAudit.Pending(_db, session.Id, session.StartedAt).SingleOrDefaultAsync(ct);
+            if (stop is not null)
+            {
+                if (SessionStopAudit.IsMatchingExit(session, snapshot))
+                {
+                    SessionStopAudit.RecordExit(session, snapshot!, stop, now);
+                    closedSessionIds.Add(session.Id);
+                }
+                // An unavailable, missing or still-running snapshot never clears a stop intent.
+                continue;
+            }
             // A Starting session may legitimately not have reached the runner yet.
             if (session.Status == SessionStatus.Starting && now - session.StartedAt < startingGrace)
                 continue;
@@ -537,6 +555,10 @@ public sealed class SessionReconciliationService
                 continue;
             }
 
+            if (row.Status is SessionStatus.Failed or SessionStatus.Stopped or SessionStatus.Stopping
+                && await SessionStopAudit.Pending(_db, row.Id, row.StartedAt).AnyAsync(ct))
+                continue;
+
             corrections += row.Status switch
             {
                 SessionStatus.Failed => await TryReAdoptAsync(row, runnerSession, now, ct),
@@ -804,6 +826,18 @@ public sealed class SessionReconciliationService
         }
 
         return 1;
+    }
+
+    private async Task<bool> TryResolveVerifiedStopAsync(
+        AgentSession row, SessionRunnerSessionDto snapshot, DateTime now, CancellationToken ct)
+    {
+        if (!SessionStopAudit.IsMatchingExit(row, snapshot))
+            return false;
+        var stop = await SessionStopAudit.Pending(_db, row.Id, row.StartedAt).SingleOrDefaultAsync(ct);
+        if (stop is null)
+            return false;
+        SessionStopAudit.RecordExit(row, snapshot, stop, now);
+        return true;
     }
 
     private async Task<bool> TryApplyExitedSnapshotAsync(

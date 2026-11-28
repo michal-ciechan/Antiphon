@@ -2,6 +2,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
 using Microsoft.AspNetCore.SignalR;
 using Serilog;
 
@@ -18,20 +19,35 @@ public class AntiphonHub : Hub
     private readonly IAuditService _auditService;
     private readonly AgentChannelService _agentChannelService;
     private readonly SessionTerminalAttachments _attachments;
+    private readonly AppDbContext _db;
 
     public AntiphonHub(IAuditService auditService, AgentChannelService agentChannelService,
-        SessionTerminalAttachments attachments)
+        SessionTerminalAttachments attachments, AppDbContext db)
     {
         _auditService = auditService;
         _agentChannelService = agentChannelService;
         _attachments = attachments;
+        _db = db;
     }
 
     public async Task JoinGroup(string groupName)
     {
         var session = SessionGroupId(groupName);
-        if (session is Guid id && !_attachments.TryAttach(id, Context.ConnectionId))
-            throw new HubException(SessionTerminalAttachments.StopInFlightMessage);
+        if (session is Guid id)
+        {
+            if (!_attachments.TryAttach(id, Context.ConnectionId, out var added))
+                throw new HubException(SessionTerminalAttachments.StopInFlightMessage);
+            try
+            {
+                if (await SessionStopAudit.IsPendingAsync(_db, id, Context.ConnectionAborted))
+                    throw new HubException(SessionTerminalAttachments.StopInFlightMessage);
+            }
+            catch
+            {
+                if (added) _attachments.Detach(id, Context.ConnectionId);
+                throw;
+            }
+        }
         // If adding the group fails, retain the attachment until LeaveGroup or disconnect.
         // A failed repeat join cannot prove an earlier membership is gone.
         await Groups.AddToGroupAsync(Context.ConnectionId, groupName);

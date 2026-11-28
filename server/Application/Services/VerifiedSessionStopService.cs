@@ -104,10 +104,75 @@ public sealed class VerifiedSessionStopService(
     private async Task<VerifiedSessionStopReceipt> StopUnderFenceAsync(
         Guid id, VerifiedSessionStopRequest expected, Authority authority, string reason, CancellationToken ct)
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        // Warm dispatch locks the previous task, then takes KEY SHARE on the session before
-        // rechecking liveness and binding its new task. Match that order and take FOR UPDATE
-        // so each side sees the other's committed decision before it can pass its own checks.
+        // Commit the generation hold under the claim lock before any runner command can be issued.
+        AuditRecord audit;
+        await using (var prepare = await db.Database.BeginTransactionAsync(ct))
+        {
+            var session = await LockSessionAsync(id, expected, ct);
+            await VerifyAsync(session, expected, authority, checkRunner: true, ct);
+            if (await SessionStopAudit.Pending(db, id, session.StartedAt).AnyAsync(ct))
+                throw new ConflictException("The verified stop is still awaiting an exit for this generation.", "session_stop_in_flight");
+
+            audit = SessionStopAudit.Begin(db, id, session.StartedAt, authority.Actor, reason, clock.GetUtcNow().UtcDateTime);
+            SessionStopAudit.BeginIntent(audit, id, session.StartedAt);
+            await db.SaveChangesAsync(ct);
+            await prepare.CommitAsync(ct);
+        }
+
+        await using var stop = await db.Database.BeginTransactionAsync(ct);
+        var current = await LockSessionAsync(id, expected, ct);
+        await db.Entry(audit).ReloadAsync(ct);
+        if (db.Entry(audit).State == EntityState.Detached ||
+            !await SessionStopAudit.Pending(db, id, current.StartedAt).AnyAsync(a => a.Id == audit.Id, ct))
+            throw Changed();
+
+        try
+        {
+            // A claim cannot take this generation across the commit above, but independent
+            // authoritative task/transcript changes during that gap still veto the command.
+            await VerifyAsync(current, expected, authority, checkRunner: false, ct);
+        }
+        catch (Exception ex) when (ex is ConflictException or ForbiddenException)
+        {
+            SessionStopAudit.SetOutcome(audit, "Preconditions changed before command");
+            await db.SaveChangesAsync(ct);
+            await stop.CommitAsync(ct);
+            throw;
+        }
+
+        // A caller disconnect or lost runner reply does not discharge the committed hold.
+        SessionRunnerSessionDto? exited = null;
+        try
+        {
+            var requested = await runtime.KillGenerationAsync(id, expected.ExpectedGeneration,
+                TimeSpan.FromMilliseconds(Math.Max(100, settings.Value.KillGraceMs)), ct);
+            if (requested) exited = await ReadRunnerAsync(id, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "The verified stop command for session {SessionId} was not confirmed", id);
+        }
+
+        if (!SessionStopAudit.IsMatchingExit(current, exited) || await OpenTaskAsync(id, ct) is not null)
+        {
+            SessionStopAudit.SetOutcome(audit, "Exit unconfirmed", settleIntent: false);
+            await db.SaveChangesAsync(ct);
+            await stop.CommitAsync(ct);
+            throw new ConflictException("The runner did not confirm exit for the verified unowned generation.",
+                "session_stop_exit_unconfirmed");
+        }
+
+        // The row and audit settle atomically while warm dispatch is still fenced.
+        SessionStopAudit.RecordExit(current, exited!, audit, clock.GetUtcNow().UtcDateTime);
+        await db.SaveChangesAsync(ct);
+        await stop.CommitAsync(ct);
+        await runtime.DisposeSessionAsync(id);
+        return new(id, exited!.AcceptedStartedAt!.Value, "Exited", null);
+    }
+
+    private async Task<AgentSession> LockSessionAsync(Guid id, VerifiedSessionStopRequest expected, CancellationToken ct)
+    {
+        // Warm dispatch locks the previous task, then takes KEY SHARE on the session.
         if (expected.ExpectedLastTaskId is Guid taskId)
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 SELECT "Id" FROM "AgentTasks" WHERE "Id" = {taskId} AND "AgentSessionId" = {id} FOR UPDATE
@@ -115,6 +180,14 @@ public sealed class VerifiedSessionStopService(
         var session = await db.AgentSessions.FromSqlInterpolated($"""
             SELECT * FROM "AgentSessions" WHERE "Id" = {id} FOR UPDATE
             """).SingleOrDefaultAsync(ct) ?? throw new NotFoundException(nameof(AgentSession), id);
+        await db.Entry(session).ReloadAsync(ct);
+        return session;
+    }
+
+    private async Task VerifyAsync(AgentSession session, VerifiedSessionStopRequest expected,
+        Authority authority, bool checkRunner, CancellationToken ct)
+    {
+        var id = session.Id;
         var task = await LatestTaskAsync(id, ct);
         var key = id.ToString("D");
         var owners = await db.Agents.FromSqlInterpolated($"""
@@ -125,67 +198,26 @@ public sealed class VerifiedSessionStopService(
         if (!SessionGeneration.Equal(session.StartedAt, expected.ExpectedGeneration)
             || session.Status != SessionStatus.Running || await OpenTaskAsync(id, ct) is not null
             || task?.Id != expected.ExpectedLastTaskId || task?.ConcurrencyToken != expected.ExpectedLastTaskRevision
-            || task is not null && (task.CompletedAt is null || !AgentTaskService.IsSettled(task.Status)))
-            throw Changed();
-        if (IsProtected(session, owners, task) || owner?.Id != expected.ExpectedOwnerId
+            || task is not null && (task.CompletedAt is null || !AgentTaskService.IsSettled(task.Status))
+            || IsProtected(session, owners, task) || owner?.Id != expected.ExpectedOwnerId
             || owner is { Status: not AgentStatus.Idle })
             throw Changed();
 
-        var runner = await ReadRunnerAsync(id, ct);
-        if (RunnerAttachment(session, owners, runner) != Unattached)
-            throw new ConflictException("An unattached terminal could not be verified.", "session_stop_attachment_unverified");
-        if (runner is not { Status: "Running", TranscriptBound: true, Pending: null, Adopted: false }
-            || await TurnEndAsync(id, ct) != expected.ExpectedTurnEndSequence
-            || runtime.HasPendingTerminalInput(id)
+        if (checkRunner)
+        {
+            var runner = await ReadRunnerAsync(id, ct);
+            if (RunnerAttachment(session, owners, runner) != Unattached)
+                throw new ConflictException("An unattached terminal could not be verified.", "session_stop_attachment_unverified");
+            if (runner is not { Status: "Running", TranscriptBound: true, Pending: null, Adopted: false })
+                throw Changed();
+        }
+
+        if (await TurnEndAsync(id, ct) != expected.ExpectedTurnEndSequence
+            || runtime.HasPendingTerminalInput(id) || runtime.HasManualTerminalTurn(id)
             || await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == id
                 && (m.Status == QueuedMessageStatus.Pending
                     || m.Status == QueuedMessageStatus.Sent && m.DeliveryAttempts > 0 && m.DeliveryVerdict == null), ct))
             throw Changed();
-
-        var audit = SessionStopAudit.Begin(db, id, session.StartedAt, authority.Actor, reason, clock.GetUtcNow().UtcDateTime);
-        SessionRunnerSessionDto? exited;
-        bool requested;
-        try
-        {
-            requested = await runtime.KillGenerationAsync(id, expected.ExpectedGeneration,
-                TimeSpan.FromMilliseconds(Math.Max(100, settings.Value.KillGraceMs)), ct);
-            exited = await ReadRunnerAsync(id, ct);
-        }
-        catch
-        {
-            await RecordUnconfirmedAsync();
-            throw;
-        }
-
-        if (!requested || exited is not { Status: "Exited", AcceptedStartedAt: { } generation }
-            || exited.SessionId != id || !SessionGeneration.Equal(generation, expected.ExpectedGeneration)
-            || await OpenTaskAsync(id, ct) is not null)
-        {
-            await RecordUnconfirmedAsync();
-            throw new ConflictException("The runner did not confirm exit for the verified unowned generation.",
-                "session_stop_exit_unconfirmed");
-        }
-
-        async Task RecordUnconfirmedAsync()
-        {
-            SessionStopAudit.SetOutcome(audit, "Exit unconfirmed");
-            await db.SaveChangesAsync(CancellationToken.None);
-            await tx.CommitAsync(CancellationToken.None);
-        }
-
-        // Publish Stopped before releasing the dispatch fence. A waiting claimant then sees
-        // the terminal row even if the runner exit event has yet to reach the server.
-        SessionExitEvidence.Apply(session, exited.ExitCode, exited.ExitSignal, exited.ExitStopIntent);
-        SessionTermination.Record(session, SessionTerminationSource.OperatorRequest);
-        session.Status = SessionStatus.Stopped;
-        session.FailureReason = null;
-        session.EndedAt = clock.GetUtcNow().UtcDateTime;
-        session.LastSeenAt = session.EndedAt.Value;
-        SessionStopAudit.SetOutcome(audit, "Exited");
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        await runtime.DisposeSessionAsync(id);
-        return new(id, generation, "Exited", null);
     }
 
     private async Task RequireScopeAsync(

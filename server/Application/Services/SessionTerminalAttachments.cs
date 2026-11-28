@@ -40,14 +40,17 @@ public sealed class SessionTerminalAttachments
         public void Dispose() => Interlocked.Exchange(ref _owner, null)?.EndInput(sessionId);
     }
 
-    public bool TryAttach(Guid sessionId, string connection)
+    public bool TryAttach(Guid sessionId, string connection) => TryAttach(sessionId, connection, out _);
+
+    public bool TryAttach(Guid sessionId, string connection, out bool added)
     {
         lock (_gate)
         {
+            added = false;
             if (_stopping.Contains(sessionId)) return false;
             if (!_subscribers.TryGetValue(sessionId, out var connections))
                 _subscribers.Add(sessionId, connections = []);
-            connections.Add(connection);
+            added = connections.Add(connection);
             return true;
         }
     }

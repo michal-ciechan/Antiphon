@@ -66,6 +66,7 @@ public sealed partial class AttentionService
         // A failed stop explains why a release/ownership leak persists. Keep that condition
         // first, then the more specific pool release condition, with all other evidence attached.
         var items = await BuildSessionStopStuckItemsAsync(now, localInventory, remoteLive, remoteUnknown, ct);
+        items.AddRange(await BuildVerifiedStopStuckItemsAsync(now, ct));
         items.AddRange(await BuildPoolDelegateUnreleasedItemsAsync(now, remoteLive, remoteUnknown, ct));
         items.AddRange(await BuildSessionUnownedItemsAsync(now, remoteLive, remoteUnknown, ct));
         return items.GroupBy(i => i.SessionId).Select(group => group.First() with
@@ -155,6 +156,33 @@ public sealed partial class AttentionService
                         ? $" historicalStandingAgentId={historicalId:D} (historical, not a current pointer)." : ""),
                 s.StartedAt, null, [AttentionAction.OpenDrawer], ModelKind: s.AgentKind.ToString(),
                 ConditionKey: $"session-unowned:{s.Id:N}")).ToList();
+    }
+
+    private async Task<List<AttentionItemDto>> BuildVerifiedStopStuckItemsAsync(DateTime now, CancellationToken ct)
+    {
+        var pending = await SessionStopAudit.ReadPendingAsync(_db, ct);
+        if (pending.Count == 0) return [];
+        var ids = pending.Select(stop => stop.SessionId).Distinct().ToArray();
+        var sessions = await _db.AgentSessions.AsNoTracking().Where(s => ids.Contains(s.Id))
+            .ToDictionaryAsync(s => s.Id, ct);
+        var items = new List<AttentionItemDto>();
+        foreach (var (id, generation, audit) in pending)
+        {
+            if (!sessions.TryGetValue(id, out var session)
+                || !SessionGeneration.Equal(generation, session.StartedAt)
+                || !audit.Summary.EndsWith("Outcome: Exit unconfirmed", StringComparison.Ordinal)
+                   && now - audit.CreatedAt < TimeSpan.FromSeconds(10))
+                continue;
+
+            var runner = session.RunnerId ?? "local";
+            items.Add(new AttentionItemDto(
+                AttentionKind.SessionStopStuck, AlertSeverity.Error, null, id, null, null,
+                $"Session {id:N} on {runner}", "Verified stop is awaiting same-generation exit",
+                $"Runner {runner}, session {id:D}, generation {generation:O}. Warm reuse is held.",
+                audit.CreatedAt, null, [AttentionAction.OpenDrawer],
+                ConditionKey: $"verified-stop:{id:N}:{generation.Ticks}"));
+        }
+        return items;
     }
 
     private async Task<List<AttentionItemDto>> BuildSessionStopStuckItemsAsync(

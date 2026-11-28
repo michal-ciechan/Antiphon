@@ -8902,7 +8902,11 @@ public sealed partial class AgentTaskDispatcher
             if (!pinned.IsPoolDelegate)
                 return await PlaceOnStandingAgentAsync(claimed, pinned, now, ct);
 
-            if (await LiveSessionIdOfAsync(pinned, ct) is null)
+            if (!Guid.TryParse(pinned.PersistentSessionId, out var pinnedSession))
+                return ReuseOutcome.SpawnFresh;
+            if (await SessionStopAudit.IsPendingAsync(_db, pinnedSession, ct))
+                return ReuseOutcome.WaitForAgent;
+            if (!await SessionIsLiveAsync(pinnedSession, ct))
                 return ReuseOutcome.SpawnFresh;
 
             // CARD-0221: a recovered Worktree delegate is Idle so the janitor can see it, but it
@@ -9020,8 +9024,14 @@ public sealed partial class AgentTaskDispatcher
                 var matchingSessions = candidateSessions.ToHashSet();
                 candidates.RemoveAll(a => !Guid.TryParse(a.PersistentSessionId, out var id) || !matchingSessions.Contains(id));
             }
+            var generations = await _db.AgentSessions.AsNoTracking().Where(s => candidateSessions.Contains(s.Id))
+                .Select(s => new { s.Id, s.StartedAt }).ToDictionaryAsync(s => s.Id, s => s.StartedAt, ct);
+            var holds = (await SessionStopAudit.ReadPendingAsync(_db, ct))
+                .Where(hold => generations.TryGetValue(hold.SessionId, out var current)
+                    && SessionGeneration.Equal(hold.Generation, current))
+                .Select(hold => hold.SessionId).ToHashSet();
             var working = await SessionMessageQueueService.IsWorkingBatchAsync(_db, candidateSessions, ct);
-            agent = candidates
+            agent = candidates.Where(a => !Guid.TryParse(a.PersistentSessionId, out var id) || !holds.Contains(id))
                 .Where(a => !Guid.TryParse(a.PersistentSessionId, out var id)
                     || !working.GetValueOrDefault(id))
                 // Same-run context first — that agent has just read the code this run cares
@@ -9054,6 +9064,8 @@ public sealed partial class AgentTaskDispatcher
         // so a stop that already holds the session meets this claim in the same order.
         var previous = await LockPreviousTokenOwnerAsync(claimed, session, ct);
         await LockSessionKeyShareAsync(session, ct);
+        if (await SessionStopAudit.IsPendingAsync(_db, session, ct))
+            return claimed.AgentId == agent.Id ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
         if (!await SessionIsLiveAsync(session, ct))
         {
             await _db.Entry(agent).ReloadAsync(ct);
@@ -9323,6 +9335,8 @@ public sealed partial class AgentTaskDispatcher
         if (await ExpireClaimedOptionalWorkAsync(claimed, ct))
             return ReuseOutcome.Expired;
         await LockSessionKeyShareAsync(session, ct);
+        if (await SessionStopAudit.IsPendingAsync(_db, session, ct))
+            return ReuseOutcome.WaitForAgent;
         if (!await SessionIsLiveAsync(session, ct))
             return standing.AlwaysOn ? ReuseOutcome.WaitForAgent : ReuseOutcome.SpawnFresh;
         if (await RefuseParallelAsync(claimed, ct))
@@ -9651,6 +9665,8 @@ public sealed partial class AgentTaskDispatcher
         var acted = 0;
         foreach (var (agent, sessionId, newest) in due)
         {
+            if (await SessionStopAudit.IsPendingAsync(_db, sessionId, ct))
+                continue;
             var settled = DelegationReportFormatter.Short(newest!.Id);
             if (working.GetValueOrDefault(sessionId))
             {
@@ -9975,6 +9991,9 @@ public sealed partial class AgentTaskDispatcher
         {
             if (sourcedOwnerIds.Contains(agent.Id))
                 continue;
+            if (Guid.TryParse(agent.PersistentSessionId, out var heldSession)
+                && await SessionStopAudit.IsPendingAsync(_db, heldSession, ct))
+                continue;
             if (Guid.TryParse(agent.PersistentSessionId, out var sid)
                 && (recheckUnfinished.Contains(sid) || recheckFailed.Contains(sid)
                     || recheckMissingBoundary.Contains(sid) || recheckWorking.GetValueOrDefault(sid)))
@@ -10008,6 +10027,8 @@ public sealed partial class AgentTaskDispatcher
             // Recheck immediately before removal: a Failed row may have been re-adopted, and a
             // remote runner may have lost its inventory since candidate selection.
             var sessionId = Guid.TryParse(agent.PersistentSessionId, out var parsedId) ? parsedId : (Guid?)null;
+            if (sessionId is Guid staleSession && await SessionStopAudit.IsPendingAsync(_db, staleSession, ct))
+                continue;
             if (!await PoolDelegateRelease.IsSessionTerminalAsync(_db, sessionId, _runtime, ct))
                 continue;
             FinishPoolRetire(agent, incidentAgentIds.Contains(agent.Id), now);

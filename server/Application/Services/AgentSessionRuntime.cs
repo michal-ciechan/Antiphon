@@ -277,13 +277,20 @@ public sealed partial class AgentSessionRuntime
             var oldHerdrEvidence = session.HerdrSupervisionFailureKind;
             HerdrSupervisionFailureEvidence.Record(session, HerdrSupervisionFailureEvidence.FromExitReason(exitReason));
             changed |= oldHerdrEvidence != session.HerdrSupervisionFailureKind;
+            var verifiedStop = await SessionStopAudit.Pending(db, sessionId, session.StartedAt).SingleOrDefaultAsync(ct);
+            if (verifiedStop is not null)
+            {
+                SessionStopAudit.SetOutcome(verifiedStop, "Exited");
+                SessionTermination.Record(session, SessionTerminationSource.OperatorRequest);
+                changed = true;
+            }
             // A CPU-spin watchdog kill reclaims an IDLE session whose process was busy-looping a
             // core after its turn completed — the non-zero exit code is just the kill's. It must
             // land as Stopped, not Failed, so the next message resumes the session by id.
             // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open, and
             // CARD-0383 detect-timeout keep-pane, are never a clean stop — Stopped is operator
             // intent and reconciliation's auto-kill key.
-            var cleanStop = SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal, exitReason,
+            var cleanStop = verifiedStop is not null || SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal, exitReason,
                 session.TerminationSource);
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {
@@ -2416,6 +2423,8 @@ public sealed partial class AgentSessionRuntime
     /// <summary>Unsubmitted human text owns the terminal; a modal key must never type over it.</summary>
     public bool HasPendingTerminalInput(Guid sessionId) =>
         _pendingInputs.TryGetValue(sessionId, out var pending) && pending.HasText;
+
+    internal bool HasManualTerminalTurn(Guid sessionId) => _manualTurns.ContainsKey(sessionId);
 
     /// <summary>
     /// A numbered approval key is consumed by the provider modal, not by the composer. Do not

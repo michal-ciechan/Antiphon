@@ -182,7 +182,8 @@ public sealed class VerifiedSessionStopTests
             var afterKill = runner.KillCalls + runner.KillGenerationCalls.Count != 0;
             // The inspection has already read once. The second read runs under the PostgreSQL
             // dispatch fence. Browser tests pause readback after the command has been issued.
-            if (dispatchRace && read == 2 || browserRace && afterKill && !fenceEntered.Task.IsCompleted)
+            if ((dispatchRace || scenario == "input-during-stop") && read == 2
+                || browserRace && scenario != "input-during-stop" && afterKill && !fenceEntered.Task.IsCompleted)
             {
                 fenceEntered.TrySetResult();
                 await releaseFence.Task.WaitAsync(ct);
@@ -423,7 +424,17 @@ public sealed class VerifiedSessionStopTests
             var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, bound.Token);
             dispatched.AgentSessionId.ShouldNotBe(id, "the dispatcher must never claim the stopped generation");
             if (scenario == "lost-readback-claim")
+            {
                 dispatched.Status.ShouldBe(AgentTaskStatus.Queued, "the pinned process is still reserved for reconciliation");
+                (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeTrue();
+                using var input = await client.PostAsJsonAsync($"/api/sessions/{id}/input", new { input = "held" }, bound.Token);
+                input.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+                inputs.ShouldBeEmpty();
+                await harness.Runtime.ObserveExitAsync(id, 0, AgentExitReason.KilledByRequest, bound.Token, generation);
+            }
+            (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeFalse();
+            await db.Entry(session).ReloadAsync(bound.Token);
+            session.Status.ShouldBe(SessionStatus.Stopped);
             return;
         }
         else
