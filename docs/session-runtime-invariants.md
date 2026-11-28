@@ -1923,6 +1923,18 @@ idle, an operator draft, a dialog, and a Working screen on an adopted session
 still write no bytes. A body already written retains its existing composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
 cannot clear that hold. The complete correlated UserPrompt remains the receipt.
+
+A temporary channel hold requires both its retry deadline and guard clearance.
+The queue preserves order within a conversation and skips exhausted rows during
+automatic admission. The terminal composer guard still covers the whole recipient
+session. The queue persists its UTC retry deadline and measures elapsed time on a
+monotonic clock during a server lifetime. After restart it uses the persisted
+deadline and caps a future deadline at 120 seconds from the first admission
+check. A wall-clock correction during downtime can change when the persisted
+deadline becomes eligible, so input still depends on the live guard. An ambiguous
+submission requires an owning receipt or explicit recovery. While parking is
+disabled, a session keeps its seat for either wait.
+
 Explicit authenticated terminal input uses the named interactive entry point.
 Startup trust/effort, exact unsafe-delete `2` without Enter, and RC dismissal have
 finite typed intents and fresh matching-layout checks; none accepts task text.

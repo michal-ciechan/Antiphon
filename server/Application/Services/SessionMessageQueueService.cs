@@ -113,6 +113,8 @@ public sealed partial class SessionMessageQueueService
         _runtime = runtime;
         _eventBus = eventBus;
         _timeProvider = timeProvider;
+        _channelRetryEpoch = timeProvider.GetTimestamp();
+        _channelRetryEpochUtc = timeProvider.GetUtcNow().UtcDateTime;
         _verification = (supervisionSettings?.Value ?? new SupervisionSettings()).DeliveryVerification;
         _apiErrorRecovery = (supervisionSettings?.Value ?? new SupervisionSettings()).ApiErrorRecovery;
         _bridgeSettings = bridgeSettings?.Value ?? new Settings.ChannelBridgeSettings();
@@ -1699,7 +1701,7 @@ public sealed partial class SessionMessageQueueService
                 return queue;
             }
 
-            if ((await ApplyChannelAdmissionAsync(db, sessionId, [message], UtcNow(), ct)).Count == 0)
+            if ((await ApplyChannelAdmissionAsync(db, sessionId, [message], ct)).Count == 0)
                 return await GetQueueAsync(sessionId, ct);
 
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
@@ -2905,7 +2907,7 @@ public sealed partial class SessionMessageQueueService
         pending = await ApplyCapacityHoldAsync(db, sessionId, pending, ct);
         if (pending.Count == 0)
             return FlushResult.Nothing;
-        pending = await ApplyChannelAdmissionAsync(db, sessionId, pending, UtcNow(), ct);
+        pending = await ApplyChannelAdmissionAsync(db, sessionId, pending, ct);
         if (pending.Count == 0)
             return TemporaryBlock();
 

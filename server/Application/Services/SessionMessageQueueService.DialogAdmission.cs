@@ -15,6 +15,11 @@ public sealed partial class SessionMessageQueueService
     public const int PendingNotePageMaxBytes = 256 * 1024;
     public const int WithholdReasonMaxLength = 200;
     internal const int ChannelInitialRetrySeconds = 10;
+    private const int ChannelMaxRetrySeconds = 120;
+    private readonly long _channelRetryEpoch;
+    private readonly DateTime _channelRetryEpochUtc;
+
+    private DateTime ChannelRetryNow() => _channelRetryEpochUtc + _timeProvider.GetElapsedTime(_channelRetryEpoch);
 
     private async Task<DialogWithhold?> ReadDialogWithholdAsync(
         AppDbContext db, Guid sessionId, CancellationToken ct)
@@ -76,37 +81,61 @@ public sealed partial class SessionMessageQueueService
 
     private Task ScheduleChannelRetryAfterWithholdAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
-        var now = UtcNow();
+        var now = ChannelRetryNow();
         var minuteAgo = now.AddMinutes(-1);
         var fiveMinutesAgo = now.AddMinutes(-5);
         return db.SessionQueuedMessages.Where(m => m.AgentSessionId == sessionId
                 && m.Status == QueuedMessageStatus.Pending && m.Origin == QueuedMessageOrigin.Channel
                 && m.FirstWithheldAt != null && (m.HoldUntil == null || m.HoldUntil <= now))
             .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.HoldUntil,
-                m => m.FirstWithheldAt <= fiveMinutesAgo ? now.AddSeconds(120)
+                m => m.FirstWithheldAt <= fiveMinutesAgo ? now.AddSeconds(ChannelMaxRetrySeconds)
                     : m.FirstWithheldAt <= minuteAgo ? now.AddSeconds(30)
                     : now.AddSeconds(ChannelInitialRetrySeconds)), ct);
     }
 
-    // Both manual and automatic writes admit only a ready prefix of the persisted channel
-    // queue. The caller's candidates can narrow that prefix (SendNow names only one row).
-    private static async Task<List<SessionQueuedMessage>> ApplyChannelAdmissionAsync(
-        AppDbContext db, Guid sessionId, List<SessionQueuedMessage> candidates, DateTime now, CancellationToken ct)
+    // Each conversation has its own ready prefix within the recipient's queue. An exhausted
+    // row remains visible for recovery, but its omission never blocks the next automatic row.
+    private async Task<List<SessionQueuedMessage>> ApplyChannelAdmissionAsync(
+        AppDbContext db, Guid sessionId, List<SessionQueuedMessage> candidates, CancellationToken ct)
     {
         var channelCandidates = candidates.Where(row => row.Origin == QueuedMessageOrigin.Channel)
             .Select(row => row.Id).ToHashSet();
         if (channelCandidates.Count == 0) return candidates;
 
-        var ordered = await db.SessionQueuedMessages.AsNoTracking()
+        var now = ChannelRetryNow();
+        var latest = now.AddSeconds(ChannelMaxRetrySeconds);
+        var pending = db.SessionQueuedMessages
             .Where(row => row.AgentSessionId == sessionId && row.Origin == QueuedMessageOrigin.Channel
-                && row.Status == QueuedMessageStatus.Pending)
+                && row.Status == QueuedMessageStatus.Pending);
+        var ordered = await pending.AsNoTracking()
             .OrderBy(row => row.Sequence)
-            .Select(row => new { row.Id, row.HoldUntil, row.FirstWithheldAt })
+            .Select(row => new
+            {
+                row.Id, row.ConversationKey, row.DeliveryAttempts,
+                Due = row.HoldUntil ?? (DateTime?)row.FirstWithheldAt!.Value.AddSeconds(ChannelInitialRetrySeconds)
+            })
             .ToListAsync(ct);
-        var admitted = ordered.TakeWhile(row => channelCandidates.Contains(row.Id)
-                && ((row.HoldUntil ?? row.FirstWithheldAt?.AddSeconds(ChannelInitialRetrySeconds)) is not { } due
-                    || due <= now))
-            .Select(row => row.Id).ToHashSet();
+        // A persisted deadline loaded after a backward clock change can exceed the maximum
+        // whole delay. Clamp it durably once so subsequent scans cannot move the cap forward.
+        if (ordered.Any(row => row.Due > latest))
+        {
+            var latestFirstHold = latest.AddSeconds(-ChannelInitialRetrySeconds);
+            await pending.Where(row => row.HoldUntil > latest
+                    || (row.HoldUntil == null && row.FirstWithheldAt > latestFirstHold))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(row => row.HoldUntil, latest), ct);
+        }
+
+        var admitted = new HashSet<Guid>();
+        var blocked = new HashSet<string?>(StringComparer.Ordinal);
+        foreach (var row in ordered)
+        {
+            var selected = channelCandidates.Contains(row.Id);
+            if (!selected && row.DeliveryAttempts >= MaxAttempts) continue;
+            if (!selected || row.Due > now)
+                blocked.Add(row.ConversationKey);
+            else if (!blocked.Contains(row.ConversationKey))
+                admitted.Add(row.Id);
+        }
         return candidates.Where(row => row.Origin != QueuedMessageOrigin.Channel || admitted.Contains(row.Id)).ToList();
     }
 
