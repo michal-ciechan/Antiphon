@@ -275,7 +275,7 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
         graph[collection] = new JsonArray(Enumerable.Range(0, count).Select(_ => element.DeepClone()).ToArray());
 
         using var response = await client.PostAsJsonAsync(ValidatePath, graph);
-        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "workflow_graph_limit");
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, "workflow_graph_limit");
     }
 
     [Test]
@@ -289,7 +289,33 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
         graph["nodes"]!.AsArray()[0]!["params"]!["extra"] = nested;
 
         using var response = await client.PostAsJsonAsync(ValidatePath, graph);
-        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "workflow_parameter_limit");
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, "workflow_parameter_limit");
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task S1_validation_returns_a_coded_bad_request_for_json_parser_failures(bool tooDeep)
+    {
+        using var client = factory.CreateClient();
+        var payload = tooDeep
+            ? "{\"params\":" + new string('[', 80) + "0" + new string(']', 80) + "}"
+            : "{\"nodes\":[\n";
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await client.PostAsync(ValidatePath, content);
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, "invalid_workflow_json");
+    }
+
+    [Test]
+    [Arguments("text")]
+    [Arguments("values")]
+    public async Task S1_validation_refuses_oversized_candidate_json(string limit)
+    {
+        using var client = factory.CreateClient();
+        object extra = limit == "text" ? new string('x', 4097) : new int[16_384];
+        using var response = await client.PostAsJsonAsync(ValidatePath, new { extra });
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, "workflow_graph_limit");
     }
 
     [Test]
@@ -314,7 +340,7 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
             edges.Add(new JsonObject { ["from"] = $"missing-from-{index}", ["to"] = $"missing-to-{index}" });
 
         using var response = await client.PostAsJsonAsync(ValidatePath, graph);
-        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "workflow_diagnostic_limit");
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, "workflow_diagnostic_limit");
     }
 
     [Test]
@@ -379,7 +405,15 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
     private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code)
     {
         response.StatusCode.ShouldBe(status);
-        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().ShouldBe(code);
+        response.Content.Headers.ContentType!.MediaType.ShouldBe("application/problem+json");
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        problem.GetProperty("code").GetString().ShouldBe(code);
+        if (status == HttpStatusCode.BadRequest)
+        {
+            problem.EnumerateObject().Select(property => property.Name)
+                .ShouldBe(["type", "title", "status", "detail", "traceId", "code"], ignoreOrder: true);
+            problem.GetProperty("status").GetInt32().ShouldBe(400);
+        }
     }
 
     [Test]
