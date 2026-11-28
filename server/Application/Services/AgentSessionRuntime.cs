@@ -2418,9 +2418,28 @@ public sealed partial class AgentSessionRuntime
                     ? ComposerInput.Digest(expectedComposer) : expectedComposer,
                 RequireOwnedComposer = requireOwnedComposer,
             };
-        ProviderDialogObservationService.RequireWritten(await WriteConditionalAsync(sessionId, request, ct));
+        var result = await WriteConditionalAsync(sessionId, request, ct);
+        // A stale-observation result from the conditional writer proves it sent no bytes.
+        // Refresh only output evidence. A different writer, process or draft cannot inherit
+        // the first submitting Enter's authority, and a transport exception never retries.
+        if (result.Outcome == ConditionalInputOutcomes.StaleObservation
+            && input == "\r" && requireOwnedComposer && expectedGeneration is { } enterGeneration
+            && request.ExpectedComposerDigest is { Length: > 0 } digest
+            && await ObserveDialogAsync(sessionId, ct) is { ComposerGuardSupported: true } refreshed
+            && refreshed.OwnedComposerDigest == digest
+            && refreshed.OutputSequence != request.ExpectedLastSequence
+            && refreshed.InputRevision == request.ExpectedInputRevision
+            && refreshed.RuntimeEpoch == request.ExpectedRuntimeEpoch
+            && ProviderDialogObservationService.Refusal(refreshed, sessionId, enterGeneration) is null
+            && SessionGeneration.Equal(enterGeneration, await db.AgentSessions.AsNoTracking()
+                .Where(s => s.Id == sessionId).Select(s => (DateTime?)s.StartedAt).SingleOrDefaultAsync(ct)))
+        {
+            request = request with { ExpectedLastSequence = refreshed.OutputSequence };
+            result = await WriteConditionalAsync(sessionId, request, ct);
+        }
+        ProviderDialogObservationService.RequireWritten(result);
         var submitted = RecordTerminalInput(sessionId, input);
-        if (submitted && trackManualTurn) TryStartManualTurnTracking(sessionId, observation!.OutputSequence);
+        if (submitted && trackManualTurn) TryStartManualTurnTracking(sessionId, request.ExpectedLastSequence);
     }
 
     internal Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct) =>

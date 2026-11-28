@@ -405,12 +405,14 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public bool DialogInputUncertain { get; set; }
     private readonly Guid _dialogEpoch = Guid.NewGuid();
     private long _dialogInputRevision;
+    private string? _ownedComposerDigest;
     private long _outputSequence;
     public Task<ProviderDialogObservation?> ObserveDialogAsync(Guid sessionId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (!DialogGuardEnabled) return Task.FromResult<ProviderDialogObservation?>(null);
-        var observed = ClaudeDialogObservation.Observe(SnapshotRenderedScreen());
+        var screen = SnapshotRenderedScreen();
+        var observed = ClaudeDialogObservation.Observe(screen);
         var classified = observed.State switch
         {
             ClaudeDialogState.Clear => ProviderDialogState.Clear,
@@ -419,9 +421,13 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         };
         var known = (!DialogAdopted || AdoptedHistoryVerified) && !DialogInputUncertain;
         var state = known ? classified : ProviderDialogState.Unknown;
+        var ownedDigest = state == ProviderDialogState.Clear && _ownedComposerDigest is { } expected
+            && ClaudeScreen.TryReadComposer(screen, out var draft, preserveDraftWhitespace: true)
+            && ComposerInput.Digest(draft) == expected ? expected : null;
         return Task.FromResult<ProviderDialogObservation?>(new(sessionId, _dialogEpoch, AcceptedStartedAt,
             SnapshotSequence, _dialogInputRevision, state, observed.Kind.ToString(), observed.CanCancel,
-            known, null, DialogAdopted, DialogInputUncertain, classified, ComposerGuardSupported: true));
+            known, null, DialogAdopted, DialogInputUncertain, classified, ComposerGuardSupported: true,
+            OwnedComposerDigest: ownedDigest));
     }
     public long SnapshotSequence { get; set; }
     public List<string> ConditionalInputs { get; } = [];
@@ -483,6 +489,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
 
         ConditionalInputs.Add(request.Input);
         await SendInputAsync(request.Input, ct);
+        if (request.ExpectedComposerDigest is "")
+            _ownedComposerDigest = ComposerInput.Digest(StripBracketedPasteMarkers(request.Input));
         // The dialog fake advances its synthetic redraw because it renders the
         // composer in memory. A generic runner request observes actual output events.
         sequence = request.RequireClaudeDialogClear ? ++SnapshotSequence : Interlocked.Read(ref _outputSequence);
@@ -493,6 +501,7 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
     public async Task SendInputAsync(string input, CancellationToken ct)
     {
         _dialogInputRevision++;
+        _ownedComposerDigest = null;
         if (ThrowOnSend is { } throwOnSend)
             throw throwOnSend;
         if (BeforeInput is { } beforeInput)
