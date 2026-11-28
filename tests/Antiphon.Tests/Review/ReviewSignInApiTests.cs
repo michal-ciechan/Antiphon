@@ -5,8 +5,11 @@ using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
+using Antiphon.Server.Domain.Entities;
+using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Shouldly;
@@ -85,6 +88,52 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
 
         var refused = await client.PostAsJsonAsync($"/api/review-gates/{other[0].Gate.GetProperty("id").GetString()}/decision", new { decision = "Approve" });
         refused.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
+
+    [Test]
+    public async Task S1_workflow_policy_requires_access_to_the_run_and_selected_revision()
+    {
+        using var client = NewClient();
+        using (var boss = NewClient())
+        {
+            await SignInAsync(boss, "boss-code", "/reviews");
+            using var seeded = await boss.PostAsync("/api/review-runs/demo", null);
+            seeded.EnsureSuccessStatusCode();
+        }
+
+        var (allowedRun, otherRun, otherRevision) = await PinOtherRevisionAsync();
+        var path = $"/api/review-runs/{allowedRun}/workflow-policy";
+        using var signedOut = await client.GetAsync(path);
+        signedOut.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        using var signedOutValidation = await client.PostAsJsonAsync("/api/review-workflows/validate", new { });
+        signedOutValidation.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        await SignInAsync(client, "dev-code", "/reviews");
+        using var allowed = await client.GetAsync(path);
+        allowed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        using var deniedRun = await client.GetAsync($"/api/review-runs/{otherRun}/workflow-policy");
+        using var deniedRevision = await client.GetAsync($"{path}?revisionId={otherRevision}");
+        new[] { deniedRun.StatusCode, deniedRevision.StatusCode }
+            .ShouldBe([HttpStatusCode.Forbidden, HttpStatusCode.Forbidden]);
+    }
+
+    private async Task<(Guid AllowedRun, Guid OtherRun, Guid OtherRevision)> PinOtherRevisionAsync()
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var runs = await db.ReviewRuns.OrderBy(run => run.Id).Select(run => new { Run = run, run.Subject.Repo }).ToListAsync();
+        var allowed = runs.First(run => run.Repo == WritableRepo).Run;
+        var other = runs.First(run => run.Repo != WritableRepo).Run;
+        var original = (await db.ReviewWorkflowRevisions.FindAsync(other.WorkflowRevisionId))!;
+        var alternate = new ReviewWorkflowRevision
+        {
+            Id = Guid.NewGuid(), Name = "other-workflow", Hash = new string('a', 64),
+            GraphJson = original.GraphJson, CreatedAt = original.CreatedAt,
+        };
+        db.ReviewWorkflowRevisions.Add(alternate);
+        other.WorkflowRevisionId = alternate.Id;
+        await db.SaveChangesAsync();
+        return (allowed.Id, other.Id, alternate.Id);
     }
 
     [Test]
