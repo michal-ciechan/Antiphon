@@ -165,7 +165,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         try
         {
             using var stream = await content.ReadAsStreamAsync(ct);
-            bytes = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwIfEndOfStream: false, cancellationToken: ct);
+            bytes = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken: ct);
         }
         catch (Exception ex) when (ex is IOException or HttpRequestException)
         {
