@@ -1,6 +1,6 @@
 namespace Antiphon.Server.Application.Exceptions;
 
-public sealed class ServiceUnavailableException : HttpException
+public class ServiceUnavailableException : HttpException
 {
     public int? RetryAfterSeconds { get; }
 

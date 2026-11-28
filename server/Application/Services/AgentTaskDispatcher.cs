@@ -348,6 +348,7 @@ public sealed partial class AgentTaskDispatcher
         SiblingObservationStale,
         /// <summary>CARD-1478: a new desktop worker is below the fresh memory floor. The claim was not kept.</summary>
         HeldOnMemory,
+        HeldOnWorkspaceAdmission,
     }
 
     private enum HoldKind
@@ -360,6 +361,7 @@ public sealed partial class AgentTaskDispatcher
         SiblingInspectionPending,
         // CARD-1478: queued, pre-claim. The task still waits for a fresh sample at or above the floor.
         DesktopMemory,
+        WorkspaceAdmission,
     }
 
     private sealed class QueuedHoldIndex
@@ -692,6 +694,13 @@ public sealed partial class AgentTaskDispatcher
                      : queued.AsEnumerable())
         {
             ct.ThrowIfCancellationRequested();
+
+            if (task.DispatchNotBeforeAt > UtcNow()
+                && lastHeld.GetValueOrDefault(task.Id) == WorkspaceAdmissionBusyException.ProblemCode)
+            {
+                heldThisTick.Add((task.Id, HoldKind.WorkspaceAdmission));
+                continue;
+            }
 
             // Old rows can retain the public desktop aliases. Use the canonical null binding
             // before capacity, platform and preparation checks. Persist it before the
@@ -1119,6 +1128,21 @@ public sealed partial class AgentTaskDispatcher
                             DelegationReportFormatter.Short(task.Id), detail);
                     }
 
+                    continue;
+                }
+
+                if (outcome == DispatchOneResult.HeldOnWorkspaceAdmission)
+                {
+                    var retryAt = UtcNow() + WorkspaceAdmissionBusyException.RetryDelay();
+                    var updated = await _db.AgentTasks
+                        .Where(t => t.Id == task.Id && t.Status == AgentTaskStatus.Queued
+                            && t.ConcurrencyToken == task.ConcurrencyToken)
+                        .ExecuteUpdateAsync(s => s.SetProperty(t => t.DispatchNotBeforeAt, retryAt), ct);
+                    if (updated != 0)
+                    {
+                        heldThisTick.Add((task.Id, HoldKind.WorkspaceAdmission));
+                        await TraceHeldAsync(task, WorkspaceAdmissionBusyException.ProblemCode, lastHeld, ct);
+                    }
                     continue;
                 }
 
@@ -2455,6 +2479,8 @@ public sealed partial class AgentTaskDispatcher
             ct.ThrowIfCancellationRequested();
             var observedAttempt = task.Attempt;
             var sessionId = task.AgentSessionId!.Value;
+            if (_launchQueue.IsWorkspaceAdmissionDeferred(sessionId))
+                continue;
             sessionById.TryGetValue(sessionId, out var sessionSnap);
             if (sessionSnap?.GrokRulesState is GrokRulesState.Pending or GrokRulesState.Failed)
                 continue; // The persisted rules deadline owns initialization, before any task brief.
@@ -5836,6 +5862,11 @@ public sealed partial class AgentTaskDispatcher
         await _db.Entry(claimed).ReloadAsync(ct);
         // Ends the claim span on this path; an exception before here leaves it unexported only.
         claimSpan?.Dispose();
+        if (claimed.DispatchNotBeforeAt > UtcNow())
+        {
+            await transaction.RollbackAsync(ct);
+            return DispatchOneResult.NotClaimed;
+        }
         if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
             && (string.IsNullOrWhiteSpace(claimed.RunnerId) || RunnerRequestIntent.IsDesktopAlias(claimed.RunnerId)))
         {
@@ -5918,9 +5949,17 @@ public sealed partial class AgentTaskDispatcher
             var path = claimed.WorktreePath ?? claimed.WorkingDirectory;
             if (!string.IsNullOrWhiteSpace(path))
             {
-                await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
-                    WorkspaceReservationKey.ForTask(claimed.WorktreePath, claimed.WorkingDirectory, claimed.WorktreeBranch, claimed.RepoPath),
-                    WorkspaceReservationKind.Launch, claimed.Id), ct);
+                try
+                {
+                    await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
+                        WorkspaceReservationKey.ForTask(claimed.WorktreePath, claimed.WorkingDirectory, claimed.WorktreeBranch, claimed.RepoPath),
+                        WorkspaceReservationKind.Launch, claimed.Id), ct);
+                }
+                catch (WorkspaceAdmissionBusyException)
+                {
+                    await AbandonClaimAsync(ct);
+                    return DispatchOneResult.HeldOnWorkspaceAdmission;
+                }
             }
         }
 

@@ -47,6 +47,9 @@ public enum ReviewAgentStatus
 
     /// <summary>Still running; poll again with <see cref="ReviewAgentResult.Handle"/>.</summary>
     Pending,
+
+    /// <summary>Creation was deferred before a reviewer was allocated. Retry without a handle.</summary>
+    Retry,
 }
 
 public sealed record ReviewAgentResult(ReviewAgentStatus Status, string? Text, string? Handle = null, ReviewAgentUsage? Usage = null)
@@ -55,6 +58,8 @@ public sealed record ReviewAgentResult(ReviewAgentStatus Status, string? Text, s
 
     /// <summary>Started (or still running) under <paramref name="handle"/>; the executor polls it on a later pass.</summary>
     public static ReviewAgentResult Pending(string handle) => new(ReviewAgentStatus.Pending, null, handle);
+
+    public static ReviewAgentResult Retry() => new(ReviewAgentStatus.Retry, null);
 }
 
 /// <summary>What the reviewer cost: a seat is <c>api-equivalent</c> (D-20).</summary>

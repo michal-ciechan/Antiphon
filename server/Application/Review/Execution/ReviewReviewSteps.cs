@@ -100,6 +100,15 @@ public static class ReviewReviewSteps
                         pack.Content, pack.Hash, group.CheckIds, subject.Repo, subject.PrNumber, walk.Iteration.HeadSha ?? walk.HeadSha, attempt,
                         previous?.Handle, group.Tier, subject.Host, localPath), ct);
                     Usage(child, result.Usage);
+                    if (result.Status == ReviewAgentStatus.Retry)
+                    {
+                        const string retrySummary = "reviewer creation waiting for workspace admission";
+                        unchanged = child.Summary == retrySummary;
+                        child.Status = ReviewNodeStatus.Waiting;
+                        child.Summary = retrySummary;
+                        child.OutputJson = ReviewWalk.ToJson(new ReviewerOutput([], [], null, [], null, attempt));
+                        break;
+                    }
                     if (result.Status == ReviewAgentStatus.Pending)
                     {
                         // A reviewer still running under the same handle changes nothing on the code host.

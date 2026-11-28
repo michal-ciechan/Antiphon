@@ -435,7 +435,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
                 session, agentId, launchSpec, remoteControlName,
                 resume ? AgentSessionResumeMode.Resume : null, notes, initialPrompt, generation, ct);
         }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
+        catch (Exception ex) when (ex is not WorkspaceAdmissionBusyException && !ct.IsCancellationRequested)
         {
             _logger.LogWarning(ex, "Failed to start interactive agent session {SessionId}", sessionId);
             await using var evidenceTransaction = _db.Database.CurrentTransaction is null
@@ -553,7 +553,6 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             // Standing resume preserves native identity even when local storage cannot be inspected.
             if (session.CardId is not null || session.WorktreeId is not null)
                 resumeMode = ApplyEffectiveResumeMode(session, launchSpec, resumeMode);
-            adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, session.Cwd, resumeMode, ct);
             spec = spec with { AcceptedStartedAt = acceptedGeneration };
             if (spec.VerificationBinding is { } binding
@@ -567,6 +566,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             EnsureHerdrLaunchAllowed(session, spec);
             await RequireCurrentCheckLaunchAsync(session, agentId, acceptedGeneration, ct);
             await AdmitWorkspaceAsync(session, ct);
+            adapter = _adapterFactory.Create(session.AgentKind, session.RunnerId);
 
             // CARD-0679 D-8: for a remote session the Start-to-ready segment survives a lost
             // phone-home connection. Nothing has been typed yet, so a loss after the runner

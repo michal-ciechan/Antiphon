@@ -7,24 +7,29 @@ using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 {
+    private const byte AdmissionDeferred = 1;
     private readonly object _gate = new();
     private readonly HashSet<Task> _launches = [];
     private readonly ConcurrentDictionary<Guid, byte> _owned = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AgentSessionLaunchQueue> _logger;
+    private readonly CancellationToken _stopping;
 
     public AgentSessionLaunchQueue(
         IServiceScopeFactory scopeFactory,
-        ILogger<AgentSessionLaunchQueue> logger)
+        ILogger<AgentSessionLaunchQueue> logger,
+        IHostApplicationLifetime? hostLifetime = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _stopping = hostLifetime?.ApplicationStopping ?? CancellationToken.None;
     }
 
     public void Enqueue(StartAgentSessionRequest request, AgentLaunchSpec spec)
@@ -53,6 +58,9 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
     }
 
     public bool Owns(Guid sessionId) => _owned.ContainsKey(sessionId);
+
+    internal bool IsWorkspaceAdmissionDeferred(Guid sessionId) =>
+        _owned.TryGetValue(sessionId, out var state) && state == AdmissionDeferred;
 
     public bool TryRegister(Guid sessionId) => _owned.TryAdd(sessionId, 0);
 
@@ -160,10 +168,35 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
         string? initialPrompt)
     {
         using var span = Antiphon.Observability.AntiphonTrace.Span("session.launch-interactive");
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
-        await service.LaunchInteractiveAsync(
-            sessionId, agentId, spec, remoteControlName, resume, notes, CancellationToken.None, initialPrompt, acceptedGeneration);
+        while (true)
+        {
+            await using (var scope = _scopeFactory.CreateAsyncScope())
+            {
+                if (IsWorkspaceAdmissionDeferred(sessionId))
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    if (!await db.AgentSessions.AsNoTracking().AnyAsync(s => s.Id == sessionId
+                            && s.StartedAt == acceptedGeneration && s.Status == SessionStatus.Starting,
+                            _stopping))
+                        return;
+                }
+                try
+                {
+                    var service = scope.ServiceProvider.GetRequiredService<AgentSessionService>();
+                    await service.LaunchInteractiveAsync(sessionId, agentId, spec, remoteControlName, resume, notes,
+                        CancellationToken.None, initialPrompt, acceptedGeneration);
+                    return;
+                }
+                catch (WorkspaceAdmissionBusyException)
+                {
+                    // The committed Starting generation still owns its brief and this queue entry.
+                    // No adapter has started. Retry admission without repeating the dispatch claim.
+                    if (_owned.TryUpdate(sessionId, AdmissionDeferred, 0))
+                        _logger.LogInformation("Workspace admission deferred interactive launch for session {SessionId}", sessionId);
+                }
+            }
+            await Task.Delay(WorkspaceAdmissionBusyException.RetryDelay(), _stopping);
+        }
     }
 
     private void Enqueue(

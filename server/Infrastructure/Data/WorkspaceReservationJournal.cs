@@ -300,8 +300,7 @@ public sealed class WorkspaceReservationJournal(
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
         {
-            throw new ServiceUnavailableException("Workspace admission is busy. Retry shortly.",
-                "workspace_admission_busy", ex, retryAfterSeconds: 2);
+            throw new WorkspaceAdmissionBusyException(ex);
         }
     }
 }

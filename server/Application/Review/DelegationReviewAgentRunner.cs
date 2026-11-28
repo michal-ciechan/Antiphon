@@ -1,5 +1,6 @@
 using System.Text;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review.Abf;
 using Antiphon.Server.Application.Settings;
@@ -48,6 +49,10 @@ public sealed class DelegationReviewAgentRunner(
         try
         {
             taskId = await tasks.CreateAsync(create, project.Id, repoPath, ct);
+        }
+        catch (WorkspaceAdmissionBusyException)
+        {
+            return ReviewAgentResult.Retry();
         }
         catch (Exception ex) when (ex is not (OperationCanceledException or ReviewAgentRunnerException))
         {
