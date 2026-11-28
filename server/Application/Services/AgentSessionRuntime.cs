@@ -280,8 +280,16 @@ public sealed partial class AgentSessionRuntime
             var verifiedStop = await SessionStopAudit.Pending(db, sessionId, session.StartedAt).SingleOrDefaultAsync(ct);
             if (verifiedStop is not null)
             {
-                SessionStopAudit.SetOutcome(verifiedStop, "Exited");
-                SessionTermination.Record(session, SessionTerminationSource.OperatorRequest);
+                if (SessionStopAudit.IsPrepared(verifiedStop))
+                {
+                    SessionStopAudit.SetOutcome(verifiedStop, "Exited before command");
+                    verifiedStop = null;
+                }
+                else
+                {
+                    SessionStopAudit.SetOutcome(verifiedStop, "Exited");
+                    SessionTermination.Record(session, SessionTerminationSource.OperatorRequest);
+                }
                 changed = true;
             }
             // A CPU-spin watchdog kill reclaims an IDLE session whose process was busy-looping a

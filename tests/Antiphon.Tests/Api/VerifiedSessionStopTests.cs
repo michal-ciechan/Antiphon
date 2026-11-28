@@ -490,10 +490,16 @@ public sealed class VerifiedSessionStopTests
                 var reconciliation = SessionReconciliationServiceTests.BuildService(db, runner, harness.EventBus, time: clock);
                 await reconciliation.ScanAsync(bound.Token);
                 (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeTrue();
+                using (var retryStop = await client.PostAsync(path, null, bound.Token))
+                    retryStop.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+                runner.KillGenerationCalls.ShouldBe([(id, generation)]);
                 using var input = await client.PostAsJsonAsync($"/api/sessions/{id}/input", new { input = "held" }, bound.Token);
                 input.StatusCode.ShouldBe(HttpStatusCode.Conflict);
                 inputs.ShouldBeEmpty();
                 await harness.Runtime.ObserveExitAsync(id, 0, AgentExitReason.KilledByRequest, bound.Token, generation);
+                using (var replay = await client.PostAsync(path, null, bound.Token))
+                    replay.StatusCode.ShouldBe(HttpStatusCode.OK);
+                runner.KillGenerationCalls.ShouldBe([(id, generation)]);
             }
             else
             {

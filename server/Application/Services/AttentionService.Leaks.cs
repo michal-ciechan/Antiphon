@@ -175,9 +175,11 @@ public sealed partial class AttentionService
                 continue;
 
             var runner = session.RunnerId ?? "local";
+            var prepared = SessionStopAudit.IsPrepared(audit);
             items.Add(new AttentionItemDto(
-                AttentionKind.SessionStopStuck, AlertSeverity.Error, null, id, null, null,
-                $"Session {id:N} on {runner}", "Verified stop is awaiting same-generation exit",
+                AttentionKind.SessionStopStuck, prepared ? AlertSeverity.Warning : AlertSeverity.Error, null, id, null, null,
+                $"Session {id:N} on {runner}", prepared ? "Verified stop is prepared and awaiting command"
+                    : "Verified stop is awaiting same-generation exit",
                 $"Runner {runner}, session {id:D}, generation {generation:O}. Warm reuse is held.",
                 audit.CreatedAt, null, [AttentionAction.OpenDrawer],
                 ConditionKey: $"verified-stop:{id:N}:{generation.Ticks}"));

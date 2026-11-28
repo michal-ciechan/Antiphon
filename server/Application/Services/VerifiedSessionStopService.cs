@@ -84,71 +84,115 @@ public sealed class VerifiedSessionStopService(
     private async Task<VerifiedSessionStopReceipt> StopUnderFenceAsync(
         Guid id, VerifiedSessionStopRequest expected, Authority authority, string reason, CancellationToken ct)
     {
-        // Commit the generation hold under the claim lock before any runner command can be issued.
+        var requestKey = SessionStopAudit.RequestKey(expected, authority.Actor, reason);
         AuditRecord audit;
+        bool retry;
+        // The prepared hold excludes new work before the command is eligible to be sent.
         await using (var prepare = await db.Database.BeginTransactionAsync(ct))
         {
             var session = await LockSessionAsync(id, expected, ct);
-            await VerifyAsync(session, expected, authority, checkRunner: true, ct);
-            if (await SessionStopAudit.Pending(db, id, session.StartedAt).AnyAsync(ct))
-                throw new ConflictException("The verified stop is still awaiting an exit for this generation.", "session_stop_in_flight");
+            if (!SessionGeneration.Equal(session.StartedAt, expected.ExpectedGeneration)) throw Changed();
+            var pending = await SessionStopAudit.Pending(db, id, session.StartedAt).SingleOrDefaultAsync(ct);
+            retry = pending is not null;
+            if (pending is not null)
+            {
+                if (!SessionStopAudit.MatchesRequest(pending, requestKey)) throw StopInFlight();
+                audit = pending;
+            }
+            else
+            {
+                if (await SessionStopAudit.HasCompletedRequestAsync(db, id, session.StartedAt, requestKey, ct))
+                    return Receipt(id, session.StartedAt);
 
-            audit = SessionStopAudit.Begin(db, id, session.StartedAt, authority.Actor, reason, clock.GetUtcNow().UtcDateTime);
-            SessionStopAudit.BeginIntent(audit, id, session.StartedAt);
-            await db.SaveChangesAsync(ct);
+                await VerifyAsync(session, expected, authority, checkRunner: true, ct);
+                audit = SessionStopAudit.Begin(db, id, session.StartedAt, authority.Actor, reason, clock.GetUtcNow().UtcDateTime);
+                SessionStopAudit.BeginIntent(audit, id, session.StartedAt, requestKey);
+                await db.SaveChangesAsync(ct);
+            }
             await prepare.CommitAsync(ct);
         }
 
-        await using var stop = await db.Database.BeginTransactionAsync(ct);
-        var current = await LockSessionAsync(id, expected, ct);
-        await db.Entry(audit).ReloadAsync(ct);
-        if (db.Entry(audit).State == EntityState.Detached ||
-            !await SessionStopAudit.Pending(db, id, current.StartedAt).AnyAsync(a => a.Id == audit.Id, ct))
-            throw Changed();
-
-        try
+        bool sendCommand;
+        await using (var mark = await db.Database.BeginTransactionAsync(ct))
         {
-            // A claim cannot take this generation across the commit above, but independent
-            // authoritative task/transcript changes during that gap still veto the command.
-            await VerifyAsync(current, expected, authority, checkRunner: false, ct);
-        }
-        catch (Exception ex) when (ex is ConflictException or ForbiddenException)
-        {
-            SessionStopAudit.SetOutcome(audit, "Preconditions changed before command");
-            await db.SaveChangesAsync(ct);
-            await stop.CommitAsync(ct);
-            throw;
+            var current = await LockSessionAsync(id, expected, ct);
+            await db.Entry(audit).ReloadAsync(ct);
+            if (!SessionGeneration.Equal(current.StartedAt, expected.ExpectedGeneration)
+                || db.Entry(audit).State == EntityState.Detached)
+                throw Changed();
+            if (SessionStopAudit.IsConfirmed(audit)) return Receipt(id, current.StartedAt);
+            if (!await SessionStopAudit.Pending(db, id, current.StartedAt).AnyAsync(a => a.Id == audit.Id, ct))
+                throw Changed();
+
+            sendCommand = SessionStopAudit.IsPrepared(audit);
+            if (sendCommand)
+            {
+                if (clock.GetUtcNow().UtcDateTime - audit.CreatedAt >= SessionStopAudit.PreparationLifetime)
+                    throw Changed();
+                try
+                {
+                    // Task and transcript changes since preparation can still veto the command.
+                    await VerifyAsync(current, expected, authority, checkRunner: retry, ct);
+                }
+                catch (Exception ex) when (ex is ConflictException or ForbiddenException)
+                {
+                    SessionStopAudit.SetOutcome(audit, "Preconditions changed before command");
+                    await db.SaveChangesAsync(ct);
+                    await mark.CommitAsync(ct);
+                    throw;
+                }
+
+                // After this commit a crash can no longer prove the command was never sent.
+                SessionStopAudit.MarkCommandPossiblySent(audit);
+                await db.SaveChangesAsync(ct);
+            }
+            await mark.CommitAsync(ct);
         }
 
-        // A caller disconnect or lost runner reply does not discharge the committed hold.
+        // A retry can observe the original command's outcome. It never issues a second command.
         SessionRunnerSessionDto? exited = null;
         try
         {
-            var requested = await runtime.KillGenerationAsync(id, expected.ExpectedGeneration,
-                TimeSpan.FromMilliseconds(Math.Max(100, settings.Value.KillGraceMs)), ct);
-            if (requested) exited = await ReadRunnerAsync(id, ct);
+            if (sendCommand)
+                await runtime.KillGenerationAsync(id, expected.ExpectedGeneration,
+                    TimeSpan.FromMilliseconds(Math.Max(100, settings.Value.KillGraceMs)), ct);
+            exited = await ReadRunnerAsync(id, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "The verified stop command for session {SessionId} was not confirmed", id);
         }
 
-        if (!SessionStopAudit.IsMatchingExit(current, exited) || await OpenTaskAsync(id, ct) is not null)
+        await using (var settle = await db.Database.BeginTransactionAsync(ct))
         {
-            SessionStopAudit.SetOutcome(audit, "Exit unconfirmed", settleIntent: false);
-            await db.SaveChangesAsync(ct);
-            await stop.CommitAsync(ct);
-            throw new ConflictException("The runner did not confirm exit for the verified unowned generation.",
-                "session_stop_exit_unconfirmed");
-        }
+            var current = await LockSessionAsync(id, expected, ct);
+            await db.Entry(audit).ReloadAsync(ct);
+            if (!SessionGeneration.Equal(current.StartedAt, expected.ExpectedGeneration)
+                || db.Entry(audit).State == EntityState.Detached)
+                throw Changed();
+            if (SessionStopAudit.IsConfirmed(audit)) return Receipt(id, current.StartedAt);
 
-        // The row and audit settle atomically while warm dispatch is still fenced.
-        SessionStopAudit.RecordExit(current, exited!, audit, clock.GetUtcNow().UtcDateTime);
-        await db.SaveChangesAsync(ct);
-        await stop.CommitAsync(ct);
+            if (!SessionStopAudit.IsMatchingExit(current, exited) || await OpenTaskAsync(id, ct) is not null)
+            {
+                SessionStopAudit.SetOutcome(audit, "Exit unconfirmed", settleIntent: false);
+                await db.SaveChangesAsync(ct);
+                await settle.CommitAsync(ct);
+                throw new ConflictException("The runner did not confirm exit for the verified unowned generation.",
+                    "session_stop_exit_unconfirmed");
+            }
+
+            SessionStopAudit.RecordExit(current, exited!, audit, clock.GetUtcNow().UtcDateTime);
+            await db.SaveChangesAsync(ct);
+            await settle.CommitAsync(ct);
+        }
         await runtime.DisposeSessionAsync(id);
-        return new(id, exited!.AcceptedStartedAt!.Value, "Exited", null);
+        return Receipt(id, exited!.AcceptedStartedAt!.Value);
     }
+
+    private static VerifiedSessionStopReceipt Receipt(Guid id, DateTime generation) => new(id, generation, "Exited", null);
+
+    private static ConflictException StopInFlight() =>
+        new("A different verified stop is awaiting settlement for this generation.", "session_stop_in_flight");
 
     private async Task<AgentSession> LockSessionAsync(Guid id, VerifiedSessionStopRequest expected, CancellationToken ct)
     {

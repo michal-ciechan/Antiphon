@@ -102,7 +102,7 @@ public sealed class SessionReconciliationService
             return 0;
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
-        var corrections = 0;
+        var corrections = await ExpireUnsentStopsAsync(now, ct);
 
         // ONE fetch per sweep, shared by both session passes. It is unconditional now: pass 3 asks
         // about sessions the DB does not think are live, so the old "skip the fetch when no DB row
@@ -144,6 +144,29 @@ public sealed class SessionReconciliationService
         corrections += await ReconcileAgentsAsync(now, ct);
 
         return corrections;
+    }
+
+    private async Task<int> ExpireUnsentStopsAsync(DateTime now, CancellationToken ct)
+    {
+        var expired = await SessionStopAudit.ReadExpiredPreparationsAsync(_db, now, ct);
+        var released = 0;
+        foreach (var (id, generation, candidate) in expired)
+        {
+            await using var transaction = _db.Database.CurrentTransaction is null
+                ? await _db.Database.BeginTransactionAsync(ct) : null;
+            // The command's durable transition uses this same row lock. Re-read after waiting.
+            await _db.AgentSessions.FromSqlInterpolated(
+                $"""SELECT * FROM "AgentSessions" WHERE "Id" = {id} FOR UPDATE""")
+                .AsNoTracking().SingleOrDefaultAsync(ct);
+            var audit = await SessionStopAudit.Pending(_db, id, generation)
+                .SingleOrDefaultAsync(a => a.Id == candidate.Id, ct);
+            if (audit is null || !SessionStopAudit.IsPrepared(audit)) continue;
+            SessionStopAudit.SetOutcome(audit, SessionStopAudit.PreparationExpired);
+            await _db.SaveChangesAsync(ct);
+            if (transaction is not null) await transaction.CommitAsync(ct);
+            released++;
+        }
+        return released;
     }
 
     /// <summary>
@@ -246,13 +269,16 @@ public sealed class SessionReconciliationService
             var stop = await SessionStopAudit.Pending(_db, session.Id, session.StartedAt).SingleOrDefaultAsync(ct);
             if (stop is not null)
             {
-                if (SessionStopAudit.IsMatchingExit(session, snapshot))
+                if (!SessionStopAudit.IsMatchingExit(session, snapshot))
+                    continue;
+                if (SessionStopAudit.IsPrepared(stop))
+                    SessionStopAudit.SetOutcome(stop, "Exited before command");
+                else
                 {
                     SessionStopAudit.RecordExit(session, snapshot!, stop, now);
                     closedSessionIds.Add(session.Id);
+                    continue;
                 }
-                // An unavailable, missing or still-running snapshot never clears a stop intent.
-                continue;
             }
             // A Starting session may legitimately not have reached the runner yet.
             if (session.Status == SessionStatus.Starting && now - session.StartedAt < startingGrace)
@@ -840,6 +866,11 @@ public sealed class SessionReconciliationService
         var stop = await SessionStopAudit.Pending(_db, row.Id, row.StartedAt).SingleOrDefaultAsync(ct);
         if (stop is null)
             return false;
+        if (SessionStopAudit.IsPrepared(stop))
+        {
+            SessionStopAudit.SetOutcome(stop, "Exited before command");
+            return false;
+        }
         SessionStopAudit.RecordExit(row, snapshot, stop, now);
         return true;
     }
