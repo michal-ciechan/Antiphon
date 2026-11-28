@@ -13,7 +13,7 @@ internal sealed record ObservedBuild(
     DateTimeOffset StartedAt, DateTimeOffset? SettledAt, string? Outcome,
     string OutputGeneration, bool LeaseVerified);
 
-internal sealed record OutputCustody(
+internal sealed record BuildCustodyEvidence(
     string Runner, string BuildId, string OutputGeneration, bool Verified,
     DateTimeOffset From, DateTimeOffset Until, DateTimeOffset? RevokedAt,
     DateTimeOffset PresentFrom, DateTimeOffset PresentUntil, DateTimeOffset? RemovedAt);
@@ -23,6 +23,6 @@ internal sealed record BuildAvailabilityResult(string Status, string? Reason = n
 internal static class BuildAvailability
 {
     public static BuildAvailabilityResult Classify(
-        BuildAvailabilityRequest request, ObservedBuild producer, OutputCustody? custody)
+        BuildAvailabilityRequest request, ObservedBuild producer, BuildCustodyEvidence? custody)
         => new("unknown", "classification-unavailable");
 }

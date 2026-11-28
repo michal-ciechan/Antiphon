@@ -17,7 +17,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             "tests/Antiphon.Tests", "effective-properties", "evaluated-graph", "toolchain", "runner-1", "linux", "x64");
         var request = new BuildAvailabilityRequest("consumer", At(20), inputs);
         var producer = new ObservedBuild("producer", "build-1", inputs, At(1), At(10), "ok", "generation-1", true);
-        var custody = new OutputCustody("runner-1", "build-1", "generation-1", true,
+        var custody = new BuildCustodyEvidence("runner-1", "build-1", "generation-1", true,
             At(5), At(40), null, At(5), At(25), At(25));
 
         Check("verified-ready", request, producer, custody, new("eligible-ready", BuildId: "build-1"));
@@ -69,7 +69,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
     }
 
     private static void Check(string label, BuildAvailabilityRequest request, ObservedBuild producer,
-        OutputCustody? custody, BuildAvailabilityResult expected)
+        BuildCustodyEvidence? custody, BuildAvailabilityResult expected)
         => BuildAvailability.Classify(request, producer, custody).ShouldBe(expected, label);
 
     [Test]
