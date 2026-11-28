@@ -41,7 +41,10 @@ public sealed class AgentTaskLandActiveSourceClaimTests
     [Arguments("CleanupRetry", "alias", "merge-helper")]
     public async Task C448_V29_ActiveSourceClaimHoldsEveryMode(string mode, string spelling, string claimant)
     {
-        await using var h = await CreateClaimHarnessAsync(mode);
+        // Keep the CLI fallback for long observation ref paths in one complete Windows claim flow.
+        var useLongWindowsRoot = OperatingSystem.IsWindows()
+            && (mode, spelling, claimant) == ("Fresh", "canonical", "follow-up");
+        await using var h = await CreateClaimHarnessAsync(mode, useLongWindowsRoot);
         h.Services.GetServices<IHostedService>().ShouldBeEmpty();
         if (mode == "ResumePublication")
         {
@@ -200,7 +203,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
         await AssertLandFirstAdmissionAsync(claimant);
     }
 
-    private static async Task<LandingSafetyHarness> CreateClaimHarnessAsync(string mode)
+    private static async Task<LandingSafetyHarness> CreateClaimHarnessAsync(string mode, bool useLongWindowsRoot)
     {
         async Task PrepareAsync(LandingSafetyHarness harness)
         {
@@ -222,7 +225,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
             return await LandingHarnessSnapshot.CreateAsync("active-source-claim-cleanup-refused",
                 ConfigureDispatcher, PrepareAsync);
 
-        var harness = NewClaimHarness();
+        var harness = useLongWindowsRoot ? new LandingSafetyHarness() : NewClaimHarness();
         try
         {
             ConfigureDispatcher(harness);
