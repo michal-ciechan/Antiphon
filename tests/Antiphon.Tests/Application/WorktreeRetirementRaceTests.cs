@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -25,6 +26,91 @@ namespace Antiphon.Tests.Application;
 [Category("Integration")]
 public sealed class WorktreeRetirementRaceTests
 {
+    [Test]
+    public async Task BusyAdmissionLeavesDispatchQueuedAndRetriesAfterRelease()
+    {
+        await using var world = await RaceWorld.CreateAsync();
+        var queued = await world.SeedQueuedTaskAsync(WorkspaceMode.ReadOnly);
+        world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
+
+        await using (var holder = new NpgsqlConnection(world.Schema.ConnectionString))
+        {
+            await holder.OpenAsync();
+            await using var transaction = await HoldAdmissionAsync(holder);
+            var tick = await world.Dispatcher.TickAsync(CancellationToken.None);
+
+            await using var db = world.CreateDb();
+            var deferred = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
+            deferred.Status.ShouldBe(AgentTaskStatus.Queued);
+            deferred.AgentSessionId.ShouldBeNull();
+            deferred.FailureReason.ShouldBeNull();
+            tick.Failures.ShouldBe(0);
+            (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == queued.Id
+                && e.Type == AgentTaskEventType.Held && e.Detail == "workspace_admission_busy")).ShouldBeTrue();
+        }
+
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (true)
+        {
+            await using var scope = world.Provider.CreateAsyncScope();
+            var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+            if ((await dispatcher.TickAsync(budget.Token)).Dispatched == 1)
+                break;
+            await Task.Delay(250, budget.Token);
+        }
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
+        world.Adapter.Started.ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task BusyAdmissionRetriesTheSameBackgroundLaunchGeneration()
+    {
+        var busy = new AdmissionTimeoutObserver();
+        await using var world = await RaceWorld.CreateAsync(interceptor: busy);
+        world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
+        var session = await world.SeedInteractiveSessionAsync();
+        var generation = await world.OwnStandingLaunchAsync(session.Id);
+
+        await using (var holder = new NpgsqlConnection(world.Schema.ConnectionString))
+        {
+            await holder.OpenAsync();
+            await using var transaction = await HoldAdmissionAsync(holder);
+            world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
+            await busy.TimedOut.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            world.Adapter.Started.ShouldBeFalse();
+        }
+
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
+        await using var db = world.CreateDb();
+        var stored = await db.AgentSessions.AsNoTracking().SingleAsync(s => s.Id == session.Id);
+        stored.Status.ShouldBe(SessionStatus.Running);
+        stored.StartedAt.ShouldBe(generation);
+        stored.FailureReason.ShouldBeNull();
+        world.Adapter.Started.ShouldBeTrue();
+        (await world.ActiveSessionLaunchIdsAsync(session.Id)).ShouldHaveSingleItem();
+    }
+
+    private static async Task<NpgsqlTransaction> HoldAdmissionAsync(NpgsqlConnection connection)
+    {
+        var transaction = await connection.BeginTransactionAsync();
+        await using var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", connection, transaction);
+        await command.ExecuteNonQueryAsync();
+        return transaction;
+    }
+
+    private sealed class AdmissionTimeoutObserver : DbCommandInterceptor
+    {
+        public TaskCompletionSource TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override Task CommandFailedAsync(DbCommand command, CommandErrorEventData eventData, CancellationToken cancellationToken = default)
+        {
+            if (eventData.Exception is PostgresException { SqlState: PostgresErrorCodes.LockNotAvailable }
+                && command.CommandText.Contains("pg_advisory_xact_lock(1017, 459)", StringComparison.Ordinal))
+                TimedOut.TrySetResult();
+            return Task.CompletedTask;
+        }
+    }
+
     [Test]
     public void C694_DeleteDirectory_RemovesReadOnlyFile()
     {

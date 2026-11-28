@@ -10,8 +10,10 @@ using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -144,6 +146,42 @@ public class ReviewDelegationRunnerApiTests(ReviewDelegationRunnerApiTests.Facto
     }
 
     [Test]
+    public async Task BusyAdmissionRetriesReviewerCreate()
+    {
+        const int number = 303;
+        factory.Host.Open(number, "Retry a contended reviewer", "dana", BaseSha, new string('d', 40), Files, Diff);
+        Script();
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var journal = scope.ServiceProvider.GetRequiredService<IWorkspaceReservationJournal>();
+        factory.Tasks.BeforeCreate = async ct =>
+        {
+            var admitted = await journal.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
+                WorkspaceReservationKey.For(Path.GetTempPath(), "", null), WorkspaceReservationKind.Launch), ct);
+            await journal.ReleaseConsumerAsync(admitted.Snapshot!.Id, admitted.Snapshot.Generation, ct);
+        };
+
+        await using var holder = new NpgsqlConnection(db.Database.GetConnectionString());
+        await holder.OpenAsync();
+        await using var transaction = await holder.BeginTransactionAsync();
+        await using var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
+        await command.ExecuteNonQueryAsync();
+        using var client = factory.CreateClient();
+        var id = await CreateRunAsync(client, number);
+        var deferred = await WaitForRunAsync(client, id, r =>
+            Reviewer(r)?.GetProperty("status").GetString() is "Waiting" or "Failed");
+        Reviewer(deferred)!.Value.GetProperty("status").GetString().ShouldBe("Waiting");
+        factory.Tasks.Created.ShouldBeEmpty();
+        await transaction.RollbackAsync();
+
+        var (_, _, _, taskId) = await WaitForTaskAsync();
+        var parked = await WaitForRunAsync(client, id, r => Reviewer(r)?.GetProperty("status").GetString() == "Waiting"
+            && Reviewer(r)!.Value.GetProperty("summary").GetString()!.Contains(taskId.ToString("D")));
+        Node(parked, "review").GetProperty("status").GetString().ShouldBe("Waiting");
+        factory.Tasks.Created.Count.ShouldBe(1);
+    }
+
+    [Test]
     [Arguments("https://github.com/acme/widgets", true)]
     [Arguments("https://github.com/acme/widgets.git/", true)]
     [Arguments("git@github.com:Acme/Widgets.git", true)]
@@ -259,6 +297,7 @@ public class ReviewDelegationRunnerApiTests(ReviewDelegationRunnerApiTests.Facto
         public ConcurrentQueue<(CreateAgentTaskRequest Request, Guid? ProjectId, string CallerDirectory, Guid Id)> Created { get; } = new();
         public ConcurrentQueue<(string RepoPath, ReviewHost Host, int? PrNumber, string HeadSha)> Heads { get; } = new();
         public ConcurrentQueue<(Guid Id, string Reason)> Cancelled { get; } = new();
+        public Func<CancellationToken, Task>? BeforeCreate { get; set; }
 
         public void Reset()
         {
@@ -266,6 +305,7 @@ public class ReviewDelegationRunnerApiTests(ReviewDelegationRunnerApiTests.Facto
             Created.Clear();
             Heads.Clear();
             Cancelled.Clear();
+            BeforeCreate = null;
         }
 
         public void Finish(Guid id, AgentTaskStatus status, string? result, string? failure = null) =>
@@ -281,13 +321,15 @@ public class ReviewDelegationRunnerApiTests(ReviewDelegationRunnerApiTests.Facto
             return Task.CompletedTask;
         }
 
-        public Task<Guid> CreateAsync(CreateAgentTaskRequest request, Guid? projectId, string callerDirectory, CancellationToken ct)
+        public async Task<Guid> CreateAsync(CreateAgentTaskRequest request, Guid? projectId, string callerDirectory, CancellationToken ct)
         {
+            if (BeforeCreate is { } beforeCreate)
+                await beforeCreate(ct);
             var id = Guid.NewGuid();
             _states[id] = new ReviewTaskState(id, AgentTaskStatus.Queued, null, null, null, request.AgentKind ?? AgentKind.ClaudeCode,
                 request.ModelLevel ?? AgentModelLevel.High, null, 0, 0, 0m, DateTime.UtcNow, null);
             Created.Enqueue((request, projectId, callerDirectory, id));
-            return Task.FromResult(id);
+            return id;
         }
 
         public Task<ReviewTaskState?> ReadAsync(Guid taskId, CancellationToken ct) => Task.FromResult(_states.GetValueOrDefault(taskId));
