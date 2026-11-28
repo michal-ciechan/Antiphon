@@ -318,22 +318,115 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     }
 
     [Test]
-    public async Task Legacy_slug_without_an_id_does_not_identify_a_live_repository(CancellationToken ct)
+    public async Task Open_legacy_slug_holds_manual_intake_even_after_slug_reuse(CancellationToken ct)
     {
         const int number = 209667;
         using var client = OpenPullRequest(number);
-        var legacy = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
+        var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
+        await MarkLegacyAsync(legacy, Repo, ct);
+        factory.Host.Pr(number).RepositoryId = 9876543210;
+
+        var refusal = await IntakeAsync(client, "ACME/WIDGETS", number, HttpStatusCode.Conflict, ct);
+
+        AssertLegacyConflict(refusal, legacy);
+        await AssertOnlyLegacyRunAsync(number, legacy, ct);
+    }
+
+    [Test]
+    public async Task Open_legacy_slug_holds_both_parallel_intakes(CancellationToken ct)
+    {
+        const int number = 209675;
+        using var client = OpenPullRequest(number);
+        var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
+        await MarkLegacyAsync(legacy, Repo, ct);
+
+        var refusals = await Task.WhenAll(
+            IntakeAsync(client, Repo, number, HttpStatusCode.Conflict, ct),
+            IntakeAsync(client, Repo, number, HttpStatusCode.Conflict, ct));
+
+        foreach (var refusal in refusals)
+            AssertLegacyConflict(refusal, legacy);
+        await AssertOnlyLegacyRunAsync(number, legacy, ct);
+    }
+
+    [Test]
+    public async Task Open_legacy_slug_holds_trusted_comment_intake_without_GitHub_writes(CancellationToken ct)
+    {
+        const int number = 209676;
+        using var client = OpenPullRequest(number);
+        var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
+        await MarkLegacyAsync(legacy, Repo, ct);
+        factory.Host.Comment(number, "209676", "maintainer", "OWNER", "/antiphon review");
+
+        factory.Host.IncludedPollPullRequests = new HashSet<int> { number };
+        try
+        {
+            using var response = await client.PostAsync("/api/review-polling/poll", null, ct);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var polling = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+            var pass = polling.GetProperty("lastPass").GetProperty("repos").EnumerateArray().Single();
+            var error = pass.GetProperty("error").GetString().ShouldNotBeNull();
+            error.ShouldContain("legacy_review_run_open");
+            error.ShouldContain(legacy.ToString("D"));
+            error.ShouldContain($"/api/review-runs/{legacy:D}/close");
+            (pass.GetProperty("runsStarted").GetInt32(), pass.GetProperty("runsRefreshed").GetInt32()).ShouldBe((0, 0));
+        }
+        finally
+        {
+            factory.Host.IncludedPollPullRequests = null;
+        }
+
+        var pr = factory.Host.Pr(number);
+        pr.Read(p => p.ConversationReplies.Count + p.Reactions.Count + p.Reviews.Count + p.Statuses.Count).ShouldBe(0);
+        await AssertOnlyLegacyRunAsync(number, legacy, ct);
+    }
+
+    [Test]
+    public async Task Verified_open_run_is_reused_even_when_a_legacy_slug_is_open(CancellationToken ct)
+    {
+        const int number = 209677;
+        using var client = OpenPullRequest(number);
+        var verified = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
+        factory.Host.Pr(number).RepositoryId = 24677;
+        var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
+        await MarkLegacyAsync(legacy, Repo, ct);
+        factory.Host.Pr(number).RepositoryId = 1234;
+
+        var existing = await IntakeAsync(client, Repo, number, HttpStatusCode.OK, ct);
+
+        Id(existing).ShouldBe(verified);
+        existing.GetProperty("existing").GetBoolean().ShouldBeTrue();
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var changed = await db.ReviewRuns.Where(r => r.Id == Id(legacy)).ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.GitHubRepositoryId, (long?)null)
-            .SetProperty(r => r.GitHubRepo, Repo), ct);
-        changed.ShouldBe(1);
-
-        var verified = await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct);
-
-        Id(verified).ShouldNotBe(Id(legacy));
         (await db.ReviewRuns.CountAsync(r => r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed, ct)).ShouldBe(2);
+    }
+
+    private async Task MarkLegacyAsync(Guid id, string repo, CancellationToken ct)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var changed = await db.ReviewRuns.Where(r => r.Id == id).ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.GitHubRepositoryId, (long?)null)
+            .SetProperty(r => r.GitHubRepo, repo), ct);
+        changed.ShouldBe(1);
+    }
+
+    private static void AssertLegacyConflict(JsonElement refusal, Guid legacy)
+    {
+        refusal.GetProperty("code").GetString().ShouldBe("legacy_review_run_open");
+        refusal.GetProperty("legacyRunId").GetGuid().ShouldBe(legacy);
+        refusal.GetProperty("detail").GetString().ShouldNotBeNull().ShouldContain($"/api/review-runs/{legacy:D}/close");
+    }
+
+    private async Task AssertOnlyLegacyRunAsync(int number, Guid id, CancellationToken ct)
+    {
+        await AssertStoredRunsAsync(number, 1, ct);
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var run = await db.ReviewRuns.SingleAsync(r => r.GitHubPrNumber == number, ct);
+        run.Id.ShouldBe(id);
+        run.GitHubRepositoryId.ShouldBeNull();
+        (await db.AgentTasks.AnyAsync(t => t.ReviewerRunId == id, ct)).ShouldBeFalse();
     }
 
     [Test]
@@ -773,6 +866,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         const string repo = "acme/historical";
         const long repositoryId = 24673;
         using var client = OpenPullRequest(openNumber);
+        client.DefaultRequestHeaders.Add("X-Review-Viewer", "operator-alex");
         factory.Host.Open(closedNumber, "Legacy closed PR", "maintainer", new string('a', 40), new string('b', 40), [], "");
         factory.Host.Pr(openNumber).RepositoryId = repositoryId;
         factory.Host.Pr(closedNumber).RepositoryId = repositoryId;
@@ -798,6 +892,8 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
 
         var explicitRestart = await IntakeAsync(client, repo, closedNumber, HttpStatusCode.Created, ct);
         Id(explicitRestart).ShouldNotBe(legacyClosed);
+        (await db.ReviewRuns.AsNoTracking().SingleAsync(r => r.Id == Id(explicitRestart), ct)).GitHubRepositoryId.ShouldBe(repositoryId);
+        await AssertStoredRunsAsync(closedNumber, 2, ct);
     }
 
     private async Task SetRunStatusAsync(Guid id, ReviewRunStatus status, CancellationToken ct)
@@ -862,6 +958,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
             services.AddSingleton<IDelegateSessionStopper>(ReviewerStopper);
             services.AddHttpClient<GitHubCodeHost>().ConfigurePrimaryHttpMessageHandler(() => MergeHandler);
             services.PostConfigure<ReviewExecutorSettings>(options => options.Enabled = false);
+            services.PostConfigure<ReviewPollingSettings>(options => options.Repos = [new ReviewPollingRepo { Repo = Repo }]);
             services.PostConfigure<ReviewSettings>(options =>
             {
                 options.AllowViewerHeader = true;
