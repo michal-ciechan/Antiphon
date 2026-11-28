@@ -242,15 +242,18 @@ public sealed class ZombieAgentReaperTests
     }
 
     [Test]
-    public void A_server_kill_that_fails_falls_back_to_the_runner_then_to_a_tree_kill()
+    [Arguments(403)]
+    [Arguments(503)]
+    public void A_server_kill_that_fails_falls_back_to_the_runner_then_to_a_tree_kill(int status)
     {
         using var work = new Work();
-        var runnerFallback = new Machine { KillAnswer = uri => uri.StartsWith("http://localhost:17202/", StringComparison.Ordinal) ? new NightlyReportHttpResponse(503, "down") : null };
+        var runnerFallback = new Machine { KillAnswer = uri => uri.StartsWith("http://localhost:17202/", StringComparison.Ordinal)
+            ? new NightlyReportHttpResponse(status, "refused") : null };
         Incident(runnerFallback, 10756, 17088, IncidentSession, "2026-08-20T07:45:00Z");
         var viaRunner = Run(work, runnerFallback, "2026-08-28T12:00:00Z", "--execute");
         viaRunner.Result.ExitCode.ShouldBe(0, viaRunner.Output);
         runnerFallback.Posts.ShouldBe(["http://localhost:17202/api/sessions/" + IncidentSession + "/kill", "http://localhost:17204/sessions/" + IncidentSession + "/kill"]);
-        viaRunner.Output.ShouldContain("server kill failed  " + IncidentSession + "  HTTP 503 down  falling back to runner");
+        viaRunner.Output.ShouldContain("server kill failed  " + IncidentSession + $"  HTTP {status} refused  falling back to runner");
         viaRunner.Output.ShouldContain("killed       pid 17088  PoolExpired  runner  " + IncidentSession);
         runnerFallback.TreeKills.ShouldBeEmpty();
 

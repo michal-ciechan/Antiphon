@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Text.Json;
+using Antiphon.Server.Api.Endpoints;
+using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
@@ -12,6 +15,9 @@ using Antiphon.SessionRunner;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.Agents;
 using Antiphon.Tests.TestHelpers;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -116,6 +122,70 @@ public class SessionGenerationExitTests
         (await verify.Agents.SingleAsync(a => a.Id == scenario.AgentId)).Status.ShouldBe(AgentStatus.Failed);
         scenario.Bus.Published.Count(e => e.Event == "SessionExited").ShouldBe(1);
         scenario.Bus.Published.Count(e => e.Event == "AgentChanged").ShouldBe(1);
+    }
+
+    [Test]
+    public async Task Headerless_server_refusal_then_runner_fallback_preserves_the_pool_stop()
+    {
+        await using var scenario = await ExitScenario.CreateAsync(failed: false, captureExit: false);
+        await using (var db = scenario.Db())
+        {
+            await db.AgentSessions.Where(s => s.Id == scenario.SessionId).ExecuteUpdateAsync(u =>
+                u.SetProperty(s => s.StandingAgentId, (Guid?)null));
+            await db.Agents.Where(a => a.Id == scenario.AgentId).ExecuteUpdateAsync(u =>
+                u.SetProperty(a => a.IsPoolDelegate, true).SetProperty(a => a.AlwaysOn, false));
+        }
+
+        var captured = await CaptureKilledExitAsync(scenario.SessionId, scenario.GenerationA,
+            () => RefuseHeaderlessReaperRequestAsync(scenario));
+        var exit = JsonSerializer.Deserialize<RunnerSessionExitedEvent>(captured.Json, WebJson)!;
+        if (!OperatingSystem.IsWindows())
+            exit = exit with { ExitCode = 1, ExitSignal = 0, ExitStopIntent = null };
+        exit.AcceptedStartedAt.ShouldBe(scenario.GenerationA);
+        exit.ExitCode.ShouldNotBe(0);
+        exit.ExitSignal.ShouldBe(0);
+        await scenario.Handler.WriteSseAsync(SessionRunnerEventNames.SessionExited, JsonSerializer.Serialize(exit, WebJson));
+        await WaitUntilAsync(async () =>
+        {
+            await using var db = scenario.Db();
+            return await db.AgentSessions.AnyAsync(s => s.Id == scenario.SessionId
+                && (s.Status == SessionStatus.Stopped || s.Status == SessionStatus.Failed));
+        });
+        await using var verify = scenario.Db();
+        var session = await verify.AgentSessions.SingleAsync(s => s.Id == scenario.SessionId);
+        session.Status.ShouldBe(SessionStatus.Stopped);
+        session.TerminationSource.ShouldBe(SessionTerminationSource.SystemRequest);
+        session.FailureReason.ShouldBeNull();
+        session.ExitCode.ShouldBe(exit.ExitCode);
+        (await verify.AuditRecords.AnyAsync(a => a.EventType == AuditEventType.SessionStop)).ShouldBeFalse();
+    }
+
+    private static async Task RefuseHeaderlessReaperRequestAsync(ExitScenario scenario)
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Testing" });
+        builder.WebHost.UseTestServer();
+        builder.Logging.ClearProviders();
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped(_ => scenario.Db());
+        builder.Services.AddScoped(_ => scenario.Harness.Scope.ServiceProvider.GetRequiredService<AgentSessionService>());
+        builder.Services.AddScoped(sp => (ICurrentUser)sp.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>()
+            .HttpContext!.Items["CurrentUser"]!);
+        builder.Services.Configure<PhoneHomeRunnerSettings>(settings =>
+            settings.OperatorTokenPath = Path.Combine(scenario.Harness.TempRoot, "reaper-operator-key"));
+        builder.Services.AddSingleton(scenario.Harness.Runtime);
+        builder.Services.AddSingleton(scenario.Harness.Queue);
+        builder.Services.AddSingleton<SessionTerminalAttachments>();
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddSingleton(Options.Create(new AgentSessionSettings()));
+        builder.Services.AddScoped<VerifiedSessionStopService>();
+        await using var app = builder.Build();
+        app.UseMiddleware<ExceptionMiddleware>();
+        app.UseMiddleware<CurrentUserMiddleware>();
+        app.MapGroup("/api/sessions").MapSessionKill();
+        await app.StartAsync();
+        using var client = app.GetTestClient();
+        using var response = await client.PostAsync($"/api/sessions/{scenario.SessionId:D}/kill", null);
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
     }
 
     [Test]
@@ -501,9 +571,10 @@ public class SessionGenerationExitTests
         public Guid AgentId => Harness.AgentId;
         public int IncidentCountAtB { get; private set; }
 
-        public static async Task<ExitScenario> CreateAsync(bool failed = true)
+        public static async Task<ExitScenario> CreateAsync(bool failed = true, bool captureExit = true)
         {
-            var captured = await CaptureKilledExitAsync();
+            var captured = captureExit ? await CaptureKilledExitAsync()
+                : (Json: string.Empty, Generation: SessionGeneration.Normalize(DateTime.UtcNow));
             var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
             var handler = new SseStreamHandler();
             var client = handler.Client();
@@ -652,9 +723,10 @@ public class SessionGenerationExitTests
         }
     }
 
-    private static async Task<(string Json, DateTime Generation)> CaptureKilledExitAsync()
+    private static async Task<(string Json, DateTime Generation)> CaptureKilledExitAsync(
+        Guid? targetId = null, DateTime? acceptedGeneration = null, Func<Task>? beforeKill = null)
     {
-        var generation = SessionGeneration.Normalize(DateTime.UtcNow);
+        var generation = acceptedGeneration ?? SessionGeneration.Normalize(DateTime.UtcNow);
         var logRoot = Path.Combine(Path.GetTempPath(), $"c502-exit-cap-{Guid.NewGuid():N}");
         await using var runtime = new SessionRunnerRuntime(
             Options.Create(new Antiphon.SessionRunner.SessionRunnerSettings
@@ -664,7 +736,7 @@ public class SessionGenerationExitTests
                 CpuWatchdogEnabled = false,
             }),
             NullLogger<SessionRunnerRuntime>.Instance);
-        var sessionId = Guid.NewGuid();
+        var sessionId = targetId ?? Guid.NewGuid();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var events = runtime.Subscribe(cts.Token);
         // cmd.exe /k stays up until KillAsync on Windows. On Linux that path is not a live
@@ -678,6 +750,7 @@ public class SessionGenerationExitTests
             args,
             new Dictionary<string, string>(),
             Path.GetTempPath(), 80, 24, AcceptedStartedAt: generation), cts.Token);
+        if (beforeKill is not null) await beforeKill();
         await runtime.KillAsync(sessionId, TimeSpan.FromSeconds(5), cts.Token);
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (DateTime.UtcNow < deadline)
