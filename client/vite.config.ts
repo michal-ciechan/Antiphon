@@ -118,6 +118,24 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     css: true,
+    deps: {
+      optimizer: {
+        client: {
+          enabled: true,
+          // Share Vite's pre-bundles across isolated jsdom workers. Keep MSW's
+          // Node entry external so it uses the real Node network modules.
+          include: [
+            '@mantine/core',
+            '@mantine/hooks',
+            '@mantine/notifications',
+            '@tanstack/react-query',
+            '@testing-library/jest-dom/vitest',
+            '@testing-library/react',
+            '@testing-library/user-event',
+          ],
+        },
+      },
+    },
     // The ONE test budget for the whole suite (CARD-0069). The 5s default had no real headroom:
     // measured on the 2026-08-19 baseline, the slowest interaction tests take 1.9–2.9s alone and
     // 2–4.6s inside a full parallel run on an otherwise-idle 8-thread machine (CardEditModal's
