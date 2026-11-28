@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Data.Common;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
@@ -21,8 +22,10 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -103,6 +106,12 @@ public sealed class VerifiedSessionStopTests
     [Test]
     public Task Confirmed_exit_releases_the_intent_before_the_next_claim() => RunStopAsync("confirmed-claim");
 
+    [Test]
+    public Task Unsent_stop_releases_the_generation_and_clears_attention_after_a_commit_cut() => RunStopAsync("unsent-expires");
+
+    [Test]
+    public Task Retrying_an_unsent_stop_reuses_the_original_intent() => RunStopAsync("unsent-retry");
+
     private static async Task RunStopAsync(string scenario)
     {
         var runner = new FakeSessionRunnerClient();
@@ -125,6 +134,8 @@ public sealed class VerifiedSessionStopTests
         var unowned = scenario is "idle" or "unconfirmed" or "new-generation";
         var browserRace = scenario is "input-during-stop" or "open-during-stop" or "reconnect-during-stop";
         var dispatchRace = scenario is "lost-readback-claim" or "confirmed-claim";
+        var unsent = scenario is "unsent-expires" or "unsent-retry";
+        var clock = new FakeTimeProvider(TimeProvider.System.GetUtcNow());
         await using var db = harness.CreateObserverContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == id);
         session.AgentKind = nativeAttach || scenario == "claude-pty" ? AgentKind.ClaudeCode : AgentKind.Codex;
@@ -172,6 +183,11 @@ public sealed class VerifiedSessionStopTests
         await db.SaveChangesAsync();
         await db.Entry(session).ReloadAsync();
         var generation = session.StartedAt;
+        runner.ListOverride = async ct =>
+        {
+            var snapshot = await runner.GetAsync(id, ct);
+            return [snapshot, snapshot with { SessionId = callerId }];
+        };
         var fenceEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFence = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var runnerReads = 0;
@@ -216,7 +232,10 @@ public sealed class VerifiedSessionStopTests
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
         builder.Services.AddScoped(_ => harness.Scope.ServiceProvider.GetRequiredService<AgentSessionService>());
-        builder.Services.AddScoped(_ => harness.CreateObserverContext());
+        var cut = new PreparedCommitCut();
+        builder.Services.AddScoped(_ => unsent
+            ? new AppDbContext(TestDbFixture.CreateDbContextOptions(harness.ConnectionString, cut))
+            : harness.CreateObserverContext());
         var operatorTokenPath = Path.Combine(harness.TempRoot, "test-stop-operator-token");
         builder.Services.Configure<PhoneHomeRunnerSettings>(settings => settings.OperatorTokenPath = operatorTokenPath);
         builder.Services.AddScoped(sp =>
@@ -228,8 +247,8 @@ public sealed class VerifiedSessionStopTests
         builder.Services.AddSingleton(Options.Create(new AgentSessionSettings()));
         // The dispatcher barrier coordinates PostgreSQL locks. Its duration says nothing
         // about runner I/O, so the exercise must not race the production read deadline.
-        builder.Services.AddSingleton<TimeProvider>(dispatchRace
-            ? new FakeTimeProvider(TimeProvider.System.GetUtcNow())
+        builder.Services.AddSingleton<TimeProvider>(dispatchRace || unsent
+            ? clock
             : TimeProvider.System);
         builder.Services.AddSingleton<SessionTerminalAttachments>();
         builder.Services.AddScoped<VerifiedSessionStopService>();
@@ -286,6 +305,39 @@ public sealed class VerifiedSessionStopTests
             path = $"/api/sessions/{id}/kill";
 
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        if (unsent)
+        {
+            using var first = await client.PostAsync(path, null, bound.Token);
+            first.StatusCode.ShouldBe(HttpStatusCode.InternalServerError);
+            cut.Committed.ShouldBeTrue();
+            runner.KillGenerationCalls.ShouldBeEmpty();
+            (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeTrue();
+            if (scenario == "unsent-retry")
+            {
+                using var retry = await client.PostAsync(path, null, bound.Token);
+                retry.StatusCode.ShouldBe(HttpStatusCode.OK);
+                runner.KillGenerationCalls.ShouldBe([(id, generation)]);
+                (await db.AuditRecords.CountAsync(a => a.EventType == AuditEventType.SessionStop, bound.Token)).ShouldBe(1);
+                return;
+            }
+
+            clock.Advance(TimeSpan.FromSeconds(11));
+            var attention = new AttentionService(db, runner, Options.Create(new SupervisionSettings()),
+                Options.Create(new DelegationSettings()), clock, NullLogger<AttentionService>.Instance);
+            (await attention.GetAsync(bound.Token)).Items.ShouldContain(x => x.ConditionKey != null
+                && x.ConditionKey.StartsWith($"verified-stop:{id:N}:"));
+            clock.Advance(TimeSpan.FromSeconds(50));
+            var reconciliation = SessionReconciliationServiceTests.BuildService(db, runner, harness.EventBus, time: clock);
+            await reconciliation.ScanAsync(bound.Token);
+            (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeFalse();
+            (await attention.GetAsync(bound.Token)).Items.ShouldNotContain(x => x.ConditionKey != null
+                && x.ConditionKey.StartsWith($"verified-stop:{id:N}:"));
+            runner.KillGenerationCalls.ShouldBeEmpty();
+            await db.Entry(session).ReloadAsync(bound.Token);
+            session.Status.ShouldBe(SessionStatus.Running);
+            return;
+        }
+
         HttpResponseMessage response;
         if (scenario == "reassigned")
         {
@@ -434,6 +486,10 @@ public sealed class VerifiedSessionStopTests
                 dispatched.Status.ShouldBe(AgentTaskStatus.Queued, "the pinned process is still reserved for reconciliation");
                 retry.ShouldBe(AgentTaskDispatcher.ReuseOutcome.WaitForAgent);
                 (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeTrue();
+                clock.Advance(TimeSpan.FromSeconds(61));
+                var reconciliation = SessionReconciliationServiceTests.BuildService(db, runner, harness.EventBus, time: clock);
+                await reconciliation.ScanAsync(bound.Token);
+                (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeTrue();
                 using var input = await client.PostAsJsonAsync($"/api/sessions/{id}/input", new { input = "held" }, bound.Token);
                 input.StatusCode.ShouldBe(HttpStatusCode.Conflict);
                 inputs.ShouldBeEmpty();
@@ -502,6 +558,19 @@ public sealed class VerifiedSessionStopTests
                 session.Status.ShouldBe(SessionStatus.Running);
             }
             runner.KillCalls.ShouldBe(0);
+        }
+    }
+
+    private sealed class PreparedCommitCut : DbTransactionInterceptor
+    {
+        public bool Committed { get; private set; }
+
+        public override Task TransactionCommittedAsync(DbTransaction transaction, TransactionEndEventData eventData,
+            CancellationToken cancellationToken = default)
+        {
+            if (Committed) return Task.CompletedTask;
+            Committed = true;
+            throw new InvalidOperationException("Simulated request loss after PostgreSQL committed the intent");
         }
     }
 
