@@ -298,7 +298,8 @@ public sealed partial class AgentSessionRuntime
             // CARD-0186: herdr pane-closed / presumed-dead / child-gone / pane-left-open, and
             // CARD-0383 detect-timeout keep-pane, are never a clean stop — Stopped is operator
             // intent and reconciliation's auto-kill key.
-            var cleanStop = verifiedStop is not null || SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal, exitReason,
+            var cleanStop = verifiedStop is not null || await SessionTermination.RecordObservedPoolStopAsync(db, session, exitReason, ct)
+                || SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal, exitReason,
                 session.TerminationSource);
             if (session.Status is SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
             {

@@ -892,14 +892,15 @@ public sealed class SessionReconciliationService
             return false;
         }
 
-        if (!SessionGeneration.Equal(runnerSession.AcceptedStartedAt, session.StartedAt))
+        if (runnerSession.SessionId != session.Id || !SessionGeneration.Equal(runnerSession.AcceptedStartedAt, session.StartedAt))
             return false;
 
         HerdrSupervisionFailureEvidence.Record(session,
             HerdrSupervisionFailureEvidence.FromExitReason(runnerSession.ExitReason));
         if (!SessionExitEvidence.Apply(session, runnerSession.ExitCode, runnerSession.ExitSignal, runnerSession.ExitStopIntent))
             _logger.LogWarning("Conflicting exit snapshot for session {SessionId}; retaining first evidence", session.Id);
-        session.Status = SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal,
+        var requestedPoolStop = await SessionTermination.RecordObservedPoolStopAsync(_db, session, runnerSession.ExitReason, ct);
+        session.Status = requestedPoolStop || SessionExitPolicy.IsCleanStop(session.ExitCode, session.ExitSignal,
             runnerSession.ExitReason, session.TerminationSource) ? SessionStatus.Stopped : SessionStatus.Failed;
         if (session.Status == SessionStatus.Failed && string.IsNullOrEmpty(session.FailureReason))
         {

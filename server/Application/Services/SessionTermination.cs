@@ -2,6 +2,8 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -21,6 +23,36 @@ public static class SessionTermination
             return false;
         session.TerminationSource = source;
         return true;
+    }
+
+    internal static async Task<bool> RecordObservedPoolStopAsync(
+        AppDbContext db, AgentSession session, AgentExitReason reason, CancellationToken ct)
+    {
+        // The Windows runner reports an actual exit code and an observed absence of POSIX
+        // signal. Scope its requested cause to an idle pool seat, as used by the reaper fallback.
+        if (reason != AgentExitReason.KilledByRequest || session.ExitSignal != 0 || session.ExitCode is null
+            || session.Status is not (SessionStatus.Starting or SessionStatus.Running or SessionStatus.Stopping)
+            || session.StandingAgentId is not null || session.CardId is not null)
+            return false;
+
+        var sessionKey = session.Id.ToString("D");
+        var owners = await db.Agents.AsNoTracking()
+            .Where(a => a.PersistentSessionId != null && a.PersistentSessionId.ToLower() == sessionKey)
+            .Select(a => a.Id).Take(2).ToListAsync(ct);
+        if (owners.Count > 1) return false;
+        var ownerId = owners.Count == 1 ? owners[0]
+            : await db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == session.Id)
+                .OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id)
+                .Select(t => t.AgentId).FirstOrDefaultAsync(ct);
+        if (ownerId is not Guid owner || !await db.Agents.AsNoTracking().AnyAsync(
+            a => a.Id == owner && a.IsPoolDelegate && !a.AlwaysOn && a.CurrentCardId == null, ct))
+            return false;
+        if (await db.AgentTasks.AsNoTracking().AnyAsync(t => (t.AgentId == owner || t.AgentSessionId == session.Id)
+            && (t.Status == AgentTaskStatus.Queued || t.Status == AgentTaskStatus.Dispatched
+                || t.Status == AgentTaskStatus.Working || t.Status == AgentTaskStatus.Blocked), ct))
+            return false;
+
+        return Record(session, SessionTerminationSource.SystemRequest) || SessionExitPolicy.IsRequested(session.TerminationSource);
     }
 
     /// <summary>
