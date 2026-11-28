@@ -297,6 +297,28 @@ public partial class ReviewEndToEndApiTests
     }
 
     [Test]
+    public async Task C2110_S1_pg_Pinned_Join_cannot_execute_Publish()
+    {
+        var pr = factory.Host.Open(21118, "Invalid Publish kind", "dana", BaseSha, HeadSha, Files, Diff);
+        var graph = PublishGraph(new Dictionary<string, object?>());
+        graph = graph with { Nodes = graph.Nodes.Select(n => n.Id == "publish" ? n with { Kind = ReviewNodeKind.Join } : n).ToList() };
+        var candidate = PublishCandidate("A", "Must never post", 55) with { InDiff = false };
+        var id = await WalkPublishAsync(21118, graph,
+        [
+            Producer("collate", ReviewNodeKind.Join, 1, new CollateOutput([candidate], [], [])),
+            Producer("verify", ReviewNodeKind.Completion, 2, new VerifyOutput(["A"], [], true)),
+        ]);
+        await using var reader = factory.Services.CreateAsyncScope();
+        var db = reader.ServiceProvider.GetRequiredService<AppDbContext>();
+        var run = await db.ReviewRuns.AsNoTracking().Include(r => r.Nodes).SingleAsync(r => r.Id == id);
+        run.Status.ShouldBe(ReviewRunStatus.Failed);
+        var attempted = run.Nodes.Where(n => n.NodeId == "publish").ShouldHaveSingleItem();
+        attempted.Status.ShouldBe(ReviewNodeStatus.Failed);
+        attempted.Summary!.ShouldContain("Publish requires a Code node.");
+        pr.Read(p => p.AcceptedReviews.Count).ShouldBe(0);
+    }
+
+    [Test]
     public async Task C2110_S1_pg_Legacy_default_body_and_inline_comments_are_exact()
     {
         var graph = PublishGraph(new Dictionary<string, object?>());

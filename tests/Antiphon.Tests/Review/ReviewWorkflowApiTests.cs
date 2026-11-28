@@ -180,6 +180,30 @@ public class ReviewWorkflowApiTests(AntiphonWebAppFactory factory)
     }
 
     [Test]
+    public async Task C2110_S1_pg_validate_rejects_Publish_on_a_Join()
+    {
+        using var client = factory.CreateClient();
+        var graph = (await client.GetFromJsonAsync<WorkflowGraphDto>("/api/review-workflows/default", ReviewWorkflowService.GraphJsonOptions))
+            .ShouldNotBeNull();
+        var edited = graph with
+        {
+            Nodes = graph.Nodes.Select(n => n.Id == "publish"
+                ? n with { Kind = Antiphon.Server.Domain.Enums.ReviewNodeKind.Join, Params = new Dictionary<string, object?> { ["inputs"] = "malformed declaration" } }
+                : n).ToList(),
+        };
+        using var response = await client.PostAsJsonAsync("/api/review-workflows/validate", edited, ReviewWorkflowService.GraphJsonOptions);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        result.GetProperty("valid").GetBoolean().ShouldBeFalse();
+        var diagnostic = result.GetProperty("diagnostics").EnumerateArray()
+            .Single(d => d.GetProperty("code").GetString() == "invalid-publish-kind");
+        diagnostic.GetProperty("nodeIds").EnumerateArray().Select(id => id.GetString()).ShouldBe(["publish"]);
+        diagnostic.GetProperty("field").GetString().ShouldBe("kind");
+        diagnostic.GetProperty("message").GetString()!.ShouldContain("Code");
+    }
+
+    [Test]
     public async Task The_default_graph_validates_and_a_loop_without_a_gate_does_not()
     {
         using var client = factory.CreateClient();
