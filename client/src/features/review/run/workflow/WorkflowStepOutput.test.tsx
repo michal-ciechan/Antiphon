@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { NodeExecutionDto, NodeStatus, WorkflowNodeDto } from '../../../../api/reviewEngine'
 import { NodeSidePanel } from './NodeSidePanel'
 import { StepNodeView } from './WorkflowNodes'
+import deltaOutput from './delta-output.fixture.json'
 
 vi.mock('@xyflow/react', async (importOriginal) => ({
   ...await importOriginal<typeof import('@xyflow/react')>(),
@@ -84,16 +85,53 @@ describe('Workflow execution output', () => {
     expect(output).toHaveStyle({ fontFamily: 'var(--mantine-font-family-monospace)' })
   })
 
-  it('separates commit-status warnings and keeps a routing failure in the output', () => {
-    const main = 'feature; reach 3, contract 3'
-    const review = 'status antiphon/review not posted: GitHub POST statuses/sha: HTTP 404: Not Found\nSee repository permissions.'
-    const approval = 'status antiphon/approval not posted: HTTP 403: Forbidden'
+  it('renders only the producer warnings and keeps the file list and routing failure in output', () => {
     const failure = "No edge leaves 'categorise' for outcome 'feature'."
-    const { container } = renderPanel(execution({ status: 'Failed', summary: [main, review, approval, failure].join('\n') }))
+    const output = { ...deltaOutput, summary: `${deltaOutput.summary}\n${failure}` }
+    const { container } = renderPanel(execution({ status: 'Failed', ...output }))
 
-    expect(container.querySelector('pre')?.textContent).toBe(`${main}\n${failure}`)
+    expect(container.querySelector('pre')?.textContent).toBe(output.summary)
     const warnings = within(screen.getByRole('list', { name: 'Warnings' })).getAllByRole('listitem')
-    expect(warnings.map((warning) => warning.textContent)).toEqual([review, approval])
+    expect(warnings.map((warning) => warning.textContent)).toEqual(deltaOutput.warnings)
+  })
+
+  it('preserves ambiguous legacy output as literal text', () => {
+    const legacy = `${deltaOutput.summary}\n${deltaOutput.warnings[0]}\n<img src=x><b>literal</b>`
+    const { container } = renderPanel(execution({ summary: legacy }))
+
+    expect(container.querySelector('pre')?.textContent).toBe(legacy)
+    expect(container.querySelector('pre img, pre b')).toBeNull()
+    expect(screen.queryByRole('list', { name: 'Warnings' })).not.toBeInTheDocument()
+  })
+
+  it('declares theme-aware output and keyboard focus colors', () => {
+    const { container } = renderPanel(execution(deltaOutput))
+
+    expect(container.querySelector('pre')?.parentElement).toHaveStyle({
+      background: 'var(--mantine-color-default)',
+      color: 'var(--mantine-color-text)',
+    })
+    const region = screen.getByRole('region', { name: 'Execution history' })
+    expect(region.className).toMatch(/executionHistory/i)
+    expect(region).toHaveStyle({ '--execution-history-focus-color': 'var(--mantine-color-text)' })
+  })
+
+  it('loads the rest of a large summary on demand one page at a time', async () => {
+    const prefix = 'large summary'
+    const summary = prefix + 'x'.repeat(1024 * 1024) + '<b>last page</b>'
+    const { container } = renderPanel(execution({ summary }))
+    const pre = () => container.querySelector('pre')
+
+    expect(pre()?.textContent?.startsWith(prefix)).toBe(true)
+    expect(pre()?.textContent?.length).toBeLessThanOrEqual(4096)
+    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Show full output' }))
+    expect(pre()?.textContent?.length).toBeLessThanOrEqual(4096)
+    await userEvent.click(screen.getByRole('button', { name: 'Last page' }))
+    expect(pre()?.textContent?.endsWith('<b>last page</b>')).toBe(true)
+    expect(pre()?.querySelector('b')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Show preview' }))
+    expect(pre()?.textContent?.startsWith(prefix)).toBe(true)
   })
 
   it('keeps wide execution rows in a keyboard-focusable horizontal scroll region', async () => {
@@ -132,5 +170,14 @@ describe('Workflow graph outcome', () => {
 
     expect(screen.getByText('2 kept, 2 disproved')).toBeVisible()
     expect(screen.queryByText('More detail')).not.toBeInTheDocument()
+  })
+
+  it('bounds the displayed and titled preview of a long first line', () => {
+    const prefix = 'large summary'
+    renderCard(execution({ outcome: null, summary: prefix + 'x'.repeat(1024 * 1024) }))
+
+    const preview = screen.getByText(new RegExp(`^${prefix}`))
+    expect(preview.textContent?.length).toBeLessThanOrEqual(160)
+    expect(preview.getAttribute('title')?.length ?? 0).toBeLessThanOrEqual(160)
   })
 })

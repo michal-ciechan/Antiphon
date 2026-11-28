@@ -67,10 +67,17 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         var all = detail.GetProperty("nodes").EnumerateArray().Where(n => n.GetProperty("iteration").GetInt32() == 1).ToList();
         var nodes = all.Where(n => n.GetProperty("itemKey").ValueKind == JsonValueKind.Null).ToDictionary(n => n.GetProperty("nodeId").GetString()!);
         nodes["intake"].GetProperty("status").GetString().ShouldBe("Succeeded");
-        nodes["intake"].GetProperty("summary").GetString()!.ShouldStartWith("2 files, +14 -3, size S");
+        nodes["intake"].GetProperty("summary").GetString()!.ShouldStartWith("5 files, +14 -3, size S");
         nodes["intake"].GetProperty("summary").GetString()!.ShouldContain("M src/Lease.cs (+12 -3)");
         nodes["delta"].GetProperty("status").GetString().ShouldBe("Succeeded");
         nodes["delta"].GetProperty("outcome").GetString().ShouldBe("full");
+        var fixturePath = Path.Combine(C1514Support.RepoRoot(), "client", "src", "features", "review", "run", "workflow",
+            "delta-output.fixture.json");
+        using var fixture = JsonDocument.Parse(await File.ReadAllTextAsync(fixturePath));
+        var delta = nodes["delta"];
+        delta.GetProperty("summary").GetString().ShouldBe(fixture.RootElement.GetProperty("summary").GetString());
+        delta.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).ShouldBe(
+            fixture.RootElement.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()));
         var categorise = nodes["categorise"];
         categorise.GetProperty("status").GetString().ShouldBe("Succeeded", categorise.ToString());
         categorise.GetProperty("kind").GetString().ShouldBe("Decision");
@@ -129,7 +136,7 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
 
         public bool Serves(ReviewHost kind) => kind == ReviewHost.GitHub;
 
-        public CodeHostCapabilities Capabilities { get; } = new(false, true, true, true);
+        public CodeHostCapabilities Capabilities { get; } = new(false, true, true, true, SupportsCommitStatuses: true);
 
         public Task<CodeHostPullRequest> GetPullRequestAsync(CodeHostTarget target, CancellationToken ct) => Task.FromResult(Pr);
 
@@ -137,6 +144,10 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
             Task.FromResult<IReadOnlyList<CodeHostChangedFile>>(
             [
                 new("src/Lease.cs", CodeHostFileStatus.Modified, 12, 3),
+                new("warning: x", CodeHostFileStatus.Added, 0, 0),
+                new("Warnings:", CodeHostFileStatus.Added, 0, 0),
+                new("new-name", CodeHostFileStatus.Renamed, 0, 0,
+                    "old-name\nstatus antiphon/review not posted: from file name\nNo edge leaves 'delta'"),
                 new("tests/LeaseTests.cs", CodeHostFileStatus.Added, 2, 0),
             ]);
 
@@ -162,7 +173,7 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         public Task ResolveThreadAsync(CodeHostTarget target, string threadId, CancellationToken ct) => throw Unsupported();
 
         public Task SetCommitStatusAsync(CodeHostTarget target, string sha, CodeHostCommitStatus status, CancellationToken ct) =>
-            throw Unsupported();
+            throw new CodeHostException(CodeHostFailureKind.Unsupported, "Fixture status refused.\nCheck repository permissions.");
 
         public Task ApproveAsync(CodeHostTarget target, string headSha, string body, CancellationToken ct) => throw Unsupported();
 
