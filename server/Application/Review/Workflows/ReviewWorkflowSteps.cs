@@ -57,7 +57,7 @@ internal static class ReviewWorkflowSteps
 
     private static readonly Dictionary<ReviewNodeKind, Registration> ControlSteps = new()
     {
-        [ReviewNodeKind.Gate] = new(new(ReviewNodeKind.Gate, [], ControlOutcomes: ReviewDecideSteps.GateOutcomes), ReviewDecideSteps.GateAsync),
+        [ReviewNodeKind.Gate] = new(new(ReviewNodeKind.Gate, [], ControlOutcomes: ReviewDecideSteps.GateEdgeOutcomes), ReviewDecideSteps.GateAsync),
         [ReviewNodeKind.Wait] = new(new(ReviewNodeKind.Wait, [], ControlOutcomes: ReviewDecideSteps.WaitOutcomes), ReviewDecideSteps.WaitAsync),
         [ReviewNodeKind.FanOut] = new(new(ReviewNodeKind.FanOut, [], RequiredSteps: [GroupChecks, BuildPacks]), ReviewReviewSteps.FanOutAsync),
     };

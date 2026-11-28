@@ -27,7 +27,7 @@ public static class ReviewDecideSteps
 {
     /// <summary>Iteration triggers that start a round; a recheck or base re-review is the same round.</summary>
     public static readonly IReadOnlyList<string> RoundTriggers = ["opened", "manual", "push", "another-round"];
-    private const string ApproveOutcome = "approve";
+    private const string ApproveOutcome = ReviewGateRule.ApproveOutcome;
 
     /// <summary>
     /// Route (design 3.3, 5): counts this round as bot-only (a human response or decision resets the
@@ -194,6 +194,9 @@ public static class ReviewDecideSteps
 
     internal static IReadOnlyList<string> GateOutcomes(WorkflowNode node) =>
         IsOptional(node) || CanSkipMergeGate(GateKindOf(node)) ? [.. node.Decisions, ApproveOutcome] : node.Decisions;
+
+    internal static IReadOnlyList<string> GateEdgeOutcomes(WorkflowNode node) => GateOutcomes(node)
+        .Where(outcome => ReviewGateRule.Find(outcome)?.Transition == ReviewGateTransition.FollowEdge).ToArray();
 
     internal static IReadOnlyList<string> WaitOutcomes(WorkflowNode node) => node.ListParam("on");
 

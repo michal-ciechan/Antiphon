@@ -181,7 +181,7 @@ public sealed class ReviewWorkflowExecutor(
             .AsSplitQuery().SingleAsync(r => r.Id == runId, ct);
         var iteration = run.Iterations.MaxBy(i => i.Iteration)
             ?? throw new InvalidOperationException($"Review run {runId} has no iteration.");
-        var workflow = await WorkflowAsync(services, db, run, ct);
+        var workflow = await services.GetRequiredService<ReviewWorkflowService>().LoadPinnedAsync(db, run.WorkflowRevisionId, ct);
         var walk = new ReviewWalk(services, db, run, iteration, workflow, time);
 
         for (var step = 0; step < MaxStepsPerWalk; step++)
@@ -214,7 +214,7 @@ public sealed class ReviewWorkflowExecutor(
                 case ReviewNodeStatus.Skipped:
                 case ReviewNodeStatus.FailedContinued:
                     // A merge gate's approve is "merge it": the PR was approved before the gate opened.
-                    if (node.Kind == ReviewNodeKind.Gate && frontier.Outcome == "approve" && ReviewDecideSteps.GateKindOf(node) != ReviewGateKind.MergeGate)
+                    if (node.Kind == ReviewNodeKind.Gate && frontier.Outcome == ReviewGateRule.ApproveOutcome && ReviewDecideSteps.GateKindOf(node) != ReviewGateKind.MergeGate)
                         await ReviewDecideSteps.ApplyGateApprovalAsync(walk, frontier, ct);
                     if (!await FollowAsync(walk, node, frontier, ct))
                         return;
@@ -533,14 +533,6 @@ public sealed class ReviewWorkflowExecutor(
         {
             logger.LogDebug(ex, "Review run {RunId} was not released on shutdown; its lease will lapse", walk.Run.Id);
         }
-    }
-
-    private static async Task<WorkflowDefinition> WorkflowAsync(IServiceProvider services, AppDbContext db, ReviewRun run, CancellationToken ct)
-    {
-        if (run.WorkflowRevisionId is { } id
-            && await db.ReviewWorkflowRevisions.AsNoTracking().Where(w => w.Id == id).Select(w => w.GraphJson).SingleOrDefaultAsync(ct) is { } json)
-            return ReviewWorkflowService.FromStoredGraph(json);
-        return services.GetRequiredService<ReviewWorkflowService>().Default;
     }
 
     private static ReviewStage StageOf(WorkflowNode node, ReviewStage current) => (node.Kind, node.Run) switch

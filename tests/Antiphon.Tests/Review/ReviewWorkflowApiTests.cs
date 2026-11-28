@@ -193,6 +193,14 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
         var validation = (await response.Content.ReadFromJsonAsync<WorkflowValidationDto>())!;
         validation.Valid.ShouldBeTrue(string.Join(", ", validation.Diagnostics.Select(d => d.Message)));
 
+        var unsupported = WorkflowJson(variant);
+        unsupported["nodes"]!.AsArray().Single(node => node!["id"]!.GetValue<string>() == "human-review")!
+            ["params"]!["decisions"] = new JsonArray(JsonValue.Create("reject"));
+        using var unsupportedResponse = await client.PostAsJsonAsync(ValidatePath, unsupported);
+        unsupportedResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var unsupportedValidation = (await unsupportedResponse.Content.ReadFromJsonAsync<WorkflowValidationDto>())!;
+        unsupportedValidation.Diagnostics.ShouldContain(d => d.Code == "invalid-parameter" && d.NodeIds.Contains("human-review"));
+
         var run = await SeedAsync("test/pinned-gate", variant);
         var gateId = await SeedWaitingGateAsync(run.Id);
         var before = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");

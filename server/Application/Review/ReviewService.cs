@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Review.Workflows;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
@@ -104,7 +105,8 @@ public sealed class ReviewService(
             ?? throw reads.RunNotFound(id);
         var counts = await FindingCountsAsync([id], ct);
         var costs = await CostsAsync([id], ct);
-        return ToDetail(run, counts.GetValueOrDefault(id), costs.GetValueOrDefault(id));
+        var workflow = run.Gates.Count == 0 ? workflows.Default : await workflows.LoadPinnedAsync(db, run.WorkflowRevisionId, ct);
+        return ToDetail(run, counts.GetValueOrDefault(id), costs.GetValueOrDefault(id), workflow);
     }
 
     /// <summary>
@@ -698,14 +700,22 @@ public sealed class ReviewService(
         var gates = await query.OrderBy(g => g.OpenedAt).ToListAsync(ct);
         var runIds = gates.Select(g => g.RunId).Distinct().ToList();
         var runs = await db.ReviewRuns.AsNoTracking().Include(r => r.Subject).Where(r => runIds.Contains(r.Id)).ToListAsync(ct);
-        var authors = runs.ToDictionary(r => r.Id, r => GateAuthor(r.Subject.Repo, r.Subject.AuthorLogin));
+        var revisions = runs.Select(run => run.WorkflowRevisionId).OfType<Guid>().Distinct().ToArray();
+        var definitions = revisions.Length == 0 ? [] : await db.ReviewWorkflowRevisions.AsNoTracking()
+            .Where(revision => revisions.Contains(revision.Id))
+            .Select(revision => new { revision.Id, revision.GraphJson }).ToListAsync(ct);
+        var pinned = definitions.ToDictionary(revision => revision.Id, revision => ReviewWorkflowService.FromStoredGraph(revision.GraphJson));
+        var gateRuns = runs.ToDictionary(run => run.Id);
         var summaries = (await SummariesAsync(runs, ct)).ToDictionary(s => s.Id);
         var now = Now();
         var items = gates.Where(g => summaries.ContainsKey(g.RunId)).Select(g =>
         {
             var age = WorkingMinutes(g.OpenedAt, now);
             var sla = age >= SlaBreachWorkingMinutes ? "Breached" : age >= SlaWarnWorkingMinutes ? "Warn" : "Ok";
-            return new QueueItemDto(ToDto(g, authors[g.RunId]), summaries[g.RunId], age, SlaBreachWorkingMinutes, sla);
+            var run = gateRuns[g.RunId];
+            var workflow = run.WorkflowRevisionId is { } revision ? pinned.GetValueOrDefault(revision, workflows.Default) : workflows.Default;
+            return new QueueItemDto(ToDto(g, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin), workflow),
+                summaries[g.RunId], age, SlaBreachWorkingMinutes, sla);
         }).ToList();
         return new ReviewListDto<QueueItemDto>(items, items.Count);
     }
@@ -717,7 +727,9 @@ public sealed class ReviewService(
     public async Task<ReviewGateDto> AssignAsync(Guid gateId, string? login, CancellationToken ct)
     {
         var gate = await OpenGateAsync(gateId, ct);
-        var subject = await db.ReviewRuns.Where(r => r.Id == gate.RunId).Select(r => r.Subject).SingleAsync(ct);
+        var run = await db.ReviewRuns.AsNoTracking().Include(r => r.Subject).SingleAsync(r => r.Id == gate.RunId, ct);
+        var subject = run.Subject;
+        var workflow = await workflows.LoadPinnedAsync(db, run.WorkflowRevisionId, ct);
         string assignee;
         if (!string.IsNullOrWhiteSpace(login))
         {
@@ -740,7 +752,7 @@ public sealed class ReviewService(
         gate.AssigneeDisplayName = settings.Value.Viewers.TryGetValue(assignee, out var known) ? known.DisplayName : null;
         gate.Status = ReviewQueueItemStatus.Assigned;
         await TouchAndSaveAsync(gate.RunId, ct);
-        return ToDto(gate, GateAuthor(subject.Repo, subject.AuthorLogin));
+        return ToDto(gate, GateAuthor(subject.Repo, subject.AuthorLogin), workflow);
     }
 
     /// <summary>"Not me": the viewer returns the gate to the team queue with a reason and is skipped by the next pick.</summary>
@@ -749,7 +761,8 @@ public sealed class ReviewService(
         if (string.IsNullOrWhiteSpace(reason))
             throw new ValidationException("reason", "Passing a review needs a reason.");
         var gate = await OpenGateAsync(gateId, ct);
-        var subjectOf = await db.ReviewRuns.Where(r => r.Id == gate.RunId).Select(r => new { r.Subject.Repo, r.Subject.AuthorLogin }).SingleAsync(ct);
+        var subjectOf = await db.ReviewRuns.Where(r => r.Id == gate.RunId).Select(r => new { r.Subject.Repo, r.Subject.AuthorLogin, r.WorkflowRevisionId }).SingleAsync(ct);
+        var workflow = await workflows.LoadPinnedAsync(db, subjectOf.WorkflowRevisionId, ct);
         var author = GateAuthor(subjectOf.Repo, subjectOf.AuthorLogin);
         var pass = new ReviewGatePass { Id = Guid.NewGuid(), GateId = gate.Id, Login = viewer.Login, Reason = reason.Trim(), At = Now() };
         db.Add(pass); // explicit Added: see Apply() on client-set Guid keys
@@ -758,7 +771,7 @@ public sealed class ReviewService(
         gate.AssigneeDisplayName = null;
         gate.Status = ReviewQueueItemStatus.Unassigned;
         await TouchAndSaveAsync(gate.RunId, ct);
-        return ToDto(gate, author);
+        return ToDto(gate, author, workflow);
     }
 
     /// <summary>
@@ -772,9 +785,11 @@ public sealed class ReviewService(
             .AsSplitQuery().SingleAsync(r => r.Id == gate.RunId, ct);
         if (run.Status is ReviewRunStatus.Closed or ReviewRunStatus.Merged)
             throw new ConflictException($"Review run {run.Id} is {run.Status}.", "review_run_finished");
-        if (CannotDecideReason(gate, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin)) is { } reason)
+        var workflow = await workflows.LoadPinnedAsync(db, run.WorkflowRevisionId, ct);
+        var allowed = AllowedDecisions(gate, workflow);
+        if (CannotDecideReason(gate, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin), allowed.Count > 0) is { } reason)
             throw new ForbiddenException(reason, "review_gate_not_decider");
-        if (!AllowedDecisions(gate).Contains(request.Decision))
+        if (allowed.FirstOrDefault(rule => rule.Decision == request.Decision) is not { } decision)
             throw new ConflictException($"Gate {gate.Id} does not allow {request.Decision}.", "review_gate_decision_not_allowed");
 
         var now = Now();
@@ -790,7 +805,7 @@ public sealed class ReviewService(
                          && n.Status is ReviewNodeStatus.Waiting or ReviewNodeStatus.Running))
             {
                 waiting.Status = ReviewNodeStatus.Succeeded;
-                waiting.Outcome = DecisionLabel(request.Decision);
+                waiting.Outcome = decision.Outcome;
                 waiting.CompletedAt = now;
                 waiting.Summary = $"{request.Decision} by {viewer.Login}";
             }
@@ -799,20 +814,20 @@ public sealed class ReviewService(
         // A gate decision is human involvement: the bot-only counter starts again (design 5).
         run.BotOnlyRounds = 0;
         var walked = run.Iterations.Any(i => i.HeadSha != null);
-        switch (request.Decision)
+        switch (decision.Transition)
         {
-            case ReviewGateDecision.Approve when walked:
+            case ReviewGateTransition.FollowEdge when walked:
                 // The executor follows the gate's approve edge: the approval status, then base-moved.
                 run.Status = ReviewRunStatus.Queued;
                 run.Stage = ReviewStage.Approval;
                 run.WaitingOn = ReviewWaitingOn.Bot;
                 break;
-            case ReviewGateDecision.Approve:
+            case ReviewGateTransition.FollowEdge:
                 run.Status = ReviewRunStatus.Approved;
                 run.Stage = ReviewStage.Approval;
                 run.WaitingOn = null;
                 break;
-            case ReviewGateDecision.AnotherRound:
+            case ReviewGateTransition.StartIteration:
                 run.Round += 1;
                 run.BotOnlyRounds = 0;
                 run.Status = ReviewRunStatus.Queued;
@@ -830,9 +845,15 @@ public sealed class ReviewService(
                     Trigger = "another-round",
                     StartedAt = now,
                 });
-                db.ReviewNodeExecutions.Add(PendingIntake(run.Id, iteration, NextSequence(run)));
+                var pending = PendingIntake(run.Id, iteration, NextSequence(run));
+                if (ReviewWorkflowRouting.Entry(workflow) is { } entry)
+                {
+                    pending.NodeId = entry.Id;
+                    pending.Kind = entry.Kind;
+                }
+                db.ReviewNodeExecutions.Add(pending);
                 break;
-            case ReviewGateDecision.Close:
+            case ReviewGateTransition.Close:
                 run.Status = ReviewRunStatus.Closed;
                 run.Stage = ReviewStage.Done;
                 run.WaitingOn = null;
@@ -842,7 +863,7 @@ public sealed class ReviewService(
         run.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
         await PublishAsync(run.Id, ct);
-        if (request.Decision == ReviewGateDecision.AnotherRound || (walked && request.Decision == ReviewGateDecision.Approve))
+        if (decision.Transition == ReviewGateTransition.StartIteration || (walked && decision.Transition == ReviewGateTransition.FollowEdge))
             executor.Wake();
         return await GetRunDetailAsync(run.Id, ct);
     }
@@ -864,22 +885,11 @@ public sealed class ReviewService(
         await PublishAsync(runId, ct);
     }
 
-    /// <summary>The gate node's decisions in the default workflow; review and approval gates fall back to all three.</summary>
-    private IReadOnlyList<ReviewGateDecision> AllowedDecisions(ReviewGate gate)
+    private static IReadOnlyList<ReviewGateRule> AllowedDecisions(ReviewGate gate, WorkflowDefinition workflow)
     {
-        var declared = gate.NodeId is null ? [] : workflows.Default.Node(gate.NodeId)?.Decisions ?? [];
-        var mapped = declared.Select(d => d switch
-        {
-            "approve" => ReviewGateDecision.Approve,
-            "another-round" => ReviewGateDecision.AnotherRound,
-            "close" => ReviewGateDecision.Close,
-            _ => (ReviewGateDecision?)null,
-        }).OfType<ReviewGateDecision>().ToList();
-        if (mapped.Count > 0)
-            return mapped;
-        return gate.Kind is ReviewGateKind.ReviewGate or ReviewGateKind.ApprovalGate
-            ? [ReviewGateDecision.Approve, ReviewGateDecision.AnotherRound, ReviewGateDecision.Close]
-            : [];
+        if (gate.NodeId is { } id && workflow.Node(id) is { Kind: ReviewNodeKind.Gate } node)
+            return node.Decisions.Select(ReviewGateRule.Find).OfType<ReviewGateRule>().ToArray();
+        return gate.Kind is ReviewGateKind.ReviewGate or ReviewGateKind.ApprovalGate ? ReviewGateRule.All : [];
     }
 
     /// <summary>Why the viewer may not decide this gate, or null (design 11.10: not the author).</summary>
@@ -891,7 +901,7 @@ public sealed class ReviewService(
 
     private GateSubject GateAuthor(string repo, string authorLogin) => new(repo, policy.Value.AuthorMayDecide(repo) ? "" : authorLogin);
 
-    private string? CannotDecideReason(ReviewGate gate, GateSubject subject)
+    private string? CannotDecideReason(ReviewGate gate, GateSubject subject, bool hasDecisions)
     {
         if (gate.Status == ReviewQueueItemStatus.Done)
             return "Already decided";
@@ -901,14 +911,8 @@ public sealed class ReviewService(
             return $"You need {settings.Value.Auth.RequiredRepoPermission.Trim().ToLowerInvariant()} access to {subject.Repo} on GitHub to decide its gates " +
                 "(checked when you signed in: sign out and in again after your access changes)";
         // TODO(review-engine trust): deciders must also be at or above the gate's trust threshold (design 11.9, 11.10).
-        return AllowedDecisions(gate).Count == 0 ? "This gate's decisions are not supported yet" : null;
+        return hasDecisions ? null : "This gate's decisions are not supported yet";
     }
-
-    private static string DecisionLabel(ReviewGateDecision decision) => decision switch
-    {
-        ReviewGateDecision.AnotherRound => "another-round",
-        _ => decision.ToString().ToLowerInvariant(),
-    };
 
     // ---- KPIs ----
 
@@ -1005,7 +1009,7 @@ public sealed class ReviewService(
         WaitingOn = run.WaitingOn,
     };
 
-    private ReviewRunDetailDto ToDetail(ReviewRun run, FindingCounts counts, RunCosts costs)
+    private ReviewRunDetailDto ToDetail(ReviewRun run, FindingCounts counts, RunCosts costs, WorkflowDefinition workflow)
     {
         var models = run.Nodes.Where(n => n.Model != null).Select(n => n.Model!).Distinct().Order(StringComparer.Ordinal).ToList();
         var summary = ToSummary(run, counts, costs, models);
@@ -1035,7 +1039,7 @@ public sealed class ReviewService(
             Nodes = run.Nodes.OrderBy(n => n.Iteration).ThenBy(n => n.StartedAt ?? DateTime.MaxValue).ThenBy(n => n.NodeId, StringComparer.Ordinal)
                 .ThenBy(n => n.ItemKey, StringComparer.Ordinal)
                 .Select(ToDto).ToList(),
-            Gates = run.Gates.OrderBy(g => g.OpenedAt).Select(g => ToDto(g, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin))).ToList(),
+            Gates = run.Gates.OrderBy(g => g.OpenedAt).Select(g => ToDto(g, GateAuthor(run.Subject.Repo, run.Subject.AuthorLogin), workflow)).ToList(),
         };
     }
 
@@ -1050,12 +1054,13 @@ public sealed class ReviewService(
         n.OutputTokens, n.CostUsd, n.StartedAt, n.CompletedAt, n.Summary);
 
     /// <summary>A gate as the viewer sees it: which decisions it allows and whether the viewer may decide.</summary>
-    public ReviewGateDto ToDto(ReviewGate g, GateSubject subject)
+    private ReviewGateDto ToDto(ReviewGate g, GateSubject subject, WorkflowDefinition workflow)
     {
-        var cannot = CannotDecideReason(g, subject);
+        var allowed = AllowedDecisions(g, workflow);
+        var cannot = CannotDecideReason(g, subject, allowed.Count > 0);
         return new ReviewGateDto(
             g.Id, g.RunId, g.Kind, g.Status, g.TeamKey, g.AssigneeLogin, g.AssigneeDisplayName, g.OpenedAt, g.DecidedAt, g.DecidedBy,
-            g.Decision, g.SteerPrompt, g.Reasons, AllowedDecisions(g), cannot is null, cannot,
+            g.Decision, g.SteerPrompt, g.Reasons, allowed.Select(rule => rule.Decision).ToArray(), cannot is null, cannot,
             g.Passes.OrderBy(p => p.At).Select(p => new GatePassDto(p.Login, p.Reason, p.At)).ToList());
     }
 

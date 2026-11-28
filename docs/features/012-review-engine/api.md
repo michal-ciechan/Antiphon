@@ -226,6 +226,10 @@ It adds located errors for invalid kinds, unknown steps, kind mismatches, child-
 invalid or unsupported input bindings, unavailable producers, unknown chains, unsupported outputs,
 and ambiguous routes. Warnings such as a missing description leave `valid` true.
 
+An executor-walked gate follows an approval edge for `Approve`. `AnotherRound` starts an iteration
+at the workflow entry, and `Close` ends the run. These two decisions require no graph edge.
+Available decisions come from the run’s pinned workflow.
+
 The policy read resolves values under current server settings for the repository recorded on the run
 and the specified graph revision. A nonblank instance failure override wins over the revision,
 followed by the step default. A configured repository rule can switch off an optional gate.

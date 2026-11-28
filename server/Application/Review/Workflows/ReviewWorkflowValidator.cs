@@ -182,7 +182,7 @@ public static class ReviewWorkflowValidator
     {
         var invalid = node.Kind switch
         {
-            ReviewNodeKind.Gate => node.Decisions.Any(decision => decision is not ("approve" or "another-round" or "close"))
+            ReviewNodeKind.Gate => node.Decisions.Any(decision => ReviewGateRule.Find(decision) is null)
                 || (node.Params.ContainsKey("optional") && !bool.TryParse(node.StringParam("optional"), out _))
                 || (node.Params.ContainsKey("gateKind") && (!Enum.TryParse<ReviewGateKind>(node.StringParam("gateKind"), true, out var kind)
                     || !Enum.IsDefined(kind))),

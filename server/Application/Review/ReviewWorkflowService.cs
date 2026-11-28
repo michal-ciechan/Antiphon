@@ -4,6 +4,8 @@ using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Review.Workflows;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Review;
@@ -44,6 +46,14 @@ public sealed class ReviewWorkflowService
     public static WorkflowDefinition FromStoredGraph(string graphJson) =>
         FromDto(JsonSerializer.Deserialize<WorkflowGraphDto>(graphJson, GraphJsonOptions)
             ?? throw new InvalidOperationException("The stored workflow revision holds no graph."));
+
+    internal async Task<WorkflowDefinition> LoadPinnedAsync(AppDbContext db, Guid? revisionId, CancellationToken ct)
+    {
+        if (revisionId is { } id && await db.ReviewWorkflowRevisions.AsNoTracking()
+            .Where(revision => revision.Id == id).Select(revision => revision.GraphJson).SingleOrDefaultAsync(ct) is { } json)
+            return FromStoredGraph(json);
+        return Default;
+    }
 
     private static readonly JsonSerializerOptions CandidateJsonOptions = new(JsonSerializerDefaults.Web)
     {
