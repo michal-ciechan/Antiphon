@@ -41,6 +41,7 @@ internal static class MigrationTestDatabase
 
     /// <summary>The review engine migration. Its Down throws, so a rewind detaches an empty copy instead.</summary>
     public const string ReviewEngineMigration = "20261122173647_AddReviewEngine";
+    private const string ReviewNodeExecutionWarningsMigration = "20261128054109_AddReviewNodeExecutionWarnings";
 
     /// <summary>The message <c>AddReviewEngine.Down</c> throws, which the detach repeats for stored rows.</summary>
     public const string ReviewEngineDowngradeRefusal = "Review engine tables cannot be discarded by a downgrade.";
@@ -59,7 +60,7 @@ internal static class MigrationTestDatabase
 
     private static readonly string ReviewEngineDetachSql =
         string.Concat(ReviewEngineTables.Select(t => $"DROP TABLE IF EXISTS \"{t}\";\n"))
-        + $"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" = '{ReviewEngineMigration}';";
+        + $"DELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" IN ('{ReviewEngineMigration}', '{ReviewNodeExecutionWarningsMigration}');";
 
     public static string[] Names()
     {
@@ -154,7 +155,7 @@ internal static class MigrationTestDatabase
 
     /// <summary>
     /// <c>AddReviewEngine.Down</c> always throws. A tip clone whose review engine tables are all
-    /// empty drops every one of them and the history row here. A stored review row in any of them is
+    /// empty drops every one of them and their migration history here. A stored review row in any of them is
     /// refused with that same message; this helper does not call Down and does not discard the rows.
     /// </summary>
     public static async Task DetachReviewEngineAsync(AppDbContext db, CancellationToken ct = default)

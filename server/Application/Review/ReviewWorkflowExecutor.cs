@@ -266,6 +266,7 @@ public sealed class ReviewWorkflowExecutor(
             execution.CompletedAt = null;
             execution.Outcome = null;
             execution.Summary = null;
+            execution.Warnings = null;
         }
 
         execution.Status = ReviewNodeStatus.Running;
@@ -309,8 +310,7 @@ public sealed class ReviewWorkflowExecutor(
         execution.Summary = result.Degraded is { } degraded
             ? $"Failed, continued (onFailure: continue): {degraded}\n{result.Summary}"
             : result.Summary;
-        if (walk.Warnings.Count > 0)
-            execution.Summary = $"{execution.Summary}\n{string.Join("\n", walk.Warnings)}";
+        execution.Warnings = walk.Warnings.Count > 0 ? walk.Warnings.ToArray() : null;
         if (result.Output is not null)
             execution.OutputJson = ReviewWalk.ToJson(result.Output);
         if (result.Usage is { } usage)

@@ -86,7 +86,8 @@ public sealed record NodeExecutionDto(
     decimal CostUsd,
     DateTime? StartedAt,
     DateTime? CompletedAt,
-    string? Summary);
+    string? Summary,
+    string[]? Warnings = null);
 
 public sealed record FindingEventDto(
     Guid Id,

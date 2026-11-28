@@ -7,7 +7,7 @@ import { SectionLabel } from '../../components/SectionLabel'
 import { ModelBadge } from '../../components/ReviewBadges'
 import { NODE_KIND_META, NODE_STATUS_META, tolerant } from '../../reviewMeta'
 import { fmtDuration, fmtTokens } from '../../reviewFormat'
-import { outputPage, OUTPUT_PAGE_SIZE, splitExecutionOutput, summaryPreview } from './executionOutput'
+import { outputPage, OUTPUT_PAGE_SIZE, summaryPreview } from './executionOutput'
 import classes from './NodeSidePanel.module.css'
 
 const WRAP_OUTPUT = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const
@@ -94,7 +94,8 @@ function SummaryOutput({ body }: { body: string }) {
 }
 
 function ExecutionOutput({ execution, current }: { execution: NodeExecutionDto; current: boolean }) {
-  const { body, warnings } = splitExecutionOutput(execution.summary)
+  const body = execution.summary ?? ''
+  const warnings = execution.warnings ?? []
   const hasBody = body.length > OUTPUT_PAGE_SIZE || body.trim().length > 0
   if (!hasBody && warnings.length === 0) return null
 
@@ -238,7 +239,7 @@ export function NodeSidePanel({
               </Table>
             </Box>
             <Stack gap={6} mt={6}>
-              {rows.filter((e) => e.summary).map((e) => (
+              {rows.filter((e) => e.summary || e.warnings?.length).map((e) => (
                 <ExecutionOutput key={e.id} execution={e} current={e.iteration === iteration} />
               ))}
             </Stack>

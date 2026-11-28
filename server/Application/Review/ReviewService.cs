@@ -1043,7 +1043,7 @@ public sealed class ReviewService(
 
     public static NodeExecutionDto ToDto(ReviewNodeExecution n) => new(
         n.Id, n.NodeId, n.Iteration, n.Kind, n.Status, n.ItemKey, n.Outcome, n.Provider, n.Model, n.Transport, n.InputTokens,
-        n.OutputTokens, n.CostUsd, n.StartedAt, n.CompletedAt, n.Summary);
+        n.OutputTokens, n.CostUsd, n.StartedAt, n.CompletedAt, n.Summary, n.Warnings);
 
     /// <summary>A gate as the viewer sees it: which decisions it allows and whether the viewer may decide.</summary>
     public ReviewGateDto ToDto(ReviewGate g, GateSubject subject)

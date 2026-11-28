@@ -153,6 +153,8 @@ export interface NodeExecutionDto {
   startedAt: string | null
   completedAt: string | null
   summary: string | null
+  /** Warnings recorded separately by the executor. Legacy summaries remain literal text. */
+  warnings?: string[] | null
 }
 
 export interface GatePassDto {

@@ -164,6 +164,9 @@ public sealed class ReviewNodeExecution
     public DateTime? CompletedAt { get; set; }
     public string? Summary { get; set; }
 
+    /// <summary>Warnings reported by the executor, stored separately from summary text.</summary>
+    public string[]? Warnings { get; set; }
+
     /// <summary>The node's outputs as canonical JSON (design 3.4): selected checks, groups, a reviewer's findings, a verdict.</summary>
     public string? OutputJson { get; set; }
 }

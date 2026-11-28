@@ -8384,6 +8384,9 @@ namespace Antiphon.Server.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.PrimitiveCollection<string[]>("Warnings")
+                        .HasColumnType("text[]");
+
                     b.HasKey("Id");
 
                     b.HasIndex("RunId", "Iteration");

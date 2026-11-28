@@ -2,7 +2,7 @@
 
 Base `b5b349d968b5c5ae28a66c73201f1ab06a540aa5`. Code owner `243d3d7d`.
 
-The Workflow tab displays the existing execution DTO. Keep each execution's output legible at the floating window's width and report its actual result on the graph in the selected iteration. The client uses the server's refused commit-status warning format and recorded execution statuses.
+The Workflow tab displays the execution DTO. Keep each execution's output legible at the floating window's width and report its actual result on the graph in the selected iteration. The server stores executor warnings separately from summary text. Earlier summary strings display verbatim.
 
 | ID | Invariant | Witness |
 |---|---|---|
@@ -32,6 +32,6 @@ The first runs record wall time and build-slot admission in the checkpoint recei
 |---|---|---|---|---|---|---|---:|---:|---|
 | CP-1 | S1 | n/a | client-red | `pwsh -NoProfile -File scripts/test-client.ps1 WorkflowStepOutput.test.tsx -JsonResultPath ../.antiphon/gh-61-client-red.json` | V-1, V-2, V-3, V-4 | Red before implementation. All 8 original results execute and fail on the intended assertions | n/a | 4 | true |
 | CP-2 | S2 | n/a | client-final | `pwsh -NoProfile -File scripts/test-client.ps1 WorkflowStepOutput.test.tsx -JsonResultPath ../.antiphon/gh-61-client-green.json` | V-1, V-2, V-3, V-4, R-1 | Typecheck and lint green. All results pass, 0 failed or skipped | n/a | 3 | true |
-| CP-3 | S2 | `tests/Antiphon.Tests -> bin-gh61-guards/` | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | R-2 | Each named class executes. Inspect any red rows against the task base | 78 | 11 | true |
+| CP-3 | S2 | `tests/Antiphon.Tests -> bin-gh61-r1-guards/` | guards | `/*/*/(TestClassificationPolicyTests*)\|(TestClassificationGuardTests*)\|(SlowTestRegistryMergeTests*)\|(SlowTestTripwireTests*)\|(NativeLinuxPolicyWitnessTests*)\|(MechanicalPcContractTests*)\|(TaskPlatformGuidanceTests*)\|(C1729LayeringGuardTests*)\|(TestLaneCategoryGuardTests*)\|(TestFixtureCleanupGuardTests*)\|(PlanCheckpointClassSelectionGuardTests*)/*` | R-2 | Each named class executes. Inspect any red rows against the task base | 78 | 11 | true |
 | CP-4 | S2 | CP-3 | live-lane | `/*/*/LiveLaneInventoryTests/(EveryLiveGateHasDisposition*)\|(ExplicitGatesAreNeverFullRequired*)` | R-2 | Both named methods execute with 0 failures or skips | 2 | 1 | true |
 | CP-5 | S2 | CP-3 | warning-provenance | `/*/*/ReviewExecutorApiTests/Manual_intake_walks_to_the_reviewers_and_fails_loudly_with_no_project_for_the_repo` | V-2 | The persisted delta response matches the summary and warnings fixture rendered by CP-2 | 1 | 1 | true |
