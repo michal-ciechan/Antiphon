@@ -39,8 +39,13 @@ public sealed class AgentTaskLandActiveSourceClaimTests
     [Arguments("CleanupRetry", "canonical", "merge-helper")]
     [Arguments("CleanupRetry", "alias", "follow-up")]
     [Arguments("CleanupRetry", "alias", "merge-helper")]
-    public async Task C448_V29_ActiveSourceClaimHoldsEveryMode(string mode, string spelling, string claimant)
+    public Task C448_V29_ActiveSourceClaimHoldsEveryMode(string mode, string spelling, string claimant) =>
+        // The two witnesses use separate repositories, databases and dispatchers.
+        Task.WhenAll(AssertClaimHoldsAsync(mode, spelling, claimant), AssertLandFirstAdmissionAsync(claimant));
+
+    private static async Task AssertClaimHoldsAsync(string mode, string spelling, string claimant)
     {
+        using var trace = TestTrace.ChunkSpan("C448 active source claim");
         // Keep the CLI fallback for long observation ref paths in one complete Windows claim flow.
         var useLongWindowsRoot = OperatingSystem.IsWindows()
             && (mode, spelling, claimant) == ("Fresh", "canonical", "follow-up");
@@ -200,7 +205,6 @@ public sealed class AgentTaskLandActiveSourceClaimTests
             if (alias is not null) Directory.Delete(alias, recursive: false);
         }
 
-        await AssertLandFirstAdmissionAsync(claimant);
     }
 
     private static async Task<LandingSafetyHarness> CreateClaimHarnessAsync(string mode, bool useLongWindowsRoot)
@@ -274,6 +278,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
 
     private static async Task AssertLandFirstAdmissionAsync(string claimant)
     {
+        using var trace = TestTrace.ChunkSpan("C448 land first admission");
         await using var h = NewClaimHarness();
         ConfigureDispatcher(h);
         await h.InitializeAsync();

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'
 import type { CardDto } from '../../api/boards'

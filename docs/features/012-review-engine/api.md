@@ -170,12 +170,14 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 |---|---|---|---|
 | GET | `/api/review-runs` | `?status=&repo=&stage=&q=` | `{ items: ReviewRunSummaryDto[], total }` |
 | GET | `/api/review-runs/kpis` | | `ReviewKpisDto` |
-| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }` (manual intake through `ICodeHost`). `GitHub` needs `prNumber`. `Local` needs `baseSha` (any ref); `headSha` defaults to `HEAD`. The title defaults to the PR or commit title. | `ReviewRunDetailDto` (201) |
+| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }` (manual intake through `ICodeHost`). `GitHub` needs `prNumber`. `Local` needs `baseSha` (any ref); `headSha` defaults to `HEAD`. The title defaults to the PR or commit title. | `ReviewRunDetailDto` (201). GitHub intake will include an `existing` flag (pending GH-56). |
 | POST | `/api/review-runs/demo` | | `{ items: ReviewRunSummaryDto[], total }`. Seeds about 10 realistic runs. Enabled only when `Review:DemoSeedEnabled` is true (on in Development); otherwise 404, which the UI uses to hide "Load demo data". The executor never picks up demo runs. |
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` |
 | GET | `/api/review-runs/{id}/findings` | `?status=` | `{ items: ReviewFindingDto[], total }` |
+| GET | `/api/review-runs/{id}/packs/{iteration}/{group}` | Run GUID, integer iteration and URL-encoded reviewer group key. No body or query. | 200 with the stored pack as `text/markdown; charset=utf-8`. 404 Problem Details if there is no pack for the tuple. |
 | POST | `/api/review-runs/{id}/refresh` | | 202. Re-reads the PR (the manual Refresh): a moved head starts a `push` iteration (next round); a failed run with an unchanged head starts a `recheck` iteration; demo runs are only re-announced. |
-| POST | `/api/review-runs/{id}/rounds` | `ReviewRoundRequest` (body optional) | `ReviewRunDetailDto`. A manual review round, same round, the steer stored on the run for the packs. A run waiting at `await-fixes` completes it with `recheck`; an approved, awaiting-merge or failed run starts a `recheck` iteration at the current head (the parked wait is superseded and `antiphon/approval` goes back to pending, as a push revokes it). 409 `review_run_at_gate` at a gate (decide it with `AnotherRound` and a steer instead), `review_run_finished` (merged or closed), `review_run_busy` (queued or running), `review_run_not_walked` (demo data); 422 for a steer over 4,000 characters; 503 when the code host fails. |
+| POST | `/api/review-runs/{id}/rounds` | `ReviewRoundRequest` (body optional) | `ReviewRunDetailDto`. Stores the steer on the run for the packs. A run waiting at `await-fixes` completes that wait with `recheck` and stays in the same round. An approved, awaiting-merge or failed run rereads the PR and starts a `recheck` iteration. If the head has moved, the round number increases. This supersedes the parked wait and returns any outstanding `antiphon/approval` to pending. 409 `review_run_at_gate` at a gate (use `AnotherRound` with a steer), `review_run_finished` (merged or closed), `review_run_busy` (queued or running), `review_run_not_walked` (demo data), 422 for a steer over 4,000 characters, or 503 when the code host fails. |
+| POST | `/api/review-runs/{id}/close` (pending GH-56) | Close request | See [GH-56](https://github.com/michal-ciechan/Antiphon/issues/56). |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` | `ReviewFindingDto` |
 | POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` (one submitted review) | `{ items: ReviewFindingDto[] }` |
 | GET | `/api/review-queue` | `?scope=Mine\|Teams\|All&login=` | `{ items: QueueItemDto[], total }` |
@@ -187,13 +189,18 @@ interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Erro
 | POST | `/api/review-workflows/validate` | `WorkflowGraphDto` | `WorkflowValidationDto` |
 | GET | `/api/review-polling` | | `ReviewPollingDto` (design 8.5 Polling). |
 | POST | `/api/review-polling/poll` | | `ReviewPollingDto` after one pass over every configured repo, run now even when the timer is off. Waits for a pass already running instead of overlapping it; a pass cut short at 90 s records the repos it reached. A repo's failure is in its `error`, not the status code. |
-| GET | `/api/review-me` | | `ReviewViewerDto`. With sign-in on (`Review:Auth:Mode` GitHub), the signed-in GitHub login. With it off, the server resolves the viewer from `Review:DefaultViewerLogin`, overridable by the `X-Review-Viewer` header when `Review:AllowViewerHeader` is true (dev only). Mutations record this viewer as the actor. |
+| GET | `/api/review-me` | | `ReviewViewerDto`. With sign-in on (`Review:Auth:Mode` GitHub), the signed-in GitHub login. With it off, the server resolves the viewer from `Review:DefaultViewerLogin`. The `X-Review-Viewer` header may override that login when `Review:AllowViewerHeader` is true. This defaults to enabled in Development and can be explicitly enabled in other environments. Mutations record this viewer as the actor. |
 | GET | `/api/review-auth/status` | | `{ mode: 'None' \| 'GitHub', signedIn, login, displayName }`. Always open. |
-| GET | `/api/review-auth/login?returnUrl=` | | 302 to GitHub's authorize page, with a one-time state in a 10-minute cookie. 404 while sign-in is off. Always open. |
-| GET | `/api/review-auth/callback?code=&state=` | | Checks the state, reads the login, and sets the session cookie (302 to `returnUrl`, a path on this site). 400 for an expired or forged state, 403 (an HTML page) when the person may not sign in, 502 when GitHub fails. Always open. |
-| POST | `/api/review-auth/logout` | | Clears the session; answers with a "Signed out" page. |
+| GET | `/api/review-auth/login` | Optional `?returnUrl=` | 302 to GitHub's authorize page, with a one-time state in a 10-minute cookie. 404 while sign-in is off. Always open. |
+| GET | `/api/review-auth/callback` | `?code=&state=`, or `?error=` on cancellation | Checks the state, reads the login and sets the session cookie (302 to `returnUrl`, a path on this site). HTML responses include 400 for cancellation or invalid state, 403 when the person may not sign in, 404 while sign-in is off and 502 when GitHub fails. Always open. |
+| POST | `/api/review-auth/logout` | | Clears the session and answers with a "Signed out" page. Always open. |
 
-With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 'sign_in_required', signInUrl }` without a session; the client sends the browser to `signInUrl` with `returnUrl` set to the current page. A gate on a repo where the viewer lacks `Review:Auth:RequiredRepoPermission` has `viewerCanDecide: false` and says why, and deciding it is a 403.
+With sign-in on, `/api` and `/hubs` require the `antiphon.review.session` cookie. The four
+`/api/review-auth/*` routes and `/api/version` remain open. A protected request without a session
+returns **401** `{ error: 'sign_in_required', title, signInUrl }`. The client sends the browser to
+`signInUrl` with `returnUrl` set to the current page. A gate on a repo where the viewer lacks
+`Review:Auth:RequiredRepoPermission` has `viewerCanDecide: false` and says why, and deciding it
+is a 403.
 
 ## SignalR
 
@@ -203,6 +210,18 @@ With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 
 Polling has no SignalR event of its own: each run a pass starts or moves publishes
 `ReviewRunChanged`, and a pass that finds nothing new publishes nothing. The client refetches
 `['reviewPolling']` every minute and takes the poll route's result.
+
+## Download a reviewer context pack
+
+Use the run detail's reviewer node execution to find its `iteration` and `itemKey` (the group
+key). For example, with sign-in off, download the Markdown for group `security` in iteration 1.
+With GitHub sign-in on, use an authenticated HTTP session.
+
+```sh
+api=${ANTIPHON_API:-http://localhost:17202}
+run_id=00000000-0000-0000-0000-000000000001  # Replace with the run ID.
+curl -fsS "$api/api/review-runs/$run_id/packs/1/security" -o review-pack.md
+```
 
 ## Changelog
 
@@ -223,5 +242,5 @@ Polling has no SignalR event of its own: each run a pass starts or moves publish
 
 ## Not in this slice
 
-Trust scores, teams/org sync, checks catalogue, pack viewer, stats rollups, prompt layers, the learn
+Trust scores, teams/org sync, checks catalogue, pack viewer UI, stats rollups, prompt layers, the learn
 loop and seeding. Their screens stay as Storybook proposals until their APIs exist.

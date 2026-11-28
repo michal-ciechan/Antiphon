@@ -80,6 +80,12 @@ if ($buildExit -ne 0) { throw "Build failed ($buildExit)" }
 
 If the script launcher is cold or stale on a laptop capped at `-m:1`, build `scripts/lib/Antiphon.Scripts/Antiphon.Scripts.csproj` explicitly with the authorised lock and flags. Use `./scripts/lib/Antiphon.Scripts/bin/Debug/net9.0/Antiphon.Scripts.exe` in place of the launchers for the permitted commands, including `test-trace-summary "$traceDir"`.
 
+### Client launcher
+
+For `client/all`, replay the planner's `dotnet exec <cli.dll> test-client --repo-root <checkout> --json-result-path <report.json>` under the authorised lock. The planner sets `ANTIPHON_TEST_TRACE_DIR` to the chunk's execution directory. Set it to a fresh directory when replaying by hand. The launcher writes `test-trace-client-*.jsonl` with dependency checks, npm install and lock spans when needed, TypeScript projects, lint, Vitest, and child process starts and waits.
+
+For a cache-cold replay with dependencies already installed, move aside `client/node_modules/.tmp`, `.vite`, and `.vite-temp` under the lock and restore them after the run. Record lock acquisition and cache preparation separately from launcher wall time. Set `DEBUG=vite:deps` to measure Vite's dependency pre-bundle inside Vitest. Compare file and test identities in the JSON report.
+
 ## 3. Read the summary
 
 Each file describes one process. If a chunk has several files, compare their lifetimes against the receipt. Overlapping processes or spans can sum to more than elapsed wall time.

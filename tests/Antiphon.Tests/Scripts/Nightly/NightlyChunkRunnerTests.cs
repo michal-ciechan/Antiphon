@@ -415,6 +415,9 @@ public sealed class NightlyChunkRunnerTests
             launch.WorkingDirectory.ShouldBe(missing.Fixture.Root);
             launch.Custody.ShouldBe(NightlyCustody.Owned);
             launch.LogPath.ShouldBe(missing.LogPath("client-all-tests.log"));
+            var traceDirectory = missing.LogPath("client-all-execution");
+            launch.Environment!["ANTIPHON_TEST_TRACE_DIR"].ShouldBe(traceDirectory);
+            Directory.Exists(traceDirectory).ShouldBeTrue();
             launch.TimeoutMilliseconds.ShouldBe(1200000);
             ClientTestsOptions.Parse(launch.Arguments.Skip(3).ToArray(), "cli-checkout").ShouldSatisfyAllConditions(
                 o => o.RepoRoot.ShouldBe(missing.Fixture.Root), o => o.JsonResultPath.ShouldBe(missing.LogPath("client-all.json")), o => o.Forward.ShouldBeEmpty());

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 // Tests for the pure/testable parts of serve.mjs (CARD-0216 S1): mode-file parsing, the
 // spawn-plan chosen per mode, and the swap decision when the mode file changes. The spawn
 // function is injected throughout so nothing here launches a real Vite process.
