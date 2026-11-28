@@ -66,7 +66,7 @@ public sealed class ChannelOutboundRecoveryTests
             db.Agents.Add(new Agent { Id = id, BoardId = boardId, Name = name, Slug = name,
                 WorkingDirectory = root, Kind = AgentKind.ClaudeCode, CreatedAt = now, UpdatedAt = now });
         db.ChatChannels.Add(new ChatChannel { Id = channel, AgentId = inbound, Provider = "fake",
-            ExternalId = "room", CreatedAt = now, UpdatedAt = now });
+            ExternalId = "room", OutboundAgentProfile = "test", CreatedAt = now, UpdatedAt = now });
         db.ChannelOutboundDeliveries.Add(new ChannelOutboundDelivery
         {
             Id = delivery, SourceKey = "source", ChannelId = channel, ProjectId = projectId,
@@ -85,9 +85,17 @@ public sealed class ChannelOutboundRecoveryTests
             new RecordingSessionStopper(), TimeProvider.System, NullLogger<AgentTaskService>.Instance,
             workspaceUse: new WorkspaceUseAdmission(journal, db));
         var producer = new FakeAntiphonMessagingClient();
+        var outbound = Options.Create(new ChannelOutboundSettings
+        {
+            Profiles = { ["test"] = new ChannelOutboundProfile
+            {
+                ProjectId = projectId, AgentId = converter, PromptFile = "convert.md",
+                Trigger = ChannelOutboundTrigger.EveryAgentReply,
+            } },
+        });
         var pump = new ChannelOutboundDeliveryPump(db, new OutboundConversionTaskRunner(db, tasks), store, producer,
             Options.Create(new AntiphonMessagingOptions()), TimeProvider.System,
-            NullLogger<ChannelOutboundDeliveryPump>.Instance);
+            NullLogger<ChannelOutboundDeliveryPump>.Instance, outbound);
 
         await using var holder = new Npgsql.NpgsqlConnection(schema.ConnectionString);
         await holder.OpenAsync();
@@ -109,8 +117,25 @@ public sealed class ChannelOutboundRecoveryTests
         var after = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == delivery);
         after.State.ShouldBe(ChannelOutboundDeliveryState.Converting);
         after.InputSha256.ShouldBe(frozen.ReplySha256);
-        after.ConversionTaskId.ShouldBe((await verify.AgentTasks.SingleAsync(t => t.OutboundDeliveryId == delivery)).Id);
+        var worker = await verify.AgentTasks.SingleAsync(t => t.OutboundDeliveryId == delivery);
+        after.ConversionTaskId.ShouldBe(worker.Id);
+        worker.ExecutionDeadlineAt.ShouldBe(after.DeadlineAt);
         producer.SentReplies.ShouldBeEmpty();
+
+        await File.WriteAllTextAsync(Path.Combine(frozen.OutputDirectory, "manifest.json"), JsonSerializer.Serialize(new
+        {
+            version = 1, deliveryId = delivery, disposition = "converted",
+            replacementText = "converted content", files = Array.Empty<object>(),
+        }));
+        worker.Status = AgentTaskStatus.Succeeded;
+        worker.CompletedAt = DateTime.UtcNow;
+        await verify.SaveChangesAsync();
+        await pump.TickAsync(CancellationToken.None);
+
+        var published = await verify.ChannelOutboundDeliveries.AsNoTracking().SingleAsync(d => d.Id == delivery);
+        published.State.ShouldBe(ChannelOutboundDeliveryState.Published);
+        published.ConversionOutcome.ShouldBe("Converted");
+        producer.SentReplies.ShouldHaveSingleItem().Text.ShouldBe("converted content");
     }
 
     // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test starts a probe. A run of
