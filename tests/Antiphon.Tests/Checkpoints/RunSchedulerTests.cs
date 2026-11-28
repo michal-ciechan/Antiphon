@@ -751,7 +751,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
     private static readonly SourceObservation ObservationSource = new(new string('a', 40), 0,
         new string('b', 64), ObservationEpoch, "known");
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_observation_preserves_command_and_receipt_bytes()
     {
         foreach (var grouped in new[] { true, false })
@@ -803,7 +803,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_stalled_sink_does_not_hold_checkpoint_completion()
     {
         foreach (var grouped in new[] { true, false })
@@ -841,7 +841,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_produced_attempt_is_bound_to_the_lease()
     {
         var repo = TempDir();
@@ -855,7 +855,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         phase.LeaseId.ShouldBe(ObservationLease.ToString("D"));
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_standalone_refusal_does_not_retain_raw_project_path()
     {
         var repo = TempDir();
@@ -945,6 +945,8 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         if (stalledPublication is not null)
             return new(exit, driver.Calls, slots.Events, json, markdown, row.Line!, trx, new([], null), milliseconds);
         var read = await BuildObservationReplay.ReadAsync(run, deadline.Token);
+        if (fault == TimingFault.None)
+            read.Events.Count.ShouldBe(1, read.CoverageReason);
         if (grouped)
             RunOwnershipStore.Read(run, runtime.CleanupContext).ShouldNotBeNull().Launched.ShouldBeNull();
         // The in-process arm has joined and its bytes are in memory. Dispose its artifacts
@@ -991,7 +993,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_broker_telemetry_gap_is_explicit()
     {
         var (observation, binding, history, request, producer, custody) = await ObserveBrokerAndCustodyAsync();
@@ -1015,7 +1017,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_custody_telemetry_gap_is_explicit()
     {
         var (observation, binding, history, request, producer, custody) = await ObserveBrokerAndCustodyAsync();
@@ -1106,7 +1108,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
-    [Test]
+    [Test, NotInParallel]
     public async Task C2103_observation_reaches_the_reader_after_handoff()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));

@@ -39,7 +39,7 @@ internal static class BuildObservationReplay
     internal static Task<FileStream> LockTaskAsync(string runDirectory, CancellationToken cancellationToken)
     {
         var root = TaskRoot(runDirectory);
-        if ((File.GetAttributes(root) | File.GetAttributes(runDirectory)).HasFlag(FileAttributes.ReparsePoint))
+        if (!ContainedCleanup.SafeAncestors(runDirectory))
             throw new TimingRootException("linked-observation-root");
         return TimingJournal.LockAsync(Path.Combine(root, ".build-observation.lock"), cancellationToken);
     }

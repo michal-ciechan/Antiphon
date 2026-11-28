@@ -132,7 +132,9 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
 
             var path = JournalRoot(runDirectory);
             budget.Token.ThrowIfCancellationRequested();
-            SafeWrite.Require(SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(runDirectory)));
+            // The checkpoint already owns the run and the task lock checked its ancestors.
+            // An exclusive mkdir cannot replace an existing path.
+            SafeWrite.Require(ExclusiveDirectory.Create(path));
             var pending = Path.Combine(path, BuildObservationReplay.BatchFile);
             // The freshly created private directory and task lock already provide custody.
             using (var batch = new FileStream(pending, FileMode.CreateNew, FileAccess.Write, FileShare.Read))

@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using Antiphon.Tests.TestHelpers;
 using Antiphon.Checkpoints;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -171,7 +171,7 @@ public sealed class TimingJournalTests : CheckpointTestBase
         corrupt.CorruptLines.Count.ShouldBe(1, "corrupt-not-truncated");
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<CheckpointToolSpawnLimit>]
     public async Task C2103_replay_reports_torn_stage_with_its_filename()
     {
         var root = Fresh("torn-stage");
@@ -213,7 +213,7 @@ public sealed class TimingJournalTests : CheckpointTestBase
         read.CoverageReason.ShouldBe("observation-invalid-stage:" + legacy);
     }
 
-    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    [Test, ParallelLimiter<CheckpointToolSpawnLimit>]
     public async Task C2103_concurrent_recovery_counts_the_staged_event_once()
     {
         var root = Fresh("concurrent-recovery");
@@ -276,14 +276,19 @@ public sealed class TimingJournalTests : CheckpointTestBase
             $root = Split-Path $journalRoot
             [IO.File]::WriteAllText((Join-Path $root "ready-$PID"), '')
             while (!(Test-Path (Join-Path $root 'go'))) { Start-Sleep -Milliseconds 25 }
-            $journal.ImportSpoolAsync([Threading.CancellationToken]::None).GetAwaiter().GetResult()
+            [void]$journal.ImportSpoolAsync([Threading.CancellationToken]::None).GetAwaiter().GetResult()
             """);
         return script;
     }
 
     private static Process StartJournalChild(string script, string mode, string journalRoot)
     {
-        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardError = true };
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = Path.GetDirectoryName(script)!,
+            UseShellExecute = false,
+            RedirectStandardError = true,
+        };
         foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script,
                      typeof(TimingJournal).Assembly.Location, mode, journalRoot })
             start.ArgumentList.Add(argument);
