@@ -1,7 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Terminal } from '@xterm/xterm'
-import { act } from '@testing-library/react'
+import { act, fireEvent, screen } from '@testing-library/react'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { SessionTerminal } from './SessionTerminal'
@@ -180,6 +180,33 @@ describe('SessionTerminal', () => {
     expect(terminal.options?.disableStdin).toBe(true)
     terminal.onDataHandler?.('after refusal')
     expect(inputSpy.mock.calls).toEqual([[{ input: 'after acknowledgement' }]])
+  })
+
+  it('sends the next keystroke after retrying a terminal attachment refused during a stop', async () => {
+    const inputSpy = vi.fn()
+    server.use(
+      http.get('/api/sessions/session-1/buffer', () =>
+        HttpResponse.json({ sessionId: 'session-1', buffer: '', lastSequence: 0 })),
+      http.post('/api/sessions/session-1/input', async ({ request }) => {
+        inputSpy(await request.json())
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    signalrMock.connection.invoke.mockRejectedValueOnce(new Error('The session is being stopped.'))
+    renderWithProviders(<SessionTerminal session={runningSession} />)
+
+    const terminal = xtermMock.instances[0]
+    const retry = await screen.findByRole('button', { name: 'Retry terminal attachment' })
+    expect(terminal.options?.disableStdin).toBe(true)
+    terminal.onDataHandler?.('before release')
+    fireEvent.click(retry)
+    await waitFor(() => expect(terminal.options?.disableStdin).toBe(false))
+    terminal.onDataHandler?.('after release')
+    await waitFor(() => expect(inputSpy.mock.calls).toEqual([[{ input: 'after release' }]]))
+    expect(signalrMock.connection.invoke.mock.calls).toEqual([
+      ['JoinGroup', 'session-session-1'],
+      ['JoinGroup', 'session-session-1'],
+    ])
   })
 
   it('writes backlog, appends matching live deltas, sends input, resizes, and leaves the group', async () => {
