@@ -702,6 +702,11 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         {
             result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, inspectMirror, deadline.Token, ct, singleAttempt);
         }
+        catch (WorkspaceAdmissionBusyException)
+        {
+            result = Outcome(RemoteSettlementSyncState.Unavailable, WorkspaceAdmissionBusyException.ProblemCode,
+                fullRef, baseline.LocalSha);
+        }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && budget.IsCancellationRequested)
         {
             result = Outcome(RemoteSettlementSyncState.Unavailable, RemoteSettlementSyncReasons.Timeout, fullRef, baseline.LocalSha);

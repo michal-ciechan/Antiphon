@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -259,7 +260,15 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
 
     private async Task<WorktreeRemoval> ExecuteAsync(CardWorktreeCleanupEndpoint endpoint, TaskWorktreeRetirement row, Guid? runId, CancellationToken ct)
     {
-        var result = await retirement.TryRetireCardDoneAsync(row, endpoint.Id, runId, ct);
+        WorktreeRemoval result;
+        try
+        {
+            result = await retirement.TryRetireCardDoneAsync(row, endpoint.Id, runId, ct);
+        }
+        catch (WorkspaceAdmissionBusyException)
+        {
+            return new(false, false, false, WorkspaceAdmissionBusyException.ProblemCode);
+        }
         if (BeforeOutcomeAsync is not null) await BeforeOutcomeAsync(ct);
         if (result.DesktopCleanupDisposition == DesktopCleanupDisposition.NotRequired)
             return await RecordDesktopDecisionAsync(endpoint, result, ct);

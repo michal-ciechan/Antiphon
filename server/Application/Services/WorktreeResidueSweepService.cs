@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -223,21 +224,31 @@ public sealed class WorktreeResidueSweepService
             {
                 // CARD-1717 D-1: system:desktop-legacy-policy admission (the live switch and the retry cursor)
                 // is inside TryRetireAsync, under the repository lease. This sweep does not apply that switch.
-                var removed = await _retirement.TryRetireAsync(release, run.Id, ct);
+                WorktreeRemoval? removed = null;
+                try
+                {
+                    removed = await _retirement.TryRetireAsync(release, run.Id, ct);
+                }
+                catch (WorkspaceAdmissionBusyException)
+                {
+                    outcome = WorktreeResidueCandidateOutcome.Deferred;
+                    code = WorkspaceAdmissionBusyException.ProblemCode;
+                    run.Deferred++;
+                }
                 actions++;
-                if (removed.IsClean)
+                if (removed is { IsClean: true })
                 {
                     outcome = WorktreeResidueCandidateOutcome.Removed;
                     code = "removed";
                     run.Removed++;
                 }
-                else if (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted)
+                else if (removed is not null && (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted))
                 {
                     outcome = WorktreeResidueCandidateOutcome.Partial;
                     code = removed.Residue ?? "partial";
                     run.Partial++;
                 }
-                else
+                else if (removed is not null)
                 {
                     outcome = WorktreeResidueCandidateOutcome.Refused;
                     code = removed.Residue ?? "refused";

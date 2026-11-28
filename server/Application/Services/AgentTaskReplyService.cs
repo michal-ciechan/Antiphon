@@ -85,13 +85,17 @@ public sealed partial class AgentTaskReplyService
     /// A session finished a turn. If that session is running a delegated task and the turn was the
     /// one we asked for, settle the task and deliver its report.
     /// </summary>
-    public async Task OnTurnEndAsync(Guid sessionId, CancellationToken ct)
+    public Task OnTurnEndAsync(Guid sessionId, CancellationToken ct) =>
+        SettleTurnEndAndCheckAdmissionAsync(sessionId, ct);
+
+    /// <summary>Returns true when workspace admission deferred settlement.</summary>
+    internal async Task<bool> SettleTurnEndAndCheckAdmissionAsync(Guid sessionId, CancellationToken ct)
     {
         var gate = _settleLocks.GetOrAdd(sessionId, static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(ct);
         try
         {
-            await OnTurnEndLockedAsync(sessionId, ct);
+            return await OnTurnEndLockedAsync(sessionId, ct);
         }
         finally
         {
@@ -126,7 +130,7 @@ public sealed partial class AgentTaskReplyService
         finally { gate.Release(); }
     }
 
-    private async Task OnTurnEndLockedAsync(Guid sessionId, CancellationToken ct)
+    private async Task<bool> OnTurnEndLockedAsync(Guid sessionId, CancellationToken ct)
     {
         try
         {
@@ -137,18 +141,20 @@ public sealed partial class AgentTaskReplyService
                 .FirstOrDefaultAsync(t => t.AgentSessionId == sessionId
                     && (t.Status == AgentTaskStatus.Dispatched || t.Status == AgentTaskStatus.Working), ct);
             if (task is null)
-                return;
+                return false;
 
             if (DelayAfterOpenTaskLoadedAsync is not null)
                 await DelayAfterOpenTaskLoadedAsync(sessionId, ct);
 
-            await JudgeOpenTaskAsync(scope.ServiceProvider, db, task, sessionId, onStillUncorrelated: null, ct);
+            var turn = await JudgeOpenTaskAsync(scope.ServiceProvider, db, task, sessionId, onStillUncorrelated: null, ct);
+            return turn.DeferredForWorkspaceAdmission;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             using var recoveryScope = _scopeFactory.CreateScope();
             recoveryScope.ServiceProvider.GetService<CompletionNoteFlushQueue>()?.Recovery.RequestSweep();
             _logger.LogWarning(ex, "Failed to settle a delegated task for session {SessionId}", sessionId);
+            return false;
         }
     }
 
@@ -308,8 +314,8 @@ public sealed partial class AgentTaskReplyService
                 _settings.FinalMessageGraceSeconds, report.Length);
         }
 
-        await SettleAsync(services, db, task, report, turn, ct);
-        return turn;
+        var admissionDeferred = await SettleAsync(services, db, task, report, turn, ct);
+        return turn with { DeferredForWorkspaceAdmission = admissionDeferred };
     }
 
     /// <summary>
@@ -1215,7 +1221,7 @@ public sealed partial class AgentTaskReplyService
             DelegationReportFormatter.Short(task.Id), interrupted.Sequence, task.Status);
     }
 
-    private async Task SettleAsync(
+    private async Task<bool> SettleAsync(
         IServiceProvider services, AppDbContext db, AgentTask task, string report, TurnOutcome turn,
         CancellationToken ct)
     {
@@ -1233,7 +1239,7 @@ public sealed partial class AgentTaskReplyService
         var classified = await ClassifyReportAsync(
             services, db, task, body, verdict, turn, now, remote, ct);
         if (classified is null)
-            return;
+            return remote.Result?.Reason == WorkspaceAdmissionBusyException.ProblemCode;
 
         var (status, evidence, settledBody, failureReason) = classified.Value;
         // CARD-1472 D-2: a bare closing line after a retained report adds nothing. The classifier
@@ -1645,6 +1651,7 @@ public sealed partial class AgentTaskReplyService
                     "Task {ShortId} settled as {Status} ({Chars:N0} chars, ${Cost:0.000}, {Evidence})",
                     DelegationReportFormatter.Short(task.Id), task.Status, settledBody.Length, task.CostUsd, evidence);
             });
+        return false;
     }
 
     /// <summary>
@@ -1741,7 +1748,7 @@ public sealed partial class AgentTaskReplyService
             {
                 prepared = await PrepareRemoteAsync(scope.ServiceProvider, task, ct, named);
                 // Left open: the delivery watchdog's next sweep recovers again and continues the wait.
-                if (StillWaitingForLease(task, prepared))
+                if (StillWaitingForSync(task, prepared))
                     return;
                 unconfirmed = await RunnerRecoveryBlockReasonAsync(scope.ServiceProvider, task, note, named, prepared, ct);
             }
@@ -2431,17 +2438,16 @@ public sealed partial class AgentTaskReplyService
     }
 
     /// <summary>
-    /// CARD-0657 R4. The runner sync's lease wait ran out of this attempt's slice but not of its
-    /// cumulative budget: nothing is settled or saved, the task stays open, and the next sweep's
-    /// re-hand continues the same wait. Only the spent budget (lease-busy) blocks.
+    /// CARD-0657 R4. Retryable sync admission leaves the task open so the next settlement sweep
+    /// re-hands the report from the transcript. Sync debt requires a known source tip.
     /// </summary>
-    private bool StillWaitingForLease(AgentTask task, RemoteSettlementSyncResult? prepared)
+    private bool StillWaitingForSync(AgentTask task, RemoteSettlementSyncResult? prepared)
     {
-        if (prepared?.Reason != RemoteSettlementSyncReasons.LeaseWaiting)
+        if (!SettlementSyncDebtPolicy.IsWaiting(prepared))
             return false;
         _logger.LogInformation(
-            "Task {ShortId}: runner sync is still waiting for the repository lease; settlement is left for the next sweep",
-            DelegationReportFormatter.Short(task.Id));
+            "Task {ShortId}: runner sync deferred ({Reason}) until the next settlement sweep",
+            DelegationReportFormatter.Short(task.Id), prepared!.Reason);
         return true;
     }
 
@@ -3330,6 +3336,8 @@ public sealed partial class AgentTaskReplyService
         BoundaryFacts? Boundary = null,
         bool PreReplyBoundary = false)
     {
+        public bool DeferredForWorkspaceAdmission { get; init; }
+
         public static readonly TurnOutcome Nothing = new(null, false);
         public static readonly TurnOutcome Deferred = new(null, false, DeferredForFinalMessage: true);
     }
@@ -4099,7 +4107,7 @@ public sealed partial class AgentTaskReplyService
                 : null;
             remote.Result = await PrepareRemoteAsync(services, task, ct, reviewEvidenceRepair:
                 repair is { Source: StageOutcomeSource.Delegate, ReviewedSourceSha: null });
-            if (StillWaitingForLease(task, remote.Result))
+            if (StillWaitingForSync(task, remote.Result))
                 return null;
             if (await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } noProgress)
                 return noProgress;
@@ -4152,7 +4160,7 @@ public sealed partial class AgentTaskReplyService
         // task gets exactly the progress policy an explicit `done` gets: an unpushed claim or no
         // pushed movement fails as no-progress instead of settling Succeeded on a confirmed S.
         remote.Result = await PrepareRemoteAsync(services, task, ct);
-        if (StillWaitingForLease(task, remote.Result))
+        if (StillWaitingForSync(task, remote.Result))
             return null;
         if (remote.Result is { State: not RemoteSettlementSyncState.NotApplicable }
             && await TryClassifyCompletedWithoutProgressAsync(services, task, body, remote.Result, ct) is { } unmarkedNoProgress)

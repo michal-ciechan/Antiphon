@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -279,6 +280,11 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
         var now = clock.GetUtcNow().UtcDateTime;
         if (state == AgentTaskSyncDebtState.Held)
             next = now.AddMinutes(HeldRecheckMinutes);
+        // Admission refused before any sync work. Keep the scheduled retry without spending
+        // one of the debt's actual sync attempts.
+        var attempts = state == AgentTaskSyncDebtState.Pending && reason == WorkspaceAdmissionBusyException.ProblemCode
+            ? claim.Debt.Attempts - 1
+            : claim.Debt.Attempts;
         var changed = await db.AgentTaskSyncDebts.Where(d => d.Id == claim.Debt.Id
                 && d.Revision == claim.Debt.Revision
                 && d.State == AgentTaskSyncDebtState.Pending
@@ -286,6 +292,7 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                 && d.Attempt == claim.Debt.Attempt)
             .ExecuteUpdateAsync(u => u.SetProperty(d => d.State, state)
                 .SetProperty(d => d.ReasonCode, reason)
+                .SetProperty(d => d.Attempts, attempts)
                 .SetProperty(d => d.NextAttemptAt, next)
                 .SetProperty(d => d.SourceReadyAt, readyAt)
                 .SetProperty(d => d.ConfirmedSha, confirmed)

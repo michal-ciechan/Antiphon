@@ -397,17 +397,26 @@ public sealed class TaskWorktreeRetirementService
         await using var lease = await _leases.TryAcquireAsync(retirement.RepositoryPath, ct);
         if (lease is null) return new(false, false, false, "repository_lease_required");
 
+        // The sweep passes an untracked snapshot. Re-read under the lease before deciding
+        // whether to issue a removal or finalize an already recorded one.
+        if (_db.Entry(retirement).State == EntityState.Detached)
+            retirement = await _db.TaskWorktreeRetirements.SingleAsync(r => r.Id == retirement.Id, ct);
+        else
+            await _db.Entry(retirement).ReloadAsync(ct);
+        if (retirement.State == WorktreeRetirementState.Complete)
+            return WorktreeRemoval.Clean;
+
         var system = string.Equals(retirement.CallerIdentity, SystemCallerIdentity, StringComparison.Ordinal);
+        if (retirement.Active && retirement.CommandIntentId is Guid durableIntent
+            && retirement.ClaimAttemptId is Guid durableAttempt
+            && await _db.TaskWorktreeRetirementAttempts.AsNoTracking().AnyAsync(a =>
+                a.Id == durableAttempt && a.RetirementId == retirement.Id && a.CommandIntentId == durableIntent
+                && a.DirectoryRemoved == true && a.RegistrationRemoved == true && a.BranchRemoved == true
+                && a.Residue == null && a.FinishedAt != null, ct))
+            return await PersistRemovalOutcomeAsync(retirement, WorktreeRemoval.Clean, endpointId, system, ct);
+
         if (system)
         {
-            // CARD-0824 S4a: a concurrent tick or the residue sweep may have finished this release under the lease,
-            // and a caller holding an untracked row (the residue sweep) must still persist what this pass does.
-            if (_db.Entry(retirement).State == EntityState.Detached)
-                retirement = await _db.TaskWorktreeRetirements.SingleAsync(r => r.Id == retirement.Id, ct);
-            else
-                await _db.Entry(retirement).ReloadAsync(ct);
-            if (retirement.State == WorktreeRetirementState.Complete)
-                return new(true, true, true, null);
             // CARD-1717 D-1: Enabled, Execute, and the retry cursor are read under the lease, after the slow
             // pre-checks and after a command that already started, before a new attempt or any delete.
             var blocked = await LegacyReleaseAdmissionAsync(retirement.TaskId, pace: true, ct);
@@ -482,6 +491,17 @@ public sealed class TaskWorktreeRetirementService
         await _commands.RecordComponentAsync(attempt.Id, removed.DirectoryGone, null, null, removed.Residue, ct);
         await _commands.RecordComponentAsync(attempt.Id, null, removed.Unregistered, null, removed.Residue, ct);
         await _commands.RecordComponentAsync(attempt.Id, null, null, removed.BranchDeleted, removed.Residue, ct);
+        return await PersistRemovalOutcomeAsync(retirement, removed, endpointId, system, ct);
+    }
+
+    private async Task<WorktreeRemoval> PersistRemovalOutcomeAsync(
+        TaskWorktreeRetirement retirement, WorktreeRemoval removed, Guid? endpointId, bool system, CancellationToken ct)
+    {
+        // Admission can defer finalization. The component journal is already durable, and
+        // the tracked row must still reflect the persisted state if the lock is busy.
+        if (removed.IsClean && _admission is not null)
+            await _admission.FenceCompletedAsync(retirement, ct);
+
         retirement.DirectoryRemovedAt = removed.DirectoryGone ? UtcNow() : retirement.DirectoryRemovedAt;
         retirement.RegistrationRemovedAt = removed.Unregistered ? UtcNow() : retirement.RegistrationRemovedAt;
         retirement.BranchRemovedAt = removed.BranchDeleted ? UtcNow() : retirement.BranchRemovedAt;
@@ -490,8 +510,6 @@ public sealed class TaskWorktreeRetirementService
         {
             retirement.State = WorktreeRetirementState.Complete;
             retirement.RetirementCompletedAt = UtcNow();
-            if (_admission is not null)
-                await _admission.FenceCompletedAsync(retirement, ct);
         }
         else if (removed.DirectoryGone || removed.Unregistered || removed.BranchDeleted)
             retirement.State = WorktreeRetirementState.Partial;
@@ -507,9 +525,10 @@ public sealed class TaskWorktreeRetirementService
         // reverses the retirement of the thing that actually matters.
         // CARD-0824 S4a T-D-6: a runner CARD-1677 retention owns keeps its mirror (the runner decides).
         // CARD-1717 D-1: the retention read is an await. A system switch that closed skips the mirror delete.
-        if (endpointId is null && !await MirrorOwnedByRetentionAsync(retirement.TaskId, ct)
+        var systemTaskId = retirement.TaskId;
+        if (endpointId is null && !await MirrorOwnedByRetentionAsync(systemTaskId, ct)
             && await StopLegacyContinuationAsync(system, systemTaskId, ct) is null)
-            await RemoveRemoteMirrorAsync(retirement.TaskId,
+            await RemoveRemoteMirrorAsync(systemTaskId,
                 // CARD-1717 B-B-1: the task read and the runner description are awaits; the switch is read
                 // again after the last of them, immediately before the remove request is sent.
                 system ? token => new ValueTask<string?>(LegacyReleaseAdmissionAsync(systemTaskId, pace: true, token)) : null,

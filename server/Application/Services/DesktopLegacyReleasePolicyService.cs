@@ -368,7 +368,17 @@ public sealed class DesktopLegacyReleasePolicyService
                 RecordCheck(taskCursors, fresh, "passed", settled: false, settings);
 
             stage = "retire_failed";
-            var removed = await _retirement.TryRetireAsync(release, run.Id, ct);
+            WorktreeRemoval removed;
+            try
+            {
+                removed = await _retirement.TryRetireAsync(release, run.Id, ct);
+            }
+            catch (WorkspaceAdmissionBusyException)
+            {
+                await RowAsync(run, WorktreeResidueCandidateOutcome.Deferred, WorkspaceAdmissionBusyException.ProblemCode,
+                    fresh, release.Id, ct);
+                return new(filedNow, filedNow, false);
+            }
             if (removed.Residue == "repository_lease_required")
             {
                 // G-59: a busy repository is a deferral; no attempt is counted.

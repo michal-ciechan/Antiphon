@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain;
 using Antiphon.Server.Domain.Entities;
@@ -14,6 +15,10 @@ namespace Antiphon.Server.Application.Services;
 /// </summary>
 public static class SettlementSyncDebtPolicy
 {
+    /// <summary>Keep the report in the transcript for the next sweep while the sync gate is busy.</summary>
+    internal static bool IsWaiting(RemoteSettlementSyncResult? result) =>
+        result?.Reason is RemoteSettlementSyncReasons.LeaseWaiting or WorkspaceAdmissionBusyException.ProblemCode;
+
     /// <summary>
     /// Returns <paramref name="result"/> with state <see cref="RemoteSettlementSyncState.Pending"/>
     /// when the only failure is a spent desktop lease and the server observed a full tip on the

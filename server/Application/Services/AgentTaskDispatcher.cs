@@ -3417,7 +3417,7 @@ public sealed partial class AgentTaskDispatcher
             // CARD-0085's zero-transcript bind recovery above stays first and unchanged.
             if (hasTranscript && _replies is not null && task.AgentSessionId is Guid settleSession)
             {
-                await _replies.OnTurnEndAsync(settleSession, ct);
+                var admissionDeferred = await _replies.SettleTurnEndAndCheckAdmissionAsync(settleSession, ct);
                 await _db.Entry(task).ReloadAsync(ct);
                 if (task.Status is not AgentTaskStatus.Dispatched and not AgentTaskStatus.Working)
                 {
@@ -3427,6 +3427,8 @@ public sealed partial class AgentTaskDispatcher
                     _deadSessions.Forget(task.Id);
                     continue;
                 }
+                if (admissionDeferred)
+                    continue;
             }
 
             var classified = AgentTaskLiveness.ClassifyFailure(task.AgentSessionId, session, hasTranscript);
