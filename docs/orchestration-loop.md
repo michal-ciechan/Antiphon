@@ -582,6 +582,8 @@ the operator's 2026-10-01 ruling, and is recorded here so a fresh seat starts fr
 session override it for that session; nothing below needs restating to apply. The delivered copy
 is the `orchestrator` bundle; this section carries the reasons.
 
+For a commissioned architecture survey, delegate one area through Investigate with a named question and a time budget. File confirmed structural defects immediately under the standing pipeline policy. Route follow-up work through the ordinary queue.
+
 1. **Each pipeline stage at up to four; at most six tasks on server2 across all stages.** These
    are the operator's defaults. Before dispatching, read the effective-settings route
    (CARD-0881): `GET /api/agent-tasks/pipeline?projectId=<id>` (or `?unscoped=true` for the null

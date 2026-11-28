@@ -78,6 +78,8 @@ Commission binding-only at explicit Frontier, then eligible mechanical-execution
 `Test` and `Deploy` are cheap because they RUN things and report what happened. Interpreting a
 failure is a separate `Debug` task — don't ask haiku to work out why the build broke.
 
+For structural changes, link the [architecture rules](../../../docs/architecture-principles.md) in the brief.
+
 ## Stage recipes
 
 One `scripts/antiphon delegate` line per stage — kind-free (no `--kind`/`--level` unless you have a reason to

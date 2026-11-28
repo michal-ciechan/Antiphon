@@ -18,18 +18,18 @@ The standing instructions already prescribe layer direction and staged verificat
 | Bundle | Normalized master units | Relevant cap | Modeled argv units with board API and explanatory style |
 | --- | ---: | ---: | ---: |
 | Orchestrator | 11,498 | 11,500 | 27,960 |
-| Plan | 1,975 | 2,500 | 18,435 |
-| TestDesign | 3,868 | 10,000 and 2,500 | 20,335 |
-| Code | 2,476 | 2,500 | 18,936 |
-| Review | 2,580 | 2,600 | 19,042 |
-| Mutation | 2,439 | 2,500 | 18,903 |
-| Investigate | 701 | 2,500 | 17,168 |
+| Plan | 1,975 | 2,480 effective | 18,435 |
+| TestDesign | 3,868 | 10,000, 2,500 and 2,480 effective | 20,335 |
+| Code | 2,476 | 2,480 effective | 18,936 |
+| Review | 2,580 | 2,580 effective | 19,042 |
+| Mutation | 2,439 | 2,480 effective | 18,903 |
+| Investigate | 701 | 2,480 effective | 17,168 |
 
 The C1332 source reconstruction used `InstructionBundles.cs:30–33`, `:233–289`, `InstructionFragments.cs:26–29`, `InstructionBundleComposer.cs:63`, `:122–140`, and `ChannelPreamble.cs:41–43`, `:60–81`. The worst case joins the rendered orchestrator, delegate basics with one expanded git-common fragment, board API, explanatory style and Telegram preset with four two-unit separators. Each bundle header and fragment header uses an eight-digit version. The CRLF Telegram preset is 2,386 UTF-16 units. The composition is 27,836 units. The six fixed example arguments plus `--append-system-prompt` overhead add 124 units using `tests/Antiphon.Tests/Application/InstructionBundleTests.cs:679–702`, `:765–766`. This statically reconstructs 27,960 against 28,000. `OrchestratorBundleOwnershipTests.cs:284–309` separately gives the 11,500 body limit, leaving two units. The brief's previous values are useful context for the constraint. The table records the measured source revision.
 
-**Confirmed mechanism for the TestDesign limit conflict.** The stage-cap test now selects 10,000 for TestDesign (`tests/Antiphon.Tests/Application/InstructionBundleTests.cs:924–941`). An independent loop still includes TestDesign and applies 2,500 to every stage except Review (`tests/Antiphon.Tests/Application/ScopedVerificationInstructionTests.cs:124–136`, `C487_G141`). Both call `InstructionBundles.TextOf`. The same normalized 3,868-unit blob fits the first bound and exceeds the second by 1,368. This is a deterministic source-level witness, with no claim about the current shipping binary or the most recent rc results. `card search 'C487_G141' --board Antiphon --all` returned zero at the time of the read.
+**TestDesign thresholds on master.** `InstructionBundleTests.each_stage_bundle_is_ascii_and_under_the_size_cap` records the newer operator budget of **10,000**. `ScopedVerificationInstructionTests.C487_G141` enforces **2,500**. `TaskPlatformGuidanceTests.Stage_bundles_leave_twenty_characters_below_the_size_cap` enforces **2,480** with its headroom rule. All three measure the LF-normalized, trimmed body. **2,480 is the effective passing limit while all three guards run.** The reviewed master body has 3,868 units. Review `2b35c77a` reproduced the headroom failure on master `2a1bf1ed11119a8c83c18515189abdf3b5629ed0`. The reviewed draft `79111b971817238c2db770304e02c5e49fb5eb6e` inherited a 2,473-unit body from its branch base and passed the 199-case guard batch. Debug `ef52447a` and repair `7503f6ff` own the separate shortening, with 2,468 units in Merge `da6fae6b`. The architecture revision leaves `stage-test-design.md` to that repair. The original card search for `C487_G141` returned zero.
 
-The proposal increases only Plan by 69 units, including the added separator, so its modeled row is 18,504 and its ASCII body is 2,044. The orchestrator row remains the maximum and its raw SHA pin (`server/Bundles/README.md:105–109`) still refers to the same content. The AGENTS blob is 22,615 UTF-8 bytes after the new row against a 24,576-byte delivery target (`tests/Antiphon.Tests/Scripts/AgentContextCheckTests.cs:45`). `git apply --cached --check` passed on a temporary index seeded with the surveyed master. Applying the five-file patch in that index produced the same draft tree as generation, `69c88f4daeec2686a50618436efb60c1daddc0d1`.
+The original draft overlay increased Plan by 69 units to 2,044, with a modeled row of 18,504. `git apply --cached --check` passed on a temporary index seeded with the surveyed master, and the five-file overlay produced draft tree `69c88f4daeec2686a50618436efb60c1daddc0d1`. The trimmed revision adds 61 units to Plan for a 2,036-unit ASCII body and a modeled row of 18,496. The orchestrator row remains the maximum and its raw SHA pin (`server/Bundles/README.md:105–109`) still refers to the same content. The AGENTS blob is 22,615 UTF-8 bytes after the new row against a 24,576-byte delivery target (`tests/Antiphon.Tests/Scripts/AgentContextCheckTests.cs:45`).
 
 ## Other repository witnesses
 
