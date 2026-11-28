@@ -196,7 +196,6 @@ public static class SessionEndpoints
             Guid? expectedLastTaskRevision,
             long? expectedTurnEndSequence,
             [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] SessionStopReason? request,
-            AgentTaskService tasks,
             IOptions<PhoneHomeRunnerSettings> settings,
             ICurrentUser user,
             AgentSessionService service,
@@ -208,16 +207,12 @@ public static class SessionEndpoints
                 || query.ContainsKey(nameof(expectedLastTaskId)) || query.ContainsKey(nameof(expectedLastTaskRevision))
                 || query.ContainsKey(nameof(expectedTurnEndSequence)))
             {
-                var caller = await tasks.AuthenticateAsync(http.Request.Headers[AgentTaskEndpoints.TokenHeader].FirstOrDefault(),
-                    cancellationToken);
-                if (!caller.MayDelegate)
-                    throw new ForbiddenException("A verified stop requires an orchestrator credential.", "session_stop_principal_denied");
+                var authority = await stops.ResolveAuthorityAsync(
+                    http.Request.Headers[AgentTaskEndpoints.TokenHeader].FirstOrDefault(), cancellationToken);
 
                 if (expectedGeneration is not { } generation || expectedTurnEndSequence is not long sequence || sequence <= 0
                     || (expectedLastTaskId is null) != (expectedLastTaskRevision is null))
                     throw new ValidationException("stopPreconditions", "Supply the generation and TurnEnd sequence, and pair the last task ID with its revision.");
-                var authority = await stops.ResolveAuthorityAsync(caller,
-                    caller.Task?.ProjectId ?? await tasks.DeriveCallerProjectAsync(caller, cancellationToken), cancellationToken);
                 return Results.Ok(await stops.StopAsync(id, new(generation, expectedOwnerId,
                     expectedLastTaskId, expectedLastTaskRevision, sequence), authority,
                     SessionStopAudit.Reason(request?.Reason, "Verified idle seat release"), cancellationToken));

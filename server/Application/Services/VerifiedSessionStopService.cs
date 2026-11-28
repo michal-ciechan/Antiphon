@@ -36,42 +36,22 @@ public sealed class VerifiedSessionStopService(
             IsProtected(session, owners, task), runner?.Status);
     }
 
-    public sealed record Authority(string Actor, Guid? ProjectId, Guid? BoardId, Guid? CardId, IReadOnlyList<string> Roots);
+    public sealed record Authority(string Actor, Guid? ProjectId, Guid? BoardId, string Root);
 
-    public async Task<Authority> ResolveAuthorityAsync(AgentTaskService.Caller caller, Guid? projectId, CancellationToken ct)
+    public async Task<Authority> ResolveAuthorityAsync(string? token, CancellationToken ct)
     {
-        var boardId = caller.BoardId;
-        var cardId = caller.Task?.CardId;
-        if (caller.Task is null && caller.SessionId is Guid sourceId)
-        {
-            var source = await db.AgentSessions.AsNoTracking()
-                .SingleOrDefaultAsync(s => s.Id == sourceId && s.Status == SessionStatus.Running, ct);
-            if (source is null) throw ScopeDenied();
-            cardId = source.CardId;
-            var key = sourceId.ToString("D");
-            var agent = await KeepSixService.StandingOrchestrators(db)
-                .Where(a => a.PersistentSessionId != null && a.PersistentSessionId.ToLower() == key)
-                .Select(a => new { a.BoardId }).SingleOrDefaultAsync(ct);
-            if (agent is null && cardId is null) throw ScopeDenied();
-            boardId ??= agent?.BoardId;
-        }
-
-        if (cardId is Guid card)
-            boardId ??= await db.Cards.AsNoTracking().Where(c => c.Id == card)
-                .Select(c => (Guid?)c.BoardId).SingleOrDefaultAsync(ct);
-        if (projectId is null && boardId is Guid board)
-            projectId = await db.Boards.AsNoTracking().Where(b => b.Id == board)
-                .Select(b => (Guid?)b.ProjectId).SingleOrDefaultAsync(ct);
-
-        var roots = new[] { caller.Task?.RepoPath ?? caller.WorkingDirectory }.Concat(caller.ExtraAllowedRoots ?? [])
-            .Where(root => Path.IsPathFullyQualified(root) || WorkingDirectoryIdentity.IsWindowsPath(root)).ToArray();
-        if (roots.Length == 0) throw ScopeDenied();
-
-        var actor = caller.Task is { } task ? $"task:{task.Id:D}"
-            : caller.CapabilityId is { } cap ? $"capability:{cap:D}"
-            : caller.SessionId is { } session ? $"session:{session:D}"
-            : throw ScopeDenied();
-        return new Authority(actor, projectId, boardId, cardId, roots);
+        if (string.IsNullOrWhiteSpace(token)) throw PrincipalDenied();
+        var hash = AgentTaskService.HashToken(token);
+        var source = await (from session in db.AgentSessions.AsNoTracking()
+            join agent in KeepSixService.StandingOrchestrators(db) on session.StandingAgentId equals (Guid?)agent.Id
+            where session.DelegationTokenHash == hash && session.Status == SessionStatus.Running
+                && session.CardId == null && agent.Status == AgentStatus.Running
+                && agent.PersistentSessionId != null && agent.PersistentSessionId.ToLower() == session.Id.ToString()
+            select new { session.Id, session.Cwd, agent.BoardId, ProjectId = (Guid?)agent.Board!.ProjectId })
+            .SingleOrDefaultAsync(ct) ?? throw PrincipalDenied();
+        var root = OrchestratorWorkspaceFactGatherer.FollowMarkerOrSelf(source.Cwd);
+        if (!Path.IsPathFullyQualified(root) && !WorkingDirectoryIdentity.IsWindowsPath(root)) throw ScopeDenied();
+        return new Authority($"session:{source.Id:D}", source.ProjectId, source.BoardId, root);
     }
 
     public async Task<VerifiedSessionStopReceipt> StopAsync(
@@ -230,11 +210,10 @@ public sealed class VerifiedSessionStopService(
             : null;
         var projectId = card?.ProjectId ?? task?.ProjectId ?? owner?.PoolProjectId;
         var boardId = card?.BoardId ?? owner?.BoardId;
-        if (authority.CardId is Guid cardScope && cardScope != cardId
-            || authority.BoardId is Guid boardScope && boardScope != boardId
+        if (authority.BoardId is Guid boardScope && boardScope != boardId
             || projectId is not null && projectId != authority.ProjectId
             || projectId is null && authority.ProjectId is not null && (task is not null || owner is not null)
-            || !authority.Roots.Any(root => WithinWorkspace(task?.RepoPath ?? session.Cwd, root)))
+            || !WithinWorkspace(task?.RepoPath ?? session.Cwd, authority.Root))
             throw ScopeDenied();
     }
 
@@ -245,6 +224,9 @@ public sealed class VerifiedSessionStopService(
 
     private static ForbiddenException ScopeDenied() =>
         new("Stopping this session requires an orchestrator credential scoped to its workspace and project.", "session_stop_scope_denied");
+
+    private static ForbiddenException PrincipalDenied() =>
+        new("A verified stop requires a live standing orchestrator session credential.", "session_stop_principal_denied");
 
     private Task<AgentTask?> LatestTaskAsync(Guid id, CancellationToken ct) =>
         db.AgentTasks.AsNoTracking().Where(t => t.AgentSessionId == id)

@@ -23,7 +23,6 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -44,6 +43,14 @@ public sealed class VerifiedSessionStopTests
     [Arguments("worker-token")]
     [Arguments("other-workspace")]
     public Task Stop_refuses_an_unscoped_caller(string scenario) => RunStopAsync(scenario);
+
+    [Test]
+    [Arguments("general-capability")]
+    [Arguments("revoked-capability")]
+    [Arguments("card-session")]
+    [Arguments("stale-orchestrator")]
+    [Arguments("orchestrator-task-token")]
+    public Task Stop_refuses_credentials_without_a_live_standing_binding(string scenario) => RunStopAsync(scenario);
 
     [Test]
     public Task Legacy_kill_records_authenticated_operator_and_outcome() => RunStopAsync("legacy-operator");
@@ -161,16 +168,7 @@ public sealed class VerifiedSessionStopTests
         }
 
         var token = Guid.NewGuid().ToString("N");
-        var callerId = Guid.NewGuid();
-        db.AgentTasks.Add(new AgentTask
-        {
-            Id = callerId, RootTaskId = callerId,
-            Kind = scenario == "worker-token" ? AgentTaskKind.Worker : AgentTaskKind.Orchestrator,
-            Status = AgentTaskStatus.Working,
-            WorkingDirectory = scenario == "other-workspace" ? Path.Combine(session.Cwd, "other") : session.Cwd,
-            TokenHash = AgentTaskService.HashToken(token),
-            CreatedAt = session.StartedAt,
-        });
+        var callerId = SeedCaller(db, session, token, scenario);
         await db.SaveChangesAsync();
         await db.Entry(session).ReloadAsync();
         var generation = session.StartedAt;
@@ -219,10 +217,6 @@ public sealed class VerifiedSessionStopTests
         builder.Logging.ClearProviders();
         builder.Services.AddScoped(_ => harness.Scope.ServiceProvider.GetRequiredService<AgentSessionService>());
         builder.Services.AddScoped(_ => harness.CreateObserverContext());
-        builder.Services.AddScoped(sp => new AgentTaskService(sp.GetRequiredService<AppDbContext>(),
-            new DelegationWorkspaceResolver(NullLogger<DelegationWorkspaceResolver>.Instance),
-            Options.Create(new DelegationSettings()), harness.EventBus, new RecordingSessionStopper(),
-            TimeProvider.System, NullLogger<AgentTaskService>.Instance));
         var operatorTokenPath = Path.Combine(harness.TempRoot, "test-stop-operator-token");
         builder.Services.Configure<PhoneHomeRunnerSettings>(settings => settings.OperatorTokenPath = operatorTokenPath);
         builder.Services.AddScoped(sp =>
@@ -462,10 +456,12 @@ public sealed class VerifiedSessionStopTests
         using (response)
         {
             await db.Entry(session).ReloadAsync();
-            if (scenario is "invalid-token" or "no-token" or "worker-token" or "other-workspace" or "legacy-no-operator")
+            if (scenario is "invalid-token" or "no-token" or "worker-token" or "other-workspace" or "legacy-no-operator"
+                or "general-capability" or "revoked-capability" or "card-session" or "stale-orchestrator" or "orchestrator-task-token")
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
                 runner.KillGenerationCalls.ShouldBeEmpty();
+                runnerReads.ShouldBe(1, "only the test's independent precondition inspection may reach the runner");
                 session.Status.ShouldBe(SessionStatus.Running);
             }
             else if (scenario == "legacy-operator")
@@ -491,7 +487,7 @@ public sealed class VerifiedSessionStopTests
                 session.Status.ShouldBe(SessionStatus.Stopped);
                 readback.GetProperty("generation").GetDateTime().ShouldBe(generation);
                 var entry = await db.AuditRecords.SingleAsync(a => a.EventType == AuditEventType.SessionStop);
-                entry.Summary.ShouldContain($"task:{callerId:D}");
+                entry.Summary.ShouldContain($"session:{callerId:D}");
                 entry.Summary.ShouldContain(generation.ToString("O"));
                 entry.Summary.ShouldContain("Retire the verified idle seat");
                 entry.Summary.ShouldContain("Outcome: Exited");
@@ -507,6 +503,66 @@ public sealed class VerifiedSessionStopTests
             }
             runner.KillCalls.ShouldBe(0);
         }
+    }
+
+    private static Guid SeedCaller(AppDbContext db, AgentSession target, string token, string scenario)
+    {
+        var id = Guid.NewGuid();
+        var hash = AgentTaskService.HashToken(token);
+        var now = target.StartedAt;
+        if (scenario is "worker-token" or "orchestrator-task-token")
+        {
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = id, RootTaskId = id, WorkingDirectory = target.Cwd, TokenHash = hash, CreatedAt = now,
+                Kind = scenario == "worker-token" ? AgentTaskKind.Worker : AgentTaskKind.Orchestrator,
+                Status = AgentTaskStatus.Working,
+            });
+            return id;
+        }
+        if (scenario is "general-capability" or "revoked-capability")
+        {
+            db.DelegationCapabilities.Add(new DelegationCapability
+            {
+                Id = id, Name = "stop-fixture", TokenHash = hash, CreatedAt = now,
+                RootsJson = DelegationCapabilityRoots.Serialize([target.Cwd]),
+                RevokedAt = scenario == "revoked-capability" ? now : null,
+            });
+            return id;
+        }
+
+        var source = new AgentSession
+        {
+            Id = id, Status = SessionStatus.Running, DelegationTokenHash = hash,
+            Cwd = scenario == "other-workspace" ? Path.Combine(target.Cwd, "other") : target.Cwd,
+            CreatedAt = now, StartedAt = now, LastSeenAt = now,
+        };
+        db.AgentSessions.Add(source);
+        if (scenario == "card-session")
+        {
+            var project = new Project { Id = Guid.NewGuid(), Name = "Card session project", CreatedAt = now, UpdatedAt = now };
+            var board = new Board { Id = Guid.NewGuid(), ProjectId = project.Id, Name = "Test board", CreatedAt = now, UpdatedAt = now };
+            var column = new BoardColumn { Id = Guid.NewGuid(), BoardId = board.Id, StateKey = "backlog", Name = "Backlog", CreatedAt = now, UpdatedAt = now };
+            var card = new Card { Id = Guid.NewGuid(), BoardId = board.Id, BoardColumnId = column.Id,
+                Identifier = "CARD-0001", Title = "Card session", CreatedAt = now, UpdatedAt = now };
+            db.AddRange(project, board, column, card);
+            source.CardId = card.Id;
+            return id;
+        }
+
+        var caller = new Agent
+        {
+            Id = Guid.NewGuid(), Name = "Standing orchestrator", Slug = "standing-orchestrator",
+            WorkingDirectory = source.Cwd, Status = AgentStatus.Running, CreatedAt = now, UpdatedAt = now,
+            PersistentSessionId = scenario == "stale-orchestrator" ? Guid.NewGuid().ToString("D") : id.ToString("D"),
+        };
+        source.StandingAgentId = caller.Id;
+        db.Agents.Add(caller);
+        db.AgentBundleAttachments.Add(new AgentBundleAttachment
+        {
+            AgentId = caller.Id, BundleKey = InstructionBundles.Orchestrator, CreatedAt = now,
+        });
+        return id;
     }
 
     private static async Task<AgentTaskDispatcher.ReuseOutcome> TryWarmClaimAsync(
