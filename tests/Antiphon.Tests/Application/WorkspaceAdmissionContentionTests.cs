@@ -102,9 +102,10 @@ public sealed class WorkspaceAdmissionContentionTests
         request.Response.StatusCode.ShouldBe(StatusCodes.Status503ServiceUnavailable,
             logger.Entries.SingleOrDefault()?.Exception?.ToString());
         request.Response.Headers.RetryAfter.ToString().ShouldBe("2");
-        journalLogger.Entries.ShouldContain(e => e.Level == LogLevel.Warning
+        journalLogger.Entries.Any(e => e.Level == LogLevel.Warning
             && e.State.GetValueOrDefault("Acquired") is false
-            && e.State.GetValueOrDefault("WaitMilliseconds") is double wait && wait > 1_000);
+            && e.State.GetValueOrDefault("WaitMilliseconds") is double wait && wait > 1_000)
+            .ShouldBeTrue();
         body.Position = 0;
         using var problem = await JsonDocument.ParseAsync(body);
         problem.RootElement.GetProperty("code").GetString().ShouldBe("workspace_admission_busy");
