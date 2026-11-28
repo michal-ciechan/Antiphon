@@ -1924,6 +1924,12 @@ still write no bytes. A body already written retains its existing composer hold
 when Enter/retry is refused. Time, an empty-looking unreadable screen, and a redraw
 cannot clear that hold. The complete correlated UserPrompt remains the receipt.
 
+The composer guard compares the rendered draft to the digest of the guarded
+write. A collapsed Claude token exposes an index and line count and holds Enter
+until the full draft is visible. After a definitive stale-observation refusal,
+one Enter retry requires a freshly rendered matching draft, the same input
+revision, runner epoch and claimed generation, and the final runner write fence.
+
 A temporary channel hold requires both its retry deadline and guard clearance.
 The queue preserves order within a conversation and skips exhausted rows during
 automatic admission. The terminal composer guard still covers the whole recipient

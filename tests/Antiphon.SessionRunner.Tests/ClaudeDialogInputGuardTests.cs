@@ -429,7 +429,7 @@ public class ClaudeDialogInputGuardTests
         var enter = await f.RequestAsync("\r");
         (await f.Runtime.SendConditionalInputAsync(
             f.Id, enter with { ExpectedComposerDigest = digest }, CancellationToken.None))
-            .Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
         f.Child.Inputs.ShouldBeEmpty();
 
         f.Session.RenderDialogScreenForTest(Clear);
@@ -442,8 +442,8 @@ public class ClaudeDialogInputGuardTests
         enter = await f.RequestAsync("\r");
         (await f.Runtime.SendConditionalInputAsync(
             f.Id, enter with { ExpectedComposerDigest = digest, RequireOwnedComposer = true }, CancellationToken.None))
-            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
-        f.Child.Inputs.ShouldBe([paste, "\r"]);
+            .Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        f.Child.Inputs.ShouldBe([paste]);
     }
 
     [Test]
@@ -458,7 +458,11 @@ public class ClaudeDialogInputGuardTests
             .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
 
         f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ [Pasted text #2 +2 lines]"));
-        (await EnterAsync()).Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        (await EnterAsync()).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        f.Child.Inputs.ShouldBe([paste]);
+
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ [Pasted text #1 +2 lines]"));
+        (await EnterAsync()).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
         f.Child.Inputs.ShouldBe([paste]);
 
         f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ fixture alpha\n  fixture beta\n  fixture gamma"));
@@ -495,7 +499,7 @@ public class ClaudeDialogInputGuardTests
         {
             ExpectedComposerDigest = ComposerInput.Digest(body),
             RequireOwnedComposer = true,
-        }, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        }, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
         f.Child.Inputs.ShouldBe([paste]);
     }
 
