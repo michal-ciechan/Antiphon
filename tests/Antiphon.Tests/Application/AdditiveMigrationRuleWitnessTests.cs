@@ -1,4 +1,7 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Shouldly;
 using TUnit.Core;
 
@@ -175,8 +178,8 @@ public sealed class AdditiveMigrationRuleWitnessTests
         text.ShouldContain(NotReviewed, Case.Sensitive);
     }
 
-    // Every backticked token of the owner's selector sentence must occur in a tests/ source other
-    // than this witness. A lowercase <placeholder> stands for one non-empty argument.
+    // Every backticked token of the owner's selector sentence must name an invocation outside
+    // this witness. A lowercase <placeholder> requires an argument.
     private static void AssertTokensReal(string text, IReadOnlyList<string> sources)
     {
         var section = text.IndexOf(OwnerHeading, StringComparison.Ordinal);
@@ -188,15 +191,34 @@ public sealed class AdditiveMigrationRuleWitnessTests
         end.ShouldBeGreaterThan(start, "selector sentence end");
         var tokens = Regex.Matches(text[start..end], "`([^`]+)`").Select(match => match.Groups[1].Value).ToArray();
         tokens.Length.ShouldBeGreaterThanOrEqualTo(6, string.Join(", ", tokens));
-        var unmatched = tokens
-            .Where(token =>
-            {
-                var pattern = new Regex(Regex.Replace(Regex.Escape(token), "<[a-z]+>", @"[^)\s][^)]*"), RegexOptions.CultureInvariant);
-                return !sources.Any(pattern.IsMatch);
-            })
-            .ToArray();
+        var unmatched = tokens.Where(token => !HasCallSite(token, sources)).ToArray();
         unmatched.ShouldBeEmpty("selector tokens with no tests/ call site outside the witness");
     }
+
+    private static bool HasCallSite(string token, IReadOnlyList<string> sources)
+    {
+        var placeholder = Regex.Match(token, @"\(<[a-z]+>\)$", RegexOptions.CultureInvariant);
+        var callee = placeholder.Success ? token[..placeholder.Index] : token.TrimEnd('(');
+        var memberName = callee[(callee.LastIndexOf('.') + 1)..];
+        var qualifiedSuffix = callee.StartsWith('.') ? callee : "." + callee;
+
+        return sources.Where(source => source.Contains(memberName, StringComparison.Ordinal))
+            .Select(source => CSharpSyntaxTree.ParseText(source).GetRoot())
+            .SelectMany(root => root.DescendantNodes(node => !IsNameof(node)).OfType<InvocationExpressionSyntax>())
+            .Any(Matches);
+
+        bool Matches(InvocationExpressionSyntax call)
+        {
+            if (IsNameof(call) || (placeholder.Success && call.ArgumentList.Arguments.Count == 0))
+                return false;
+
+            var name = string.Concat(call.Expression.DescendantTokens().Select(part => part.Text));
+            return name == callee || name.EndsWith(qualifiedSuffix, StringComparison.Ordinal);
+        }
+    }
+
+    private static bool IsNameof(SyntaxNode node) =>
+        node is InvocationExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.Text: "nameof" } };
 
     private static IReadOnlyList<string> TestSources()
     {
