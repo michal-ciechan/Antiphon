@@ -20,6 +20,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
 {
     public const string CostHeader = "x-litellm-response-cost";
     private const int MaxErrorTextLength = 300;
+    private const string DiagnosticOmitted = "Provider diagnostic omitted.";
 
     public bool Serves(string dialect) => JevDialects.All.Contains(dialect, StringComparer.OrdinalIgnoreCase);
 
@@ -182,7 +183,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         }
         catch (JsonException)
         {
-            return BoundErrorText(Redact(body));
+            return DiagnosticOmitted;
         }
     }
 
@@ -224,8 +225,21 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
     private static JsonElement ErrorProperty(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
 
-    private static string? ErrorString(JsonElement element) =>
-        element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+    private static string? ErrorString(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.String)
+            return null;
+
+        try
+        {
+            return element.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            // JsonDocument accepts escaped lone surrogates until a string is decoded.
+            throw new JsonException("The provider diagnostic contains an invalid JSON string.");
+        }
+    }
 
     private static string BoundErrorText(string text) => text.Length <= MaxErrorTextLength ? text : text[..MaxErrorTextLength];
 
