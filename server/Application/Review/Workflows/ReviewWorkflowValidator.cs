@@ -580,7 +580,7 @@ public static class ReviewWorkflowValidator
         public void Add(WorkflowDiagnostic diagnostic)
         {
             if (_items.Count >= MaxDiagnostics)
-                throw new ValidationException("graph", $"A workflow may report at most {MaxDiagnostics} diagnostics.", "workflow_diagnostic_limit");
+                throw new BadRequestException($"A workflow may report at most {MaxDiagnostics} diagnostics.", "workflow_diagnostic_limit");
             _items.Add(diagnostic);
         }
 

@@ -1,0 +1,26 @@
+{
+  "malformed": {
+    "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+    "title": "Bad Request",
+    "status": 400,
+    "detail": "Expected a valid JSON workflow graph within the supported nesting depth.",
+    "traceId": "review-workflow-contract",
+    "code": "invalid_workflow_json"
+  },
+  "nesting": {
+    "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+    "title": "Bad Request",
+    "status": 400,
+    "detail": "Expected a valid JSON workflow graph within the supported nesting depth.",
+    "traceId": "review-workflow-contract",
+    "code": "invalid_workflow_json"
+  },
+  "graph": {
+    "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+    "title": "Bad Request",
+    "status": 400,
+    "detail": "A workflow may contain at most 256 nodes.",
+    "traceId": "review-workflow-contract",
+    "code": "workflow_graph_limit"
+  }
+}

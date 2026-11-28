@@ -32,6 +32,33 @@ namespace Antiphon.E2E;
 public class ContractSnapshotTests
 {
     [Test]
+    public async Task Review_workflow_validation_problem_contract()
+    {
+        var app = await SharedApp.GetAsync();
+        var samples = new Dictionary<string, string>
+        {
+            ["malformed"] = "{\"nodes\":[",
+            ["nesting"] = "{\"params\":" + new string('[', 80) + "0" + new string(']', 80) + "}",
+            ["graph"] = JsonSerializer.Serialize(new { nodes = new object?[257] }),
+        };
+        var problems = new JsonObject();
+        foreach (var (name, payload) in samples)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/review-workflows/validate");
+            request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+            request.Headers.Add("X-Correlation-Id", "review-workflow-contract");
+            using var response = await app.HttpClient.SendAsync(request);
+            ((int)response.StatusCode).ShouldBe(400, name);
+            response.Content.Headers.ContentType!.MediaType.ShouldBe("application/problem+json", name);
+            problems[name] = JsonNode.Parse(await response.Content.ReadAsStringAsync());
+        }
+
+        const string fixture = "review-workflow-validation-problems.json";
+        var expected = await File.ReadAllTextAsync(Path.Combine(FixturesDir(), fixture));
+        Normalize(problems.ToJsonString()).ShouldBe(Normalize(expected), $"Backend contract drifted from {fixture}.");
+    }
+
+    [Test]
     public async Task Agent_files_review_threads_and_content_contracts()
     {
         var app = await SharedApp.GetAsync();

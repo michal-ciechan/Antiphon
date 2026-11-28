@@ -203,7 +203,7 @@ interface WorkflowPolicyDto {
 | POST | `/api/review-gates/{id}/decision` | `GateDecisionRequest` | `ReviewRunDetailDto` |
 | GET | `/api/review-workflows/default` | | `WorkflowGraphDto` |
 | GET | `/api/review-workflows/revisions/{id}` | | `WorkflowGraphDto` (the snapshot a run used) |
-| POST | `/api/review-workflows/validate` | Raw `WorkflowGraphDto` | `WorkflowValidationDto` (200 for semantic errors, including unknown textual and numeric node kinds; 400 for malformed JSON) |
+| POST | `/api/review-workflows/validate` | Raw `WorkflowGraphDto` | `WorkflowValidationDto` (200 for semantic errors, including unknown textual and numeric node kinds; coded 400 for malformed JSON or validation limits) |
 | GET | `/api/review-runs/{id}/workflow-policy` | `?revisionId=` (optional; defaults to the run's pin or the embedded workflow for a legacy unpinned run) | `WorkflowPolicyDto`; 404 for a missing run or revision |
 | GET | `/api/review-polling` | | `ReviewPollingDto` (design 8.5 Polling). |
 | POST | `/api/review-polling/poll` | | `ReviewPollingDto` after one pass over every configured repo, run now even when the timer is off. Waits for a pass already running instead of overlapping it; a pass cut short at 90 s records the repos it reached. A repo's failure is in its `error`, not the status code. |
@@ -225,6 +225,17 @@ Validation checks the submitted graph against the server's registered work and c
 It adds located errors for invalid kinds, unknown steps, kind mismatches, child-only reviewer routes,
 invalid or unsupported input bindings, unavailable producers, unknown chains, unsupported outputs,
 and ambiguous routes. Warnings such as a missing description leave `valid` true.
+
+Validation boundary failures use the same `400` Problem Details fields (`type`, `title`, `status`,
+`detail`, `traceId`, and `code`):
+
+| Code | Trigger |
+|---|---|
+| `invalid_workflow_json` | Invalid JSON, including nesting beyond the JSON parser's limit |
+| `bad_request` | An invalid graph shape or duplicate JSON key |
+| `workflow_graph_limit` | Too many nodes, edges, sections or JSON values, or text beyond the per-value limit |
+| `workflow_parameter_limit` | Parameter nesting beyond the candidate limit |
+| `workflow_diagnostic_limit` | More than 100 validation diagnostics |
 
 An executor-walked gate follows an approval edge for `Approve`. `AnotherRound` starts an iteration
 at the workflow entry, and `Close` ends the run. These two decisions require no graph edge.

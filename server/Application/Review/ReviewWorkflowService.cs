@@ -99,14 +99,14 @@ public sealed class ReviewWorkflowService
             throw GraphLimit($"A workflow may contain at most {limit} {name}.");
     }
 
-    private static ValidationException GraphLimit(string detail) => new("graph", detail, "workflow_graph_limit");
+    private static BadRequestException GraphLimit(string detail) => new(detail, "workflow_graph_limit");
 
     private static void ValidateJson(JsonElement value, int depth, ref int remaining)
     {
         if (--remaining < 0)
             throw GraphLimit($"A workflow may contain at most {MaxJsonValues} JSON values.");
         if (depth > MaxCandidateDepth)
-            throw new ValidationException("graph", "Workflow parameters may nest up to 16 levels.", "workflow_parameter_limit");
+            throw new BadRequestException("Workflow parameters may nest up to 16 levels.", "workflow_parameter_limit");
 
         switch (value.ValueKind)
         {

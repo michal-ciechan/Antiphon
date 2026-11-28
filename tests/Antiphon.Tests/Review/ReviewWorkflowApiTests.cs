@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Reflection;
@@ -275,14 +276,24 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
     [Test]
     [Arguments("nodes", 257)]
     [Arguments("edges", 1025)]
+    [Arguments("sections", 257)]
+    [Arguments("nodes", 20_000)]
+    [Arguments("edges", 100_000)]
     public async Task S1_validation_refuses_oversized_graphs(string collection, int count)
     {
         using var client = factory.CreateClient();
-        var graph = WorkflowJson(ReviewWorkflowYaml.LoadDefault());
-        var element = graph[collection]!.AsArray()[0]!;
-        graph[collection] = new JsonArray(Enumerable.Range(0, count).Select(_ => element.DeepClone()).ToArray());
+        var item = collection switch
+        {
+            "nodes" => """{"id":"a","run":"Intake","kind":"Code","params":{}}""",
+            "edges" => """{"from":"a","to":"b"}""",
+            _ => """{"id":"a","title":"Fixture","nodeIds":[]}""",
+        };
+        using var payload = new StringContent("{\"" + collection + "\":[" + string.Join(",", Enumerable.Repeat(item, count)) + "]}",
+            Encoding.UTF8, "application/json");
 
-        using var response = await client.PostAsJsonAsync(ValidatePath, graph);
+        var clock = Stopwatch.StartNew();
+        using var response = await client.PostAsync(ValidatePath, payload);
+        Console.WriteLine($"Validation boundary: {count} {collection}, HTTP {(int)response.StatusCode}, {clock.Elapsed.TotalMilliseconds:F1} ms");
         await AssertProblemAsync(response, HttpStatusCode.BadRequest, "workflow_graph_limit");
     }
 
