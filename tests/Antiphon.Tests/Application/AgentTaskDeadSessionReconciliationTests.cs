@@ -529,6 +529,7 @@ public class AgentTaskDeadSessionReconciliationTests
         finally
         {
             await sweep;
+            await db.AgentTaskLandNotifications.Where(n => n.TaskId == task.Id).ExecuteDeleteAsync();
             var children = db.AgentTasks.Where(t => t.ParentTaskId == task.Id);
             await db.AgentTaskEvents.Where(e => children.Any(t => t.Id == e.AgentTaskId)).ExecuteDeleteAsync();
             await children.ExecuteDeleteAsync();
