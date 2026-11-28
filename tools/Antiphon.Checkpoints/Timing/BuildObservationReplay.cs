@@ -16,6 +16,9 @@ internal static class BuildObservationReplay
     {
         if (history is null)
             return new("unknown", "broker-telemetry-unreachable", null);
+        if (string.IsNullOrWhiteSpace(expected.Authority) || string.IsNullOrWhiteSpace(expected.Generation)
+            || expected.LeaseId == Guid.Empty)
+            return new("unknown", "broker-binding-unverified", null);
         var paired = history.Where(item => item.Binding == expected).ToArray();
         if (paired.Length != 2)
             return new("unknown", paired.Length < 2 ? "broker-pair-missing" : "broker-pair-ambiguous", null);
@@ -33,6 +36,8 @@ internal static class BuildObservationReplay
         {
             if (!Directory.Exists(path))
                 return new([], "observation-missing");
+            if (!WithinReadBudget(path, cancellationToken))
+                return new([], "observation-read-bound-exceeded");
             await TimingJournal.Open(path).ImportSpoolAsync(cancellationToken).ConfigureAwait(false);
             var read = TimingJournal.Read(path);
             var events = read.Events.Where(item => item.BuildPhase is { Version: "antiphon-timing-phase-v1" }).ToArray();
@@ -50,6 +55,44 @@ internal static class BuildObservationReplay
         {
             return new([], "observation-unreachable");
         }
+    }
+
+    // Count the existing staged and finalized files before the shared journal opens them.
+    // The staging and finalized copies can coexist after a crash, so allow one copy of each.
+    private static bool WithinReadBudget(string root, CancellationToken cancellationToken)
+    {
+        var paths = new Stack<(string Path, int Depth)>();
+        paths.Push((root, 0));
+        var entries = 0;
+        var shards = 0;
+        long bytes = 0;
+        while (paths.TryPop(out var directory))
+        {
+            if (File.GetAttributes(directory.Path).HasFlag(FileAttributes.ReparsePoint))
+                return false;
+            foreach (var path in Directory.EnumerateFileSystemEntries(directory.Path))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++entries > 2 * CheckpointBuildObservation.EventLimit + 16 * 4)
+                    return false;
+                var attributes = File.GetAttributes(path);
+                if (attributes.HasFlag(FileAttributes.ReparsePoint))
+                    return false;
+                if (attributes.HasFlag(FileAttributes.Directory))
+                {
+                    if (directory.Depth >= 4)
+                        return false;
+                    paths.Push((path, directory.Depth + 1));
+                    continue;
+                }
+                if (Path.GetFileName(path) == "events.jsonl" && ++shards > 16)
+                    return false;
+                bytes += new FileInfo(path).Length;
+                if (bytes > 2 * CheckpointBuildObservation.ByteLimit)
+                    return false;
+            }
+        }
+        return true;
     }
 
     internal static BuildAvailabilityResult Classify(ObservedBuild producer, BuildAvailabilityRequest request,

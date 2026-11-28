@@ -315,8 +315,9 @@ public static class CheckpointApp
             manifest.Checkpoints.FirstOrDefault(spec => spec.Id == row.Id)?.IsCommand != true).ToList();
         source.BuildSource = testRows.Count == 0 ? "notApplicable"
             : testRows.All(row => row.Source.BuildSource == "verified") ? "verified" : "unknown";
-        var model = BuildReport(runDirectory, repo, request, manifest, state, result, context, cancellationToken,
-            runtime.ReportHost);
+        var model = BuildReport(runDirectory, repo, request, manifest, state, result, context, cancellationToken);
+        if (runtime.ReportHost is { } reportHost)
+            model.Host = reportHost;
         async Task<int> RetainPublicationFailure(StatePublicationException failure)
         {
             state.ExitCode = model.ExitCode = ExitCodes.Invalid;
@@ -798,8 +799,7 @@ public static class CheckpointApp
         RunRequest request,
         CheckpointManifest manifest,
         RunState state,
-        SchedulerResult result, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default,
-        ReportHost? host = null)
+        SchedulerResult result, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
     {
         context ??= CheckpointCleanupDefaults.Context;
         var rows = new List<ReportRow>();
@@ -856,7 +856,7 @@ public static class CheckpointApp
             Source = state.Source,
             Branch = request.Branch,
             Worktree = repo,
-            Host = host ?? HostSnapshot.Report(),
+            Host = HostSnapshot.Report(),
             StartedAt = state.StartedAt,
             EndedAt = ended,
             WallSeconds = (ended - state.StartedAt).TotalSeconds,

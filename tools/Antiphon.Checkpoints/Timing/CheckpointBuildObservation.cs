@@ -9,11 +9,16 @@ public sealed record CheckpointBuildPhase(
     string? SourceSha, string? SourceFingerprint, string? RequestedPropertiesDigest, string? LeaseId,
     DateTimeOffset RequestedAt, DateTimeOffset? LaunchedAt, DateTimeOffset? ExitedAt, DateTimeOffset SettledAt,
     double ElapsedSeconds, string Outcome, string BuildSource, string? OperatingSystem, string Architecture,
-    double? TestHostSeconds, DateTimeOffset? CleanupStartedAt, DateTimeOffset? CleanupEndedAt, bool? OutputsCleaned);
+    double? TestHostSeconds, DateTimeOffset? CleanupStartedAt, DateTimeOffset? CleanupEndedAt, bool? OutputsCleaned)
+{
+    public string BrokerCoverageReason { get; init; } = "broker-telemetry-unreachable";
+    public string CustodyCoverageReason { get; init; } = "custody-record-unreachable";
+}
 
 // Collect scalar facts during execution. Only the terminal path opens the shared journal.
 internal sealed class CheckpointBuildObservation(string runDirectory, string runId, string? taskId,
-    string? attemptId, TimeProvider time, int eventLimit = CheckpointBuildObservation.EventLimit)
+    string? attemptId, TimeProvider time, int eventLimit = CheckpointBuildObservation.EventLimit,
+    int byteLimit = CheckpointBuildObservation.ByteLimit)
 {
     internal const int EventLimit = 128;
     internal const int ByteLimit = 64 * 1024;
@@ -77,7 +82,7 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
         record.BuildPhase = phase;
         // Reserve room for the sequence, newline and terminal cleanup timestamps.
         var bytes = JsonSerializer.SerializeToUtf8Bytes(record, TimingJournal.Json).Length + 112;
-        if (_recordBytes + bytes > ByteLimit - DiagnosticReserve)
+        if (_recordBytes + bytes > byteLimit - DiagnosticReserve)
         {
             _truncated = true;
             return;
