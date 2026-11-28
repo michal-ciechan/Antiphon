@@ -300,6 +300,52 @@ public partial class ReviewEndToEndApiTests
     }
 
     [Test]
+    public async Task C2110_S1_pg_Pinned_publish_records_only_recipient_visible_html_coverage()
+    {
+        const string details = "<details>\n<summary>Optional context</summary>\n\n";
+        var candidate = PublishCandidate("A", "Visible summary finding", 55) with { InDiff = false };
+        var cases = new (int Number, string Template, bool UsesTemplate)[]
+        {
+            (21119, details + "{{findings}}\n\n</details>", false),
+            (21120, details + "Other text\n\n</details>\n\n{{findings}}", true),
+        };
+        foreach (var (number, template, usesTemplate) in cases)
+        {
+            var graph = PublishGraph(new Dictionary<string, object?>
+            {
+                ["inputs"] = new[] { "collate", "verify" },
+                ["summaryTemplate"] = template,
+            });
+            var fixture = await PostFixtureAsync(number, graph, [candidate]);
+            var receipt = Receipt(fixture.Pr, fixture.Output);
+            receipt.Target.PrNumber.ShouldBe(number);
+            receipt.Review.CommitSha.ShouldBe(HeadSha);
+            receipt.Review.Comments.ShouldBeEmpty();
+
+            var html = Markdig.Markdown.ToHtml(receipt.Review.Body);
+            var findingLine = html.IndexOf("<li>F1 major · ", StringComparison.Ordinal);
+            var detailsEnd = html.IndexOf("</details>", StringComparison.Ordinal);
+            var finding = fixture.Findings.ShouldHaveSingleItem();
+            finding.Posted.ShouldBe(findingLine >= 0 && findingLine > detailsEnd,
+                "Publish may mark a summary-only finding posted only when it is visible in the accepted review");
+            html.ShouldContain(candidate.Title + "</li>");
+            fixture.Output.SummaryOnly.ShouldBe([finding.Key]);
+            finding.Posted.ShouldBeTrue();
+            finding.ExternalThreadUrl.ShouldBe(receipt.Posted.Url);
+            if (usesTemplate)
+            {
+                receipt.Review.Body.ShouldStartWith(details);
+                detailsEnd.ShouldBeGreaterThanOrEqualTo(0);
+            }
+            else
+            {
+                receipt.Review.Body.ShouldStartWith("**Antiphon review**, round 1 (iteration 1)\n");
+                html.ShouldNotContain("<details>");
+            }
+        }
+    }
+
+    [Test]
     public async Task C2110_S1_pg_Pinned_Join_cannot_execute_Publish()
     {
         var pr = factory.Host.Open(21118, "Invalid Publish kind", "dana", BaseSha, HeadSha, Files, Diff);

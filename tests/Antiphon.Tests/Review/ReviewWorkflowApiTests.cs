@@ -153,6 +153,7 @@ public class ReviewWorkflowApiTests(AntiphonWebAppFactory factory)
             ("inline code", "Literal `text\n{{findings}}\ncontinues`"),
             ("HTML block", "<div>\n{{findings}}\n</div>"),
             ("link destination", "[link](\n{{findings}}\n)"),
+            ("image alt text", "![alt\n{{findings}}\ntext](image.png)"),
             ("indented code", "    {{defaultBody}}"),
         };
         var results = new List<(string Label, JsonElement Result)>();
@@ -176,6 +177,48 @@ public class ReviewWorkflowApiTests(AntiphonWebAppFactory factory)
             diagnostic.GetProperty("nodeIds").EnumerateArray().Select(id => id.GetString()).ShouldBe(["publish"]);
             diagnostic.GetProperty("field").GetString().ShouldBe("summaryTemplate");
             diagnostic.GetProperty("message").GetString()!.ShouldContain("visible");
+        }
+    }
+
+    [Test]
+    public async Task C2110_S1_pg_validate_requires_coverage_outside_html_containers()
+    {
+        using var client = factory.CreateClient();
+        var graph = (await client.GetFromJsonAsync<WorkflowGraphDto>("/api/review-workflows/default", ReviewWorkflowService.GraphJsonOptions))
+            .ShouldNotBeNull();
+        const string details = "<details>\n<summary>Optional context</summary>\n\n";
+        var cases = new (string Template, bool Valid)[]
+        {
+            (details + "{{findings}}\n\n</details>", false),
+            (details + "Other text\n\n</details>\n\n{{findings}}", true),
+            ("<DETAILS open>\n\n{{defaultBody}}\n\n</DETAILS>", false),
+            ("<details>\n<summary>\n\n{{findings}}\n\n</summary>\n</details>", false),
+            ("<div hidden>\n\n{{findings}}\n\n</div>", false),
+            ("<div style=\"display:none\">\n\n{{findings}}\n\n</div>", false),
+            ("<unknown-container>\n\n{{findings}}", false),
+            ("<details/>\n\n{{findings}}", false),
+            (details + "```html\n</details>\n```\n\n{{findings}}", false),
+            ("<!-- <details> -->\n\n{{findings}}", true),
+        };
+        foreach (var (template, valid) in cases)
+        {
+            var edited = graph with
+            {
+                Nodes = graph.Nodes.Select(n => n.Id == "publish"
+                    ? n with { Params = new Dictionary<string, object?> { ["summaryTemplate"] = template } } : n).ToList(),
+            };
+            using var response = await client.PostAsJsonAsync("/api/review-workflows/validate", edited, ReviewWorkflowService.GraphJsonOptions);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+            result.GetProperty("valid").GetBoolean().ShouldBe(valid, template);
+            if (valid)
+                continue;
+
+            var diagnostic = result.GetProperty("diagnostics").EnumerateArray()
+                .Single(d => d.GetProperty("code").GetString() == "invalid-summary-template");
+            diagnostic.GetProperty("nodeIds").EnumerateArray().Select(id => id.GetString()).ShouldBe(["publish"]);
+            diagnostic.GetProperty("field").GetString().ShouldBe("summaryTemplate");
+            diagnostic.GetProperty("message").GetString()!.ShouldContain("outside HTML containers");
         }
     }
 
