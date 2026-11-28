@@ -146,6 +146,11 @@ test('C2109_S1_diagnostic_focus', async () => {
   await waitFor(() => expect(fitView).toHaveBeenCalledWith(expect.objectContaining({
     nodes: expect.arrayContaining([{ id: 'await-merge' }, { id: 'base-drift' }]),
   })))
+
+  const toggle = screen.getByRole('button', { name: 'Intake' })
+  toggle.focus()
+  await user.keyboard('{Enter}')
+  expect(toggle).toHaveFocus()
 })
 
 test('C2109_S1_policy_identity', async () => {

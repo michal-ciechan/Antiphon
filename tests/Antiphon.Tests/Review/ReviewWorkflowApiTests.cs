@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Review;
+using Antiphon.Server.Application.Review.Execution;
 using Antiphon.Server.Application.Review.Workflows;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -15,6 +16,7 @@ using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Shouldly;
 using TUnit.Core;
 
@@ -157,6 +159,124 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
     }
 
     [Test]
+    [Arguments("nodes", 257)]
+    [Arguments("edges", 1025)]
+    public async Task S1_validation_refuses_oversized_graphs(string collection, int count)
+    {
+        using var client = factory.CreateClient();
+        var graph = WorkflowJson(ReviewWorkflowYaml.LoadDefault());
+        var element = graph[collection]!.AsArray()[0]!;
+        graph[collection] = new JsonArray(Enumerable.Range(0, count).Select(_ => element.DeepClone()).ToArray());
+
+        using var response = await client.PostAsJsonAsync(ValidatePath, graph);
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "workflow_graph_limit");
+    }
+
+    [Test]
+    public async Task S1_validation_refuses_deep_parameters()
+    {
+        using var client = factory.CreateClient();
+        var graph = WorkflowJson(ReviewWorkflowYaml.LoadDefault());
+        JsonNode nested = JsonValue.Create("leaf")!;
+        for (var depth = 0; depth < 25; depth++)
+            nested = new JsonArray(nested);
+        graph["nodes"]!.AsArray()[0]!["params"]!["extra"] = nested;
+
+        using var response = await client.PostAsJsonAsync(ValidatePath, graph);
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "workflow_parameter_limit");
+    }
+
+    [Test]
+    public async Task S1_validation_refuses_duplicate_nested_parameter_keys()
+    {
+        using var client = factory.CreateClient();
+        using var content = new StringContent("""
+            {"nodes":[{"id":"intake","kind":"Code","run":"Intake","params":{"extra":{"duplicate":1,"duplicate":2}}}]}
+            """, Encoding.UTF8, "application/json");
+
+        using var response = await client.PostAsync(ValidatePath, content);
+        await AssertProblemAsync(response, HttpStatusCode.BadRequest, "bad_request");
+    }
+
+    [Test]
+    public async Task S1_validation_caps_diagnostic_fan_out()
+    {
+        using var client = factory.CreateClient();
+        var graph = WorkflowJson(ReviewWorkflowYaml.LoadDefault());
+        var edges = graph["edges"]!.AsArray();
+        for (var index = 0; index < 128; index++)
+            edges.Add(new JsonObject { ["from"] = $"missing-from-{index}", ["to"] = $"missing-to-{index}" });
+
+        using var response = await client.PostAsJsonAsync(ValidatePath, graph);
+        await AssertProblemAsync(response, HttpStatusCode.UnprocessableEntity, "workflow_diagnostic_limit");
+    }
+
+    [Test]
+    [Arguments("empty", "missing-entry", null)]
+    [Arguments("group", "missing-successor", "group")]
+    [Arguments("failure", "missing-failure-route", "delta")]
+    [Arguments("implicit", "unavailable-input", "packs")]
+    public async Task S1_validation_requires_executable_routes(string change, string expectedCode, string? nodeId)
+    {
+        using var client = factory.CreateClient();
+        var graph = WorkflowJson(ReviewWorkflowYaml.LoadDefault());
+        var edges = graph["edges"]!.AsArray();
+        JsonNode From(string id) => edges.Single(edge => edge!["from"]!.GetValue<string>() == id)!;
+        switch (change)
+        {
+            case "empty":
+                graph = new JsonObject { ["nodes"] = new JsonArray(), ["edges"] = new JsonArray() };
+                break;
+            case "group":
+                edges.Remove(From("group"));
+                break;
+            case "failure":
+                From("delta")["label"] = "incremental|full";
+                graph["nodes"]!.AsArray().Single(node => node!["id"]!.GetValue<string>() == "delta")!
+                    ["params"]!["onFailure"] = "continue";
+                break;
+            case "implicit":
+                From("select")["to"] = "packs";
+                break;
+        }
+
+        using var response = await client.PostAsJsonAsync(ValidatePath, graph);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var validation = (await response.Content.ReadFromJsonAsync<WorkflowValidationDto>())!;
+        validation.Valid.ShouldBeFalse();
+        validation.Diagnostics.ShouldContain(d => d.Code == expectedCode
+            && (nodeId is null || d.NodeIds.Contains(nodeId)));
+    }
+
+    [Test]
+    public async Task S1_validation_serializes_the_exact_parallel_edge_index()
+    {
+        using var client = factory.CreateClient();
+        var graph = WorkflowJson(ReviewWorkflowYaml.LoadDefault());
+        var edges = graph["edges"]!.AsArray();
+        var original = edges.Single(edge => edge!["from"]!.GetValue<string>() == "route"
+            && edge["label"]?.GetValue<string>() == "findings")!;
+        var duplicateIndex = edges.Count;
+        edges.Add(original.DeepClone());
+
+        using var response = await client.PostAsJsonAsync(ValidatePath, graph);
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var diagnostic = result.GetProperty("diagnostics").EnumerateArray()
+            .Single(row => row.GetProperty("code").GetString() == "ambiguous-route");
+        var edge = diagnostic.GetProperty("edge");
+        edge.GetProperty("from").GetString().ShouldBe("route");
+        edge.GetProperty("to").GetString().ShouldBe("await-fixes");
+        edge.GetProperty("index").GetInt32().ShouldBe(duplicateIndex);
+    }
+
+    private static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code)
+    {
+        response.StatusCode.ShouldBe(status);
+        (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().ShouldBe(code);
+    }
+
+    [Test]
     public async Task C2109_S1_Unknown_text_kind_is_a_node_diagnostic()
     {
         using var client = factory.CreateClient();
@@ -211,6 +331,51 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
         nodes["categorise"].OnFailure.ShouldBe(new WorkflowPolicyValue<string>("stop", WorkflowPolicySource.InstanceOverride));
         nodes["verify"].OnFailure.ShouldBe(new WorkflowPolicyValue<string>("continue", WorkflowPolicySource.WorkflowRevision));
         nodes["intake"].OnFailure.ShouldBe(new WorkflowPolicyValue<string>("stop", WorkflowPolicySource.StepDefault));
+    }
+
+    [Test]
+    public async Task S1_fan_out_policy_matches_failed_continued_execution()
+    {
+        using var client = factory.CreateClient();
+        var embedded = ReviewWorkflowYaml.LoadDefault();
+        var run = await SeedAsync("test/policy-fan-out", embedded with
+        {
+            Edges = embedded.Edges.Select(edge => edge.From == "review" ? edge with { To = "await-fixes" } : edge).ToArray(),
+        });
+        await QueueFanOutAsync(run.Id);
+
+        var executor = factory.Services.GetServices<IHostedService>().OfType<ReviewWorkflowExecutor>().Single();
+        (await executor.RunPendingAsync(CancellationToken.None)).ShouldBe(1);
+
+        var detail = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
+        detail.GetProperty("status").GetString().ShouldBe("AwaitingFixes");
+        var review = detail.GetProperty("nodes").EnumerateArray().Single(node => node.GetProperty("nodeId").GetString() == "review");
+        review.GetProperty("status").GetString().ShouldBe("FailedContinued");
+        review.GetProperty("summary").GetString()!.ShouldContain("No context pack for group fixture");
+        var policy = (await ReadPolicyAsync(client, run.Id)).Nodes.Single(node => node.NodeId == "review");
+        policy.OnFailure.ShouldBe(new WorkflowPolicyValue<string>("continue", WorkflowPolicySource.InstanceOverride));
+    }
+
+    private async Task QueueFanOutAsync(Guid runId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var run = await db.ReviewRuns.Include(row => row.Iterations).SingleAsync(row => row.Id == runId);
+        run.Status = ReviewRunStatus.Queued;
+        run.Iterations.Single().HeadSha = new string('b', 40);
+        db.ReviewNodeExecutions.AddRange(
+            new ReviewNodeExecution
+            {
+                Id = Guid.NewGuid(), RunId = runId, NodeId = "group", Kind = ReviewNodeKind.Code, Iteration = 1, Sequence = 2,
+                Status = ReviewNodeStatus.Succeeded, StartedAt = SeedTime, CompletedAt = SeedTime,
+                OutputJson = ReviewWalk.ToJson(new GroupOutput([new ReviewGroup("fixture", [], false, "Low", 1)])),
+            },
+            new ReviewNodeExecution
+            {
+                Id = Guid.NewGuid(), RunId = runId, NodeId = "review", Kind = ReviewNodeKind.FanOut, Iteration = 1, Sequence = 3,
+                Status = ReviewNodeStatus.Pending,
+            });
+        await db.SaveChangesAsync();
     }
 
     [Test]
@@ -385,6 +550,7 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
             {
                 settings.OnFailure["categorise"] = " STOP ";
                 settings.OnFailure["verify"] = "   ";
+                settings.OnFailure["review"] = "continue";
                 settings.GatesOff["merge-gate"] = [" test/policy-gate-a "];
                 settings.GatesOff["human-approve"] = ["test/policy-gate-a"];
             });
