@@ -432,6 +432,11 @@ public sealed class VerifiedSessionStopTests
                 inputs.ShouldBeEmpty();
                 await harness.Runtime.ObserveExitAsync(id, 0, AgentExitReason.KilledByRequest, bound.Token, generation);
             }
+            else
+            {
+                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
+                dispatched.AgentSessionId.ShouldNotBeNull();
+            }
             (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeFalse();
             await db.Entry(session).ReloadAsync(bound.Token);
             session.Status.ShouldBe(SessionStatus.Stopped);
