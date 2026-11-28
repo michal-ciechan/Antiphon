@@ -33,6 +33,16 @@ public sealed class HistoricalMigrationSeedCoverageTests
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportCompletedAt", true, false)),
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportPromptSequence", true, false)),
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportSessionId", true, false)),
+        // The historical PR fixture writes through predecessor SQL. Reversible-tip task seeds
+        // project AgentTask onto their older model, including its relationships and indexes.
+        (MigrationTestDatabase.OpenReviewRunMigration, new("ReviewRuns", "GitHubPrNumber", true, false)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("ReviewRuns", "GitHubRepo", true, false)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("ReviewRuns", "GitHubAuthority", true, false)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("ReviewRuns", "GitHubRepositoryId", true, false)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("ReviewRuns", "IsDemo", false, true)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("AgentTasks", "ReviewerRunId", true, false)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("AgentTasks", "ReviewerNodeId", true, false)),
+        (MigrationTestDatabase.OpenReviewRunMigration, new("AgentTasks", "ReviewerAttempt", true, false)),
     ];
 
     [Test]

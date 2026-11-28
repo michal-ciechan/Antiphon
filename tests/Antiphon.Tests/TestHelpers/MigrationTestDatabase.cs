@@ -35,7 +35,14 @@ internal static class MigrationTestDatabase
             var task = builder.Entity<AgentTask>();
             var legacy = new AddRefOnlyParkWorkspaceSnapshot().TargetModel.FindEntityType(typeof(AgentTask).FullName!)!;
             foreach (var property in task.Metadata.GetProperties().Where(p => legacy.FindProperty(p.Name) is null).ToArray())
+            {
+                // Explicit relationships and indexes can retain a shadow property after Ignore.
+                foreach (var foreignKey in property.GetContainingForeignKeys().ToArray())
+                    task.Metadata.RemoveForeignKey(foreignKey);
+                foreach (var index in property.GetContainingIndexes().ToArray())
+                    task.Metadata.RemoveIndex(index);
                 task.Ignore(property.Name);
+            }
         }
     }
 
@@ -65,7 +72,7 @@ internal static class MigrationTestDatabase
           """
         + $"\nDELETE FROM \"__EFMigrationsHistory\" WHERE \"MigrationId\" IN ('{ReviewEngineMigration}', '{OpenReviewRunMigration}');";
 
-    private const string OpenReviewRunMigration = "20261127142459_EnforceOneOpenReviewRunPerPullRequest";
+    public const string OpenReviewRunMigration = "20261127142459_EnforceOneOpenReviewRunPerPullRequest";
 
     public static string[] Names()
     {
