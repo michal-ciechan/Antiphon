@@ -1,7 +1,7 @@
 import { onlineManager } from '@tanstack/react-query'
 import { cleanup } from '@testing-library/react'
 import { HttpResponse, delay, http, type JsonBodyType } from 'msw'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentTaskRole } from '../../api/agentTasks'
 import {
   complexityChainKeys,
@@ -29,6 +29,11 @@ import {
 } from './routingSettingsModel'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
+
+let user: ReturnType<typeof userEvent.setup>
+beforeEach(() => {
+  user = userEvent.setup({ delay: null })
+})
 
 const grok: ComplexityCandidateDto = {
   agentKind: 'Grok',
@@ -515,7 +520,7 @@ describe('C1270 cell editor after a failed read', () => {
       renderWithProviders(<RoutingSettingsTab />)
 
       const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
-      await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+      await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
       const editor = await screen.findByTestId('routing-cell-editor')
       const reason = within(editor).getByLabelText('Reason (optional)')
       const expires = within(editor).getByLabelText('Expires (optional)')
@@ -532,13 +537,13 @@ describe('C1270 cell editor after a failed read', () => {
         expect(confirm).not.toBeChecked()
         expect(save).toBeDisabled()
         expect(clear).toBeDisabled()
-        await userEvent.click(within(editor).getByRole('button', { name: 'Add candidate' }))
-        await userEvent.type(reason, 'rewrite')
+        await user.click(within(editor).getByRole('button', { name: 'Add candidate' }))
+        await user.type(reason, 'rewrite')
         expect(save).toBeDisabled()
-        await userEvent.click(confirm)
+        await user.click(confirm)
         expect(clear).toBeEnabled()
         expect(save).toBeEnabled()
-        await userEvent.click(save)
+        await user.click(save)
         await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
         expect(put.mock.calls[0][0]).toBe(`Plan/${tier}`)
         expect(put.mock.calls[0][1]).toMatchObject({ provenance: 'Human', reason: 'rewrite', notAfter: null })
@@ -552,9 +557,9 @@ describe('C1270 cell editor after a failed read', () => {
         expect(confirm).not.toBeChecked()
         expect(save).toBeDisabled()
         expect(clear).toBeEnabled()
-        await userEvent.click(confirm)
+        await user.click(confirm)
         expect(save).toBeEnabled()
-        await userEvent.click(save)
+        await user.click(save)
         await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
         expect(put).toHaveBeenCalledWith(`Plan/${tier}`, {
           candidates: [{ agentKind: 'Grok', modelLevel: 'Frontier' }], provenance: 'Human', reason: null, notAfter: null,
@@ -871,7 +876,7 @@ describe('C1270 D-1 offline reads and the cell editor', () => {
       )
       const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
       const cell = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
-      await userEvent.click(within(cell).getByRole('button', { name: 'Configure Plan / Hard' }))
+      await user.click(within(cell).getByRole('button', { name: 'Configure Plan / Hard' }))
       const editor = await screen.findByTestId('routing-cell-editor')
       const button = within(editor).getByRole('button', { name: action })
       expect(button).toBeEnabled()
@@ -901,10 +906,10 @@ describe('C1270 D-2 clear confirmation after a failed read', () => {
     serveRouting({ list: planCellList(tier), effective: { Plan: { ...planEffective, chains: [c1270Cell('chain', 'Required', tier)] } } })
     renderWithProviders(<RoutingSettingsTab />)
     const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
-    await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+    await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
     const editor = await screen.findByTestId('routing-cell-editor')
-    await userEvent.click(within(editor).getByRole('checkbox', { name: c1270EditorConfirm.chain }))
-    await userEvent.click(within(editor).getByRole('button', { name: 'Clear override' }))
+    await user.click(within(editor).getByRole('checkbox', { name: c1270EditorConfirm.chain }))
+    await user.click(within(editor).getByRole('button', { name: 'Clear override' }))
 
     const confirm = await within(editor).findByTestId('routing-cell-editor-clear-confirm')
     expect(confirm).toHaveTextContent(`Clear Plan/${tier} override?`)
@@ -916,9 +921,9 @@ describe('C1270 D-2 clear confirmation after a failed read', () => {
     serveRouting({ list: planCellList(tier), effective: { Plan: { ...planEffective, chains: [c1270Cell('chain metadata', 'Required', tier)] } } })
     renderWithProviders(<RoutingSettingsTab />)
     const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
-    await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+    await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
     const editor = await screen.findByTestId('routing-cell-editor')
-    await userEvent.click(within(editor).getByRole('button', { name: 'Clear override' }))
+    await user.click(within(editor).getByRole('button', { name: 'Clear override' }))
 
     const confirm = await within(editor).findByTestId('routing-cell-editor-clear-confirm')
     expect(confirm).toHaveTextContent('The stored reason and expiry are unknown (chain metadata read failed (InvalidOperationException)); clearing deletes them with the row.')
@@ -1131,10 +1136,10 @@ describe('RoutingSettingsTab', () => {
     renderWithProviders(<RoutingSettingsTab />)
     // Wait for the data-loaded test id before clicking; the original C470 failure cause is a hypothesis, not established (CARD-0097 D2).
     const mutationHard = await screen.findByTestId('routing-matrix-cell-Mutation-Hard')
-    await userEvent.click(within(mutationHard).getByRole('button', { name: 'Configure Mutation / Hard' }))
+    await user.click(within(mutationHard).getByRole('button', { name: 'Configure Mutation / Hard' }))
     const editor = await screen.findByTestId('routing-cell-editor')
-    await userEvent.click(within(editor).getByRole('button', { name: 'Add candidate' }))
-    await userEvent.click(within(editor).getByRole('button', { name: 'Save' }))
+    await user.click(within(editor).getByRole('button', { name: 'Add candidate' }))
+    await user.click(within(editor).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put).toHaveBeenCalledWith('Mutation', expect.objectContaining({ provenance: 'Human' }))
     await screen.findByTestId('routing-pin-banner-Code')
@@ -1330,7 +1335,7 @@ describe('RoutingSettingsTab', () => {
     expect(within(planHard).getByRole('button', { name: 'Configure Plan / Hard' })).toBeInTheDocument()
     expect(screen.queryByTestId('routing-cell-editor')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Configure Plan / Hard' }))
+    await user.click(screen.getByRole('button', { name: 'Configure Plan / Hard' }))
     expect(await screen.findByRole('dialog', { name: 'Configure Plan / Hard' })).toBeInTheDocument()
     expect(screen.getByTestId('routing-cell-editor')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
@@ -1369,11 +1374,11 @@ describe('C1275 editor draft across a failed list refresh', () => {
     serveRouting()
     const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
     const anyHard = await screen.findByTestId('routing-matrix-cell-any-Hard')
-    await userEvent.click(within(anyHard).getByRole('button', { name: 'Configure Any role / Hard' }))
+    await user.click(within(anyHard).getByRole('button', { name: 'Configure Any role / Hard' }))
     const editor = await screen.findByTestId('routing-cell-editor')
     const reason = within(editor).getByLabelText('Reason (optional)')
-    await userEvent.clear(reason)
-    await userEvent.type(reason, 'unsaved draft')
+    await user.clear(reason)
+    await user.type(reason, 'unsaved draft')
 
     server.use(http.get('/api/complexity-chains', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
     await act(async () => { await queryClient.refetchQueries({ queryKey: complexityChainKeys.list(), exact: true }) })
