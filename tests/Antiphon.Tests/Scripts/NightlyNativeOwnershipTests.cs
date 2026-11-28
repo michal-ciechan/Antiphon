@@ -215,7 +215,7 @@ public sealed class NightlyNativeOwnershipTests
             result.CleanupComplete.ShouldBeFalse();
         }, cancellationToken);
 
-    [Test, Timeout(120_000)]
+    [Test, Timeout(40_000)]
     public Task C1039_FileStdinFailedLaunchHasOneCleanupBudget(CancellationToken cancellationToken) =>
         RunAsync(nameof(C1039_FileStdinFailedLaunchHasOneCleanupBudget), native =>
         {

@@ -150,6 +150,7 @@ namespace Antiphon.Nightly
             var drainCancellation = _drainCancellation.Token;
             var clock = Stopwatch.StartNew();
             bool resumed = false;
+            bool failed = false;
             string stdoutPath = logPath + ".stdout.tmp", stderrPath = logPath + ".stderr.tmp";
             void ClearActiveHeartbeat()
             {
@@ -237,7 +238,11 @@ namespace Antiphon.Nightly
                     CloseCarrierHandle(carrier.Process, startup.Startup.stdin);
                     CloseCarrierHandle(carrier.Process, startup.Startup.stdout);
                     CloseCarrierHandle(carrier.Process, startup.Startup.stderr);
-                    StopHandleCarrier(ref carrier);
+                    // Reuse this deadline if stopping the carrier fails during launch.
+                    cleanup = Stopwatch.StartNew();
+                    TerminateHandleCarrier(carrier.Process);
+                    WaitForHandleCarrier(ref carrier, cleanup, cleanupBudget);
+                    cleanup = null;
                 }
                 using (var identity = Process.GetProcessById(Observation.Pid)) Observation.RootStartedAtUtc = identity.StartTime.ToUniversalTime();
                 // Desktop packaged apps can create unpackaged children outside this job,
@@ -384,9 +389,13 @@ namespace Antiphon.Nightly
             }
             catch (Exception ex)
             {
+                failed = true;
                 Observation.Error = ex.Message; Observation.ExitCode = 1;
                 Observation.OutputDrained = false;
                 cleanup ??= Stopwatch.StartNew();
+                // Signal the carrier before waiting for the job to empty or its output handles to close.
+                try { if (carrier.Process != IntPtr.Zero) TerminateHandleCarrier(carrier.Process); }
+                catch (Exception e) { Observation.Error += "; " + e.Message; }
                 _drainCancellation.Cancel();
                 try
                 {
@@ -396,7 +405,6 @@ namespace Antiphon.Nightly
                 {
                     Observation.Error += "; Native job cleanup observation failed: " + cleanupError.Message;
                 }
-                Observation.CleanupMilliseconds = cleanup.Elapsed.TotalMilliseconds;
                 var pendingOutput = new[] { stdout?.Completion, stderr?.Completion, logWrite }.Where(work => work != null);
                 try
                 {
@@ -412,6 +420,8 @@ namespace Antiphon.Nightly
             }
             finally
             {
+                try { WaitForHandleCarrier(ref carrier, cleanup, cleanupBudget); }
+                catch (Exception e) { Observation.Error += "; " + e.Message; }
                 // Retain the idle verdict for the observer's next poll or until the next native chunk starts.
                 if (string.IsNullOrEmpty(Observation.IdleHangReason)) ClearActiveHeartbeat();
                 if (drain != null) Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
@@ -419,8 +429,6 @@ namespace Antiphon.Nightly
                 StampOwnerObservation(root);
                 Observation.DescendantIdentities = _descendants.Values.Select(p => p.Id + ":" + p.StartTime.ToUniversalTime().ToString("O")).ToArray();
                 foreach (var p in _descendants.Values) p.Dispose();
-                try { StopHandleCarrier(ref carrier); }
-                catch (Exception e) { Observation.Error += "; " + e.Message; }
                 Close(ref job); Close(ref root); Close(ref thread);
                 JobHandle = IntPtr.Zero;
                 Close(ref outRead); Close(ref outWrite); Close(ref errRead); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
@@ -429,6 +437,7 @@ namespace Antiphon.Nightly
                 if (parentAttribute != IntPtr.Zero) Marshal.FreeHGlobal(parentAttribute);
                 if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);
                 if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
+                if (failed) Observation.CleanupMilliseconds = cleanup.Elapsed.TotalMilliseconds;
             }
             return Observation;
         }
@@ -965,15 +974,23 @@ namespace Antiphon.Nightly
                 "DuplicateHandle close launch copy");
         }
 
-        private void StopHandleCarrier(ref ProcessInfo carrier)
+        private static void TerminateHandleCarrier(IntPtr carrier)
+        {
+            // The carrier never runs. Its exit also releases any copies left by a failed launch.
+            Check(TerminateProcess(carrier, 1) || RootExited(carrier), "TerminateProcess handle carrier");
+        }
+
+        private void WaitForHandleCarrier(ref ProcessInfo carrier, Stopwatch cleanup, int budget)
         {
             if (carrier.Process == IntPtr.Zero) return;
             try
             {
-                // The carrier never runs. Its exit also releases any copies left by a failed launch.
-                Check(TerminateProcess(carrier.Process, 1) || RootExited(carrier.Process), "TerminateProcess handle carrier");
-                var wait = WaitForCarrierExit(carrier.Process, DefaultCleanupTimeoutMilliseconds);
-                if (wait == 258) throw new TimeoutException("Suspended handle carrier did not exit within the cleanup budget.");
+                var wait = WaitForCarrierExit(carrier.Process, TimeLeft(cleanup, budget));
+                if (wait == 258)
+                {
+                    Observation.TimedOut = true;
+                    throw new TimeoutException("Suspended handle carrier did not exit within the cleanup budget.");
+                }
                 Check(wait == 0, "WaitForSingleObject handle carrier");
             }
             finally
