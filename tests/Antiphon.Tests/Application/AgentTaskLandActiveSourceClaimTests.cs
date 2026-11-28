@@ -222,7 +222,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
             return await LandingHarnessSnapshot.CreateAsync("active-source-claim-cleanup-refused",
                 ConfigureDispatcher, PrepareAsync);
 
-        var harness = new LandingSafetyHarness();
+        var harness = NewClaimHarness();
         try
         {
             ConfigureDispatcher(harness);
@@ -235,6 +235,11 @@ public sealed class AgentTaskLandActiveSourceClaimTests
             throw;
         }
     }
+
+    // Keep generated observation refs under Git's Windows path limits so guarded reads can use libgit2.
+    // The cleanup snapshot has its own root format for rewriting copied paths.
+    private static LandingSafetyHarness NewClaimHarness() =>
+        new(root: Directory.CreateTempSubdirectory("antiphon-c448-").FullName);
 
     private static string CleanupResidue(LandingSafetyHarness harness) =>
         Path.Combine(harness.Fixture.Source, ".antiphon", "report.md");
@@ -266,7 +271,7 @@ public sealed class AgentTaskLandActiveSourceClaimTests
 
     private static async Task AssertLandFirstAdmissionAsync(string claimant)
     {
-        await using var h = new LandingSafetyHarness();
+        await using var h = NewClaimHarness();
         ConfigureDispatcher(h);
         await h.InitializeAsync();
         await h.AddSourceAsync();
