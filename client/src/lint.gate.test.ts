@@ -15,7 +15,13 @@ import { ESLint } from 'eslint'
  */
 describe('lint gate', () => {
   it('eslint reports zero problems across the client', { timeout: 180_000 }, async () => {
-    const eslint = new ESLint({ cwd: process.cwd() })
+    // Share the CLI gate's content-addressed cache. Standalone runs still lint every uncached file.
+    const eslint = new ESLint({
+      cwd: process.cwd(),
+      cache: true,
+      cacheLocation: 'node_modules/.tmp/eslintcache',
+      cacheStrategy: 'content',
+    })
     const results = await eslint.lintFiles(['.'])
     const problems = results.filter((r) => r.errorCount > 0 || r.warningCount > 0)
     const formatter = await eslint.loadFormatter('stylish')
