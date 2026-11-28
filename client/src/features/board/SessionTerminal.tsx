@@ -42,6 +42,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
 
     let disposed = false
     let joined = false
+    let joinAttempt = 0
     let backlogLoaded = false
     let lastAppliedSequence = 0
     const pendingDeltas: AgentTextDeltaPayload[] = []
@@ -86,11 +87,14 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
 
     const join = async () => {
       if (disposed || connection.state !== HubConnectionState.Connected) return
+      const attempt = ++joinAttempt
       try {
         await connection.invoke('JoinGroup', groupName)
-        if (connection.state === HubConnectionState.Connected) setJoined(true)
+        if (attempt === joinAttempt && connection.state === HubConnectionState.Connected) setJoined(true)
       } catch (error) {
-        setJoined(false, error instanceof Error ? error.message : 'Terminal attachment was refused.')
+        if (attempt === joinAttempt) {
+          setJoined(false, error instanceof Error ? error.message : 'Terminal attachment was refused.')
+        }
       }
     }
 
@@ -137,8 +141,14 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
     }
 
     connection.on('AgentTextDelta', onDelta)
-    connection.onreconnecting(() => setJoined(false))
-    connection.onclose(() => setJoined(false, 'Terminal connection closed.'))
+    connection.onreconnecting(() => {
+      joinAttempt++
+      setJoined(false)
+    })
+    connection.onclose(() => {
+      joinAttempt++
+      setJoined(false, 'Terminal connection closed.')
+    })
     connection.onreconnected(() => {
       setJoined(false)
       void (async () => {

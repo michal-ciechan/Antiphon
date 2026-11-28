@@ -379,7 +379,7 @@ public sealed class VerifiedSessionStopTests
         {
             var task = await AgentTaskPoolTests.SeedQueuedTaskAsync(session.Cwd, agent.ModelLevel,
                 pinnedAgentId: agent.Id, kind: AgentKind.Codex, connectionString: schema.ConnectionString);
-            var (dispatcher, _, provider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
+            var (_, _, provider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
             await using var owner = provider;
             var stop = client.PostAsync(path, null, bound.Token);
             try
@@ -387,7 +387,7 @@ public sealed class VerifiedSessionStopTests
                 await fenceEntered.Task.WaitAsync(bound.Token);
                 // Probe an actual PostgreSQL row conflict from the real dispatcher, not a timing
                 // assumption about when its continuation reaches FOR KEY SHARE.
-                var dispatch = dispatcher.TickAsync(bound.Token);
+                var dispatch = TryWarmClaimAsync(provider, task.Id, bound.Token);
                 try
                 {
                     await using var monitor = new NpgsqlConnection(schema.ConnectionString);
@@ -402,7 +402,11 @@ public sealed class VerifiedSessionStopTests
                         if (!waiting && !dispatch.IsCompleted)
                             await Task.Delay(20, bound.Token);
                     } while (!waiting && !dispatch.IsCompleted);
-                    waiting.ShouldBeTrue("dispatch must meet the real stop fence");
+                    if (!waiting)
+                    {
+                        var earlyOutcome = await dispatch;
+                        waiting.ShouldBeTrue($"dispatch returned {earlyOutcome} before taking the real stop fence");
+                    }
                 }
                 finally
                 {
@@ -418,14 +422,13 @@ public sealed class VerifiedSessionStopTests
             using (response)
                 response.StatusCode.ShouldBe(scenario == "lost-readback-claim" ? HttpStatusCode.Conflict : HttpStatusCode.OK);
 
-            var (retry, _, retryProvider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
-            await using var retryOwner = retryProvider;
-            await retry.TickAsync(bound.Token);
+            var retry = await TryWarmClaimAsync(provider, task.Id, bound.Token);
             var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, bound.Token);
             dispatched.AgentSessionId.ShouldNotBe(id, "the dispatcher must never claim the stopped generation");
             if (scenario == "lost-readback-claim")
             {
                 dispatched.Status.ShouldBe(AgentTaskStatus.Queued, "the pinned process is still reserved for reconciliation");
+                retry.ShouldBe(AgentTaskDispatcher.ReuseOutcome.WaitForAgent);
                 (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeTrue();
                 using var input = await client.PostAsJsonAsync($"/api/sessions/{id}/input", new { input = "held" }, bound.Token);
                 input.StatusCode.ShouldBe(HttpStatusCode.Conflict);
@@ -434,8 +437,7 @@ public sealed class VerifiedSessionStopTests
             }
             else
             {
-                dispatched.Status.ShouldBe(AgentTaskStatus.Dispatched);
-                dispatched.AgentSessionId.ShouldNotBeNull();
+                retry.ShouldBe(AgentTaskDispatcher.ReuseOutcome.SpawnFresh);
             }
             (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeFalse();
             await db.Entry(session).ReloadAsync(bound.Token);
@@ -495,5 +497,20 @@ public sealed class VerifiedSessionStopTests
             }
             runner.KillCalls.ShouldBe(0);
         }
+    }
+
+    private static async Task<AgentTaskDispatcher.ReuseOutcome> TryWarmClaimAsync(
+        IServiceProvider provider, Guid taskId, CancellationToken ct)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId, ct);
+        var outcome = await dispatcher.TryReuseWarmAgentAsync(task, DateTime.UtcNow, ct);
+        if (outcome == AgentTaskDispatcher.ReuseOutcome.Reused)
+            await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        return outcome;
     }
 }

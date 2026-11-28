@@ -319,7 +319,12 @@ The [verified single-session stop](orchestration-loop.md#verified-single-session
 `POST /api/sessions/{id}/kill` with `expectedGeneration`, `expectedTurnEndSequence` and
 the non-null `expectedOwnerId`, `expectedLastTaskId` and `expectedLastTaskRevision` query
 parameters. Success returns the runner-confirmed `Exited` generation and `openTaskId: null`.
-HTTP 409 means the preconditions or the exit proof failed.
+The conditional route requires a scoped `X-Antiphon-Task-Token` and accepts only eligible Codex
+and Grok PtyHost seats. Omit the guard parameters for the human-only kill, which requires
+`X-Antiphon-Operator-Token`. Either route accepts a JSON `reason` for the audit. Missing or invalid
+authority returns 403. A conditional 409 means the preconditions or the exit proof failed.
+Until an issued stop's exit is confirmed, the generation is excluded from warm reuse, terminal
+input returns 409 `session_stop_in_flight`, and new SignalR session-group joins are refused.
 
 The delivery queue lists Pending rows and Sent rows with a null verdict and at least
 one attempt. `deliveryUnconfirmed`, `deliveryAttempts`, `lastDeliveryStartedAt` and
