@@ -52,8 +52,9 @@ public sealed class ExpectedPlatformSkipRosterTests
     [Test]
     public void Herdr_scheduling_skips_are_accepted_only_on_the_opposite_platform()
     {
+        const string testNamespace = "Antiphon.SessionRunner.Tests";
         const string shortName = "HerdrLabelFollowSchedulingTests";
-        const string className = "Antiphon.SessionRunner.Tests." + shortName;
+        const string className = testNamespace + "." + shortName;
         var windowsSkips = new (string Method, string Reason)[]
         {
             ("Saved_snapshot_reads_while_writer_holds_mutex_on_unix", "Unix snapshot replacement permits a concurrent unlocked read."),
@@ -72,6 +73,7 @@ public sealed class ExpectedPlatformSkipRosterTests
             PsValue.Str(PsValue.Prop(entry, "platform")), PsValue.Str(PsValue.Prop(entry, "reasonPrefix")),
             NightlyChunkVerdict.ReasonClass(entry))).ToArray();
         var policy = NightlyPolicy.Read(Repo, "").Object;
+        var sourceIndex = new NightlyCsMethodIndex(Path.Combine(Repo, "tests"));
         foreach (var (platform, nativePlatform, skips) in new[] { ("windows", "linux", windowsSkips), ("linux", "windows", linuxSkips) })
         {
             var trx = fixture.PathOf(platform + ".trx");
@@ -109,8 +111,6 @@ public sealed class ExpectedPlatformSkipRosterTests
             var herdrEntries = roster.Where(entry => expectedIds.Contains(PsValue.Str(PsValue.Prop(entry, "test")))).ToArray();
             herdrEntries.Length.ShouldBe(expectedIds.Length);
             herdrEntries.ShouldAllBe(entry => PsValue.Str(PsValue.Prop(entry, "platform")) == platform);
-            NightlyExpectedSkips.SourceGaps(Repo, platform, herdrEntries, null).ShouldBeEmpty();
-            NightlyExpectedSkips.ReasonGaps(Repo, platform, herdrEntries, null).ShouldBeEmpty();
 
             var classExclusions = NightlyPolicy.ProfileExclusions(policy, "rc", "session-runner", platform)
                 .Where(row => string.Equals(row.Class, shortName, StringComparison.OrdinalIgnoreCase)
@@ -119,11 +119,12 @@ public sealed class ExpectedPlatformSkipRosterTests
                 .ShouldBe(skips.Select(skip => skip.Method).Order(StringComparer.Ordinal));
             classExclusions.ShouldAllBe(row => row.Methods.Length > 0);
             var nativeExclusions = NightlyPolicy.ProfileExclusions(policy, "rc", "session-runner", nativePlatform);
-            foreach (var row in parsed)
+            foreach (var (method, reason) in skips)
             {
-                var node = new PlainObject(("ClassName", row.ClassName), ("Method", row.MethodName));
-                NightlyPolicy.NodeExcluded(node, classExclusions).ShouldBeTrue(row.Identity);
-                NightlyPolicy.NodeExcluded(node, nativeExclusions).ShouldBeFalse(row.Identity);
+                var node = new PlainObject(("ClassName", className), ("Method", method));
+                NightlyPolicy.NodeExcluded(node, classExclusions).ShouldBeTrue(method);
+                NightlyPolicy.NodeExcluded(node, nativeExclusions).ShouldBeFalse(method);
+                sourceIndex.ReachableSkipTexts(shortName, method, testNamespace, fold: false).ShouldContain(reason, method);
             }
         }
     }
