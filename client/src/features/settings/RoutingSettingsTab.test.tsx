@@ -755,7 +755,10 @@ describe('C1270 D-1 read state table', () => {
     .map(state => ({ read, state }))))(
     'C1270 D-1 $read read $state', async ({ read: name, state }: { read: string; state: C1270D1State }) => {
       const read = c1270D1Reads[name]
-      serveRouting({ usage: fullUsage })
+      // Only the matrix read cases assert the role rows and their controls.
+      // For the other sections, keep the matrix mounted with its Any-role row.
+      const list = read.configure ? listDto : { ...planCellList('Medium'), roles: [] }
+      serveRouting({ usage: fullUsage, list })
       // msw checks the first listed handler first, so the read under test wins over the revisions default.
       server.use(
         c1270D1Handler(read, state === 'loading' ? c1270D1Respond.infinite(read)
