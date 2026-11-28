@@ -62,7 +62,8 @@ internal sealed record ReviewPublishConfiguration(string Collate, string Verify,
 
         if (node.Params.TryGetValue(TemplateField, out var raw)
             && !ReviewSummaryTemplate.TryParse(raw, configuration, out _))
-            diagnostics.Add(Error("invalid-summary-template", TemplateField, "Use a bounded summary template with known, bound slots and exactly one standalone defaultBody or findings slot in visible top-level Markdown text."));
+            diagnostics.Add(Error("invalid-summary-template", TemplateField,
+                "Use a bounded summary template with known, bound slots and exactly one standalone defaultBody or findings slot in visible top-level Markdown text outside HTML containers. Preceding HTML must use recognized, balanced tags."));
 
         WorkflowDiagnostic Error(string code, string field, string message) =>
             new(code, WorkflowDiagnosticSeverity.Error, message, [node.Id]) { Field = field };

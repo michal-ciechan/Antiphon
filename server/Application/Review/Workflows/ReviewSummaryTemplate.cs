@@ -17,11 +17,13 @@ internal sealed partial class ReviewSummaryTemplate
 
     private readonly string _text;
     private readonly IReadOnlyList<Match> _slots;
+    private readonly Match _coverage;
 
-    private ReviewSummaryTemplate(string text, IReadOnlyList<Match> slots)
+    private ReviewSummaryTemplate(string text, IReadOnlyList<Match> slots, Match coverage)
     {
         _text = text;
         _slots = slots;
+        _coverage = coverage;
     }
 
     public static bool TryParse(object? value, ReviewPublishConfiguration? configuration, out ReviewSummaryTemplate? template)
@@ -55,10 +57,10 @@ internal sealed partial class ReviewSummaryTemplate
             }
         }
 
-        if (coverage is null || HasDelimiters(text.AsSpan(position)) || !InVisibleParagraph(text, coverage))
+        if (coverage is null || HasDelimiters(text.AsSpan(position)) || !InVisibleParagraph(text, coverage.Index, coverage.Value))
             return false;
 
-        template = new(text, slots);
+        template = new(text, slots, coverage);
         return true;
     }
 
@@ -67,6 +69,8 @@ internal sealed partial class ReviewSummaryTemplate
         var result = new StringBuilder();
         var position = 0;
         var bytes = 0;
+        var coverageStart = 0;
+        var coverageLength = 0;
         foreach (var slot in _slots)
         {
             var literal = _text.AsSpan(position, slot.Index - position);
@@ -77,7 +81,13 @@ internal sealed partial class ReviewSummaryTemplate
                 body = "";
                 return false;
             }
-            result.Append(literal).Append(value);
+            result.Append(literal);
+            if (slot == _coverage)
+            {
+                coverageStart = result.Length;
+                coverageLength = value.Length;
+            }
+            result.Append(value);
             position = slot.Index + slot.Length;
         }
 
@@ -88,6 +98,17 @@ internal sealed partial class ReviewSummaryTemplate
             return false;
         }
         body = result.Append(tail).ToString();
+        var prefix = body.AsSpan(0, coverageStart);
+        if (prefix.Contains('<'))
+        {
+            // Substitutions can complete authored markup, even when values are escaped.
+            var probe = string.Concat(prefix, _coverage.Value, body.AsSpan(coverageStart + coverageLength));
+            if (!InVisibleParagraph(probe, coverageStart, _coverage.Value))
+            {
+                body = "";
+                return false;
+            }
+        }
         return true;
     }
 
@@ -109,10 +130,69 @@ internal sealed partial class ReviewSummaryTemplate
         return text.AsSpan(first, (last < 0 ? text.Length : last) - first).Trim().SequenceEqual(slot.Value);
     }
 
-    private static bool InVisibleParagraph(string text, Match slot) =>
-        Markdown.Parse(text, Pipeline).OfType<ParagraphBlock>().Any(paragraph =>
+    private static bool InVisibleParagraph(string text, int slotStart, string slot)
+    {
+        var document = Markdown.Parse(text, Pipeline);
+        var topLevelText = document.OfType<ParagraphBlock>().Any(paragraph =>
             paragraph.Inline is { } inlines && inlines.OfType<LiteralInline>().Any(inline =>
-                inline.Span.Start <= slot.Index && inline.Span.End >= slot.Index + slot.Length - 1));
+                inline.Span.Start <= slotStart && inline.Span.End >= slotStart + slot.Length - 1));
+        return topLevelText && (!text.AsSpan(0, slotStart).Contains('<') || OutsideHtmlContainers(document, slot));
+    }
+
+    private static bool OutsideHtmlContainers(MarkdownDocument document, string slot)
+    {
+        // Raw opening and closing tags can render around a sibling Markdown paragraph.
+        // Check the emitted tags so escapes, code and image alt text cannot supply closures.
+        var html = Markdown.ToHtml(document, Pipeline);
+        var slotStart = html.IndexOf(slot, StringComparison.Ordinal);
+        if (slotStart < 0 || html.LastIndexOf(slot, StringComparison.Ordinal) != slotStart)
+            return false;
+
+        var openTags = new Stack<string>();
+        var position = 0;
+        while ((position = html.IndexOf('<', position, slotStart - position)) >= 0)
+        {
+            var token = HtmlToken().Match(html, position);
+            if (!token.Success || token.Index + token.Length > slotStart)
+                return false;
+            position += token.Length;
+
+            var tag = token.Groups["tag"].Value.ToLowerInvariant();
+            if (token.Groups["close"].Success)
+            {
+                if (!openTags.TryPop(out var opening) || opening != tag)
+                    return false;
+            }
+            else if (tag is "a" or "b" or "blockquote" or "code" or "del" or "details" or "div" or "em"
+                or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "i" or "ins" or "kbd" or "li"
+                or "mark" or "ol" or "p" or "pre" or "s" or "span" or "strong" or "sub" or "summary" or "sup"
+                or "table" or "tbody" or "td" or "th" or "thead" or "tr" or "ul")
+                openTags.Push(tag);
+            else if (tag is not ("" or "br" or "hr" or "img" or "wbr"))
+                return false;
+        }
+
+        // Require only the paragraph Markdig generated, regardless of authored attributes
+        // or which elements the host sanitizer keeps. Unknown or malformed tags fail closed.
+        return openTags.Count == 1 && openTags.Peek() == "p";
+    }
+
+    [GeneratedRegex(
+        """
+        \G(?:
+            <!-- (?! > | -> ) (?:(?! -- )[\s\S])* -->
+          | < (?<close>/) (?<tag>[A-Za-z][A-Za-z0-9]*) [\t\n\f\r\x20]* >
+          | < (?<tag>[A-Za-z][A-Za-z0-9]*)
+              (?> [\t\n\f\r\x20]+ [A-Za-z_:][A-Za-z0-9_.:-]*
+                  (?: [\t\n\f\r\x20]* = [\t\n\f\r\x20]*
+                      (?:"[^"]*" | '[^']*' | [^\t\n\f\r\x20"'=<>`]+)
+                  )?
+              )*
+              [\t\n\f\r\x20]* /? >
+        )
+        """,
+        RegexOptions.IgnorePatternWhitespace | RegexOptions.CultureInvariant)]
+    private static partial Regex HtmlToken();
 
     [GeneratedRegex(@"\{\{(?<name>[A-Za-z.]+)\}\}", RegexOptions.CultureInvariant)]
     private static partial Regex Slot();

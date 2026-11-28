@@ -304,19 +304,23 @@ public partial class ReviewEndToEndApiTests
     {
         const string details = "<details>\n<summary>Optional context</summary>\n\n";
         var candidate = PublishCandidate("A", "Visible summary finding", 55) with { InDiff = false };
-        var cases = new (int Number, string Template, bool UsesTemplate)[]
+        var cases = new (int Number, string Template, bool UsesTemplate, string? SubjectTitle)[]
         {
-            (21119, details + "{{findings}}\n\n</details>", false),
-            (21120, details + "Other text\n\n</details>\n\n{{findings}}", true),
+            (21119, details + "{{findings}}\n\n</details>", false, null),
+            (21120, details + "Other text\n\n</details>\n\n{{findings}}", true, null),
+            (21121, "<det{{run.title}}ils>\n<summary>Optional context</summary>\n\n{{findings}}\n\n</details>", false, "a"),
         };
-        foreach (var (number, template, usesTemplate) in cases)
+        foreach (var (number, template, usesTemplate, subjectTitle) in cases)
         {
             var graph = PublishGraph(new Dictionary<string, object?>
             {
                 ["inputs"] = new[] { "collate", "verify" },
                 ["summaryTemplate"] = template,
             });
-            var fixture = await PostFixtureAsync(number, graph, [candidate]);
+            if (subjectTitle is not null)
+                ReviewWorkflowValidator.Validate(graph).Valid.ShouldBeTrue();
+            var fixture = await PostFixtureAsync(number, graph, [candidate],
+                arrange: subjectTitle is null ? null : run => run.Subject.Title = subjectTitle);
             var receipt = Receipt(fixture.Pr, fixture.Output);
             receipt.Target.PrNumber.ShouldBe(number);
             receipt.Review.CommitSha.ShouldBe(HeadSha);
@@ -428,7 +432,7 @@ public partial class ReviewEndToEndApiTests
 
     private async Task<(Guid RunId, ScriptedPr Pr, PublishOutput Output, List<ReviewFinding> Findings)> PostFixtureAsync(
         int number, WorkflowDefinition graph, IReadOnlyList<FindingCandidate> candidates, VerifyOutput? verify = null,
-        ReviewNodeStatus status = ReviewNodeStatus.Succeeded, bool hasPr = true)
+        ReviewNodeStatus status = ReviewNodeStatus.Succeeded, bool hasPr = true, Action<ReviewRun>? arrange = null)
     {
         var pr = factory.Host.Open(number, "Publish fixture", "dana", BaseSha, HeadSha, Files, Diff);
         var id = await WalkPublishAsync(number, graph,
@@ -436,7 +440,7 @@ public partial class ReviewEndToEndApiTests
             Producer("collate", ReviewNodeKind.Join, 1, new CollateOutput(candidates, [], [])),
             Producer("verify", ReviewNodeKind.Completion, 2,
                 verify ?? new VerifyOutput(candidates.Select(c => c.Cid).ToList(), [], true), status),
-        ], hasPr: hasPr);
+        ], hasPr: hasPr, arrange: arrange);
 
         await using var reader = factory.Services.CreateAsyncScope();
         var db = reader.ServiceProvider.GetRequiredService<AppDbContext>();
