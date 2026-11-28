@@ -48,11 +48,12 @@ public sealed class WorkspaceReservationJournal(
         return rows.Where(r => !orphaned.Contains(r)).Select(ToSnapshot).ToList();
     }
 
-    public async Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
+    public async Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        using var admissionLock = new AdmissionLock(admissionSettings, logger);
+        using var admissionLock = new AdmissionLock(admissionSettings, logger, admissionWait);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await admissionLock.AcquireAsync(db, ct);
         var blocking = await db.WorkspaceUseReservations
@@ -86,11 +87,12 @@ public sealed class WorkspaceReservationJournal(
         return new(true, ToSnapshot(row), null);
     }
 
-    public async Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct)
+    public async Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        using var admissionLock = new AdmissionLock(admissionSettings, logger);
+        using var admissionLock = new AdmissionLock(admissionSettings, logger, admissionWait);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await admissionLock.AcquireAsync(db, ct);
         var existing = await db.WorkspaceUseReservations
@@ -284,13 +286,39 @@ public sealed class WorkspaceReservationJournal(
     }
 
     // Declare the observation outside the owning transaction so disposal measures through
-    // transaction cleanup on both commit and rollback. CardDone uses the same bound and timing.
-    internal sealed class AdmissionLock(IOptions<WorkspaceAdmissionSettings>? settings, ILogger? logger) : IDisposable
+    // transaction cleanup on both commit and rollback. CardDone measures through its transaction cleanup as well.
+    internal sealed class AdmissionLock(IOptions<WorkspaceAdmissionSettings>? settings, ILogger? logger,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background) : IDisposable
     {
         private long? _acquiredAt;
         private double _waitMilliseconds;
 
         internal async Task AcquireAsync(AppDbContext db, CancellationToken ct)
+        {
+            var interactive = admissionWait == WorkspaceAdmissionWaitPolicy.Interactive;
+            var sql = interactive ? BoundedLockSql() : "SELECT pg_advisory_xact_lock(1017, 459)";
+            var waitStarted = Stopwatch.GetTimestamp();
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(sql, ct);
+                _acquiredAt = Stopwatch.GetTimestamp();
+            }
+            catch (PostgresException ex) when (interactive && ex.SqlState == PostgresErrorCodes.LockNotAvailable)
+            {
+                throw new WorkspaceAdmissionBusyException(ex);
+            }
+            finally
+            {
+                _waitMilliseconds = Stopwatch.GetElapsedTime(waitStarted, _acquiredAt ?? Stopwatch.GetTimestamp()).TotalMilliseconds;
+                if (!_acquiredAt.HasValue)
+                {
+                    WarnOnSlowWait(acquired: false);
+                    logger?.LogDebug("Workspace admission lock unavailable after {WaitMilliseconds} ms", _waitMilliseconds);
+                }
+            }
+        }
+
+        private string BoundedLockSql()
         {
             // PostgreSQL does not bind parameters inside a DO body. Substitute only an
             // invariant integer and keep a shorter existing timeout for this wait.
@@ -298,7 +326,7 @@ public sealed class WorkspaceReservationJournal(
                 settings?.Value.LockTimeoutMilliseconds ?? WorkspaceAdmissionSettings.DefaultLockTimeoutMilliseconds,
                 WorkspaceAdmissionSettings.MinimumLockTimeoutMilliseconds,
                 WorkspaceAdmissionSettings.MaximumLockTimeoutMilliseconds).ToString(CultureInfo.InvariantCulture);
-            var sql = $$"""
+            return $$"""
                 DO $admission$
                 DECLARE
                     previous_timeout text := current_setting('lock_timeout');
@@ -312,26 +340,6 @@ public sealed class WorkspaceReservationJournal(
                 END;
                 $admission$;
                 """;
-
-            var waitStarted = Stopwatch.GetTimestamp();
-            try
-            {
-                await db.Database.ExecuteSqlRawAsync(sql, ct);
-                _acquiredAt = Stopwatch.GetTimestamp();
-            }
-            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
-            {
-                throw new WorkspaceAdmissionBusyException(ex);
-            }
-            finally
-            {
-                _waitMilliseconds = Stopwatch.GetElapsedTime(waitStarted, _acquiredAt ?? Stopwatch.GetTimestamp()).TotalMilliseconds;
-                if (!_acquiredAt.HasValue)
-                {
-                    WarnOnSlowWait(acquired: false);
-                    logger?.LogDebug("Workspace admission lock unavailable after {WaitMilliseconds} ms", _waitMilliseconds);
-                }
-            }
         }
 
         internal void Released()

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -66,7 +67,7 @@ public static class AgentTaskEndpoints
             CancellationToken ct) =>
         {
             var caller = await ResolveCallerAsync(http, service, ct);
-            var created = await service.CreateAsync(request, caller, ct);
+            var created = await service.CreateAsync(request, caller, ct, admissionWait: WorkspaceAdmissionWaitPolicy.Interactive);
             return Results.Created($"/api/agent-tasks/{created.Id}", created);
         });
 
@@ -293,20 +294,22 @@ public static class AgentTaskEndpoints
             RetryAgentTaskRequest? request,
             AgentTaskService service,
             CancellationToken ct) =>
-            Results.Ok(await service.RetryAsync(id, ct, request?.AbandonCommitRecovery ?? false)));
+            Results.Ok(await service.RetryAsync(id, ct, request?.AbandonCommitRecovery ?? false,
+                admissionWait: WorkspaceAdmissionWaitPolicy.Interactive)));
 
         tasks.MapPost("/{id:guid}/reroute", async (
             Guid id,
             RerouteAgentTaskRequest request,
             AgentTaskService service,
             CancellationToken ct) =>
-            Results.Ok(await service.RerouteAsync(id, request.AgentKind, request.ModelLevel, ct)));
+            Results.Ok(await service.RerouteAsync(id, request.AgentKind, request.ModelLevel, ct, admissionWait: WorkspaceAdmissionWaitPolicy.Interactive)));
 
         tasks.MapPost("/{id:guid}/escalate", async (
             Guid id,
             EscalateAgentTaskRequest? request,
             AgentTaskService service,
-            CancellationToken ct) => Results.Ok(await service.EscalateAsync(id, request?.ModelLevel, ct)));
+            CancellationToken ct) => Results.Ok(await service.EscalateAsync(id, request?.ModelLevel, ct,
+                admissionWait: WorkspaceAdmissionWaitPolicy.Interactive)));
 
         tasks.MapPost("/{id}/reply", async (
             string id,
@@ -334,7 +337,7 @@ public static class AgentTaskEndpoints
                 request.Message ?? "",
                 request.Origin ?? AnswerOrigin.Web,
                 request.Round,
-                ct));
+                ct, admissionWait: WorkspaceAdmissionWaitPolicy.Interactive));
         });
 
         // CARD-0294 S1: replay the standing authority given at dispatch as the answer.
@@ -348,7 +351,7 @@ public static class AgentTaskEndpoints
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             return Results.Ok(await replies.ContinueWithAuthorityAsync(
-                taskId, request?.Origin ?? AnswerOrigin.Web, ct));
+                taskId, request?.Origin ?? AnswerOrigin.Web, ct, admissionWait: WorkspaceAdmissionWaitPolicy.Interactive));
         });
 
         // CARD-0407. A worker asks before opening a human question. Only its own live task or
@@ -378,7 +381,8 @@ public static class AgentTaskEndpoints
         {
             var taskId = await service.ResolveTaskIdAsync(id, ct);
             return Results.Ok(await replies.RefineAsync(
-                taskId, request.Message, ct, request.InterruptCurrentTurn, request.RequestId));
+                taskId, request.Message, ct, request.InterruptCurrentTurn, request.RequestId,
+                admissionWait: WorkspaceAdmissionWaitPolicy.Interactive));
         });
 
         // CARD-0330 S4. Explicit flag on a distillation. 409 if the task has no ledger row.
@@ -525,7 +529,7 @@ public static class AgentTaskEndpoints
     {
         var taskId = await service.ResolveTaskIdAsync(id, ct);
         return Results.Accepted($"/api/agent-tasks/{taskId}",
-            await lands.RequestAsync(taskId, request ?? new LandAgentTaskRequest(), ct));
+            await lands.RequestAsync(taskId, request ?? new LandAgentTaskRequest(), ct, admissionWait: WorkspaceAdmissionWaitPolicy.Interactive));
     }
 
     private static bool IsExplicitCommitPath(string? path)

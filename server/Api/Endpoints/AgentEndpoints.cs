@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 
@@ -173,7 +174,8 @@ public static class AgentEndpoints
             AgentControlService service,
             CancellationToken cancellationToken) =>
         {
-            return Results.Ok(await service.AttachHerdrAsync(id, request, cancellationToken));
+            return Results.Ok(await service.AttachHerdrAsync(id, request, cancellationToken,
+                admissionWait: WorkspaceAdmissionWaitPolicy.Interactive));
         });
 
         // CARD-0214. Creates the agent's configured working directory (the readiness

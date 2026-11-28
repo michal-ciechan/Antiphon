@@ -14,9 +14,11 @@ public interface IWorkspaceReservationJournal
     Task<IReadOnlyList<WorkspaceReservationSnapshot>> ReadActiveAsync(
         WorkspaceReservationKey key, bool liveOwnersOnly, CancellationToken ct);
 
-    Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct);
+    Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background);
 
-    Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct);
+    Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background);
 
     Task InvalidateUnclaimedReleaseAsync(Guid taskId, CancellationToken ct);
 

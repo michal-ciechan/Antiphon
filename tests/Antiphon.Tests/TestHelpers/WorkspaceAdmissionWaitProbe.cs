@@ -18,8 +18,9 @@ internal sealed class WorkspaceAdmissionWaitProbe : DbCommandInterceptor
     {
         if (command.CommandText.Contains("pg_advisory_xact_lock(1017, 459)", StringComparison.Ordinal))
         {
+            var refuse = Refuse;
             Entered.TrySetResult();
-            if (Refuse)
+            if (refuse)
                 throw new WorkspaceAdmissionBusyException(new TimeoutException("Injected admission refusal."));
         }
         return ValueTask.FromResult(result);

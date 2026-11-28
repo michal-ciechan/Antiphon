@@ -157,7 +157,8 @@ public class ReviewDelegationRunnerApiTests(ReviewDelegationRunnerApiTests.Facto
         factory.Tasks.BeforeCreate = async ct =>
         {
             var admitted = await journal.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
-                WorkspaceReservationKey.For(Path.GetTempPath(), "", null), WorkspaceReservationKind.Launch), ct);
+                WorkspaceReservationKey.For(Path.GetTempPath(), "", null), WorkspaceReservationKind.Launch), ct,
+                WorkspaceAdmissionWaitPolicy.Interactive);
             await journal.ReleaseConsumerAsync(admitted.Snapshot!.Id, admitted.Snapshot.Generation, ct);
         };
 

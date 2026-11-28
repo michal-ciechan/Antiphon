@@ -78,7 +78,8 @@ public sealed class AgentTaskLandService
     }
 
     /// <summary>Persist and queue an explicit land request. The endpoint returns before git runs.</summary>
-    public async Task<LandRequestResult> RequestAsync(Guid taskId, LandAgentTaskRequest body, CancellationToken ct)
+    public async Task<LandRequestResult> RequestAsync(Guid taskId, LandAgentTaskRequest body, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(ct);
         await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM \"AgentTasks\" WHERE \"Id\" = {taskId} FOR UPDATE", ct);
@@ -119,7 +120,7 @@ public sealed class AgentTaskLandService
         {
             admitted = await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
                 WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
-                WorkspaceReservationKind.Launch, task.Id), ct);
+                WorkspaceReservationKind.Launch, task.Id), ct, admissionWait);
         }
 
         try

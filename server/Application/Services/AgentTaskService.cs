@@ -285,17 +285,20 @@ public sealed class AgentTaskService
     /// </summary>
     /// <summary>Internal caller-action admission; HTTP authorization belongs to the B-2 component.</summary>
     public Task<AgentTaskCreatedDto> CreateAsync(CreateAgentTaskRequest request, Caller caller,
-        Guid handoffActionId, CancellationToken ct, bool acceptSpend = false) =>
-        CreateCoreAsync(request, caller, handoffActionId, ct, acceptSpend);
+        Guid handoffActionId, CancellationToken ct, bool acceptSpend = false,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background) =>
+        CreateCoreAsync(request, caller, handoffActionId, ct, admissionWait, acceptSpend);
 
     public Task<AgentTaskCreatedDto> CreateAsync(
         CreateAgentTaskRequest request,
         Caller caller,
-        CancellationToken ct) => CreateCoreAsync(request, caller, null, ct);
+        CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background) =>
+        CreateCoreAsync(request, caller, null, ct, admissionWait);
 
     private async Task<AgentTaskCreatedDto> CreateCoreAsync(
         CreateAgentTaskRequest request, Caller caller, Guid? handoffActionId, CancellationToken ct,
-        bool acceptSpend = false)
+        WorkspaceAdmissionWaitPolicy admissionWait, bool acceptSpend = false)
     {
         if (handoffActionId is not null && !acceptSpend)
             throw new ConflictException("The caller must explicitly accept this child request's spend.", "handoff_spend_held");
@@ -1816,7 +1819,7 @@ public sealed class AgentTaskService
             if (verificationAdmission is not null)
                 await _interimPolicy!.LatchOwnerLockedAsync(verificationAdmission.SubjectTaskId, ct);
 
-        await AdmitWorkspaceAsync(task, ct);
+        await AdmitWorkspaceAsync(task, ct, admissionWait);
         _db.AgentTasks.Add(task);
         _db.AgentTaskEvents.Add(new AgentTaskEvent
         {
@@ -3223,7 +3226,8 @@ public sealed class AgentTaskService
     /// Run a task again, at the same tier. For a task that stalled, failed, or came back with an
     /// answer the caller rejected — the goal is unchanged, so what changes is the attempt.
     /// </summary>
-    public async Task<AgentTaskSummaryDto> RetryAsync(Guid id, CancellationToken ct, bool abandonCommitRecovery = false)
+    public async Task<AgentTaskSummaryDto> RetryAsync(Guid id, CancellationToken ct,
+        bool abandonCommitRecovery = false, WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
@@ -3246,7 +3250,7 @@ public sealed class AgentTaskService
                     AgentLaunchEnv.Parse(task.LaunchEnvOverrideJson), AgentLaunchEnv.Parse(task.InheritedLaunchEnvJson),
                     false, task.RunnerId, ct);
                 await RefuseUnauthenticatedRunnerCodexAsync(task.AgentKind, false, task.RunnerId, ct);
-                await ContinueReleasedSeatAnswerAsync(task, ct);
+                await ContinueReleasedSeatAnswerAsync(task, ct, admissionWait);
                 return await SummaryOfAsync(task, ct);
             }
             finally { gate.Release(); }
@@ -3284,7 +3288,7 @@ public sealed class AgentTaskService
             task.AgentKind, allowUnauthenticated: false, task.RunnerId, ct);
         await RequeueAsync(
             task, AgentTaskEventType.Retried, task.ModelLevel,
-            $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct, abandonCommitRecovery);
+            $"Retried at {ModelLevelAliases.For(task.AgentKind, task.ModelLevel)}.", ct, abandonCommitRecovery, admissionWait: admissionWait);
         return await SummaryOfAsync(task, ct);
     }
 
@@ -3294,7 +3298,8 @@ public sealed class AgentTaskService
     /// <c>model_disabled</c>.
     /// </summary>
     public async Task<AgentTaskSummaryDto> RerouteAsync(
-        Guid id, AgentKind agentKind, AgentModelLevel modelLevel, CancellationToken ct)
+        Guid id, AgentKind agentKind, AgentModelLevel modelLevel, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
@@ -3371,7 +3376,7 @@ public sealed class AgentTaskService
         }
 
         task.FailureReason = null;
-        await RequeueAsync(task, AgentTaskEventType.Rerouted, modelLevel, detail, ct);
+        await RequeueAsync(task, AgentTaskEventType.Rerouted, modelLevel, detail, ct, admissionWait: admissionWait);
         return await SummaryOfAsync(task, ct);
     }
 
@@ -3464,7 +3469,8 @@ public sealed class AgentTaskService
     /// last one found, because escalation that restarts cold just pays more for the same dead end.
     /// </summary>
     public async Task<AgentTaskSummaryDto> EscalateAsync(
-        Guid id, AgentModelLevel? to, CancellationToken ct, string? reason = null)
+        Guid id, AgentModelLevel? to, CancellationToken ct, string? reason = null,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var task = await _db.AgentTasks.FirstOrDefaultAsync(t => t.Id == id, ct)
             ?? throw new NotFoundException(nameof(AgentTask), id);
@@ -3505,7 +3511,7 @@ public sealed class AgentTaskService
             return await SummaryOfAsync(task, ct);
         }
 
-        await RequeueAsync(task, AgentTaskEventType.Escalated, target.Value, detail, ct);
+        await RequeueAsync(task, AgentTaskEventType.Escalated, target.Value, detail, ct, admissionWait: admissionWait);
         return await SummaryOfAsync(task, ct);
     }
 
@@ -3770,7 +3776,8 @@ public sealed class AgentTaskService
     /// admission refuses; no provider is started here. The nullable fields came from S3a.
     /// </summary>
     internal async Task<bool> TryAcceptReleasedSeatAnswerAsync(
-        AgentTask task, string message, AnswerOrigin origin, int? round, CancellationToken ct)
+        AgentTask task, string message, AnswerOrigin origin, int? round, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var answer = message.Trim().ReplaceLineEndings("\n");
         if (task.Status != AgentTaskStatus.Blocked && task.ReleasedSeatAnswerId is not null
@@ -3870,7 +3877,7 @@ public sealed class AgentTaskService
             await tx.CommitAsync(ct);
         }
         await _eventBus.PublishToAllAsync("AgentTaskChanged", new { taskId = task.Id, rootId = task.RootTaskId }, ct);
-        await ContinueReleasedSeatAnswerAsync(task, ct);
+        await ContinueReleasedSeatAnswerAsync(task, ct, admissionWait);
         return true;
     }
 
@@ -3992,7 +3999,8 @@ public sealed class AgentTaskService
             && p.State is AgentTaskParkState.ResumePending or AgentTaskParkState.Parked or AgentTaskParkState.Resumed);
     }
 
-    private async Task ContinueReleasedSeatAnswerAsync(AgentTask task, CancellationToken ct)
+    private async Task ContinueReleasedSeatAnswerAsync(AgentTask task, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var release = await TerminalRunnerSeatReleaseService.FindConfirmedAttemptReleaseAsync(_db, task, ct);
         if (release is null) return;
@@ -4012,7 +4020,7 @@ public sealed class AgentTaskService
             await _quotaGate.EnforceAsync(task.AgentKind, SubscriptionUsageKey.For(owner, task.AgentKind),
                 false, "released-seat answer", ct);
         }
-        await AdmitWorkspaceAsync(task, ct);
+        await AdmitWorkspaceAsync(task, ct, admissionWait);
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
             await LockReleasedAnswerAsync(task.Id, release.Id, release.SessionId, task.AgentId, ct);
@@ -4043,7 +4051,7 @@ public sealed class AgentTaskService
     /// </summary>
     private async Task RequeueAsync(
         AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct,
-        bool abandonCommitRecovery = false)
+        bool abandonCommitRecovery = false, WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var sourceSession = task.ReleasedSeatAnswerId is not null
             ? await _db.RunnerSeatReleases.Where(r => r.Id == task.ReleasedSeatAnswerReleaseId)
@@ -4059,14 +4067,15 @@ public sealed class AgentTaskService
             var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, current, ct);
             if (release?.State == RunnerSeatReleaseState.Unresolved)
                 throw new ConflictException("The seat release is awaiting reconciliation.", "runner_seat_release_pending");
-            await RequeueCoreAsync(task, type, level, detail, ct, abandonCommitRecovery);
+            await RequeueCoreAsync(task, type, level, detail, ct, abandonCommitRecovery, admissionWait: admissionWait);
         }
         finally { gate?.Release(); }
     }
 
     private async Task RequeueCoreAsync(
         AgentTask task, AgentTaskEventType type, AgentModelLevel level, string detail, CancellationToken ct,
-        bool abandonCommitRecovery = false, Guid? acceptedAnswerId = null, bool workspaceAdmitted = false)
+        bool abandonCommitRecovery = false, Guid? acceptedAnswerId = null, bool workspaceAdmitted = false,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         // CARD-0547 D-4: every requeue nulls the session and dispatch time the settlement digest is
         // built from, so an unresolved commit-recovery obligation could never be recovered after it.
@@ -4089,7 +4098,7 @@ public sealed class AgentTaskService
                 });
         }
 
-        if (!workspaceAdmitted) await AdmitWorkspaceAsync(task, ct);
+        if (!workspaceAdmitted) await AdmitWorkspaceAsync(task, ct, admissionWait);
         var release = await TerminalRunnerSeatReleaseService.FindAttemptReleaseAsync(_db, task, ct);
         if (!TerminalRunnerSeatReleaseService.IsConfirmed(release))
             await StopDelegateAsync(task, ct);
@@ -5546,14 +5555,15 @@ public sealed class AgentTaskService
     internal static string HashToken(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
 
-    private async Task AdmitWorkspaceAsync(AgentTask task, CancellationToken ct)
+    private async Task AdmitWorkspaceAsync(AgentTask task, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         if (_workspaceUse is null) return;
         var path = task.WorktreePath ?? task.WorkingDirectory;
         if (string.IsNullOrWhiteSpace(path)) return;
         await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
-            WorkspaceReservationKind.Launch, task.Id), ct);
+            WorkspaceReservationKind.Launch, task.Id), ct, admissionWait);
         await _workspaceUse.InvalidateReleaseAsync(task.Id, ct);
     }
 

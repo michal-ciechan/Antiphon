@@ -1179,15 +1179,17 @@ internal sealed class GatedReservationJournal(WorkspaceReservationJournal inner,
         WorkspaceReservationKey key, bool liveOwnersOnly, CancellationToken ct) =>
         inner.ReadActiveAsync(key, liveOwnersOnly, ct);
 
-    public Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
+    public Task<WorkspaceReservationCommitResult> TryAdmitConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         if (gate.RefuseTaskId is Guid id && command.TaskId == id)
             return Task.FromResult(new WorkspaceReservationCommitResult(false, null, "workspace_reserved"));
-        return inner.TryAdmitConsumerAsync(command, ct);
+        return inner.TryAdmitConsumerAsync(command, ct, admissionWait);
     }
 
-    public Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct) =>
-        inner.TryClaimRetirementAsync(command, ct);
+    public Task<WorkspaceReservationCommitResult> TryClaimRetirementAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background) =>
+        inner.TryClaimRetirementAsync(command, ct, admissionWait);
 
     public Task InvalidateUnclaimedReleaseAsync(Guid taskId, CancellationToken ct) =>
         inner.InvalidateUnclaimedReleaseAsync(taskId, ct);

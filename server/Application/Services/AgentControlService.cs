@@ -1227,7 +1227,8 @@ public sealed class AgentControlService : ICompactionContinuationResume
     /// Inspect is read-only; the DB row is written Starting before the runner binds anything.
     /// Nothing is typed (no remote-control, no launch note, no queue flush).
     /// </summary>
-    public async Task<AgentDetailDto> AttachHerdrAsync(Guid agentId, AttachHerdrPaneRequest request, CancellationToken ct)
+    public async Task<AgentDetailDto> AttachHerdrAsync(Guid agentId, AttachHerdrPaneRequest request, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.PaneId))
@@ -1319,7 +1320,7 @@ public sealed class AgentControlService : ICompactionContinuationResume
             // CARD-0664 A8: the adopted session owns the row, so its exit, kill or failed attach ends it.
             admitted = await _workspaceUse.RequireConsumerAsync(new WorkspaceReservationCommand(
                 WorkspaceReservationKey.For(cwd, branch, repo),
-                WorkspaceReservationKind.Launch, null, sessionId), ct);
+                WorkspaceReservationKind.Launch, null, sessionId), ct, admissionWait);
         }
         AgentSession session;
         var workspaceKey = "none";

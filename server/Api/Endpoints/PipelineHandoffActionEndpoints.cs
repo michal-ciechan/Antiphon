@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -46,7 +47,7 @@ public static class PipelineHandoffActionEndpoints
                     ProjectId: predecessor.ProjectId, IsOperator: true);
             }
             else caller = await tasks.AuthenticateAsync(http.Request.Headers["X-Antiphon-Task-Token"].FirstOrDefault(), ct);
-            return Results.Ok(await actions.RequestChildAsync(predecessorId, actionId, request, caller, actor, ct));
+            return Results.Ok(await actions.RequestChildAsync(predecessorId, actionId, request, caller, actor, ct, admissionWait: WorkspaceAdmissionWaitPolicy.Interactive));
         });
     }
 

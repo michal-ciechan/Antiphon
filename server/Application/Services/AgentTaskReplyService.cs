@@ -397,7 +397,7 @@ public sealed partial class AgentTaskReplyService
 
     public async Task<AgentTaskSummaryDto> AnswerAsync(
         Guid taskId, string message, AnswerOrigin origin, int? round, CancellationToken ct,
-        string? repliedDetailPrefix = null)
+        string? repliedDetailPrefix = null, WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         if (string.IsNullOrWhiteSpace(message))
             throw new ValidationException(nameof(message), "A reply message is required.");
@@ -430,13 +430,13 @@ public sealed partial class AgentTaskReplyService
             // The tool-call id captured here is checked again at enqueue.
             var liveAtDecision = await LiveQuestionInReleasedSeatWindowAsync(scope.ServiceProvider, db, task, ct);
             if (liveAtDecision is null
-                && await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+                && await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct, admissionWait))
             {
                 saved = true;
                 var releasedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);
                 return await tasks.GetSummaryAsync(task, releasedFamily);
             }
-            admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
+            admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct, admissionWait);
             if (task.Status == AgentTaskStatus.Blocked)
             {
                 if (task.FailureCode == AgentTaskFailureCode.SubscriptionQuotaExceeded)
@@ -532,7 +532,7 @@ public sealed partial class AgentTaskReplyService
                 if (liveAtDecision is { } decided && !SameLiveQuestion(decided, liveAtEnqueue))
                 {
                     await db.Entry(task).ReloadAsync(ct);
-                    if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+                    if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct, admissionWait))
                     {
                         await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
                         saved = true;
@@ -578,7 +578,7 @@ public sealed partial class AgentTaskReplyService
                     await db.SaveChangesAsync(ct);
                     saved = false;
                     await db.Entry(task).ReloadAsync(ct);
-                    if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct))
+                    if (await tasks.TryAcceptReleasedSeatAnswerAsync(task, message, origin, round, ct, admissionWait))
                     {
                         await ReleaseAdmittedAsync(scope.ServiceProvider, admitted);
                         saved = true;
@@ -612,7 +612,8 @@ public sealed partial class AgentTaskReplyService
     /// not answered this way.
     /// </summary>
     public async Task<AgentTaskSummaryDto> ContinueWithAuthorityAsync(
-        Guid taskId, AnswerOrigin origin, CancellationToken ct)
+        Guid taskId, AnswerOrigin origin, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -653,7 +654,7 @@ public sealed partial class AgentTaskReplyService
             origin,
             round: null,
             ct,
-            BlockedNote.RepliedContinuePrefix);
+            BlockedNote.RepliedContinuePrefix, admissionWait);
     }
 
     /// <summary>
@@ -763,7 +764,8 @@ public sealed partial class AgentTaskReplyService
     /// </summary>
     public async Task<AgentTaskSummaryDto> RefineAsync(
         Guid taskId, string message, CancellationToken ct,
-        bool interruptCurrentTurn = false, Guid? requestId = null)
+        bool interruptCurrentTurn = false, Guid? requestId = null,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         if (string.IsNullOrWhiteSpace(message))
             throw new ValidationException(nameof(message), "A refinement message is required.");
@@ -783,7 +785,7 @@ public sealed partial class AgentTaskReplyService
                 return replayed;
         }
 
-        var admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct);
+        var admitted = await AdmitWorkspaceAsync(scope.ServiceProvider, task, ct, admissionWait);
 
         var saved = false;
         string? interruptWritten = null;
@@ -5587,7 +5589,8 @@ public sealed partial class AgentTaskReplyService
         };
 
     /// <summary>Admits the task's workspace use; returns the reservation (null when admission is not wired).</summary>
-    private static async Task<WorkspaceReservationSnapshot?> AdmitWorkspaceAsync(IServiceProvider services, AgentTask task, CancellationToken ct)
+    private static async Task<WorkspaceReservationSnapshot?> AdmitWorkspaceAsync(
+        IServiceProvider services, AgentTask task, CancellationToken ct, WorkspaceAdmissionWaitPolicy admissionWait)
     {
         var admission = services.GetService<WorkspaceUseAdmission>();
         if (admission is null) return null;
@@ -5595,7 +5598,7 @@ public sealed partial class AgentTaskReplyService
         if (string.IsNullOrWhiteSpace(path)) return null;
         var admitted = await admission.RequireConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
-            WorkspaceReservationKind.Launch, task.Id), ct);
+            WorkspaceReservationKind.Launch, task.Id), ct, admissionWait);
         try
         {
             await admission.InvalidateReleaseAsync(task.Id, ct);

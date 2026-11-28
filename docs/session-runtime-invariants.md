@@ -476,26 +476,23 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
 ## Workspace admission contention
 
 PostgreSQL transaction advisory key `(1017,459)` serializes workspace consumers with retirement
-and CardDone cleanup intent. `WorkspaceAdmission__LockTimeoutMilliseconds` defaults to 2,000 ms
-and accepts 100 through 10,000 ms. The transaction uses the shorter of this bound and an existing
-nonzero PostgreSQL `lock_timeout` for the advisory wait, then restores the previous value. A
-lock timeout aborts the waiting transaction and its owner rolls it back.
+and CardDone cleanup intent. Background callers use the PostgreSQL advisory wait with the
+existing command and cancellation budgets. HTTP handlers that can return a retryable response
+opt in to a shorter wait. `WorkspaceAdmission__LockTimeoutMilliseconds` defaults to 2,000 ms and
+accepts 100 through 10,000 ms. For an interactive wait, the transaction uses the shorter of this
+bound and an existing nonzero PostgreSQL `lock_timeout`, then restores the previous value.
+A lock timeout aborts the waiting transaction and its owner rolls it back.
 
 The HTTP retry response is `503` with problem code `workspace_admission_busy` and
-`Retry-After: 2` in seconds. Retry the same Create or Reply after that interval. A contended live
+`Retry-After: 2` in seconds. The delegate and card CLIs and the web client surface the
+server detail. Retry the operation manually after that interval. A contended live
 Reply leaves the question answerable. For a released-seat answer, retry with the same answer so
 the server can continue the durable acceptance. A session waiting for an answer keeps its seat
 under the default parking configuration.
 
-A contended dispatch claim leaves the task Queued with a `workspace_admission_busy` Held
-event. The pipeline uses its `awaitingDispatch` queue reason when no other gate takes precedence.
-A retry deadline with jitter paces additional passes.
-If the launch claim already committed, the launch queue keeps ownership of the same Starting
-session generation while retrying admission. Reviewer creation waits for the next executor poll.
-Runner settlement defers the report for the transcript sweep when admission refused before
-source observation. An existing sync debt retains its retry. The residue sweep records a
-Deferred candidate and visits the remaining items. A durable complete removal record lets the
-next pass finish retirement without issuing another removal.
+The dispatch claim, launches, reviewer and other helper creation, settlement, park
+publication, residue sweep and cleanup all use background admission. A durable complete
+removal record lets a later sweep finish retirement without issuing another removal.
 
 | Path reaching `(1017,459)` | Lock order |
 |---|---|

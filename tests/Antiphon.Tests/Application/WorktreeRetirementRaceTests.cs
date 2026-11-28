@@ -30,15 +30,14 @@ public sealed class WorktreeRetirementRaceTests
     [Test]
     public async Task BusyAdmissionLeavesDispatchQueuedAndRetriesAfterRelease()
     {
-        await using var world = await RaceWorld.CreateAsync();
+        var refusal = new WorkspaceAdmissionWaitProbe { Refuse = true };
+        await using var world = await RaceWorld.CreateAsync(interceptor: refusal);
         var queued = await world.SeedQueuedTaskAsync(WorkspaceMode.ReadOnly);
         world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
 
-        await using (var holder = new NpgsqlConnection(world.Schema.ConnectionString))
         {
-            await holder.OpenAsync();
-            await using var transaction = await HoldAdmissionAsync(holder);
             var tick = await world.Dispatcher.TickAsync(CancellationToken.None);
+            refusal.Refuse = false;
 
             await using var db = world.CreateDb();
             var deferred = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == queued.Id);
@@ -66,20 +65,16 @@ public sealed class WorktreeRetirementRaceTests
     [Test]
     public async Task BusyAdmissionRetriesTheSameBackgroundLaunchGeneration()
     {
-        var busy = new AdmissionTimeoutObserver();
-        await using var world = await RaceWorld.CreateAsync(interceptor: busy);
+        var refusal = new WorkspaceAdmissionWaitProbe { Refuse = true };
+        await using var world = await RaceWorld.CreateAsync(interceptor: refusal);
         world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
         var session = await world.SeedInteractiveSessionAsync();
         var generation = await world.OwnStandingLaunchAsync(session.Id);
 
-        await using (var holder = new NpgsqlConnection(world.Schema.ConnectionString))
-        {
-            await holder.OpenAsync();
-            await using var transaction = await HoldAdmissionAsync(holder);
-            world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
-            await busy.TimedOut.Task.WaitAsync(TimeSpan.FromSeconds(15));
-            world.Adapter.Started.ShouldBeFalse();
-        }
+        world.LaunchQueue.EnqueueInteractiveSession(session.Id, world.AgentId, generation, world.LaunchSpec(session.Id), null);
+        await refusal.Entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        refusal.Refuse = false;
+        world.Adapter.Started.ShouldBeFalse();
 
         await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, CancellationToken.None);
         await using var db = world.CreateDb();
@@ -145,19 +140,6 @@ public sealed class WorktreeRetirementRaceTests
         return transaction;
     }
 
-    private sealed class AdmissionTimeoutObserver : DbCommandInterceptor
-    {
-        public TaskCompletionSource TimedOut { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public override Task CommandFailedAsync(DbCommand command, CommandErrorEventData eventData, CancellationToken cancellationToken = default)
-        {
-            if (eventData.Exception is PostgresException { SqlState: PostgresErrorCodes.LockNotAvailable }
-                && command.CommandText.Contains("pg_advisory_xact_lock(1017, 459)", StringComparison.Ordinal))
-                TimedOut.TrySetResult();
-            return Task.CompletedTask;
-        }
-    }
-
     [Test]
     public Task ContendedCreateAndReplyReachTheRecipientDespiteAnEnqueueFailure() =>
         ExerciseReplyRecoveryAsync(crashAfterCommit: false);
@@ -185,7 +167,7 @@ public sealed class WorktreeRetirementRaceTests
         {
             await using var scope = world.Provider.CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
-                .CreateAsync(request, world.ManualCaller(), ct);
+                .CreateAsync(request, world.ManualCaller(), ct, WorkspaceAdmissionWaitPolicy.Interactive);
         }
 
         async Task AppendAsync(Guid sessionId, string kind, string? text)
@@ -239,7 +221,8 @@ public sealed class WorktreeRetirementRaceTests
 
         await using (var busy = await HoldAdmissionAsync(holder))
         {
-            (await Should.ThrowAsync<ServiceUnavailableException>(() => world.Replies.AnswerAsync(created.Id, answer, ct)))
+            (await Should.ThrowAsync<ServiceUnavailableException>(() => world.Replies.AnswerAsync(created.Id, answer, AnswerOrigin.Web, null, ct,
+                    admissionWait: WorkspaceAdmissionWaitPolicy.Interactive)))
                 .Code.ShouldBe("workspace_admission_busy");
             await AssertBlockedAndUnqueuedAsync();
         }

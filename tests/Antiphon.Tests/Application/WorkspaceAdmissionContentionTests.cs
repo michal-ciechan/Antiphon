@@ -2,6 +2,7 @@ using System.Text.Json;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
@@ -82,7 +83,8 @@ public sealed class WorkspaceAdmissionContentionTests
         await using var transaction = await holder.BeginTransactionAsync();
         await using var takeLock = new NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
         await takeLock.ExecuteNonQueryAsync();
-        var busy = await Should.ThrowAsync<WorkspaceAdmissionBusyException>(() => journal.TryAdmitConsumerAsync(command, default));
+        var busy = await Should.ThrowAsync<WorkspaceAdmissionBusyException>(() =>
+            journal.TryAdmitConsumerAsync(command, default, WorkspaceAdmissionWaitPolicy.Interactive));
         busy.InnerException.ShouldBeOfType<PostgresException>().SqlState.ShouldBe(PostgresErrorCodes.LockNotAvailable,
             "the chosen lock timeout expires before the server's statement deadline");
         await transaction.RollbackAsync();
@@ -122,7 +124,7 @@ public sealed class WorkspaceAdmissionContentionTests
         var logger = new RecordingLogger<ExceptionMiddleware>();
         var middleware = new ExceptionMiddleware(async context =>
         {
-            await admission.RequireConsumerAsync(command, context.RequestAborted);
+            await admission.RequireConsumerAsync(command, context.RequestAborted, WorkspaceAdmissionWaitPolicy.Interactive);
         }, logger);
         var request = new DefaultHttpContext();
         using var body = new MemoryStream();

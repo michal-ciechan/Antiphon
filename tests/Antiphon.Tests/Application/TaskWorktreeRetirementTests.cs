@@ -13,7 +13,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -28,13 +27,14 @@ public sealed class TaskWorktreeRetirementTests
     [Arguments(true)]
     public async Task ResidueSweepRetriesBusyAdmissionBeforeClaimOrAfterDurableRemoval(bool afterRemoval)
     {
-        var busy = new RetirementAdmissionCut(afterRemoval);
+        var refusal = new WorkspaceAdmissionWaitProbe();
+        var busy = new RetirementAdmissionCut(afterRemoval, refusal);
         await using var harness = await SettledRemovalHarness.CreateAsync(namedLeaf: true, configure: services =>
         {
             services.AddSingleton(Options.Create(new WorktreeResidueSettings { Execute = true }));
             services.AddScoped<WorktreeResidueSweepService>();
             services.AddScoped<IRetirementCommandJournal>(busy.Wrap);
-        });
+        }, commandInterceptor: refusal);
         var ct = CancellationToken.None;
         Guid releaseId;
         await using (var scope = harness.Host.Services.CreateAsyncScope())
@@ -50,18 +50,8 @@ public sealed class TaskWorktreeRetirementTests
                 true, "reviewed no further use"), new(null, null, ""), ct)).Id;
         }
 
-        await using (var holder = new NpgsqlConnection(harness.Host.Schema.ConnectionString))
+        refusal.Refuse = !afterRemoval;
         {
-            await holder.OpenAsync(ct);
-            await using var transaction = await holder.BeginTransactionAsync(ct);
-            busy.TakeLock = async token =>
-            {
-                await using var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
-                await command.ExecuteNonQueryAsync(token);
-            };
-            if (!afterRemoval)
-                await busy.TakeLock(ct);
-
             await using var scope = harness.Host.Services.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<WorktreeResidueSweepService>().RunAsync(ct);
             await using var db = harness.Host.CreateContext();
@@ -77,7 +67,7 @@ public sealed class TaskWorktreeRetirementTests
             busy.ComponentWrites.ShouldBe(afterRemoval ? 3 : 0);
         }
 
-        busy.TakeLock = null;
+        refusal.Refuse = false;
         await using (var scope = harness.Host.Services.CreateAsyncScope())
             await scope.ServiceProvider.GetRequiredService<WorktreeResidueSweepService>().RunAsync(ct);
         await using var fresh = harness.Host.CreateContext();
@@ -87,16 +77,20 @@ public sealed class TaskWorktreeRetirementTests
         busy.ComponentWrites.ShouldBe(3, "replaying a durable removal only finalizes it");
     }
 
-    private sealed class RetirementAdmissionCut(bool afterRemoval)
+    private sealed class RetirementAdmissionCut(bool afterRemoval, WorkspaceAdmissionWaitProbe refusal)
     {
-        public Func<CancellationToken, Task>? TakeLock { get; set; }
+        public void AfterBranchRemoved()
+        {
+            if (afterRemoval)
+                refusal.Refuse = true;
+        }
         public int ComponentWrites { get; private set; }
 
         public IRetirementCommandJournal Wrap(IServiceProvider services) =>
-            new Journal(this, afterRemoval, new RetirementCommandJournal(services.GetRequiredService<IServiceScopeFactory>(),
+            new Journal(this, new RetirementCommandJournal(services.GetRequiredService<IServiceScopeFactory>(),
                 services.GetRequiredService<TimeProvider>()));
 
-        private sealed class Journal(RetirementAdmissionCut cut, bool afterRemoval, IRetirementCommandJournal inner) : IRetirementCommandJournal
+        private sealed class Journal(RetirementAdmissionCut cut, IRetirementCommandJournal inner) : IRetirementCommandJournal
         {
             public Task<bool> TryCommitIntentAsync(Guid attemptId, Guid commandId, CancellationToken ct) =>
                 inner.TryCommitIntentAsync(attemptId, commandId, ct);
@@ -106,8 +100,8 @@ public sealed class TaskWorktreeRetirementTests
             {
                 await inner.RecordComponentAsync(attemptId, directory, registration, branch, residue, ct);
                 cut.ComponentWrites++;
-                if (afterRemoval && branch == true && cut.TakeLock is { } takeLock)
-                    await takeLock(ct);
+                if (branch == true)
+                    cut.AfterBranchRemoved();
             }
         }
     }

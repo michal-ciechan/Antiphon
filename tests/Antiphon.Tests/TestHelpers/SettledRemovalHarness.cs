@@ -27,9 +27,10 @@ internal sealed class SettledRemovalHarness : IAsyncDisposable
     private SettledRemovalHarness(LandingSafetyHarness host) => Host = host;
 
     /// <param name="configure">CARD-0824 S4a S-4: extra registrations, passed through to <see cref="LandingSafetyHarness.ConfigureServices"/>.</param>
-    public static async Task<SettledRemovalHarness> CreateAsync(bool namedLeaf = false, Action<IServiceCollection>? configure = null)
+    public static async Task<SettledRemovalHarness> CreateAsync(bool namedLeaf = false, Action<IServiceCollection>? configure = null,
+        Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor? commandInterceptor = null)
     {
-        var host = new LandingSafetyHarness { ConfigureServices = configure };
+        var host = new LandingSafetyHarness { ConfigureServices = configure, CommandInterceptor = commandInterceptor };
         await host.InitializeAsync();
         var h = new SettledRemovalHarness(host);
         h.SourceSha = (await host.Fixture.RequiredAsync(host.Fixture.Source, "rev-parse", "HEAD")).Trim();

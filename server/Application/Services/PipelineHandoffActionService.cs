@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
@@ -118,7 +119,8 @@ public sealed class PipelineHandoffActionService(AppDbContext db, TimeProvider c
     }
 
     public async Task<AgentTaskCreatedDto> RequestChildAsync(Guid predecessorId, Guid actionId,
-        PipelineHandoffChildRequest request, AgentTaskService.Caller caller, string actor, CancellationToken ct)
+        PipelineHandoffChildRequest request, AgentTaskService.Caller caller, string actor, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
         var action = await db.PipelineHandoffActions.AsNoTracking().SingleOrDefaultAsync(a =>
             a.Id == actionId && a.PredecessorTaskId == predecessorId, ct)
@@ -146,7 +148,7 @@ public sealed class PipelineHandoffActionService(AppDbContext db, TimeProvider c
             await using var scope = (scopes ?? throw new InvalidOperationException("Child admission requires an owned scope."))
                 .CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
-                .CreateAsync(request.Task, caller, actionId, ct, acceptSpend: request.AcceptSpend);
+                .CreateAsync(request.Task, caller, actionId, ct, acceptSpend: request.AcceptSpend, admissionWait: admissionWait);
         }
         catch (HttpException error) when (error.StatusCode is 409 or 422)
         {

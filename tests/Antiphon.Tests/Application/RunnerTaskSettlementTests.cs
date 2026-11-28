@@ -628,22 +628,20 @@ public sealed class RunnerTaskSettlementTests
     public async Task BusyAdmissionLeavesCompletedRunnerReportForTheSettlementSweep()
     {
         await using var world = await RunnerSettlementWorld.CreateAsync(fenced: true);
+        var refusal = new WorkspaceAdmissionWaitProbe();
+        world.Interceptors.Add(refusal);
+        await world.RestartServicesAsync();
         var tip = await world.Git.RunnerPushAsync("work.txt", "recover this report");
         var report = RunnerSettlementWorld.Report("Implemented and pushed the repair.");
 
-        await using (var holder = new Npgsql.NpgsqlConnection(world.Schema.ConnectionString))
-        {
-            await holder.OpenAsync();
-            await using var transaction = await holder.BeginTransactionAsync();
-            await using var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
-            await command.ExecuteNonQueryAsync();
-            await world.SettleAsync(report);
+        refusal.Refuse = true;
+        await world.SettleAsync(report);
+        refusal.Refuse = false;
 
-            world.Task.Status.ShouldBe(AgentTaskStatus.Working, Why(world));
-            world.Task.CompletedAt.ShouldBeNull();
-            await AssertNoDebtAsync(world);
-            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
-        }
+        world.Task.Status.ShouldBe(AgentTaskStatus.Working, Why(world));
+        world.Task.CompletedAt.ShouldBeNull();
+        await AssertNoDebtAsync(world);
+        (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
 
         (await world.SweepDeferredReportsAsync()).ShouldBe(1);
         world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));

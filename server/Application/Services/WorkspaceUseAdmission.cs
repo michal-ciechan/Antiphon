@@ -20,9 +20,10 @@ public sealed class WorkspaceUseAdmission(
     internal WorkspaceReservationJournal.AdmissionLock MeasureAdmissionLock() => new(admissionSettings, logger);
 
     /// <summary>Admits one consumer and returns its reservation (CARD-0664: callers may release it).</summary>
-    public async Task<WorkspaceReservationSnapshot> RequireConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
+    public async Task<WorkspaceReservationSnapshot> RequireConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct,
+        WorkspaceAdmissionWaitPolicy admissionWait = WorkspaceAdmissionWaitPolicy.Background)
     {
-        var result = await journal.TryAdmitConsumerAsync(command, ct);
+        var result = await journal.TryAdmitConsumerAsync(command, ct, admissionWait);
         if (!result.Accepted)
             throw new ConflictException(result.Reason ?? "Workspace is reserved for retirement.", "workspace_reserved");
         return result.Snapshot!;
