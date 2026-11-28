@@ -338,13 +338,13 @@ edges:
   - base-moved[moved|behind] -> base-drift
   - update-branch[approved] -> await-merge
   - update-branch[open] -> await-fixes          # after an author opt-in; its own push is base-only
-  - await-fixes[push|recheck] -> intake         # back edge, maxIterations: 20; delta re-runs the drift check if a drift is recorded
-  - await-merge[push] -> intake                 # back edge, maxIterations: 20; revokes the approval
+  - { edge: "await-fixes[push|recheck] -> intake", maxIterations: 20, overflow: human-review } # Delta re-runs the drift check if a drift is recorded.
+  - { edge: "await-merge[push] -> intake", maxIterations: 20, overflow: human-review } # Revokes the approval.
   - await-fixes[base-moved] -> record-drift     # D-19: no branch update while fixes are awaited
   - record-drift -> await-fixes
   - await-fixes[update-requested] -> update-branch   # the author opts in (D-19)
   - await-merge[base-moved] -> base-drift
-  - base-drift[affected] -> intake              # back edge, maxIterations: 10; carries a rebase steer
+  - { edge: "base-drift[affected] -> intake", maxIterations: 10, overflow: human-review } # Carries a rebase steer.
   - base-drift[unaffected] -> update-branch     # approval carried forward (patch ids unchanged)
 ```
 
