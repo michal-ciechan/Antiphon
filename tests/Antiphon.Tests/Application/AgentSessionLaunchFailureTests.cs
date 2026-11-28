@@ -2094,6 +2094,10 @@ public class AgentSessionLaunchFailureTests
             && t.Kind == TranscriptKinds.SessionRestartBoundary);
         replayed.Id.ShouldBe(boundary.Id);
         replayed.StopReason.ShouldBe(ChannelRestartContinuation.Queued);
+        resumed.SubmittedBodies.ShouldBe([continued.Body]);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId
+            && t.Sequence > boundary.Sequence && t.Kind == TranscriptKinds.UserPrompt && t.Text == continued.Body))
+            .ShouldBe(1);
 
         Task<BridgeQueueHarness> OpenAsync(FakeAgentProtocolAdapter[] adapters, Guid? session = null,
             Guid? agent = null, Action<DbContextOptionsBuilder>? configureDb = null) =>
