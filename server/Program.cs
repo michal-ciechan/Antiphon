@@ -483,7 +483,8 @@ try
         sp.GetRequiredService<TimeProvider>(),
         sp.GetRequiredService<RemoteSpillCourier>(),
         sp.GetRequiredService<ILogger<PhoneHomeRunnerDirectory>>(),
-        sp.GetService<IRunnerEligibilityObserver>()));
+        sp.GetService<IRunnerEligibilityObserver>(),
+        sp.GetRequiredService<SessionInputAdmission>()));
     builder.Services.AddSingleton<ISessionRunnerDirectory>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<IRunnerEligibilitySnapshotSource>(sp => sp.GetRequiredService<PhoneHomeRunnerDirectory>());
     builder.Services.AddSingleton<ISessionRunnerClient, RoutingSessionRunnerClient>();
@@ -661,6 +662,7 @@ try
     builder.Services.AddSingleton<OutputDistillationQueue>();
     builder.Services.AddSingleton<CompletionNoteFlushQueue>();
     builder.Services.AddSingleton<SessionTerminalAttachments>();
+    builder.Services.AddSingleton<SessionInputAdmission>();
     builder.Services.AddScoped<VerifiedSessionStopService>();
     builder.Services.AddSingleton<SpecialistFailureQueue>();
     builder.Services.AddScoped<OutputDistillationService>();

@@ -55,8 +55,9 @@ public sealed partial class SessionMessageQueueService
         }
     }
 
-    private async Task<bool> CanWriteResumeInputAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
+    private async Task<bool> CanWriteDeliveryInputAsync(AppDbContext db, Guid sessionId, CancellationToken ct)
     {
+        if (await SessionStopAudit.IsPendingAsync(db, sessionId, ct)) return false;
         var fence = await ObserveResumeReceiptFenceAsync(db, sessionId, ct);
         if (!fence.Ready) return false;
         if (fence.Confirmed) return true;
@@ -73,10 +74,10 @@ public sealed partial class SessionMessageQueueService
         return true;
     }
 
-    private async Task<bool> CanWriteResumeInputAsync(Guid sessionId, CancellationToken ct)
+    private async Task<bool> CanWriteDeliveryInputAsync(Guid sessionId, CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
-        return await CanWriteResumeInputAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
+        return await CanWriteDeliveryInputAsync(scope.ServiceProvider.GetRequiredService<AppDbContext>(), sessionId, ct);
     }
 
     private async Task<bool> HasResumeReceiptObligationAsync(Guid sessionId, CancellationToken ct)

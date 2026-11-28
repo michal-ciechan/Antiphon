@@ -103,7 +103,8 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         IOptions<GrokRulesSettings>? rulesSettings = null,
         TimeProvider? time = null,
         IOptionsMonitor<ResilienceSettings>? resilience = null,
-        IOptions<HostStatsSettings>? hostStats = null)
+        IOptions<HostStatsSettings>? hostStats = null,
+        SessionInputAdmission? inputAdmission = null)
     {
         _httpClient = httpClient;
         _httpClientFactory = httpClientFactory;
@@ -112,6 +113,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         _time = time ?? TimeProvider.System;
         _resilience = resilience;
         _hostStats = hostStats?.Value ?? new HostStatsSettings();
+        _inputAdmission = inputAdmission;
         _absenceKey = new(() => AbsenceEvidenceKey.TryLoad(_settings.AbsenceEvidence.KeyPath, out _));
         _httpClient.BaseAddress = new Uri(_settings.BaseUrl.TrimEnd('/') + "/");
     }
@@ -860,8 +862,11 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         return new(null, null, status, responseBody, authentication, request, sentAt, _time.GetUtcNow());
     }
 
+    private readonly SessionInputAdmission? _inputAdmission;
+
     public async Task SendInputAsync(Guid sessionId, string input, CancellationToken ct)
     {
+        using var admission = _inputAdmission is null ? null : await _inputAdmission.RequireAsync(sessionId, ct);
         var response = await _httpClient.PostAsJsonAsync(
             $"sessions/{sessionId:D}/input",
             new RunnerInputRequest(input),
@@ -876,6 +881,7 @@ public sealed class SessionRunnerHttpClient : ISessionRunnerClient
         if (request.RequireClaudeDialogClear
             && (await GetCapabilitiesAsync(ct))?.Features?.Contains(ProviderDialogObservation.Capability) != true)
             return new(sessionId, ConditionalInputOutcomes.Unsupported);
+        using var admission = _inputAdmission is null ? null : await _inputAdmission.RequireAsync(sessionId, ct);
         HttpResponseMessage response;
         try
         {

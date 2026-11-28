@@ -60,6 +60,7 @@ public sealed class SessionReconciliationService
     private readonly ILogger<SessionReconciliationService> _logger;
     private readonly ILaunchOwnership? _ownership;
     private readonly ISessionRunnerDirectory? _directory;
+    private readonly CompletionNoteFlushQueue? _inputFlushes;
 
     public SessionReconciliationService(
         AppDbContext db,
@@ -76,7 +77,8 @@ public sealed class SessionReconciliationService
         TimeProvider timeProvider,
         ILogger<SessionReconciliationService> logger,
         ILaunchOwnership? ownership = null,
-        ISessionRunnerDirectory? directory = null)
+        ISessionRunnerDirectory? directory = null,
+        CompletionNoteFlushQueue? inputFlushes = null)
     {
         _db = db;
         _runnerClient = runnerClient;
@@ -93,6 +95,7 @@ public sealed class SessionReconciliationService
         _logger = logger;
         _ownership = ownership;
         _directory = directory;
+        _inputFlushes = inputFlushes;
     }
 
     /// <summary>Runs one reconciliation sweep. Returns the number of rows it had to correct.</summary>
@@ -163,7 +166,11 @@ public sealed class SessionReconciliationService
             if (audit is null || !SessionStopAudit.IsPrepared(audit)) continue;
             SessionStopAudit.SetOutcome(audit, SessionStopAudit.PreparationExpired);
             await _db.SaveChangesAsync(ct);
-            if (transaction is not null) await transaction.CommitAsync(ct);
+            if (transaction is not null)
+            {
+                await transaction.CommitAsync(ct);
+                _inputFlushes?.TryEnqueue(id);
+            }
             released++;
         }
         return released;

@@ -2383,7 +2383,8 @@ public class SessionReconciliationServiceTests
         int maxReAdoptions = 3,
         ILogger<SessionReconciliationService>? logger = null,
         SessionGenerationCompatState? generationCompat = null,
-        ISessionRunnerDirectory? directory = null) =>
+        ISessionRunnerDirectory? directory = null,
+        CompletionNoteFlushQueue? inputFlushes = null) =>
         new(
             db,
             runnerClient,
@@ -2412,7 +2413,8 @@ public class SessionReconciliationServiceTests
             time ?? TimeProvider.System,
             logger ?? NullLogger<SessionReconciliationService>.Instance,
             ownership,
-            directory);
+            directory,
+            inputFlushes);
 
     /// <summary>A runner that reports one session Running, with a real process behind it.</summary>
     private static FakeRunnerClient RunnerRunning(

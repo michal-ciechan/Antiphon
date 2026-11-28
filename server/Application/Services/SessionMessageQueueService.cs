@@ -595,8 +595,8 @@ public sealed partial class SessionMessageQueueService
             DeliveryOutcome outcome;
             try
             {
-                if (!await CanWriteResumeInputAsync(sessionId, ct))
-                    throw new ConflictException("Transcript receipt readiness is pending; input was deferred.");
+                if (!await CanWriteDeliveryInputAsync(sessionId, ct))
+                    throw new ConflictException("Session input is waiting for stop or transcript evidence.");
                 await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
                 await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
                 await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
@@ -976,7 +976,7 @@ public sealed partial class SessionMessageQueueService
             // Pending here; DeliverNextLockedAsync is the single automatic admission predicate
             // (CARD-0574 D-10). The launch path flushes the queue itself the moment boot completes
             // (FlushSessionAsync).
-            var resumeReady = !deliverIfIdle || await CanWriteResumeInputAsync(db, sessionId, ct);
+            var resumeReady = !deliverIfIdle || await CanWriteDeliveryInputAsync(db, sessionId, ct);
             var working = await ReadWorkingAsync(db, sessionId, ct);
             if (deliverIfIdle
                 && resumeReady
@@ -1067,8 +1067,8 @@ public sealed partial class SessionMessageQueueService
         TranscriptBaseline nowBaseline;
         try
         {
-            if (!await CanWriteResumeInputAsync(sessionId, ct))
-                throw new ConflictException("Transcript receipt readiness is pending; input was deferred.");
+            if (!await CanWriteDeliveryInputAsync(sessionId, ct))
+                throw new ConflictException("Session input is waiting for stop or transcript evidence.");
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
             await EnsureRulesAllowOrdinaryInputAsync(sessionId, ct);
             await EnsureNoUnconfirmedExpectationBodyAsync(sessionId, ct);
@@ -1668,7 +1668,7 @@ public sealed partial class SessionMessageQueueService
             }
 
             await RequireImmediateAdmissionAsync(await RequireSessionAsync(sessionId, ct), ct);
-            if (!await CanWriteResumeInputAsync(db, sessionId, ct))
+            if (!await CanWriteDeliveryInputAsync(db, sessionId, ct))
                 return await GetQueueAsync(sessionId, ct);
             if (StandingResumeNote.IsNote(message)
                 && (await CaptureSessionGenerationAsync(sessionId, ct) is not { } noteGeneration
@@ -1843,7 +1843,7 @@ public sealed partial class SessionMessageQueueService
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            if (!await CanWriteResumeInputAsync(db, sessionId, ct))
+            if (!await CanWriteDeliveryInputAsync(db, sessionId, ct))
                 return lateConfirmed.ToResult() with { Deferred = true };
             // Cancel-not-strand: a Supervision /compact that sat through a turn must not fire now.
             if (action is not null)
@@ -2036,7 +2036,7 @@ public sealed partial class SessionMessageQueueService
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                if (await CanWriteResumeInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct))
+                if (await CanWriteDeliveryInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct))
                     result = await DeliverNextLockedAsync(db, sessionId, ct);
             }
             finally
@@ -2094,7 +2094,7 @@ public sealed partial class SessionMessageQueueService
             // Boot is not the moment to compact — cancel-not-strand, a later sweep re-derives.
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
             await CancelPendingSupervisionLockedAsync(db, sessionId, "boot-flush", ct);
-            result = await CanWriteResumeInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct)
+            result = await CanWriteDeliveryInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct)
                 ? await DeliverNextLockedAsync(db, sessionId, ct)
                 : FlushResult.Nothing;
             if (result == FlushResult.Nothing && receipts.Confirmed > 0)
@@ -2148,7 +2148,7 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var receipts = await ReconcileDeliveredSpillsLockedAsync(db, sessionId, ct);
-            if (await CanWriteResumeInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct))
+            if (await CanWriteDeliveryInputAsync(db, sessionId, ct) && !await ReadWorkingAsync(db, sessionId, ct))
             {
                 // A pending auto-compact after a *manual* compact is redundant; drop it.
                 await CancelPendingSupervisionLockedAsync(db, sessionId, "idle-flush", ct);
@@ -2510,7 +2510,7 @@ public sealed partial class SessionMessageQueueService
             return FlushResult.Nothing;
         }
 
-        if (!await CanWriteResumeInputAsync(db, sessionId, ct)) return TemporaryBlock();
+        if (!await CanWriteDeliveryInputAsync(db, sessionId, ct)) return TemporaryBlock();
         var rulesSession = await db.AgentSessions.AsNoTracking().SingleOrDefaultAsync(s => s.Id == sessionId, ct);
         if (rulesSession is null || rulesSession.Status != SessionStatus.Running
             || rulesSession.GrokRulesState == GrokRulesState.Failed
@@ -3633,7 +3633,7 @@ public sealed partial class SessionMessageQueueService
         LateConfirmCollector? lateConfirmed = null,
         bool retainOnClear = false)
     {
-        if (run.Count == 0 || !await CanWriteResumeInputAsync(db, sessionId, ct))
+        if (run.Count == 0 || !await CanWriteDeliveryInputAsync(db, sessionId, ct))
             return FlushResult.Nothing;
         if (run.Any(m => m.MaintenanceKind != RemoteControlMaintenanceKind.None))
             return FlushResult.Nothing;
@@ -3736,7 +3736,7 @@ public sealed partial class SessionMessageQueueService
     {
         foreach (var message in run)
             if (!await SupervisionInputCurrentAsync(db, message, ct)) return FlushResult.Nothing;
-        if (!await CanWriteResumeInputAsync(db, sessionId, ct)) return FlushResult.Nothing;
+        if (!await CanWriteDeliveryInputAsync(db, sessionId, ct)) return FlushResult.Nothing;
         var kind = await TryGetSessionKindAsync(sessionId, ct);
         var head = run[0];
         if (head.SpecialistInputPolicyJson is not null)
@@ -6320,8 +6320,8 @@ public sealed partial class SessionMessageQueueService
             await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            if (!await CanWriteResumeInputAsync(db, sessionId, ct))
-                return new LocalCommandPollResult.Skipped("receipt readiness pending");
+            if (!await CanWriteDeliveryInputAsync(db, sessionId, ct))
+                return new LocalCommandPollResult.Skipped("stop or transcript evidence pending");
             if (!(await _runtime.ListLiveSessionsAsync(ct)).Contains(sessionId))
                 return new LocalCommandPollResult.Skipped("not live");
             if (!await IsAcceptingInputAsync(sessionId, ct))
@@ -6397,7 +6397,7 @@ public sealed partial class SessionMessageQueueService
     private async Task<LocalCommandTypeResult> TypeLocalCommandAsync(
         Guid sessionId, string command, CancellationToken ct, int? sequenceTimeoutSeconds = null)
     {
-        if (!await CanWriteResumeInputAsync(sessionId, ct) || await IsModalBlockedAsync(sessionId, ct))
+        if (!await CanWriteDeliveryInputAsync(sessionId, ct) || await IsModalBlockedAsync(sessionId, ct))
             return LocalCommandTypeResult.NotAccepted;
 
         if (await _runtime.TryGetLiveSnapshotAsync(sessionId, ct) is not { } before)

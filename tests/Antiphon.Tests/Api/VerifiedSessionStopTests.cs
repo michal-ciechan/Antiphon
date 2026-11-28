@@ -5,6 +5,7 @@ using System.Data.Common;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Dtos;
+using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -112,6 +113,9 @@ public sealed class VerifiedSessionStopTests
     [Test]
     public Task Retrying_an_unsent_stop_reuses_the_original_intent() => RunStopAsync("unsent-retry");
 
+    [Test]
+    public Task Queued_input_is_held_until_cancellation_then_delivers_in_order_once() => RunStopAsync("queued-stop-cancel");
+
     private static async Task RunStopAsync(string scenario)
     {
         var runner = new FakeSessionRunnerClient();
@@ -134,7 +138,7 @@ public sealed class VerifiedSessionStopTests
         var unowned = scenario is "idle" or "unconfirmed" or "new-generation";
         var browserRace = scenario is "input-during-stop" or "open-during-stop" or "reconnect-during-stop";
         var dispatchRace = scenario is "lost-readback-claim" or "confirmed-claim";
-        var unsent = scenario is "unsent-expires" or "unsent-retry";
+        var unsent = scenario is "unsent-expires" or "unsent-retry" or "queued-stop-cancel";
         var clock = new FakeTimeProvider(TimeProvider.System.GetUtcNow());
         await using var db = harness.CreateObserverContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == id);
@@ -153,7 +157,7 @@ public sealed class VerifiedSessionStopTests
             agent.AlwaysOn = true;
             agent.StandingSpecialistRole = StandingSpecialistSeatPolicy.Role;
         }
-        if (dispatchRace)
+        if (dispatchRace || scenario == "unsent-expires")
         {
             agent.Kind = AgentKind.Codex;
             agent.ModelLevel = AgentModelLevel.Medium;
@@ -183,11 +187,9 @@ public sealed class VerifiedSessionStopTests
         await db.SaveChangesAsync();
         await db.Entry(session).ReloadAsync();
         var generation = session.StartedAt;
-        runner.ListOverride = async ct =>
-        {
-            var snapshot = await runner.GetAsync(id, ct);
-            return [snapshot, snapshot with { SessionId = callerId }];
-        };
+        runner.ListOverride = _ => Task.FromResult<IReadOnlyList<SessionRunnerSessionDto>>(
+            [new(id, 123, generation, "Running", null, AgentExitReason.Unknown, 1, AcceptedStartedAt: generation),
+             new(callerId, 124, generation, "Running", null, AgentExitReason.Unknown, 0, AcceptedStartedAt: generation)]);
         var fenceEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFence = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var runnerReads = 0;
@@ -321,13 +323,17 @@ public sealed class VerifiedSessionStopTests
                 return;
             }
 
+            var messages = scenario == "queued-stop-cancel"
+                ? await QueueWhileStopHeldAsync(harness, db, bound.Token) : [];
             clock.Advance(TimeSpan.FromSeconds(11));
             var attention = new AttentionService(db, runner, Options.Create(new SupervisionSettings()),
                 Options.Create(new DelegationSettings()), clock, NullLogger<AttentionService>.Instance);
             (await attention.GetAsync(bound.Token)).Items.ShouldContain(x => x.ConditionKey != null
                 && x.ConditionKey.StartsWith($"verified-stop:{id:N}:"));
             clock.Advance(TimeSpan.FromSeconds(50));
-            var reconciliation = SessionReconciliationServiceTests.BuildService(db, runner, harness.EventBus, time: clock);
+            var flushes = new CompletionNoteFlushQueue();
+            var reconciliation = SessionReconciliationServiceTests.BuildService(db, runner, harness.EventBus,
+                time: clock, inputFlushes: flushes);
             await reconciliation.ScanAsync(bound.Token);
             (await SessionStopAudit.IsPendingAsync(db, id, bound.Token)).ShouldBeFalse();
             (await attention.GetAsync(bound.Token)).Items.ShouldNotContain(x => x.ConditionKey != null
@@ -335,6 +341,33 @@ public sealed class VerifiedSessionStopTests
             runner.KillGenerationCalls.ShouldBeEmpty();
             await db.Entry(session).ReloadAsync(bound.Token);
             session.Status.ShouldBe(SessionStatus.Running);
+            if (scenario == "unsent-expires")
+            {
+                var pending = await AgentTaskPoolTests.SeedQueuedTaskAsync(session.Cwd, agent.ModelLevel,
+                    pinnedAgentId: agent.Id, kind: AgentKind.Codex, connectionString: schema.ConnectionString);
+                var (_, _, provider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
+                await using (provider)
+                    (await TryWarmClaimAsync(provider, pending.Id, bound.Token)).ShouldBe(AgentTaskDispatcher.ReuseOutcome.Reused);
+                (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == pending.Id, bound.Token))
+                    .AgentSessionId.ShouldBe(id);
+            }
+            if (messages.Length > 0)
+            {
+                await using var wake = flushes.ReadAllAsync(bound.Token).GetAsyncEnumerator();
+                (await wake.MoveNextAsync()).ShouldBeTrue();
+                wake.Current.ShouldBe(id);
+                foreach (var _ in messages)
+                    await harness.Queue.FlushIfIdleAsync(id, bound.Token);
+                await harness.Queue.FlushIfIdleAsync(id, bound.Token);
+                harness.Adapter.SubmittedBodies.ShouldBe(messages);
+                var prompts = await db.TranscriptEntries.AsNoTracking().Where(t => t.AgentSessionId == id
+                    && t.Kind == TranscriptKinds.UserPrompt).OrderBy(t => t.Sequence).Select(t => t.Text).ToListAsync(bound.Token);
+                prompts.ShouldBe(messages);
+                var deliveries = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == id)
+                    .OrderBy(m => m.Sequence).ToListAsync(bound.Token);
+                deliveries.Count.ShouldBe(2);
+                deliveries.ShouldAllBe(m => m.DeliveryAttempts == 1 && m.DeliveryVerdict == DeliveryVerdict.Delivered);
+            }
             return;
         }
 
@@ -496,6 +529,7 @@ public sealed class VerifiedSessionStopTests
                 using var input = await client.PostAsJsonAsync($"/api/sessions/{id}/input", new { input = "held" }, bound.Token);
                 input.StatusCode.ShouldBe(HttpStatusCode.Conflict);
                 inputs.ShouldBeEmpty();
+                await QueueWhileStopHeldAsync(harness, db, bound.Token);
                 await harness.Runtime.ObserveExitAsync(id, 0, AgentExitReason.KilledByRequest, bound.Token, generation);
                 using (var replay = await client.PostAsync(path, null, bound.Token))
                     replay.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -565,6 +599,27 @@ public sealed class VerifiedSessionStopTests
             }
             runner.KillCalls.ShouldBe(0);
         }
+    }
+
+    private static async Task<string[]> QueueWhileStopHeldAsync(BridgeQueueHarness harness, AppDbContext db, CancellationToken ct)
+    {
+        var id = harness.SessionId;
+        harness.Runtime.Register(id, harness.Adapter);
+        await Should.ThrowAsync<ConflictException>(() =>
+            harness.Queue.EnqueueAsync(id, "Immediate input is held", MessageSendMode.Now, ct));
+        string[] bodies = ["First held input", "Second held input"];
+        foreach (var body in bodies)
+            await harness.Queue.EnqueueAsync(id, body, MessageSendMode.WhenIdle, ct);
+        var rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == id)
+            .OrderBy(m => m.Sequence).ToListAsync(ct);
+        await harness.Queue.SendNowAsync(id, rows[0].Id, ct);
+        await harness.Queue.FlushIfIdleAsync(id, ct);
+        harness.Adapter.Inputs.ShouldBeEmpty();
+        rows = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == id)
+            .OrderBy(m => m.Sequence).ToListAsync(ct);
+        rows.Select(m => m.Body).ShouldBe(bodies);
+        rows.ShouldAllBe(m => m.Status == QueuedMessageStatus.Pending && m.DeliveryAttempts == 0);
+        return bodies;
     }
 
     private sealed class PreparedCommitCut : DbTransactionInterceptor

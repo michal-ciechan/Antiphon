@@ -3,6 +3,7 @@ using System.Text.Json;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Services;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.SessionRunner.Contracts;
 
@@ -98,16 +99,18 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly Func<bool>? _isCurrent;
     private readonly TimeProvider _time;
+    private readonly SessionInputAdmission? _inputAdmission;
 
     public PhoneHomeRunnerClient(
         PhoneHomeLiveConnection connection,
         Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null, Func<bool>? isCurrent = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null, SessionInputAdmission? inputAdmission = null)
     {
         _connection = connection;
         _time = time ?? TimeProvider.System;
         _spills = spills;
         _isCurrent = isCurrent;
+        _inputAdmission = inputAdmission;
     }
 
     public async Task<RunnerCapabilitiesDto?> GetCapabilitiesAsync(CancellationToken ct)
@@ -434,6 +437,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
             return;
         }
 
+        using var admission = _inputAdmission is null ? null : await _inputAdmission.RequireAsync(sessionId, ct);
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.Input, new { sessionId, input }, ct);
         ThrowIfError(frame);
@@ -447,6 +451,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
     public async Task SendInputWithSpillAsync(
         Guid sessionId, string input, string runnerCwd, PhoneHomeInputSpill spill, CancellationToken ct)
     {
+        using var admission = _inputAdmission is null ? null : await _inputAdmission.RequireAsync(sessionId, ct);
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.Input, new { sessionId, input, runnerCwd, spill }, ct);
         ThrowIfError(frame);
@@ -615,6 +620,7 @@ public sealed class PhoneHomeRunnerClient : ISessionRunnerClient, IVerificationW
             spill = staged;
             transient = true;
         }
+        using var admission = _inputAdmission is null ? null : await _inputAdmission.RequireAsync(sessionId, ct);
         var frame = await _connection.RequestAsync(
             PhoneHomeOperation.ConditionalInput,
             new

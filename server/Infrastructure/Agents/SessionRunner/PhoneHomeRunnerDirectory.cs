@@ -33,6 +33,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
     private readonly ILogger _logger;
     private readonly Antiphon.Server.Application.Services.RemoteSpillCourier? _spills;
     private readonly IRunnerEligibilityObserver? _observer;
+    private readonly SessionInputAdmission? _inputAdmission;
     internal DateTimeOffset CodexCliEvidenceNow => _clock.GetUtcNow();
 
     public PhoneHomeRunnerDirectory(
@@ -43,9 +44,11 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         // CARD-0604 G-21: absent, a remote spill is typed whole rather than written anywhere.
         Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null,
         ILogger<PhoneHomeRunnerDirectory>? inventoryLogger = null,
-        IRunnerEligibilityObserver? observer = null)
+        IRunnerEligibilityObserver? observer = null,
+        SessionInputAdmission? inputAdmission = null)
     {
         _observer = observer;
+        _inputAdmission = inputAdmission;
         _spills = spills;
         _local = local;
         _settings = settings.Value;
@@ -166,7 +169,7 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         // end; a client on it would only fail its first request.
         if (!live.SocketOpen)
             throw new ServiceUnavailableException("Phone-home runner connection is closed.", PhoneHomeProblemTypes.Unavailable);
-        return new PhoneHomeRunnerClient(live, _spills, () => IsCurrent(live));
+        return new PhoneHomeRunnerClient(live, _spills, () => IsCurrent(live), inputAdmission: _inputAdmission);
     }
 
     public async Task<RunnerProviderAuthDto?> RequestProviderAuthAsync(
