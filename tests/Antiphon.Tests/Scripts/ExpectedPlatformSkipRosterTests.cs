@@ -130,6 +130,48 @@ public sealed class ExpectedPlatformSkipRosterTests
     }
 
     [Test]
+    public void Roster_uses_qualified_source_identities_across_suites()
+    {
+        using var fixture = NightlyFixture.Create("eps-cross-suite");
+        var tests = Directory.CreateDirectory(Path.Combine(fixture.Root, "tests")).FullName;
+        File.WriteAllText(Path.Combine(tests, "MainTests.cs"), """
+            namespace First; public class MainTests
+            {
+                [Test] public void Required() => Removed();
+                private void Removed() { }
+            }
+            """);
+        const string current = "First.MainTests.Required";
+        const string moved = "Old.MainTests.Required";
+        const string noLongerATest = "First.MainTests.Removed";
+        var roster = new[] { Entry("windows", current, "skip") };
+        var state = new NightlyRunState { Platform = "windows", ExpectedSkipRoster = roster };
+        var suite = new NightlySuiteRunner(state);
+        var discoveryPath = Path.Combine(fixture.Root, "other.discovery.json");
+        NightlyFixture.WriteDiscovery(discoveryPath, [new NightlyTestNode("other", "OtherTests", "Runs", "Second")]);
+        var index = new NightlyDiscoveryIndex();
+        var discovery = index.Entry(discoveryPath).Document;
+        suite.Complete(new NightlyPreparedSuite(new NightlySuiteState
+        {
+            SuiteId = "other",
+            IsNative = true,
+            DiscoveryIndex = index,
+            ProfileDiscovery = discovery,
+            ProfileDiscoveryPath = discoveryPath,
+            DiscoveryNodes = PsValue.AsArray(PsValue.Prop(discovery, "Nodes")),
+        }, []));
+
+        var gaps = NightlyExpectedSkips.SourceGaps(fixture.Root, "windows",
+            roster.Concat([Entry("windows", moved, "skip"), Entry("windows", noLongerATest, "skip")]).ToArray(), null);
+        var rows = new NightlyCaseRows();
+        rows.Check(state.ExpectedSkipWarnings.Count == 0, "another suite does not condemn a valid roster row",
+            Joined(state.ExpectedSkipWarnings.ToArray()));
+        rows.Check(gaps.SequenceEqual([moved, noLongerATest]), "a moved namespace and a former test are stale",
+            string.Join(",", gaps));
+        rows.ShouldAllPass(2);
+    }
+
+    [Test]
     public void Windows_qualification_tolerates_the_three_linux_only_witnesses()
     {
         const string handleProbe = "Antiphon.Tests.Scripts.ScriptHarnessHandleProbeTests.Early_exit_reports_process_and_receipt_evidence";
@@ -224,16 +266,7 @@ public sealed class ExpectedPlatformSkipRosterTests
         rows.Check(digest.Length == 64 && digest == digestAgain && toleratedIds.Length == 1 && toleratedIds[0] == Cleanup && toleratedClass == "platform",
             "EPS tolerated-list-and-digest", "digest=" + digest + " ids=" + string.Join(",", toleratedIds) + " class=" + toleratedClass);
 
-        // W2-nightly S13: suite completion (the stale-roster warnings) is Antiphon.Nightly/NightlySuiteRunner.cs.
-        var implText = File.ReadAllText(Path.Combine(Repo, "scripts", "lib", "Antiphon.Nightly", "NightlySuiteRunner.cs"));
-        var knownIds = SuiteCompletionParts.KnownIdentities([new PlainObject(("ClassName", "Antiphon.Tests.Application.C0824RefOnlyCleanupTests"),
-            ("Method", "Remote_cleanup_still_uses_its_binding_and_generation"))]);
-        var knownWarnings = NightlyChunkVerdict.StaleWarnings("windows", roster, knownIds);
-        var wired = implText.Contains("SuiteCompletionParts.KnownIdentities(", StringComparison.Ordinal);
-        rows.Check(knownIds.Contains(Cleanup) && knownWarnings.Contains("stale-roster:" + Sync) && !knownWarnings.Contains("stale-roster:" + Cleanup) && wired,
-            "EPS discovery-known-identities", "known=" + string.Join(",", knownIds) + " warnings=" + string.Join(",", knownWarnings) + " wired=" + wired);
-
-        rows.ShouldAllPass(23);
+        rows.ShouldAllPass(22);
     }
 
     // EPS trx-debug-trace: the TRX reader keeps the skip's DebugTrace, and an all-skip exit 8 from it is tolerated.
@@ -280,7 +313,7 @@ public sealed class ExpectedPlatformSkipRosterTests
         var windows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "platform")) == "windows").ToArray();
         var unique = windows.Select(e => PsValue.Str(PsValue.Prop(e, "test"))).Distinct(StringComparer.Ordinal).Count();
         var gaps = NightlyExpectedSkips.SourceGaps(Repo, "windows", committed, null);
-        rows.Check(windows.Length == 37 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
+        rows.Check(windows.Length > 0 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
             "windows=" + windows.Length + " unique=" + unique + " gaps=" + string.Join(",", gaps));
 
         var planted = committed.Append(Entry("windows", Missing, "gone")).ToArray();

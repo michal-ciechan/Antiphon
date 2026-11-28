@@ -23,6 +23,8 @@ namespace Antiphon.Nightly
         public string BarrierDirectory { get; set; } = "";
         public string[] Barriers { get; set; } = Array.Empty<string>();
         public bool FailAssignment { get; set; }
+        public bool FailJobTermination { get; set; }
+        public int CleanupTimeoutMilliseconds { get; set; } = NativeProcessOwner.DefaultCleanupTimeoutMilliseconds;
         public bool ZeroCountAtRootWait { get; set; }
         public string TrxPath { get; set; } = "";
         public string DiagnosticDirectory { get; set; } = "";
@@ -30,18 +32,21 @@ namespace Antiphon.Nightly
         public string HangCapturePath { get; set; } = "";
         public NightlyChunkIdleMonitor IdleMonitor { get; set; }
         public string ActiveHeartbeatPath { get; set; } = "";
-        internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken))
+        // Fixture launches can supply input and clean their job as soon as the root exits.
+        public string StandardInputPath { get; set; } = "";
+        public bool TerminateDescendantsOnRootExit { get; set; }
+        internal void Pause(string phase, CancellationToken cancellation = default(CancellationToken), string evidence = "entered")
         {
             if (!Barriers.Contains(phase)) return;
-            File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), "entered");
+            File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), evidence);
             while (!File.Exists(Path.Combine(BarrierDirectory, phase + ".release")))
             { cancellation.ThrowIfCancellationRequested(); Thread.Sleep(10); }
         }
-        internal bool HoldRootWait()
+        internal bool HoldWait(string phase)
         {
-            if (!Barriers.Contains("root-wait")) return false;
-            File.WriteAllText(Path.Combine(BarrierDirectory, "root-wait.entered"), "entered");
-            return !File.Exists(Path.Combine(BarrierDirectory, "root-wait.release"));
+            if (!Barriers.Contains(phase)) return false;
+            File.WriteAllText(Path.Combine(BarrierDirectory, phase + ".entered"), "entered");
+            return !File.Exists(Path.Combine(BarrierDirectory, phase + ".release"));
         }
     }
 
@@ -55,6 +60,8 @@ namespace Antiphon.Nightly
         public string[] DescendantIdentities { get; set; } = Array.Empty<string>();
         public bool ChildrenExited { get; set; }
         public bool OutputDrained { get; set; }
+        // The merged log writes the stdout bytes before any stderr bytes.
+        public long StandardOutputBytes { get; set; }
         public bool CleanupComplete { get { return ChildrenExited && OutputDrained; } }
         public bool TerminationRequested { get; set; }
         public bool TerminationSucceeded { get; set; }
@@ -79,7 +86,14 @@ namespace Antiphon.Nightly
 
     public sealed class NativeProcessOwner
     {
+        internal const int DefaultCleanupTimeoutMilliseconds = 15000;
         private const int OutputDrainTimeoutMilliseconds = 15000;
+        private const int ParentProcessAttribute = 0x20000;
+        private const int HandleListAttribute = 0x20002;
+        private const uint CreateSuspended = 0x4;
+        private const uint CreateUnicodeEnvironment = 0x400;
+        private const uint ExtendedStartupInfoPresent = 0x80000;
+        private const uint CreateNoWindow = 0x08000000;
         private readonly CancellationTokenSource _drainCancellation = new CancellationTokenSource();
         private readonly NativeProcessHooks _hooks;
         private readonly Dictionary<int, Process> _descendants = new Dictionary<int, Process>();
@@ -103,6 +117,8 @@ namespace Antiphon.Nightly
         // Windows CommandLineToArgvW/CRT encoding, including empty tokens and trailing slashes.
         private static string Quote(string value)
         {
+            // WSL recognizes switches such as -e before parsing the remaining command line.
+            if (value.Length > 0 && !value.Any(c => char.IsWhiteSpace(c) || c == '"')) return value;
             var text = new StringBuilder("\"");
             int slashes = 0;
             foreach (char c in value)
@@ -122,11 +138,19 @@ namespace Antiphon.Nightly
             IntPtr job = IntPtr.Zero, root = IntPtr.Zero, thread = IntPtr.Zero;
             IntPtr outRead = IntPtr.Zero, outWrite = IntPtr.Zero, errRead = IntPtr.Zero, errWrite = IntPtr.Zero;
             IntPtr inputRead = IntPtr.Zero, inputWrite = IntPtr.Zero, attributes = IntPtr.Zero, handleList = IntPtr.Zero, envBlock = IntPtr.Zero;
+            IntPtr parentAttribute = IntPtr.Zero;
+            ProcessInfo carrier = default;
+            bool attributesInitialized = false;
             ReaderWork stdout = null, stderr = null;
             Task logWrite = null;
             Stopwatch drain = null;
+            Stopwatch cleanup = null;
+            int cleanupBudget = _hooks.CleanupTimeoutMilliseconds > 0
+                ? _hooks.CleanupTimeoutMilliseconds : DefaultCleanupTimeoutMilliseconds;
+            var drainCancellation = _drainCancellation.Token;
             var clock = Stopwatch.StartNew();
             bool resumed = false;
+            bool failed = false;
             string stdoutPath = logPath + ".stdout.tmp", stderrPath = logPath + ".stderr.tmp";
             void ClearActiveHeartbeat()
             {
@@ -143,22 +167,48 @@ namespace Antiphon.Nightly
                 var limits = new ExtendedLimits();
                 limits.Basic.LimitFlags = 0x2000; // KILL_ON_JOB_CLOSE only; no breakaway.
                 Check(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()), "SetInformationJobObject");
-                Pipe(out outRead, out outWrite, true);
-                Pipe(out errRead, out errWrite, true);
-                Pipe(out inputRead, out inputWrite, false);
-                IntPtr size = IntPtr.Zero;
-                InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
-                attributes = Marshal.AllocHGlobal(size);
-                Check(InitializeProcThreadAttributeList(attributes, 1, 0, ref size), "InitializeProcThreadAttributeList");
-                handleList = Marshal.AllocHGlobal(IntPtr.Size * 3);
-                Marshal.WriteIntPtr(handleList, 0, inputRead);
-                Marshal.WriteIntPtr(handleList, IntPtr.Size, outWrite);
-                Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, errWrite);
-                Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)0x20002, handleList, (IntPtr)(IntPtr.Size * 3), IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute");
+                bool fileInput = !string.IsNullOrEmpty(_hooks.StandardInputPath);
+                Pipe(out outRead, out outWrite, true, inheritChildEnd: !fileInput);
+                Pipe(out errRead, out errWrite, true, inheritChildEnd: !fileInput);
+                using var inputFile = fileInput
+                    ? new FileStream(_hooks.StandardInputPath, FileMode.Open, FileAccess.Read, FileShare.Read) : null;
+                if (!fileInput) Pipe(out inputRead, out inputWrite, false);
+                IntPtr localInput = inputFile?.SafeFileHandle.DangerousGetHandle() ?? inputRead;
                 var startup = new StartupInfoEx();
                 startup.Startup.cb = Marshal.SizeOf<StartupInfoEx>();
                 startup.Startup.flags = 0x100; // USESTDHANDLES
-                startup.Startup.stdin = inputRead; startup.Startup.stdout = outWrite; startup.Startup.stderr = errWrite;
+                startup.Startup.stdin = localInput;
+                startup.Startup.stdout = outWrite;
+                startup.Startup.stderr = errWrite;
+
+                // HANDLE_LIST still requires inheritable entries. Put those entries in a suspended
+                // process so a concurrent CreateProcess in this process cannot collect them.
+                if (fileInput)
+                {
+                    StartHandleCarrier(job, out carrier);
+                    startup.Startup.stdin = DuplicateForChild(carrier.Process, localInput);
+                    startup.Startup.stdout = DuplicateForChild(carrier.Process, outWrite);
+                    startup.Startup.stderr = DuplicateForChild(carrier.Process, errWrite);
+                }
+                int attributeCount = fileInput ? 2 : 1;
+                IntPtr size = IntPtr.Zero;
+                InitializeProcThreadAttributeList(IntPtr.Zero, attributeCount, 0, ref size);
+                attributes = Marshal.AllocHGlobal(size);
+                Check(InitializeProcThreadAttributeList(attributes, attributeCount, 0, ref size), "InitializeProcThreadAttributeList");
+                attributesInitialized = true;
+                if (fileInput)
+                {
+                    parentAttribute = Marshal.AllocHGlobal(IntPtr.Size);
+                    Marshal.WriteIntPtr(parentAttribute, carrier.Process);
+                    Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)ParentProcessAttribute, parentAttribute, (IntPtr)IntPtr.Size,
+                        IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute parent process");
+                }
+                handleList = Marshal.AllocHGlobal(IntPtr.Size * 3);
+                Marshal.WriteIntPtr(handleList, 0, startup.Startup.stdin);
+                Marshal.WriteIntPtr(handleList, IntPtr.Size, startup.Startup.stdout);
+                Marshal.WriteIntPtr(handleList, IntPtr.Size * 2, startup.Startup.stderr);
+                Check(UpdateProcThreadAttribute(attributes, 0, (IntPtr)HandleListAttribute, handleList, (IntPtr)(IntPtr.Size * 3),
+                    IntPtr.Zero, IntPtr.Zero), "UpdateProcThreadAttribute standard handles");
                 startup.Attributes = attributes;
                 // Null inherits via CreateProcess; even an empty explicit map replaces.
                 if (environment != null)
@@ -176,11 +226,25 @@ namespace Antiphon.Nightly
                 }
                 var command = new StringBuilder(Quote(executable) + " " + string.Join(" ", (arguments ?? Array.Empty<string>()).Select(Quote)));
                 ProcessInfo info;
+                _hooks.Pause("create-process", evidence: localInput.ToInt64().ToString(CultureInfo.InvariantCulture));
                 Check(CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, true,
-                    0x4 | 0x400 | 0x80000 | 0x08000000, envBlock, directory, ref startup, out info), "CreateProcess suspended");
+                    CreateSuspended | CreateUnicodeEnvironment | ExtendedStartupInfoPresent | CreateNoWindow,
+                    envBlock, directory, ref startup, out info), "CreateProcess suspended");
                 root = info.Process; thread = info.Thread; Observation.Pid = (int)info.Pid;
-                using (var identity = Process.GetProcessById(Observation.Pid)) Observation.RootStartedAtUtc = identity.StartTime.ToUniversalTime();
+                inputFile?.Dispose();
                 Close(ref outWrite); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
+                if (fileInput)
+                {
+                    CloseCarrierHandle(carrier.Process, startup.Startup.stdin);
+                    CloseCarrierHandle(carrier.Process, startup.Startup.stdout);
+                    CloseCarrierHandle(carrier.Process, startup.Startup.stderr);
+                    // Reuse this deadline if stopping the carrier fails during launch.
+                    cleanup = Stopwatch.StartNew();
+                    TerminateHandleCarrier(carrier.Process);
+                    WaitForHandleCarrier(ref carrier, cleanup, cleanupBudget);
+                    cleanup = null;
+                }
+                using (var identity = Process.GetProcessById(Observation.Pid)) Observation.RootStartedAtUtc = identity.StartTime.ToUniversalTime();
                 // Desktop packaged apps can create unpackaged children outside this job,
                 // even when this process itself was successfully assigned to it.
                 uint packageLength = 0;
@@ -188,7 +252,15 @@ namespace Antiphon.Nightly
                 if (packageStatus != 15700) // APPMODEL_ERROR_NO_PACKAGE
                     throw new InvalidOperationException("Native job custody refuses packaged process images; use an unpackaged executable. Package query=" + packageStatus);
                 _hooks.Pause("assignment");
-                Check(!_hooks.FailAssignment && AssignProcessToJobObject(job, root), "AssignProcessToJobObject");
+                if (fileInput)
+                {
+                    // Windows inherits the chosen parent's job. Verify custody before resume.
+                    Check(IsProcessInJob(root, job, out bool contained), "IsProcessInJob");
+                    if (_hooks.FailAssignment || !contained)
+                        throw new InvalidOperationException("AssignProcessToJobObject: inherited private job membership not established.");
+                }
+                else
+                    Check(!_hooks.FailAssignment && AssignProcessToJobObject(job, root), "AssignProcessToJobObject");
                 // Readers start before resume, and own only their respective read handles.
                 stdout = Drain(outRead, stdoutPath, "stdout"); outRead = IntPtr.Zero;
                 stderr = Drain(errRead, stderrPath, "stderr"); errRead = IntPtr.Zero;
@@ -211,15 +283,17 @@ namespace Antiphon.Nightly
                     }
                     return beat;
                 }
+                bool stopOwnedChildren = false;
                 CompletionGraceResult graceResult = NightlyCompletionGrace.Wait(
                     () =>
                     {
                         int active = _hooks.ZeroCountAtRootWait ? 0 : Count(job);
                         CaptureDescendants(job);
                         Observation.RemainingProcessCount = active;
-                        bool rootExited = !_hooks.HoldRootWait() && RootExited(root);
+                        bool rootExited = !_hooks.HoldWait("root-wait") && RootExited(root);
                         Observation.ChildrenExited = rootExited && active == 0;
-                        return Observation.ChildrenExited;
+                        stopOwnedChildren = _hooks.TerminateDescendantsOnRootExit && rootExited && active > 0;
+                        return Observation.ChildrenExited || stopOwnedChildren;
                     },
                     watchEvidence ? (Func<bool>)(() => ExecutionEvidenceFinished(_hooks.TrxPath, _hooks.DiagnosticDirectory, notBefore)) : null,
                     grace,
@@ -244,18 +318,24 @@ namespace Antiphon.Nightly
                     Observation.TimedOut = true;
                 }
                 Observation.ExecutionMilliseconds = graceResult.ElapsedMilliseconds;
-                var cleanup = Stopwatch.StartNew();
                 if (Observation.TimedOut)
                 {
                     try { WriteHangCapture(job, root, logPath); }
                     catch (Exception captureEx) { Observation.HangCaptureError = captureEx.Message; }
+                }
+                bool terminate = Observation.TimedOut || stopOwnedChildren;
+                if (terminate) _hooks.Pause("job-termination");
+                cleanup = Stopwatch.StartNew();
+                if (terminate)
+                {
                     Observation.TerminationRequested = true;
-                    Observation.TerminationSucceeded = TerminateJobObject(job, 1);
+                    Observation.TerminationSucceeded = TryTerminateJob(job);
                     Check(Observation.TerminationSucceeded, "TerminateJobObject");
                 }
                 while (!RootExited(root) || Count(job) != 0)
                 {
-                    if (cleanup.ElapsedMilliseconds >= 15000) throw new TimeoutException("Native job cleanup not observed within 15000ms.");
+                    if (TimeLeft(cleanup, cleanupBudget) == 0)
+                        throw new TimeoutException("Native job cleanup not observed within " + cleanupBudget + "ms.");
                     Thread.Sleep(10);
                 }
                 Observation.RemainingProcessCount = Count(job);
@@ -279,11 +359,12 @@ namespace Antiphon.Nightly
                     // Physical EOF and flushed temporary files permit the final write;
                     // reader completion is independently observed by the owner below.
                     Task.WhenAll(stdout.ContentReady.Task, stderr.ContentReady.Task).GetAwaiter().GetResult();
-                    _hooks.Pause("log-write", _drainCancellation.Token);
+                    _hooks.Pause("log-write", drainCancellation);
                     using (var output = new FileStream(logPath, FileMode.Create, FileAccess.Write, FileShare.Read))
                     {
-                        foreach (string path in new[] { stdoutPath, stderrPath })
-                            using (var input = File.OpenRead(path)) input.CopyTo(output);
+                        using (var input = File.OpenRead(stdoutPath)) input.CopyTo(output);
+                        Observation.StandardOutputBytes = output.Position;
+                        using (var input = File.OpenRead(stderrPath)) input.CopyTo(output);
                         output.Flush(true);
                     }
                 });
@@ -308,40 +389,41 @@ namespace Antiphon.Nightly
             }
             catch (Exception ex)
             {
+                failed = true;
                 Observation.Error = ex.Message; Observation.ExitCode = 1;
+                Observation.OutputDrained = false;
+                cleanup ??= Stopwatch.StartNew();
+                // Signal the carrier before waiting for the job to empty or its output handles to close.
+                try { if (carrier.Process != IntPtr.Zero) TerminateHandleCarrier(carrier.Process); }
+                catch (Exception e) { Observation.Error += "; " + e.Message; }
                 _drainCancellation.Cancel();
-                // Failed admission must kill the suspended root, which is not yet in our job.
-                // A running root is contained: kill only our job, never a process-name sweep.
-                if (root != IntPtr.Zero)
+                try
                 {
-                    Observation.TerminationRequested = true;
-                    Observation.TerminationSucceeded = resumed ? TerminateJobObject(job, 1) : TerminateProcess(root, 1);
-                    if (!Observation.TerminationSucceeded && !RootExited(root)) Close(ref job); // kill-on-close fallback
-                    // Keep this foreground owner until the retained exact handles signal.
-                    while (!RootExited(root) || _descendants.Values.Any(p => !p.HasExited)) Thread.Sleep(100);
-                    if (job != IntPtr.Zero)
+                    if (root != IntPtr.Zero) FinishFailedCleanup(root, ref job, resumed, cleanup, cleanupBudget);
+                }
+                catch (Exception cleanupError)
+                {
+                    Observation.Error += "; Native job cleanup observation failed: " + cleanupError.Message;
+                }
+                var pendingOutput = new[] { stdout?.Completion, stderr?.Completion, logWrite }.Where(work => work != null);
+                try
+                {
+                    if (!Task.WhenAll(pendingOutput).Wait(TimeLeft(cleanup, cleanupBudget)))
                     {
-                        Observation.RemainingProcessCount = Count(job);
-                        while (Observation.RemainingProcessCount != 0)
-                        { Thread.Sleep(100); Observation.RemainingProcessCount = Count(job); }
-                        Observation.ChildrenExited = RootExited(root) && Observation.RemainingProcessCount == 0;
+                        Observation.TimedOut = true;
+                        Observation.OutputDrainTimedOut = true;
+                        Observation.Error += "; Native error-path output drain exceeded the remaining cleanup budget.";
                     }
                 }
-                if (stdout != null && stderr != null)
-                {
-                    try { Task.WhenAll(stdout.Completion, stderr.Completion).GetAwaiter().GetResult(); } catch { /* retain partial logs */ }
-                }
+                catch (AggregateException) { /* retain partial logs and original failure */ }
                 // No clean output verdict after any exception; retain temporary evidence.
             }
             finally
             {
+                try { WaitForHandleCarrier(ref carrier, cleanup, cleanupBudget); }
+                catch (Exception e) { Observation.Error += "; " + e.Message; }
                 // Retain the idle verdict for the observer's next poll or until the next native chunk starts.
                 if (string.IsNullOrEmpty(Observation.IdleHangReason)) ClearActiveHeartbeat();
-                // Join test-operation barriers too, including when a broken verdict is
-                // deliberately exercised. The observer can see that broken verdict.
-                if (stdout != null && stderr != null)
-                    try { Task.WhenAll(stdout.Completion, stderr.Completion).GetAwaiter().GetResult(); } catch { }
-                if (logWrite != null) try { logWrite.GetAwaiter().GetResult(); } catch { }
                 if (drain != null) Observation.DrainMilliseconds = drain.Elapsed.TotalMilliseconds;
                 _drainCancellation.Dispose();
                 StampOwnerObservation(root);
@@ -350,12 +432,54 @@ namespace Antiphon.Nightly
                 Close(ref job); Close(ref root); Close(ref thread);
                 JobHandle = IntPtr.Zero;
                 Close(ref outRead); Close(ref outWrite); Close(ref errRead); Close(ref errWrite); Close(ref inputRead); Close(ref inputWrite);
-                if (attributes != IntPtr.Zero) { DeleteProcThreadAttributeList(attributes); Marshal.FreeHGlobal(attributes); }
+                if (attributesInitialized) DeleteProcThreadAttributeList(attributes);
+                if (attributes != IntPtr.Zero) Marshal.FreeHGlobal(attributes);
+                if (parentAttribute != IntPtr.Zero) Marshal.FreeHGlobal(parentAttribute);
                 if (handleList != IntPtr.Zero) Marshal.FreeHGlobal(handleList);
                 if (envBlock != IntPtr.Zero) Marshal.FreeHGlobal(envBlock);
+                if (failed) Observation.CleanupMilliseconds = cleanup.Elapsed.TotalMilliseconds;
             }
             return Observation;
         }
+
+        private bool TryTerminateJob(IntPtr job) => !_hooks.FailJobTermination && TerminateJobObject(job, 1);
+
+        private void FinishFailedCleanup(IntPtr root, ref IntPtr job, bool resumed, Stopwatch cleanup, int budget)
+        {
+            Observation.ChildrenExited = false;
+            Observation.RemainingProcessCount = -1;
+            Observation.TerminationRequested = true;
+            // An unadmitted suspended root may still be outside our job.
+            Observation.TerminationSucceeded = resumed ? TryTerminateJob(job) : TerminateProcess(root, 1);
+            if (!Observation.TerminationSucceeded)
+            {
+                // Closing the last private job handle kills the job even if the root already exited.
+                JobHandle = IntPtr.Zero;
+                Close(ref job);
+            }
+
+            while (true)
+            {
+                Observation.RemainingProcessCount = job == IntPtr.Zero ? -1 : Count(job);
+                if (!_hooks.HoldWait("failure-cleanup") && Observation.RemainingProcessCount <= 0
+                    && RootExited(root) && _descendants.Values.All(process => process.HasExited))
+                {
+                    Observation.ChildrenExited = Observation.RemainingProcessCount == 0;
+                    return;
+                }
+                int remaining = TimeLeft(cleanup, budget);
+                if (remaining == 0)
+                {
+                    Observation.TimedOut = true;
+                    string message = "Native job cleanup not observed within " + budget + "ms.";
+                    if (!Observation.Error.Contains(message, StringComparison.Ordinal)) Observation.Error += "; " + message;
+                    return;
+                }
+                Thread.Sleep(Math.Min(remaining, 10));
+            }
+        }
+
+        private static int TimeLeft(Stopwatch clock, int budget) => (int)Math.Max(0, budget - clock.ElapsedMilliseconds);
 
         private sealed class ReaderWork
         {
@@ -365,6 +489,7 @@ namespace Antiphon.Nightly
         private ReaderWork Drain(IntPtr handle, string path, string phase)
         {
             var reader = new ReaderWork();
+            var cancellation = _drainCancellation.Token;
             reader.Completion = Task.Run(() =>
             {
                 try
@@ -378,7 +503,7 @@ namespace Antiphon.Nightly
                         var buffer = new byte[81920];
                         while (true)
                         {
-                            _drainCancellation.Token.ThrowIfCancellationRequested();
+                            cancellation.ThrowIfCancellationRequested();
                             uint available;
                             if (!PeekNamedPipe(pipe, IntPtr.Zero, 0, IntPtr.Zero, out available, IntPtr.Zero))
                             {
@@ -395,7 +520,7 @@ namespace Antiphon.Nightly
                         output.Flush(true);
                     }
                     reader.ContentReady.SetResult(true);
-                    _hooks.Pause(phase, _drainCancellation.Token);
+                    _hooks.Pause(phase, cancellation);
                 }
                 catch (Exception ex) { reader.ContentReady.TrySetException(ex); throw; }
             });
@@ -821,12 +946,68 @@ namespace Antiphon.Nightly
             finally { Marshal.FreeHGlobal(buffer); }
         }
         private static bool RootExited(IntPtr root) { uint value = WaitForSingleObject(root, 0); Check(value != uint.MaxValue, "Root wait"); return value == 0; }
-        private static void Pipe(out IntPtr read, out IntPtr write, bool childWrites)
+        private static void Pipe(out IntPtr read, out IntPtr write, bool childWrites, bool inheritChildEnd = true)
         {
-            var security = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Inherit = 1 };
+            var security = new SecurityAttributes { Length = Marshal.SizeOf<SecurityAttributes>(), Inherit = inheritChildEnd ? 1 : 0 };
             Check(CreatePipe(out read, out write, ref security, 0), "CreatePipe");
-            Check(SetHandleInformation(childWrites ? read : write, 1, 0), "SetHandleInformation");
+            if (inheritChildEnd) Check(SetHandleInformation(childWrites ? read : write, 1, 0), "SetHandleInformation");
         }
+
+        private static void StartHandleCarrier(IntPtr job, out ProcessInfo carrier)
+        {
+            var startup = new StartupInfo { cb = Marshal.SizeOf<StartupInfo>() };
+            Check(CreateProcessW(Path.Combine(Environment.SystemDirectory, "cmd.exe"), null, IntPtr.Zero, IntPtr.Zero,
+                false, CreateSuspended | CreateNoWindow, IntPtr.Zero, null, ref startup, out carrier), "CreateProcess suspended handle carrier");
+            Check(AssignProcessToJobObject(job, carrier.Process), "AssignProcessToJobObject handle carrier");
+        }
+
+        private static IntPtr DuplicateForChild(IntPtr carrier, IntPtr handle)
+        {
+            Check(DuplicateHandle(GetCurrentProcess(), handle, carrier, out var duplicate, 0, true, 2), "DuplicateHandle for launch");
+            return duplicate;
+        }
+
+        private static void CloseCarrierHandle(IntPtr carrier, IntPtr handle)
+        {
+            const uint duplicateCloseSource = 1;
+            Check(DuplicateHandle(carrier, handle, IntPtr.Zero, IntPtr.Zero, 0, false, duplicateCloseSource),
+                "DuplicateHandle close launch copy");
+        }
+
+        private static void TerminateHandleCarrier(IntPtr carrier)
+        {
+            // The carrier never runs. Its exit also releases any copies left by a failed launch.
+            Check(TerminateProcess(carrier, 1) || RootExited(carrier), "TerminateProcess handle carrier");
+        }
+
+        private void WaitForHandleCarrier(ref ProcessInfo carrier, Stopwatch cleanup, int budget)
+        {
+            if (carrier.Process == IntPtr.Zero) return;
+            try
+            {
+                var wait = WaitForCarrierExit(carrier.Process, TimeLeft(cleanup, budget));
+                if (wait == 258)
+                {
+                    Observation.TimedOut = true;
+                    throw new TimeoutException("Suspended handle carrier did not exit within the cleanup budget.");
+                }
+                Check(wait == 0, "WaitForSingleObject handle carrier");
+            }
+            finally
+            {
+                Close(ref carrier.Thread);
+                Close(ref carrier.Process);
+            }
+        }
+
+        private uint WaitForCarrierExit(IntPtr carrier, int milliseconds)
+        {
+            if (!_hooks.HoldWait("carrier-exit")) return WaitForSingleObject(carrier, (uint)milliseconds);
+            // Hold the exit observation for this wait, after the real carrier termination request.
+            Thread.Sleep(milliseconds);
+            return 258;
+        }
+
         private static void Close(ref IntPtr handle) { if (handle != IntPtr.Zero) { CloseHandle(handle); handle = IntPtr.Zero; } }
         private static void Check(bool ok, string operation) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), operation); }
 
@@ -847,10 +1028,15 @@ namespace Antiphon.Nightly
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool SetInformationJobObject(IntPtr job, int kind, ref ExtendedLimits limits, uint size);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool QueryInformationJobObject(IntPtr job, int kind, IntPtr buffer, uint size, out uint returned);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool contained);
+        [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+        [DllImport("kernel32.dll", SetLastError=true)] private static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, IntPtr target, uint access, bool inherit, uint options);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previous, IntPtr returned);
         [DllImport("kernel32.dll")] private static extern void DeleteProcThreadAttributeList(IntPtr list);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern bool CreateProcessW(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref StartupInfoEx startup, out ProcessInfo info);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] private static extern bool CreateProcessW(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inherit, uint flags, IntPtr environment, string directory, ref StartupInfo startup, out ProcessInfo info);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern uint ResumeThread(IntPtr thread);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool TerminateJobObject(IntPtr job, uint code);
         [DllImport("kernel32.dll", SetLastError=true)] private static extern bool TerminateProcess(IntPtr process, uint code);

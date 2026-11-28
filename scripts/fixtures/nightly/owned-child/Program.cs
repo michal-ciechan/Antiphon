@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
-var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain", "environment", "retained-writer" };
+var modes = new[] { "child", "breakaway-child", "descendant", "breakaway", "root-held", "plain", "environment", "retained-writer", "stdin" };
 var controlArguments = args.Length >= 2 && modes.Contains(args[1]);
 var directory = controlArguments ? args[0] : Environment.GetEnvironmentVariable("C1039_FIXTURE_DIRECTORY")!;
 var mode = controlArguments ? args[1] : Environment.GetEnvironmentVariable("C1039_FIXTURE_MODE")!;
@@ -79,6 +79,7 @@ if (mode == "breakaway")
 }
 if (mode == "root-held")
     while (!File.Exists(Path.Combine(directory, "root.release"))) Thread.Sleep(10);
+if (mode == "stdin") Console.WriteLine("FIXTURE-STDIN:" + Console.ReadLine());
 Console.WriteLine("ROOT-STDOUT-END"); Console.Error.WriteLine("ROOT-STDERR-END");
 
 internal static class Native
@@ -117,6 +118,19 @@ public static class NativeJobObserver
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         return contained;
     }
+    public static bool InheritedSameHandle(IntPtr process, long value)
+    {
+        var source = (IntPtr)value;
+        if (!Native.DuplicateHandle(process, source, Native.GetCurrentProcess(), out var copy, 0, false, 2))
+        {
+            var error = Marshal.GetLastWin32Error();
+            if (error == 6) return false; // ERROR_INVALID_HANDLE
+            throw new System.ComponentModel.Win32Exception(error);
+        }
+        try { return CompareObjectHandles(source, copy); }
+        finally { Native.CloseHandle(copy); }
+    }
+    [DllImport("kernelbase.dll")] private static extern bool CompareObjectHandles(IntPtr first, IntPtr second);
     public static void CloseWriter(long handle)
     {
         if (!CloseHandle((IntPtr)handle))

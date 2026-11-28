@@ -528,8 +528,7 @@ namespace Antiphon.Nightly
 
         /// <summary>
         /// Complete-NightlySuiteExecution: a native suite's terminal rows must cover its discovery (less the profile's
-        /// exclusions), else the run is incomplete; the expected-skip roster entries the discovery no longer knows are
-        /// warnings. The suite is then Completed.
+        /// exclusions), else the run is incomplete. The suite is then Completed.
         /// </summary>
         public void Complete(NightlyPreparedSuite suite)
         {
@@ -562,17 +561,7 @@ namespace Antiphon.Nightly
                     s.Reasons.Add("missing-expanded-row union " + string.Join(",", PsValue.AsArray(PsValue.Prop(union, "Missing")).Select(PsValue.Str)));
                 }
             }
-            var roster = s.ExpectedSkipRoster == null ? new object[0] : PsValue.AsArray(s.ExpectedSkipRoster);
-            if (st.IsNative && st.ProfileDiscovery != null && !string.IsNullOrWhiteSpace(st.ProfileDiscoveryPath) && st.DiscoveryNodes.Length > 0 && roster.Length > 0)
-            {
-                var known = SuiteCompletionParts.KnownIdentities(st.DiscoveryNodes);
-                foreach (var stale in NightlyChunkVerdict.StaleWarnings(s.Platform ?? "", s.ExpectedSkipRoster, known))
-                {
-                    var text = PsValue.Str(stale);
-                    if (string.IsNullOrWhiteSpace(text)) continue;
-                    if (!PsOps.Contains(s.ExpectedSkipWarnings.ToArray(), text, true)) s.ExpectedSkipWarnings.Add(text);
-                }
-            }
+            // The end-of-run source scan checks the repository-wide skip roster even for partial selections.
             suite.Completed = true;
         }
 

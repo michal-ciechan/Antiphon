@@ -82,7 +82,7 @@ public sealed class NightlyNativeOwnershipTests
     [Test, Timeout(120_000)]
     public Task C1039_AssignBeforeResume(CancellationToken cancellationToken) => RunAsync(nameof(C1039_AssignBeforeResume), native =>
     {
-        string[] tokens = ["path with spaces", "", "a\"b", @"C:\tail\", "/*/*/(A)|(B)/*", "*", "$literal"];
+        string[] tokens = ["path with spaces", "", "a\"b", @"C:\tail\", @"C:\tail space\", "/*/*/(A)|(B)/*", "*", "$literal"];
         var r = native.NewRun("suspended root", "descendant", ["assignment"], tokens: tokens);
         native.WaitFor(() => File.Exists(Path.Combine(r.Root, "assignment.entered")), "assignment barrier");
         var rootHandle = native.Hold(Process.GetProcessById(r.Owner.Observation.Pid));
@@ -149,8 +149,149 @@ public sealed class NightlyNativeOwnershipTests
         native.Assert(!File.Exists(Path.Combine(r.Root, "breakaway-child.pid")), "no independently live breakaway descendant");
         native.Complete(r);
 
+        FixtureJobReapsDescendant(native);
         IdleCaptureAndJobTermination(native, cancellationToken);
+        foreach (var owner in native.Owners)
+        {
+            var custody = owner.Completion.GetAwaiter().GetResult();
+            (custody.JobEmptyObserved, custody.RemainingProcessCount).ShouldBe((true, 0), "every fixture job is empty");
+            var members = custody.DescendantIdentities.Zip(custody.DescendantImages, (identity, image) => image + "=" + identity);
+            Console.WriteLine(FormattableString.Invariant(
+                $"C1039_NATIVE_CUSTODY root={custody.Pid}:{custody.RootStartedAtUtc:O}; job-empty={custody.JobEmptyObserved}; remaining={custody.RemainingProcessCount}; members={string.Join(",", members)}"));
+        }
     }, cancellationToken);
+
+    private static void FixtureJobReapsDescendant(NativeHarness native)
+    {
+        var root = native.NewRoot("fixture-owned descendant");
+        var log = Path.Combine(root, "native.log");
+        var hooks = new NativeProcessHooks { TerminateDescendantsOnRootExit = true };
+        var owner = NativeProcessOwner.Start(Fixture, [root, "descendant"], root, 30_000, log, null, hooks);
+        native.Owners.Add(owner);
+
+        var result = owner.Completion.GetAwaiter().GetResult();
+        result.ExitCode.ShouldBe(0, result.Error);
+        result.TimedOut.ShouldBeFalse();
+        result.TerminationSucceeded.ShouldBeTrue();
+        result.CleanupComplete.ShouldBeTrue();
+        result.RemainingProcessCount.ShouldBe(0);
+        var child = ReadMarker(Path.Combine(root, "child.pid")).Trim();
+        result.DescendantIdentities.ShouldContain(id => id.StartsWith(child + ":", StringComparison.Ordinal));
+        var bytes = File.ReadAllBytes(log);
+        var stdoutLength = checked((int)result.StandardOutputBytes);
+        System.Text.Encoding.UTF8.GetString(bytes.AsSpan(0, stdoutLength)).ShouldContain("ROOT-STDOUT-END");
+        System.Text.Encoding.UTF8.GetString(bytes.AsSpan(stdoutLength)).ShouldContain("ROOT-STDERR-END");
+    }
+
+    [Test, Timeout(120_000)]
+    public Task C1039_JobTerminationFailureHasBoundedCleanup(CancellationToken cancellationToken) =>
+        RunAsync(nameof(C1039_JobTerminationFailureHasBoundedCleanup), native =>
+        {
+            var root = native.NewRoot("termination failure");
+            var log = Path.Combine(root, "native.log");
+            var hooks = new NativeProcessHooks
+            {
+                BarrierDirectory = root,
+                Barriers = ["job-termination", "failure-cleanup"],
+                TerminateDescendantsOnRootExit = true,
+                FailJobTermination = true,
+                CleanupTimeoutMilliseconds = 500,
+            };
+            var owner = NativeProcessOwner.Start(Fixture, [root, "descendant"], root, 30_000, log, null, hooks);
+            native.Owners.Add(owner);
+            var run = new NativeRun(root, owner, log);
+            native.WaitFor(() => File.Exists(Path.Combine(root, "job-termination.entered")), "termination after root exit");
+            var child = native.OpenHandle(run, "child");
+            child.HasExited.ShouldBeFalse();
+            native.Release(run, "job-termination");
+
+            child.WaitForExit(3000).ShouldBeTrue("kill-on-close must reap the live descendant even though the root exited");
+            owner.Completion.Wait(5000, cancellationToken)
+                .ShouldBeTrue("an unresolved cleanup probe must reach the owner deadline");
+            var result = owner.Completion.GetAwaiter().GetResult();
+            result.Error.ShouldContain("TerminateJobObject");
+            result.Error.ShouldContain("Native job cleanup not observed within 500ms");
+            result.JobEmptyObserved.ShouldBeFalse();
+            result.CleanupComplete.ShouldBeFalse();
+        }, cancellationToken);
+
+    [Test, Timeout(40_000)]
+    public Task C1039_FileStdinFailedLaunchHasOneCleanupBudget(CancellationToken cancellationToken) =>
+        RunAsync(nameof(C1039_FileStdinFailedLaunchHasOneCleanupBudget), native =>
+        {
+            const int cleanupBudget = 750;
+            const int tolerance = 500;
+            var root = native.NewRoot("failed file stdin launch");
+            var input = Path.Combine(root, "stdin.txt");
+            var log = Path.Combine(root, "native.log");
+            File.WriteAllText(input, "fixture input");
+            var hooks = new NativeProcessHooks
+            {
+                StandardInputPath = input,
+                BarrierDirectory = root,
+                Barriers = ["create-process", "carrier-exit"],
+                CleanupTimeoutMilliseconds = cleanupBudget,
+            };
+            var owner = NativeProcessOwner.Start(Path.Combine(root, "missing.exe"), [], root, 30_000, log, null, hooks);
+            native.Owners.Add(owner);
+            native.WaitFor(() => File.Exists(Path.Combine(root, "create-process.entered")), "file stdin carrier setup");
+
+            var elapsed = Stopwatch.StartNew();
+            native.Release(new NativeRun(root, owner, log), "create-process");
+            var result = owner.Completion.WaitAsync(TimeSpan.FromSeconds(20), cancellationToken).GetAwaiter().GetResult();
+            elapsed.Stop();
+
+            result.Pid.ShouldBe(0);
+            result.ExitCode.ShouldBe(1);
+            result.Error.ShouldContain("CreateProcess suspended");
+            File.Exists(Path.Combine(root, "carrier-exit.entered")).ShouldBeTrue("the file stdin carrier must reach its delayed wait");
+            File.WriteAllText(Path.Combine(root, "result.json"), JsonSerializer.Serialize(result));
+            Console.WriteLine($"C1039_CARRIER_CLEANUP wall={elapsed.Elapsed.TotalMilliseconds:F0}ms cleanup={result.CleanupMilliseconds:F0}ms budget={cleanupBudget}ms");
+            elapsed.ElapsedMilliseconds.ShouldBeLessThanOrEqualTo(cleanupBudget + tolerance, "failed launch and carrier cleanup share one deadline");
+            result.CleanupMilliseconds.ShouldBeInRange(cleanupBudget - 50, cleanupBudget + tolerance, "the cleanup receipt includes the carrier wait");
+            result.Error.ShouldContain("Suspended handle carrier did not exit within the cleanup budget");
+        }, cancellationToken);
+
+    [Test, Timeout(120_000)]
+    public Task C1039_ConcurrentLaunchDoesNotInheritStdin(CancellationToken cancellationToken) =>
+        RunAsync(nameof(C1039_ConcurrentLaunchDoesNotInheritStdin), native =>
+        {
+            var root = native.NewRoot("isolated stdin");
+            var input = Path.Combine(root, "stdin");
+            var log = Path.Combine(root, "native.log");
+            File.WriteAllText(input, "private input");
+            var hooks = new NativeProcessHooks
+            {
+                BarrierDirectory = root,
+                Barriers = ["create-process"],
+                StandardInputPath = input,
+            };
+            var owner = NativeProcessOwner.Start(Fixture, [root, "stdin"], root, 30_000, log, null, hooks);
+            native.Owners.Add(owner);
+            var run = new NativeRun(root, owner, log);
+            native.WaitFor(() => File.Exists(Path.Combine(root, "create-process.entered")) || owner.Completion.IsCompleted,
+                "stdin launch preparation");
+            owner.Completion.IsCompleted.ShouldBeFalse("stdin launch should pause immediately before CreateProcess");
+
+            var siblingRoot = native.NewRoot("unrelated redirected launch");
+            var sibling = native.Hold(Process.Start(new ProcessStartInfo(Fixture)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                ArgumentList = { siblingRoot, "root-held" },
+            }).ShouldNotBeNull());
+            native.WaitFor(() => File.Exists(Path.Combine(siblingRoot, "started")), "unrelated sibling running");
+            var inputHandle = long.Parse(ReadMarker(Path.Combine(root, "create-process.entered")),
+                System.Globalization.CultureInfo.InvariantCulture);
+            JobObserver.InheritedSameHandle(sibling.Handle, inputHandle)
+                .ShouldBeFalse("the concurrent redirected launch inherited the native owner's stdin file");
+            native.Release(run, "create-process");
+            native.Complete(run);
+            File.ReadAllText(log).ShouldContain("FIXTURE-STDIN:private input");
+            sibling.HasExited.ShouldBeFalse("the independent launch is still holding every handle it inherited");
+            Should.NotThrow(() => File.Delete(input), "the sibling must not inherit the stdin file");
+            File.Exists(input).ShouldBeFalse();
+        }, cancellationToken);
 
     [Test, Timeout(120_000)]
     public Task C1039_DrainBeforeReturn(CancellationToken cancellationToken) => RunAsync(nameof(C1039_DrainBeforeReturn), native =>
@@ -576,7 +717,8 @@ public sealed class NightlyNativeOwnershipTests
             // Release every fixture barrier even when the guarded assertion goes red.
             foreach (var root in _roots)
             {
-                foreach (var phase in new[] { "assignment", "root-wait", "stdout", "stderr", "log-write", "root", "child" })
+                foreach (var phase in new[] { "create-process", "assignment", "root-wait", "job-termination", "failure-cleanup",
+                             "stdout", "stderr", "log-write", "root", "child" })
                     File.WriteAllText(Path.Combine(root, phase + ".release"), "finally release");
                 // A deliberate breakaway mutant must also be joined by its exact fixture identity.
                 var childFile = Path.Combine(root, "breakaway-child.pid");
@@ -608,6 +750,8 @@ public sealed class NightlyNativeOwnershipTests
             System.Reflection.Assembly.LoadFrom(Path.ChangeExtension(Fixture, ".dll")).GetType("NativeJobObserver", throwOnError: true)!);
 
         public static bool Contains(IntPtr process, IntPtr job) => (bool)Invoke("Contains", process, job)!;
+
+        public static bool InheritedSameHandle(IntPtr process, long handle) => (bool)Invoke("InheritedSameHandle", process, handle)!;
 
         public static uint ReadLimitFlags(IntPtr job) => (uint)Invoke("ReadLimitFlags", job)!;
 

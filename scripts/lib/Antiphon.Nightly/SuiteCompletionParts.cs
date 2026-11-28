@@ -51,29 +51,5 @@ namespace Antiphon.Nightly
             return warnings.ToArray();
         }
 
-        /// <summary>
-        /// Get-NightlyDiscoveryKnownIdentities: ClassName + "." + Method of every non-null node that has both as
-        /// properties (the case-insensitive member lookup; dictionary keys are not properties) with non-blank
-        /// [string] values, in discovery order, duplicates kept.
-        /// </summary>
-        public static string[] KnownIdentities(object[] nodes)
-        {
-            if (nodes == null) return Array.Empty<string>();
-            var ids = new List<string>(nodes.Length);
-            foreach (var node in nodes)
-            {
-                if (node == null) continue;
-                var classValue = PsValue.Property(node, "ClassName", out var hasClass);
-                if (!hasClass) continue;
-                var methodValue = PsValue.Property(node, "Method", out var hasMethod);
-                if (!hasMethod) continue;
-                var className = PsValue.Str(classValue);
-                if (string.IsNullOrWhiteSpace(className)) continue;
-                var method = PsValue.Str(methodValue);
-                if (string.IsNullOrWhiteSpace(method)) continue;
-                ids.Add(className + "." + method);
-            }
-            return ids.ToArray();
-        }
     }
 }

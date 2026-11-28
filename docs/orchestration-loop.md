@@ -874,6 +874,8 @@ Code and Merge briefs name the guard filter in the default Code/Review recipe. I
 
 The fixed classes are always `TestTimingOperationLabelTests`, `AppDbContextModelTests`, `ContractSnapshotTests`, `CheckpointReceiptSafetyTests`, and `HostCleanupCheckpointReceiptTests`, plus the land notification family (CARD-1801): `AgentTaskLandHeldNotificationTests`, `AgentTaskLandNotificationParkFollowUpTests`, `AgentTaskLandNotificationPersistenceTests`, `AgentTaskLandNotificationReconcileLoadTests`, `AgentTaskLandNotificationRecoveryTests`, `AgentTaskLandNotificationRescanTests`, `AgentTaskLandReceiptWatermarkSafetyTests`, `AgentTaskLandReceiptWatermarkTests`, and `ReceiptScanDestinationIntegrationTests`. The fixed methods are the A5 pair, the `ReleaseGatePlatformTests` cases `LinuxOnlyWindowsExclusionPolicy` and `C1686_LinuxOnlyCensus`.
 
+`LinuxOnlyWindowsExclusionPolicy` also resolves every entry in `tests/expected-platform-skips.json` against qualified test declarations on both platforms. A moved or removed test must update its skip entry in the same change.
+
 The subset also runs every impacted-classes row the batch diff selects (CARD-1801). Each 2026-11-08 why-missed note proposed a selector row that no stage ran; resolving the rows on the batch range and running them as CHECKPOINT rows is what executes the table before a land. A migrations row match (`server/Migrations/**`, `AppDbContext.cs`, or a `*Model.cs`) brings the downgrade selector: every `MigrateAsync(<target>)`, `IMigrator`, `MigrationTestDatabase`, and `.Down(` caller. Resolve the filters with:
 
 ```sh

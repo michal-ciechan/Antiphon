@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
+using Shouldly;
 using TUnit.Core;
 using static Antiphon.Tests.Scripts.Nightly.NightlyPlanCases;
 
@@ -24,6 +25,8 @@ public sealed partial class ReleaseGatePlatformTests
     [Test]
     public void LinuxOnlyWindowsExclusionPolicy()
     {
+        AssertExpectedSkipRosterIsCurrent(Repo);
+
         var rows = new NightlyCaseRows();
         string[] decisionClasses = ["ClaudeDialogWatchdogCanaryTests", "CheckpointOwnedOutputTests", "CheckpointLargeStampTests", "CheckpointShapeConflictTests",
             "CheckpointTrackedBaselineTests", "CheckpointOutputConfinementTests", "RunnerWorkspaceBindingTests"];
@@ -102,6 +105,72 @@ public sealed partial class ReleaseGatePlatformTests
             "linux=" + linuxLaunched.Length + " inventory=" + linuxOnly.Length);
         rows.ShouldAllPass(6, "C1323 every-new-row-has-linux-gate", "C1323 markers-and-rows-agree", "C1323 decision-classes-are-not-class-excluded",
             "C1323 linux-only-rows-leave-census-complete", "C1323 decision-gaps-stay-incomplete", "C1323 linux-still-requires-the-rows");
+    }
+
+    [Test]
+    public void LinuxOnlyWindowsExclusionPolicy_uses_CLR_nested_and_generic_roster_identities()
+    {
+        using var fixture = NightlyFixture.Create("eps-nested");
+        var repo = CensusRoot(fixture, "nested-roster",
+        [
+            ("tests/Outer.cs", """
+                namespace Demo;
+                public partial class Outer<T> { public partial class Inner<TFirst, TSecond> { } }
+                """),
+            ("tests/Outer.Tests.cs", """
+                namespace Demo
+                {
+                    public partial class Outer<T>
+                    {
+                        public partial class Inner<TFirst, TSecond>
+                        {
+                            [Test, Arguments(42)] public void CanRun(int number) { }
+                        }
+                    }
+                }
+                """),
+            ("tests/Nested.cs", "namespace Demo; public class NonGeneric { public class Nested { [Test] public void CanRun() { } } }"),
+            ("tests/Homonym.cs", "namespace Demo; public class Another { [Test] public void CanRun() { } }"),
+        ]);
+        var path = Path.Combine(repo, "tests", "expected-platform-skips.json");
+        void WriteRoster(params string[] identities) => File.WriteAllText(path,
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                entries = identities.Select(test => new { platform = "windows", test, reasonPrefix = "fixture" }),
+            }));
+
+        const string generic = "Demo.Outer`1+Inner`2";
+        const string valid = generic + "[[System.Int32, System.Private.CoreLib],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun";
+        const string wrongArgumentCount = generic + "[[System.Int32, System.Private.CoreLib],[System.String, System.Private.CoreLib]].CanRun";
+        const string invalidSyntax = generic + "[not a CLR type].CanRun";
+        const string invalidArgument = generic + "[[not a CLR type, System.Private.CoreLib],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun";
+        var nestedArgument = typeof(Dictionary<string, int[,]>).AssemblyQualifiedName;
+        var validNestedArgument = generic + $"[[{nestedArgument}],[System.String, System.Private.CoreLib],[System.Boolean, System.Private.CoreLib]].CanRun";
+
+        WriteRoster(generic + ".CanRun", "Demo.NonGeneric+Nested.CanRun", "Demo.Another.CanRun", valid, validNestedArgument);
+        AssertExpectedSkipRosterIsCurrent(repo);
+
+        WriteRoster(valid, wrongArgumentCount, invalidSyntax, invalidArgument, validNestedArgument);
+        var staleArguments = Should.Throw<ShouldAssertException>(() => AssertExpectedSkipRosterIsCurrent(repo));
+        staleArguments.Message.ShouldContain(wrongArgumentCount);
+        staleArguments.Message.ShouldContain(invalidSyntax);
+        staleArguments.Message.ShouldContain(invalidArgument);
+        staleArguments.Message.ShouldNotContain(valid);
+        staleArguments.Message.ShouldNotContain(validNestedArgument);
+
+        WriteRoster("Demo.NonGeneric.Nested.CanRun", "Demo.Outer`1+Inner`1.CanRun", "Demo.Unrelated.CanRun");
+        var stale = Should.Throw<ShouldAssertException>(() => AssertExpectedSkipRosterIsCurrent(repo));
+        stale.Message.ShouldContain("Demo.NonGeneric.Nested.CanRun, Demo.Outer`1+Inner`1.CanRun, Demo.Unrelated.CanRun");
+    }
+
+    private static void AssertExpectedSkipRosterIsCurrent(string repo)
+    {
+        var skipRoster = NightlyChunkVerdict.SkipRoster(Path.Combine(repo, "tests", "expected-platform-skips.json"));
+        foreach (var platform in new[] { "linux", "windows" })
+        {
+            var staleEntries = NightlyExpectedSkips.SourceGaps(repo, platform, skipRoster, null);
+            staleEntries.ShouldBeEmpty($"Stale expected-platform skip entries for {platform}: {string.Join(", ", staleEntries)}");
+        }
     }
 
     /// <summary>
