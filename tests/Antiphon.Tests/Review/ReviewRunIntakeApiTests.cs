@@ -719,8 +719,16 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
         }
         else
         {
-            PromptSubmissionMatch.IsCompleteIn(body, prompts.ShouldHaveSingleItem()).ShouldBeTrue();
-            brief.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            try
+            {
+                PromptSubmissionMatch.IsCompleteIn(body, prompts.ShouldHaveSingleItem()).ShouldBeTrue();
+                brief.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            }
+            finally
+            {
+                // Release this case's reviewer slot before the other cases use the shared fixture.
+                await CloseCurrentAsync(client, runId, ct);
+            }
         }
     }
 
