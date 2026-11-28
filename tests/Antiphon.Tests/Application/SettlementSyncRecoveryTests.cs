@@ -1182,7 +1182,7 @@ public sealed class SettlementSyncRecoveryTests
         {
             var pending = await DebtAsync(world);
             pending.State.ShouldBe(AgentTaskSyncDebtState.Pending, cut);
-            pending.Attempts.ShouldBe(1, cut);
+            pending.Attempts.ShouldBe(cut == "claimed" ? 0 : 1, cut);
             world.DebtClock.Advance(TimeSpan.FromMinutes(1));
             (await world.SweepSettlementSyncAsync()).ShouldBe(1, cut);
             (await DebtAsync(world)).State.ShouldBe(AgentTaskSyncDebtState.Ready, cut);

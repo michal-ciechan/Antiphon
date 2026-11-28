@@ -606,7 +606,8 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// A mismatched episode refuses <c>settlement_sync_source_changed</c> and touches no Git.
     /// </summary>
     public Task<RemoteSettlementSyncResult> SyncSettledAsync(
-        AgentTask task, AgentTaskSyncDebt debt, CancellationToken ct)
+        AgentTask task, AgentTaskSyncDebt debt, CancellationToken ct,
+        Func<CancellationToken, Task<bool>>? beginAttempt = null)
     {
         var baseline = TaskProgressJson.TryReadBaseline(task.ProgressBaselineJson)?.Primary;
         if (debt.TaskId != task.Id || debt.Attempt != task.Attempt
@@ -622,7 +623,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
             || !GitObjectId.IsFull(debt.SourceSha))
             return Task.FromResult(Outcome(RemoteSettlementSyncState.Refused,
                 RemoteSettlementSyncReasons.SettlementSyncSourceChanged));
-        return SyncCoreAsync(task, [debt.SourceSha!], inspectMirror: false, ct, singleAttempt: true);
+        return SyncCoreAsync(task, [debt.SourceSha!], inspectMirror: false, ct, singleAttempt: true, beginAttempt);
     }
 
     public Task<RemoteSettlementSyncResult> SyncForReviewEvidenceAsync(
@@ -639,10 +640,10 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// </summary>
     private async Task<RemoteSettlementSyncResult> SyncCoreAsync(
         AgentTask task, IReadOnlyCollection<string>? reportedTips, bool inspectMirror, CancellationToken ct,
-        bool singleAttempt = false)
+        bool singleAttempt = false, Func<CancellationToken, Task<bool>>? beginAttempt = null)
     {
         if (singleAttempt || _leaseWaiters is null)
-            return WithWorkspace(task, await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt));
+            return WithWorkspace(task, await SyncEligibleAsync(task, reportedTips, inspectMirror, ct, singleAttempt, beginAttempt));
         var waiting = false;
         try
         {
@@ -659,7 +660,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
 
     private async Task<RemoteSettlementSyncResult> SyncEligibleAsync(
         AgentTask task, IReadOnlyCollection<string>? reportedTips, bool inspectMirror, CancellationToken ct,
-        bool singleAttempt)
+        bool singleAttempt, Func<CancellationToken, Task<bool>>? beginAttempt = null)
     {
         if (!IsEligible(task))
             return RemoteSettlementSyncResult.NotApplicable;
@@ -700,7 +701,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
         RemoteSettlementSyncResult result;
         try
         {
-            result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, inspectMirror, deadline.Token, ct, singleAttempt);
+            result = await SyncAdmittedAsync(task, baseline, fullRef, reportedTips, inspectMirror, deadline.Token, ct, singleAttempt, beginAttempt);
         }
         catch (WorkspaceAdmissionBusyException)
         {
@@ -723,9 +724,9 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 fullRef, baseline.LocalSha);
         }
 
-        // Only an attempt still waiting for the lease carries its wait into the next sweep. The
-        // caller's own cancellation propagates above and leaves the wait running for the re-hand.
-        if (!singleAttempt && result.Reason != RemoteSettlementSyncReasons.LeaseWaiting)
+        // A pre-sync admission deferral keeps the lease window started by an earlier sweep.
+        // The caller's own cancellation also leaves the wait running for a later sweep.
+        if (!singleAttempt && !SettlementSyncDebtPolicy.IsWaiting(result))
             LeaseWaits.End(task.Id);
         return result;
     }
@@ -738,10 +739,19 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
     /// </summary>
     private async Task<RemoteSettlementSyncResult> SyncAdmittedAsync(
         AgentTask task, ProgressSourceBaseline baseline, string fullRef, IReadOnlyCollection<string>? reportedTips,
-        bool inspectMirror, CancellationToken ct, CancellationToken caller, bool singleAttempt)
+        bool inspectMirror, CancellationToken ct, CancellationToken caller, bool singleAttempt,
+        Func<CancellationToken, Task<bool>>? beginAttempt)
     {
-        if (_reservations is null)
+        async Task<RemoteSettlementSyncResult> SyncAsync()
+        {
+            if (beginAttempt is not null && !await beginAttempt(ct))
+                return Outcome(RemoteSettlementSyncState.Refused,
+                    RemoteSettlementSyncReasons.SettlementSyncEpisodeChanged, fullRef, baseline.LocalSha);
             return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, inspectMirror, ct, caller, singleAttempt);
+        }
+
+        if (_reservations is null)
+            return await SyncAsync();
 
         var admitted = await _reservations.TryAdmitConsumerAsync(new WorkspaceReservationCommand(
             WorkspaceReservationKey.ForTask(task.WorktreePath, task.WorkingDirectory, task.WorktreeBranch, task.RepoPath),
@@ -751,7 +761,7 @@ public sealed class RemoteWorkspaceService : IRemoteSettlementSync
                 fullRef, baseline.LocalSha);
         try
         {
-            return await SyncOwnedCheckoutAsync(task, baseline, fullRef, reportedTips, inspectMirror, ct, caller, singleAttempt);
+            return await SyncAsync();
         }
         finally
         {

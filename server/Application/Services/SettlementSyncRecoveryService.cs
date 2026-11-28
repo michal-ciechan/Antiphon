@@ -1,5 +1,4 @@
 using Antiphon.Server.Application.Dtos;
-using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -26,7 +25,7 @@ namespace Antiphon.Server.Application.Services;
 /// Pending recovery is unchanged.
 /// This service does not read
 /// <c>RunnerSyncDebtOnSettlement</c>: that switch stops settlement from minting a row, and a
-/// row already accepted keeps recovering. CARD-1446 D-2: a Pending row claimed
+/// row already accepted keeps recovering. CARD-1446 D-2: a Pending row admitted to sync
 /// <see cref="DelegationSettings.RunnerSyncDebtMaxAttempts"/> times is Held
 /// <c>settlement_sync_attempts_exhausted</c> at its next due claim, before Git.
 /// </summary>
@@ -59,7 +58,8 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                 if (claim is null) continue;
                 attempted++;
                 if (BoundaryAsync is not null) await BoundaryAsync("claimed", ct);
-                var result = await workspace.SyncSettledAsync(claim.Task, claim.Debt, ct);
+                var result = await workspace.SyncSettledAsync(claim.Task, claim.Debt, ct,
+                    token => BeginAttemptAsync(claim, token));
                 if (BoundaryAsync is not null) await BoundaryAsync("synced", ct);
                 if (!await SaveAsync(claim, result, ct)) continue;
                 if (BoundaryAsync is not null) await BoundaryAsync("saved", ct);
@@ -151,17 +151,17 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                     logger.LogWarning("Settlement sync debt {DebtId} held after {Attempts} attempts", id, debt.Attempts);
                     return null;
                 }
-                var attempts = debt.Attempts + 1;
-                var next = due.AddMinutes(BackoffMinutes(attempts));
-                var changed = await db.AgentTaskSyncDebts.Where(d => d.Id == id && d.Revision == debt.Revision)
-                    .ExecuteUpdateAsync(u => u.SetProperty(d => d.Attempts, attempts)
-                        .SetProperty(d => d.NextAttemptAt, next)
+                // Claim the due row and pace recovery of an interrupted claim. Charge the
+                // attempt separately, after workspace admission and before the first sync read.
+                var next = due.AddMinutes(BackoffMinutes(debt.Attempts + 1));
+                var changed = await db.AgentTaskSyncDebts.Where(d => d.Id == id && d.Revision == debt.Revision
+                        && d.Attempts == debt.Attempts && d.NextAttemptAt == debt.NextAttemptAt)
+                    .ExecuteUpdateAsync(u => u.SetProperty(d => d.NextAttemptAt, next)
                         .SetProperty(d => d.UpdatedAt, due)
                         .SetProperty(d => d.Revision, d => d.Revision + 1), ct);
                 if (changed != 1) return null;
                 await tx.CommitAsync(ct);
                 debt.Revision++;
-                debt.Attempts = attempts;
                 debt.NextAttemptAt = next;
                 return new Claim(task!, debt);
             }
@@ -215,6 +215,28 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
                 .SetProperty(d => d.UpdatedAt, due)
                 .SetProperty(d => d.Revision, d => d.Revision + 1), ct);
     }
+
+    private async Task<bool> BeginAttemptAsync(Claim claim, CancellationToken ct)
+    {
+        // A replacement claim may have taken over while admission waited. Only the current
+        // fence can spend an attempt and enter Git. Restamp pacing from the actual start.
+        var now = clock.GetUtcNow().UtcDateTime;
+        var next = now.AddMinutes(BackoffMinutes(claim.Debt.Attempts + 1));
+        var changed = await PendingClaim(claim)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.Attempts, d => d.Attempts + 1)
+                .SetProperty(d => d.NextAttemptAt, next)
+                .SetProperty(d => d.UpdatedAt, now), ct);
+        if (changed != 1) return false;
+        claim.Debt.NextAttemptAt = next;
+        return true;
+    }
+
+    private IQueryable<AgentTaskSyncDebt> PendingClaim(Claim claim) =>
+        db.AgentTaskSyncDebts.Where(d => d.Id == claim.Debt.Id
+            && d.Revision == claim.Debt.Revision
+            && d.State == AgentTaskSyncDebtState.Pending
+            && d.SourceSha == claim.Debt.SourceSha
+            && d.Attempt == claim.Debt.Attempt);
 
     private async Task<bool> SaveAsync(Claim claim, RemoteSettlementSyncResult result, CancellationToken ct)
     {
@@ -280,19 +302,9 @@ public sealed class SettlementSyncRecoveryService(AppDbContext db, RemoteWorkspa
         var now = clock.GetUtcNow().UtcDateTime;
         if (state == AgentTaskSyncDebtState.Held)
             next = now.AddMinutes(HeldRecheckMinutes);
-        // Admission refused before any sync work. Keep the scheduled retry without spending
-        // one of the debt's actual sync attempts.
-        var attempts = state == AgentTaskSyncDebtState.Pending && reason == WorkspaceAdmissionBusyException.ProblemCode
-            ? claim.Debt.Attempts - 1
-            : claim.Debt.Attempts;
-        var changed = await db.AgentTaskSyncDebts.Where(d => d.Id == claim.Debt.Id
-                && d.Revision == claim.Debt.Revision
-                && d.State == AgentTaskSyncDebtState.Pending
-                && d.SourceSha == claim.Debt.SourceSha
-                && d.Attempt == claim.Debt.Attempt)
+        var changed = await PendingClaim(claim)
             .ExecuteUpdateAsync(u => u.SetProperty(d => d.State, state)
                 .SetProperty(d => d.ReasonCode, reason)
-                .SetProperty(d => d.Attempts, attempts)
                 .SetProperty(d => d.NextAttemptAt, next)
                 .SetProperty(d => d.SourceReadyAt, readyAt)
                 .SetProperty(d => d.ConfirmedSha, confirmed)
