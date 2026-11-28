@@ -240,6 +240,120 @@ public sealed partial class ChannelInputWithheldIncidentTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    [Timeout(120_000)]
+    public async Task DefinitivelyRefusedEnterRetriesOnlyTheSameOwnedDraft(bool foreignDraft, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, new OutageQueueClock());
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var floor = await h.CurrentTranscriptMaxSequenceAsync();
+        var chat = await h.BindChannelAsync();
+        var enterRequests = 0;
+        h.Adapter.BeforeConditionalInput = () =>
+        {
+            if (h.Adapter.Inputs.Count != 1) return;
+            if (++enterRequests != 1) return;
+            h.Adapter.SnapshotSequence++;
+            if (foreignDraft) h.Adapter.PrimeComposer("foreign draft");
+        };
+        h.Adapter.OnSubmitted = submitted => h.InsertStoreVisibleTurnAsync(submitted, "fixture answer");
+        using var bridge = Bridge(h);
+
+        await bridge.HandleInboundAsync(Message(chat, "fixture-stale-enter", "fixture inbound"), ct);
+
+        await using var db = Db(schema.ConnectionString);
+        var row = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId, ct);
+        row.DeliveryAttempts.ShouldBe(1);
+        row.LastDeliveryBaselineSequence.ShouldBe(floor);
+        if (foreignDraft)
+        {
+            enterRequests.ShouldBe(1);
+            h.Adapter.Inputs.ShouldHaveSingleItem();
+            h.Adapter.SubmittedBodies.ShouldBeEmpty();
+            row.DeliveryVerdict.ShouldBeNull();
+        }
+        else
+        {
+            enterRequests.ShouldBe(2);
+            h.Adapter.Inputs.ShouldBe([row.Body, "\r"]);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text == row.Body, ct)).ShouldBe(1);
+        }
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task LaterInboundReachesRecipientPastAnExhaustedChannelHead(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, new OutageQueueClock());
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var oldChat = await h.BindChannelAsync();
+        var chat = await h.BindChannelAsync();
+        var park = await h.SeedPendingMessageAsync("old incomplete draft",
+            origin: QueuedMessageOrigin.Channel, conversationKey: $"telegram:{oldChat}",
+            deliveryAttempts: 3, deliveryVerdict: DeliveryVerdict.Truncated,
+            baselineSequence: await h.CurrentTranscriptMaxSequenceAsync());
+        h.Adapter.OnSubmitted = submitted => h.InsertStoreVisibleTurnAsync(submitted, "fixture answer");
+        using var bridge = Bridge(h);
+
+        await bridge.HandleInboundAsync(Message(chat, "fixture-after-park", "later inbound"), ct);
+
+        await using var db = Db(schema.ConnectionString);
+        var parked = await db.SessionQueuedMessages.SingleAsync(m => m.Id == park, ct);
+        parked.Status.ShouldBe(QueuedMessageStatus.Pending);
+        parked.DeliveryVerdict.ShouldBe(DeliveryVerdict.Truncated);
+        var later = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == h.SessionId && m.Id != park, ct);
+        later.ConversationKey.ShouldBe($"telegram:{chat}");
+        later.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == later.Body, ct)).ShouldBe(1);
+        h.Adapter.SubmittedBodies.ShouldBe([later.Body]);
+    }
+
+    [Test]
+    [Arguments(60)]
+    [Arguments(-60)]
+    [Timeout(120_000)]
+    public async Task ChannelHoldUsesElapsedTimeAcrossUtcJumps(int jumpSeconds, CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new ChannelHoldClock();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, clock);
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var chat = await h.BindChannelAsync();
+        using var bridge = Bridge(h);
+        h.Adapter.DialogAdopted = true;
+        var inbound = Message(chat, "fixture-utc-jump", "fixture held inbound") with { Timestamp = clock.GetUtcNow() };
+        await bridge.HandleInboundAsync(inbound, ct);
+        await using var db = Db(schema.ConnectionString);
+        var row = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId, ct);
+        row.HoldUntil.ShouldBe(clock.GetUtcNow().UtcDateTime.AddSeconds(10));
+
+        h.Adapter.AdoptedHistoryVerified = true;
+        h.Adapter.ConditionalOutcomeOverride = ConditionalInputOutcomes.ModalBlocked;
+        clock.UtcAdjustment = TimeSpan.FromSeconds(jumpSeconds);
+        clock.Advance(TimeSpan.FromSeconds(9));
+        await h.Queue.SendNowAsync(h.SessionId, row.Id, ct);
+        h.Adapter.ConditionalInputs.ShouldBeEmpty("UTC cannot expire the wait before ten elapsed seconds");
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await h.Queue.SendNowAsync(h.SessionId, row.Id, ct);
+        h.Adapter.ConditionalInputs.ShouldHaveSingleItem();
+    }
+
+    private sealed class ChannelHoldClock()
+        : FakeTimeProvider(new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero))
+    {
+        public TimeSpan UtcAdjustment { get; set; }
+        public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + UtcAdjustment;
+        public override long GetTimestamp() => base.GetUtcNow().Ticks;
+    }
+
+    [Test]
     [Timeout(120_000)]
     public async Task LiveAndRecoveryPollsRejectMachinePromptQuotingTheChannelBody(CancellationToken ct)
     {

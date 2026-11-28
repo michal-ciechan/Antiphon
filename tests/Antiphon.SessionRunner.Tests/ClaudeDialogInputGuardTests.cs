@@ -447,6 +447,36 @@ public class ClaudeDialogInputGuardTests
     }
 
     [Test]
+    public async Task GuardedEnterRefusesTheFirstForeignTokenAndAcceptsTheRenderedOwnedDraft()
+    {
+        const string body = "fixture alpha\nfixture beta\nfixture gamma";
+        var paste = Antiphon.Agents.Pty.PtyInputEncoding.EncodeBody(body);
+        await using var f = new Fixture();
+        var request = await f.RequestAsync(paste);
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, request with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ [Pasted text #2 +2 lines]"));
+        (await EnterAsync()).Outcome.ShouldBe(ConditionalInputOutcomes.ComposerMismatch);
+        f.Child.Inputs.ShouldBe([paste]);
+
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", "❯ fixture alpha\n  fixture beta\n  fixture gamma"));
+        (await EnterAsync()).Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+        f.Child.Inputs.ShouldBe([paste, "\r"]);
+
+        async Task<RunnerConditionalInputResult> EnterAsync()
+        {
+            var enter = await f.RequestAsync("\r");
+            return await f.Runtime.SendConditionalInputAsync(f.Id, enter with
+            {
+                ExpectedComposerDigest = ComposerInput.Digest(body),
+                RequireOwnedComposer = true,
+            }, CancellationToken.None);
+        }
+    }
+
+    [Test]
     public async Task GuardedEnterRefusesForeignCollapsedTokenAfterOwnedPaste()
     {
         const string body = "fixture alpha\nfixture beta\nfixture gamma";

@@ -459,6 +459,8 @@ internal sealed class FakeAgentProtocolAdapter : IAgentProtocolAdapter, IAttacha
         if (request.RequireClaudeDialogClear)
         {
             BeforeConditionalInput?.Invoke();
+            if (SnapshotSequence != request.ExpectedLastSequence)
+                return new(Guid.Empty, ConditionalInputOutcomes.StaleObservation, AcceptedStartedAt, SnapshotSequence);
             if (!DialogGuardEnabled) return new(Guid.Empty, ConditionalInputOutcomes.Unsupported);
             if (request.ExpectedInputRevision != _dialogInputRevision || request.ExpectedRuntimeEpoch != _dialogEpoch)
                 return new(Guid.Empty, ConditionalInputOutcomes.StaleObservation);
