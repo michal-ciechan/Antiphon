@@ -9,6 +9,7 @@ using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
+using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
@@ -28,13 +29,21 @@ namespace Antiphon.Tests.Api;
 public sealed class VerifiedSessionStopTests
 {
     [Test]
+    public Task Stop_requires_the_scoped_orchestrator_credential() => RunStopAsync("invalid-token");
+
+    [Test]
+    public Task Legacy_kill_requires_the_operator_credential() => RunStopAsync("legacy-no-operator");
+
+    [Test]
     [Arguments("reassigned")]
     [Arguments("attached")]
     [Arguments("browser")]
     [Arguments("idle")]
     [Arguments("unconfirmed")]
     [Arguments("new-generation")]
-    public async Task Stop_binds_to_the_verified_unattached_and_unowned_seat(string scenario)
+    public Task Stop_binds_to_the_verified_unattached_and_unowned_seat(string scenario) => RunStopAsync(scenario);
+
+    private static async Task RunStopAsync(string scenario)
     {
         var runner = new FakeSessionRunnerClient();
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
@@ -95,6 +104,8 @@ public sealed class VerifiedSessionStopTests
         if (scenario == "browser")
             app.Services.GetRequiredService<SessionTerminalAttachments>().TryAttach(id, "open-terminal").ShouldBeTrue();
         using var client = app.GetTestClient();
+        if (scenario == "invalid-token")
+            client.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader, "invalid-stop-test-token");
         await using (var inspection = app.Services.CreateAsyncScope())
         {
             var snapshot = await inspection.ServiceProvider.GetRequiredService<VerifiedSessionStopService>()
@@ -109,6 +120,8 @@ public sealed class VerifiedSessionStopTests
         var path = $"/api/sessions/{id}/kill?expectedGeneration={Uri.EscapeDataString(expected.ToString("O"))}&expectedTurnEndSequence=1";
         if (!unowned)
             path += $"&expectedOwnerId={agent.Id}";
+        if (scenario == "legacy-no-operator")
+            path = $"/api/sessions/{id}/kill";
 
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         HttpResponseMessage response;
@@ -159,7 +172,13 @@ public sealed class VerifiedSessionStopTests
         using (response)
         {
             await db.Entry(session).ReloadAsync();
-            if (scenario == "idle")
+            if (scenario is "invalid-token" or "legacy-no-operator")
+            {
+                response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+                runner.KillGenerationCalls.ShouldBeEmpty();
+                session.Status.ShouldBe(SessionStatus.Running);
+            }
+            else if (scenario == "idle")
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.OK);
                 var readback = await response.Content.ReadFromJsonAsync<JsonElement>();
