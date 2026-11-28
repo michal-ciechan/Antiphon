@@ -427,16 +427,16 @@ public static class ReviewReviewSteps
 
         string? reviewId = null;
         string? reviewUrl = null;
-        var summaryOnlyCount = summaryOnly.Count;
         var canPost = walk.Host.Capabilities.CanPostReviews && run.Subject.PrNumber is not null;
         if (canPost && (inline.Count > 0 || summaryOnly.Count > 0))
         {
             var runLink = walk.PublicRunUrl is { } url ? $"[View this review in Antiphon](<{url}>)" : null;
             var rendered = ReviewSummaryRenderer.Render(walk, node, configuration, inputs, inline.Select(i => i.Finding).ToList(),
                 summaryOnly, belowBar.Count, verification, verify?.Status is ReviewNodeStatus.Skipped or ReviewNodeStatus.FailedContinued, runLink);
-            summaryOnlyCount = rendered.SummaryOnlyCount;
+            var body = rendered.Body;
+            summaryOnly.RemoveRange(rendered.SummaryOnlyCount, summaryOnly.Count - rendered.SummaryOnlyCount);
             var comments = inline.Select(i => new CodeHostReviewComment(i.Finding.FilePath, i.Candidate.Line, CommentBody(i.Finding, runLink))).ToList();
-            var posted = await walk.Host.PostReviewAsync(walk.Binding.Target, new CodeHostReview(walk.Iteration.HeadSha ?? walk.HeadSha, rendered.Body, comments), ct);
+            var posted = await walk.Host.PostReviewAsync(walk.Binding.Target, new CodeHostReview(walk.Iteration.HeadSha ?? walk.HeadSha, body, comments), ct);
             reviewId = posted.ReviewId;
             reviewUrl = posted.Url;
             var remaining = posted.Comments.ToList();
@@ -455,7 +455,7 @@ public static class ReviewReviewSteps
                 finding.UpdatedAt = walk.Now();
             }
 
-            foreach (var finding in summaryOnly.Take(summaryOnlyCount))
+            foreach (var finding in summaryOnly)
             {
                 finding.Posted = true;
                 finding.ExternalThreadUrl ??= posted.Url;
@@ -471,8 +471,8 @@ public static class ReviewReviewSteps
             description, ct);
 
         var where = canPost ? "posted" : "kept in Antiphon (the code host takes no reviews)";
-        var summary = $"{created.Count} findings: {inline.Count} inline, {summaryOnlyCount} in the summary, {belowBar.Count} below round {run.Round}'s bar; {where}";
-        return NodeResult.Ok(null, summary, new PublishOutput(inline.Select(i => i.Finding.Key).ToList(), summaryOnly.Take(summaryOnlyCount).Select(f => f.Key).ToList(),
+        var summary = $"{created.Count} findings: {inline.Count} inline, {summaryOnly.Count} in the summary, {belowBar.Count} below round {run.Round}'s bar; {where}";
+        return NodeResult.Ok(null, summary, new PublishOutput(inline.Select(i => i.Finding.Key).ToList(), summaryOnly.Select(f => f.Key).ToList(),
             belowBar.Select(f => f.Key).ToList(), reviewId, reviewUrl));
     }
 
