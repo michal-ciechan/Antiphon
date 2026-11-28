@@ -151,30 +151,37 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
             validation.Valid.ShouldBeTrue(string.Join(", ", validation.Diagnostics.Select(d => d.Message)));
 
         var run = await SeedAsync("test/gate-transitions", variant);
-        var gateId = await SeedWaitingGateAsync(run.Id);
-        using var rejected = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Reject" });
-        rejected.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-        using var decided = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision });
-        decided.StatusCode.ShouldBe(HttpStatusCode.OK, await decided.Content.ReadAsStringAsync());
+        try
+        {
+            var gateId = await SeedWaitingGateAsync(run.Id);
+            using var rejected = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Reject" });
+            rejected.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            using var decided = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision });
+            decided.StatusCode.ShouldBe(HttpStatusCode.OK, await decided.Content.ReadAsStringAsync());
 
-        var updated = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
-        updated.GetProperty("workflowRevisionId").GetGuid().ShouldBe(run.WorkflowRevisionId!.Value);
-        updated.GetProperty("status").GetString().ShouldBe(status);
-        updated.GetProperty("stage").GetString().ShouldBe(stage);
-        updated.GetProperty("gates").EnumerateArray().Single().GetProperty("decision").GetString().ShouldBe(decision);
-        var nodes = updated.GetProperty("nodes").EnumerateArray().ToList();
-        nodes.Single(node => node.GetProperty("nodeId").GetString() == "human-review").GetProperty("outcome").GetString().ShouldBe(outcome);
-        if (decision == "AnotherRound")
-        {
-            updated.GetProperty("round").GetInt32().ShouldBe(run.Round + 1);
-            updated.GetProperty("iterations").EnumerateArray()
-                .ShouldContain(i => i.GetProperty("iteration").GetInt32() == 2 && i.GetProperty("trigger").GetString() == outcome);
-            nodes.ShouldContain(node => node.GetProperty("nodeId").GetString() == "intake"
-                && node.GetProperty("iteration").GetInt32() == 2 && node.GetProperty("status").GetString() == "Pending");
+            var updated = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
+            updated.GetProperty("workflowRevisionId").GetGuid().ShouldBe(run.WorkflowRevisionId!.Value);
+            updated.GetProperty("status").GetString().ShouldBe(status);
+            updated.GetProperty("stage").GetString().ShouldBe(stage);
+            updated.GetProperty("gates").EnumerateArray().Single().GetProperty("decision").GetString().ShouldBe(decision);
+            var nodes = updated.GetProperty("nodes").EnumerateArray().ToList();
+            nodes.Single(node => node.GetProperty("nodeId").GetString() == "human-review").GetProperty("outcome").GetString().ShouldBe(outcome);
+            if (decision == "AnotherRound")
+            {
+                updated.GetProperty("round").GetInt32().ShouldBe(run.Round + 1);
+                updated.GetProperty("iterations").EnumerateArray()
+                    .ShouldContain(i => i.GetProperty("iteration").GetInt32() == 2 && i.GetProperty("trigger").GetString() == outcome);
+                nodes.ShouldContain(node => node.GetProperty("nodeId").GetString() == "intake"
+                    && node.GetProperty("iteration").GetInt32() == 2 && node.GetProperty("status").GetString() == "Pending");
+            }
+            else
+            {
+                updated.GetProperty("iterations").GetArrayLength().ShouldBe(1);
+            }
         }
-        else
+        finally
         {
-            updated.GetProperty("iterations").GetArrayLength().ShouldBe(1);
+            await DeleteGateFixtureAsync(run);
         }
     }
 
@@ -203,15 +210,32 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
         unsupportedValidation.Diagnostics.ShouldContain(d => d.Code == "invalid-parameter" && d.NodeIds.Contains("human-review"));
 
         var run = await SeedAsync("test/pinned-gate", variant);
-        var gateId = await SeedWaitingGateAsync(run.Id);
-        var before = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
-        before.GetProperty("gates").EnumerateArray().Single().GetProperty("allowedDecisions").EnumerateArray()
-            .Select(value => value.GetString()).ShouldBe(["Close"]);
+        try
+        {
+            var gateId = await SeedWaitingGateAsync(run.Id);
+            var before = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
+            before.GetProperty("gates").EnumerateArray().Single().GetProperty("allowedDecisions").EnumerateArray()
+                .Select(value => value.GetString()).ShouldBe(["Close"]);
 
-        using var refused = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Approve" });
-        await AssertProblemAsync(refused, HttpStatusCode.Conflict, "review_gate_decision_not_allowed");
-        using var closed = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Close" });
-        closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var refused = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Approve" });
+            await AssertProblemAsync(refused, HttpStatusCode.Conflict, "review_gate_decision_not_allowed");
+            using var closed = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Close" });
+            closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+        }
+        finally
+        {
+            await DeleteGateFixtureAsync(run);
+        }
+    }
+
+    private async Task DeleteGateFixtureAsync(ReviewRun run)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        // The shared factory clears caches between tests. Remove these runnable rows before
+        // the fan-out witness explicitly takes an executor pass.
+        await db.ReviewRuns.Where(item => item.Id == run.Id).ExecuteDeleteAsync();
+        await db.ReviewSubjects.Where(item => item.Id == run.SubjectId).ExecuteDeleteAsync();
     }
 
     private async Task<Guid> SeedWaitingGateAsync(Guid runId)
