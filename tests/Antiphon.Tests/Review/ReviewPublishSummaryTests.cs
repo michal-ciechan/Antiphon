@@ -209,10 +209,13 @@ public class ReviewPublishSummaryTests
         const string template = "Custom heading\n\n{{findings}}\n\n{{blastRadius}}\n";
         var lf = Render(Walk(), template, [finding], null);
         var crlf = Render(Walk(), template.ReplaceLineEndings("\r\n"), [finding], null);
+        const string expected = "Custom heading\n\nFindings:\n- **F1** major · path: Visible finding\n\n"
+            + "**Blast radius across all iterations**\n"
+            + "- Reach: Unavailable\n- External contract: Unavailable\n- Persistent data: Unavailable\n"
+            + "- Rollback at release: Unavailable\n- Reversal after months: Unavailable\n- Exposure: Unavailable\n";
 
         System.Text.Encoding.UTF8.GetBytes(crlf).ShouldBe(System.Text.Encoding.UTF8.GetBytes(lf));
-        lf.ShouldStartWith("Custom heading\n\nFindings:\n- **F1** major · path: Visible finding\n\n**Blast radius across all iterations**\n");
-        lf.ShouldNotContain("\r");
+        System.Text.Encoding.UTF8.GetBytes(lf).ShouldBe(System.Text.Encoding.UTF8.GetBytes(expected));
     }
 
     private static readonly ReviewPublishConfiguration Binding = new("collate", "verify", "categorise", "select");
