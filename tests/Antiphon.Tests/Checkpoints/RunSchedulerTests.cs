@@ -745,6 +745,8 @@ public sealed class RunSchedulerTests : CheckpointTestBase
     private const string ObservationBuild = "bin-c2103-observe";
     private const string ObservationFilter = "/*/*/ExampleSurfaceTests/case";
     private static readonly DateTimeOffset ObservationEpoch = new(2026, 11, 27, 0, 0, 0, TimeSpan.Zero);
+    private static readonly Guid ObservationTask = Guid.Parse("9750517d-c558-46fd-913f-d0a530661490");
+    private static readonly Guid ObservationSession = Guid.Parse("be8e637d-973b-4345-a6e1-30499ea89e84");
     private static readonly Guid ObservationLease = Guid.Parse("680dd065-b0f2-4c44-925f-6dda1e331d5e");
     private static readonly SourceObservation ObservationSource = new(new string('a', 40), 0,
         new string('b', 64), ObservationEpoch, "known");
@@ -801,17 +803,81 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
     }
 
+    [Test]
+    public async Task C2103_stalled_sink_does_not_hold_checkpoint_completion()
+    {
+        foreach (var grouped in new[] { true, false })
+        {
+            var repo = TempDir();
+            Directory.CreateDirectory(Path.Combine(repo, "sample"));
+            File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"), """<Project Sdk="Microsoft.NET.Sdk" />""");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim();
+            var arm = RunObservationArmAsync(repo, Path.Combine(repo, ".antiphon", "checkpoints"),
+                grouped, fails: true, TimingFault.None, journal => journal.FlushGate = () =>
+                {
+                    entered.TrySetResult();
+                    release.Wait(TimeSpan.FromSeconds(5));
+                    return Task.CompletedTask;
+                });
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                var result = await arm.WaitAsync(TimeSpan.FromSeconds(3));
+                result.Exit.ShouldBe(ExitCodes.FailedTests);
+            }
+            finally
+            {
+                release.Set();
+                await arm;
+            }
+        }
+    }
+
+    [Test]
+    public async Task C2103_produced_attempt_is_bound_to_the_lease()
+    {
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"), """<Project Sdk="Microsoft.NET.Sdk" />""");
+        var result = await RunObservationArmAsync(repo, Path.Combine(repo, ".antiphon", "checkpoints"),
+            grouped: false, fails: false, TimingFault.None);
+        var phase = result.Read.Events.Single().BuildPhase!;
+        phase.TaskId.ShouldBe(ObservationTask.ToString("D"));
+        phase.AttemptId.ShouldBe(ObservationSession.ToString("D"), "owner-attempt-from-the-production-row");
+        phase.LeaseId.ShouldBe(ObservationLease.ToString("D"));
+    }
+
+    [Test]
+    public async Task C2103_standalone_refusal_does_not_retain_raw_project_path()
+    {
+        var repo = TempDir();
+        const string project = "customer-private/sample.csproj";
+        var result = await RunObservationArmAsync(repo, Path.Combine(repo, ".antiphon", "checkpoints"),
+            grouped: false, fails: false, TimingFault.None, project: project, refuse: true);
+        result.Exit.ShouldBe(ExitCodes.Invalid);
+        result.Commands.ShouldBeEmpty();
+        var phase = result.Read.Events.Single().BuildPhase!;
+        System.Text.Json.JsonSerializer.Serialize(phase, TimingJournal.Json).ShouldNotContain(project);
+    }
+
     private static async Task<ObservationArm> RunObservationArmAsync(string repo, string results,
-        bool grouped, bool fails, TimingFault? fault)
+        bool grouped, bool fails, TimingFault? fault, Action<TimingJournal>? configureJournal = null,
+        string project = "sample", bool refuse = false)
     {
         var clock = new ControlledTimeProvider(ObservationEpoch);
         var driver = new FakeDriver();
-        var slots = new ObservationSlotTrace();
+        var slots = new ObservationSlotTrace(refuse);
         var console = new StringWriter();
         var runtime = new CheckpointApp.Runtime
         {
             RepoRoot = repo, Driver = driver, Slots = slots, SourceCapture = _ => ObservationSource,
-            EnvironmentLookup = _ => null, TimeProvider = clock, Output = console,
+            EnvironmentLookup = name => !grouped ? name switch
+            {
+                "ANTIPHON_TASK_ID" => ObservationTask.ToString("D"),
+                "ANTIPHON_SESSION_ID" => ObservationSession.ToString("D"),
+                _ => null,
+            } : null, TimeProvider = clock, Output = console,
             CleanupContext = new CheckpointCleanupContext(new CheckpointNativeIo(), new CheckpointNativeGitRunner(), clock),
             RowStamp = () => "20261127-000000-abcd", RunStamp = () => "20261127-000000-abcd",
             ReportHost = new ReportHost { Os = "fixture", Cores = 6, MemAvailableMb = 65536, LoadAvg = "fixture" },
@@ -820,6 +886,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             {
                 var journal = TimingJournal.Open(path);
                 journal.Fault = fault.GetValueOrDefault();
+                configureJournal?.Invoke(journal);
                 return journal;
             },
         };
@@ -852,7 +919,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
         else
         {
-            string[] args = ["row", "--name", "CP-1", "--project", "sample", "--output-path", ObservationBuild + "/",
+            string[] args = ["row", "--name", "CP-1", "--project", project, "--output-path", ObservationBuild + "/",
                 "--filter", ObservationFilter, "--results-root", results, "--min-executed", "1"];
             if (fault.HasValue)
                 args = [.. args, "--observe-builds"];
@@ -864,7 +931,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var markdown = File.ReadAllBytes(Path.Combine(run, "report.md"));
         var report = ReceiptJson.Parse<ReportModel>(System.Text.Encoding.UTF8.GetString(json), ReportWriter.Json);
         var row = report.Rows.Single();
-        var trx = TrxReport.Parse(row.Trx!);
+        var trx = refuse ? new TrxParseResult() : TrxReport.Parse(row.Trx!);
         var read = await BuildObservationReplay.ReadAsync(run, deadline.Token);
         if (grouped)
             RunOwnershipStore.Read(run, runtime.CleanupContext).ShouldNotBeNull().Launched.ShouldBeNull();
@@ -874,7 +941,8 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         try
         {
             Directory.Move(run, Path.Combine(archive, "results"));
-            Directory.Move(Path.Combine(repo, "sample", ObservationBuild), Path.Combine(archive, "output"));
+            if (!refuse)
+                Directory.Move(Path.Combine(repo, "sample", ObservationBuild), Path.Combine(archive, "output"));
         }
         finally
         {
@@ -886,13 +954,15 @@ public sealed class RunSchedulerTests : CheckpointTestBase
     private sealed record ObservationArm(int Exit, IReadOnlyList<DriverRequest> Commands, IReadOnlyList<string> Slots,
         byte[] Json, byte[] Markdown, string Line, TrxParseResult Trx, BuildObservationRead Read, double ExecutionMilliseconds);
 
-    private sealed class ObservationSlotTrace : IBuildSlotClient
+    private sealed class ObservationSlotTrace(bool refuse) : IBuildSlotClient
     {
         internal List<string> Events { get; } = [];
         public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) => Task.FromResult(new SlotSession("enabled", 6));
 
         public Task<SlotLease> AcquireAsync(SlotSession session, string label, CancellationToken cancellationToken)
         {
+            if (refuse)
+                return Task.FromResult(new SlotLease { State = "refused", ExitCode = ExitCodes.Invalid });
             Events.Add("grant " + label);
             return Task.FromResult(new SlotLease
             {

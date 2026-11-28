@@ -169,6 +169,58 @@ public sealed class TimingJournalTests : CheckpointTestBase
         corrupt.CorruptLines.Count.ShouldBe(1, "corrupt-not-truncated");
     }
 
+    [Test]
+    public async Task C2103_replay_reports_torn_stage_with_its_filename()
+    {
+        var root = Fresh("torn-stage");
+        var journal = CheckpointBuildObservation.JournalRoot(root);
+        var spool = Directory.CreateDirectory(Path.Combine(journal, "spool")).FullName;
+        const string name = "interrupted.json";
+        await File.WriteAllTextAsync(Path.Combine(spool, name), "{\"eventId\":");
+        var read = await BuildObservationReplay.ReadAsync(root, CancellationToken.None);
+        read.CoverageReason.ShouldNotBeNull().ShouldContain(name);
+    }
+
+    [Test]
+    public async Task C2103_replay_reports_unpublished_batch_tail()
+    {
+        var root = Fresh("batch-tail");
+        var observation = new CheckpointBuildObservation(root, "run", null, null, TimeProvider.System);
+        foreach (var build in new[] { "first", "second" })
+            observation.Complete(observation.Begin("grouped-producer", build, "sample", SourceObservation.Unknown("fixture")),
+                "ok", "verified");
+        await observation.PublishAsync(path =>
+        {
+            var journal = TimingJournal.Open(path);
+            journal.AfterSequenceAssigned = () =>
+            {
+                journal.Fault = TimingFault.BeforeSpool;
+                return Task.CompletedTask;
+            };
+            return journal;
+        }, TextWriter.Null.WriteLine);
+        var read = await BuildObservationReplay.ReadAsync(root, CancellationToken.None);
+        read.Events.Select(item => item.ProducingBuildId).ShouldBe(["first"]);
+        read.CoverageReason.ShouldBe("observation-batch-incomplete");
+    }
+
+    [Test]
+    public async Task C2103_replay_bounds_the_whole_task_root()
+    {
+        var task = Fresh("task");
+        string? run = null;
+        for (var i = 0; i < 17; i++)
+        {
+            run = Directory.CreateDirectory(Path.Combine(task, $"run-{i}")).FullName;
+            var observation = new CheckpointBuildObservation(run, $"run-{i}", null, null, TimeProvider.System);
+            observation.Complete(observation.Begin("grouped-producer", "build", "sample", SourceObservation.Unknown("fixture")),
+                "ok", "verified");
+            await observation.PublishAsync(null, TextWriter.Null.WriteLine);
+        }
+        var read = await BuildObservationReplay.ReadAsync(run!, CancellationToken.None);
+        read.CoverageReason.ShouldBe("observation-read-bound-exceeded");
+    }
+
     private string Fresh(string name)
     {
         var path = Path.Combine(TempDir(), name);
