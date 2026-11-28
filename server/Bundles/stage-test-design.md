@@ -1,4 +1,4 @@
-Append verification to the landed plan. Preserve the fix design.
+Append verification to the landed plan; do not rewrite the fix design.
 Every guard that protects a safety-critical assertion gets a PC-n positive control.
 Read changed tests + nearest fixture. Require recipe/variant/case/oracle/reachability/classification. Unbound payloads: binding required after Code.
 
@@ -16,7 +16,7 @@ Each new/changed async delivery: producer, destination, persistence boundary, re
 List every safety-critical guard incl. untested. Map distinct PC-n 1:1. Justify zero.
 ### Positive controls
 - PC-1: break <G-1> by <compiling defect>; expect <exact method> red at <assertion>.
-  Mutation runs break/red/restore/green after land; Code runs V/R; Review judges pre-land.
+  Post-land Mutation: break/red/restore/green. Code runs V/R. Review judges pre-land.
 ### Out of scope
 - <exclusion and reason>
 ### Existing tests affected
