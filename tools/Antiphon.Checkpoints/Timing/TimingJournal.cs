@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -30,20 +29,27 @@ public sealed class TimingJournal
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
     };
 
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> Gates = new(StringComparer.Ordinal);
-
     public string Root { get; }
     public TimingFault Fault { get; set; }
     public Func<Task>? FlushGate { get; set; }
     public TaskCompletionSource<bool>? FlushEntered { get; set; }
     public Func<Task>? AfterSequenceAssigned { get; set; }
+    public Func<string, Task>? AfterPartialStage { get; set; }
 
-    private TimingJournal(string root) => Root = root;
+    private readonly int? byteLimit;
 
-    public static TimingJournal Open(string root)
+    private TimingJournal(string root, int? byteLimit)
+    {
+        Root = root;
+        this.byteLimit = byteLimit;
+    }
+
+    public static TimingJournal Open(string root) => Open(root, null);
+
+    internal static TimingJournal Open(string root, int? byteLimit)
     {
         RequireComponent(Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), allowNested: true);
-        return new TimingJournal(Path.GetFullPath(root));
+        return new TimingJournal(Path.GetFullPath(root), byteLimit);
     }
 
     public static string Resolve(TimingRootRequest request)
@@ -83,92 +89,185 @@ public sealed class TimingJournal
         if (Fault == TimingFault.BeforeSpool)
             throw new TimingPersistenceException("spool-not-persisted");
 
+        Directory.CreateDirectory(Root);
+        using var gate = await LockAsync(Path.Combine(Root, ".journal.lock"), cancellationToken).ConfigureAwait(false);
         Directory.CreateDirectory(SpoolDirectory());
         var spool = SpoolPath(ev.EventId);
-        var staged = JsonSerializer.Serialize(ev, Json);
-        await File.WriteAllTextAsync(spool, staged, cancellationToken).ConfigureAwait(false);
+        if (File.Exists(spool))
+        {
+            var prior = JsonSerializer.Deserialize<TimingEvent>(ReadText(spool, byteLimit), Json);
+            if (prior?.PayloadIdentity != ev.PayloadIdentity)
+                throw new TimingIntegrityException("event-conflict");
+        }
+        else
+        {
+            await StageAsync(spool, ev, cancellationToken).ConfigureAwait(false);
+        }
+
         if (Fault == TimingFault.AfterSpoolBeforeAppend)
             throw new TimingPersistenceException("append-not-started");
+        return await AppendStagedAsync(ev, spool, recovering: false, cancellationToken).ConfigureAwait(false);
+    }
 
-        var gate = Gates.GetOrAdd(ShardKey(ev), _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+    private async Task StageAsync(string spool, TimingEvent ev, CancellationToken cancellationToken)
+    {
+        var temp = spool + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(ev, Json);
         try
         {
-            var path = ShardPath(ev);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var existing = ReadShard(path);
-            var match = existing.Events.FirstOrDefault(item => item.EventId == ev.EventId);
-            if (match is not null)
+            await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
             {
-                if (!string.Equals(match.PayloadIdentity, ev.PayloadIdentity, StringComparison.Ordinal))
-                    throw new TimingIntegrityException("event-conflict");
-                TryDelete(spool);
-                return new TimingAppendResult { Acknowledged = true, Idempotent = true, Sequence = match.Sequence };
+                if (AfterPartialStage is not null)
+                {
+                    await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), cancellationToken).ConfigureAwait(false);
+                    stream.Flush(true);
+                    await AfterPartialStage(temp).ConfigureAwait(false);
+                    await stream.WriteAsync(bytes.AsMemory(bytes.Length / 2), cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                }
+                stream.Flush(true);
             }
-
-            if (ev.EventKind == "set-completed" && existing.Events.Any(item => item.EventKind == "set-completed"
-                    && item.SetId == ev.SetId && item.SetKind == ev.SetKind && item.Producer != ev.Producer))
-            {
-                TryDelete(spool);
-                return new TimingAppendResult { Acknowledged = true, SuppressedProducer = true, TimingPersistence = "complete" };
-            }
-
-            ev.Sequence = existing.Events.Count == 0 ? 1 : existing.Events.Max(item => item.Sequence) + 1;
-            if (AfterSequenceAssigned is not null)
-                await AfterSequenceAssigned().ConfigureAwait(false);
-
-            var line = JsonSerializer.Serialize(ev, Json) + "\n";
-            await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
-            var bytes = Encoding.UTF8.GetBytes(line);
-            await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-            FlushEntered?.TrySetResult(true);
-            if (FlushGate is not null)
-                await FlushGate().ConfigureAwait(false);
-            stream.Flush(true);
-            if (Fault == TimingFault.AfterFlushBeforeAck)
-                throw new TimingPersistenceException("ack-not-returned");
-            TryDelete(spool);
-            return new TimingAppendResult { Acknowledged = true, Sequence = ev.Sequence };
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temp, spool);
         }
         finally
         {
-            gate.Release();
+            TryDelete(temp);
         }
+    }
+
+    private async Task<TimingAppendResult> AppendStagedAsync(TimingEvent ev, string spool, bool recovering,
+        CancellationToken cancellationToken, Dictionary<string, TimingReadResult>? shards = null)
+    {
+        var path = ShardPath(ev);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        if (shards is null || !shards.TryGetValue(path, out var existing))
+        {
+            existing = ReadShard(path, byteLimit);
+            shards?.Add(path, existing);
+        }
+        var match = existing.Events.FirstOrDefault(item => item.EventId == ev.EventId);
+        if (match is not null)
+        {
+            if (!string.Equals(match.PayloadIdentity, ev.PayloadIdentity, StringComparison.Ordinal))
+                throw new TimingIntegrityException("event-conflict");
+            TryDelete(spool);
+            return new TimingAppendResult { Acknowledged = true, Idempotent = true, Sequence = match.Sequence };
+        }
+
+        if (ev.EventKind == "set-completed" && existing.Events.Any(item => item.EventKind == "set-completed"
+                && item.SetId == ev.SetId && item.SetKind == ev.SetKind && item.Producer != ev.Producer))
+        {
+            TryDelete(spool);
+            return new TimingAppendResult { Acknowledged = true, SuppressedProducer = true, TimingPersistence = "complete" };
+        }
+
+        // Preserve the torn bytes for diagnosis and never join a new JSON object to a damaged line.
+        if (existing.TornTails > 0 || existing.CorruptLines.Count > 0)
+            throw new TimingIntegrityException("malformed-journal");
+        ev.Sequence = existing.Events.Count == 0 ? 1 : checked(existing.Events.Max(item => item.Sequence) + 1);
+        if (AfterSequenceAssigned is not null)
+            await AfterSequenceAssigned().ConfigureAwait(false);
+
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(ev, Json) + "\n");
+        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+        if (byteLimit is int limit && (stream.Length + bytes.Length > limit
+            || existing.Events.Count >= CheckpointBuildObservation.EventLimit))
+            throw new TimingReadBoundException();
+        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        FlushEntered?.TrySetResult(true);
+        if (FlushGate is not null)
+            await FlushGate().ConfigureAwait(false);
+        stream.Flush(true);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!recovering && Fault == TimingFault.AfterFlushBeforeAck)
+            throw new TimingPersistenceException("ack-not-returned");
+        existing.Events.Add(ev);
+        TryDelete(spool);
+        return new TimingAppendResult { Acknowledged = true, Sequence = ev.Sequence };
     }
 
     public async Task ImportSpoolAsync(CancellationToken cancellationToken = default)
     {
+        await RecoverAndReadAsync(read: false, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<(TimingReadResult Read, string? Failure)> RecoverAndReadAsync(bool read,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(Root))
+            return (new(), null);
+        using var gate = await LockAsync(Path.Combine(Root, ".journal.lock"), cancellationToken).ConfigureAwait(false);
+        string? failure = null;
+        var shards = read ? new Dictionary<string, TimingReadResult>(StringComparer.Ordinal) : null;
         var dir = SpoolDirectory();
-        if (!Directory.Exists(dir))
-            return;
-        foreach (var file in Directory.GetFiles(dir, "*.json").OrderBy(path => path, StringComparer.Ordinal))
+        if (Directory.Exists(dir))
         {
-            string staged;
+            // Observation replay has already checked the bounded task inventory. Bound
+            // this enumeration as well, so additions after that scan cannot expand it.
+            var files = Directory.EnumerateFiles(dir).Take(byteLimit.HasValue ? 2 * CheckpointBuildObservation.EventLimit + 1 : int.MaxValue)
+                .OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            if (byteLimit.HasValue && files.Length > 2 * CheckpointBuildObservation.EventLimit)
+                throw new TimingReadBoundException();
+            foreach (var file in files)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (file.EndsWith(".tmp", StringComparison.Ordinal))
+                {
+                    failure ??= "observation-torn-stage:" + Path.GetFileName(file);
+                    continue;
+                }
+                if (!file.EndsWith(".json", StringComparison.Ordinal))
+                    continue;
+                try
+                {
+                    var ev = JsonSerializer.Deserialize<TimingEvent>(ReadText(file, byteLimit), Json)
+                        ?? throw new JsonException();
+                    RequireComponent(ev.EventId);
+                    RequireComponent(ev.RunId);
+                    if (Path.GetFileNameWithoutExtension(file) != ev.EventId || ev.Attempt <= 0)
+                        throw new JsonException();
+                    await AppendStagedAsync(ev, file, recovering: true, cancellationToken, shards).ConfigureAwait(false);
+                }
+                catch (FileNotFoundException)
+                {
+                    continue;
+                }
+                catch (Exception ex) when (read && ex is JsonException or TimingRootException or TimingIntegrityException or OverflowException or DecoderFallbackException)
+                {
+                    failure ??= "observation-invalid-stage:" + Path.GetFileName(file);
+                }
+            }
+        }
+        return (read ? ReadRoots([Root], byteLimit, shards) : new(), failure);
+    }
+
+    // FileShare.None is an OS-backed exclusion on the supported hosts. Keep the
+    // lock file in place so waiters always open the same file after a process exits.
+    internal static async Task<FileStream> LockAsync(string path, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
+                throw new TimingRootException("linked-journal-lock");
             try
             {
-                staged = await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false);
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
-            catch (FileNotFoundException)
+            catch (IOException) when (File.Exists(path))
             {
-                // A concurrent append can commit and acknowledge this file after enumeration.
-                continue;
-            }
-            var ev = JsonSerializer.Deserialize<TimingEvent>(staged, Json)
-                ?? throw new TimingIntegrityException("event-conflict");
-            var previous = Fault;
-            Fault = TimingFault.None;
-            try
-            {
-                await AppendAsync(ev, cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                Fault = previous;
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken).ConfigureAwait(false);
             }
         }
     }
 
-    public static TimingReadResult Read(params string[] roots)
+    public static TimingReadResult Read(params string[] roots) => ReadRoots(roots, null, null);
+
+    private static TimingReadResult ReadRoots(string[] roots, int? byteLimit, Dictionary<string, TimingReadResult>? shards)
     {
         var events = new List<TimingEvent>();
         var warnings = new List<string>();
@@ -177,9 +276,26 @@ public sealed class TimingJournal
         var seen = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var root in roots.Where(root => !string.IsNullOrWhiteSpace(root) && Directory.Exists(root)))
         {
-            foreach (var file in Directory.GetFiles(root, "events.jsonl", SearchOption.AllDirectories).OrderBy(path => path, StringComparer.Ordinal))
+            var files = Directory.EnumerateFiles(root, "events.jsonl", new EnumerationOptions
             {
-                var shard = ReadShard(file);
+                RecurseSubdirectories = true,
+                AttributesToSkip = byteLimit.HasValue ? FileAttributes.ReparsePoint : 0,
+                MaxRecursionDepth = byteLimit.HasValue ? 4 : int.MaxValue,
+            }).Take(byteLimit.HasValue ? BuildObservationReplay.TaskShardLimit + 1 : int.MaxValue)
+                .OrderBy(path => path, StringComparer.Ordinal).ToArray();
+            if (byteLimit.HasValue && files.Length > BuildObservationReplay.TaskShardLimit)
+                throw new TimingReadBoundException();
+            foreach (var file in files)
+            {
+                TimingReadResult shard;
+                try { shard = shards?.GetValueOrDefault(file) ?? ReadShard(file, byteLimit); }
+                catch (DecoderFallbackException) when (byteLimit.HasValue)
+                {
+                    warnings.Add("observation-invalid-shard:" + Path.GetRelativePath(root, file));
+                    continue;
+                }
+                if (byteLimit.HasValue && (shard.CorruptLines.Count > 0 || shard.TornTails > 0))
+                    warnings.Add("observation-invalid-shard:" + Path.GetRelativePath(root, file));
                 torn += shard.TornTails;
                 warnings.AddRange(shard.Warnings);
                 corrupt.AddRange(shard.CorruptLines);
@@ -228,15 +344,17 @@ public sealed class TimingJournal
 
     public static string? GitCommonTimingRoot(string? gitCommonDirectory) => Fallback(gitCommonDirectory);
 
-    private static TimingReadResult ReadShard(string path)
+    private static TimingReadResult ReadShard(string path, int? byteLimit)
     {
         if (!File.Exists(path))
             return new TimingReadResult();
-        var text = File.ReadAllText(path);
+        var text = ReadText(path, byteLimit);
         if (text.Length == 0)
             return new TimingReadResult();
         var torn = !text.EndsWith('\n');
         var lines = text.Split('\n');
+        if (byteLimit.HasValue && lines.Length > CheckpointBuildObservation.EventLimit + 1)
+            throw new TimingReadBoundException();
         var events = new List<TimingEvent>();
         var warnings = new List<string>();
         var corrupt = new List<string>();
@@ -247,7 +365,10 @@ public sealed class TimingJournal
                 continue;
             try
             {
-                events.Add(JsonSerializer.Deserialize<TimingEvent>(lines[i], Json) ?? throw new JsonException("empty"));
+                var ev = JsonSerializer.Deserialize<TimingEvent>(lines[i], Json) ?? throw new JsonException("empty");
+                if (byteLimit.HasValue && (string.IsNullOrWhiteSpace(ev.EventId) || ev.Sequence <= 0))
+                    throw new JsonException("timing identity or sequence missing");
+                events.Add(ev);
             }
             catch (JsonException)
             {
@@ -260,6 +381,20 @@ public sealed class TimingJournal
         return new TimingReadResult { Events = events, Warnings = warnings, CorruptLines = corrupt, TornTails = torn && lines[^1].Length > 0 ? 1 : 0 };
     }
 
+    internal static string ReadText(string path, int? byteLimit)
+    {
+        if (byteLimit is not int limit)
+            return File.ReadAllText(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (stream.Length > limit)
+            throw new TimingReadBoundException();
+        var buffer = new byte[limit + 1];
+        var count = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+        if (count > limit)
+            throw new TimingReadBoundException();
+        return new UTF8Encoding(false, true).GetString(buffer, 0, count);
+    }
+
     private string ShardPath(TimingEvent ev)
     {
         var date = (ev.StartedAt ?? DateTimeOffset.UtcNow).UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
@@ -270,9 +405,6 @@ public sealed class TimingJournal
     private string SpoolDirectory() => Path.Combine(Root, "spool");
 
     private string SpoolPath(string eventId) => Path.Combine(SpoolDirectory(), eventId + ".json");
-
-    private static string ShardKey(TimingEvent ev) =>
-        ev.RunId + "/" + ev.Attempt.ToString(CultureInfo.InvariantCulture);
 
     private static string? Fallback(string? gitCommon)
     {
@@ -310,3 +442,5 @@ public sealed class TimingJournal
             File.Delete(path);
     }
 }
+
+internal sealed class TimingReadBoundException : IOException;

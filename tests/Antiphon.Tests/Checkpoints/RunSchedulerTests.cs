@@ -797,7 +797,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             positive.Read.Events.Single().BuildPhase!.BuildId.ShouldBe(ObservationBuild);
             positive.Read.Events.Single().BuildPhase!.Invocation.ShouldBe(grouped ? "grouped-producer" : "standalone-composite");
             baseline.Read.CoverageReason.ShouldBe("observation-missing");
-            sinkFailure.Read.CoverageReason.ShouldBe("observation-missing");
+            sinkFailure.Read.CoverageReason.ShouldBe("observation-batch-incomplete");
             Console.WriteLine(FormattableString.Invariant(
                 $"C2103 parity {label} offMs={baseline.ExecutionMilliseconds:F2} onMs={positive.ExecutionMilliseconds:F2} sinkFailureMs={sinkFailure.ExecutionMilliseconds:F2}"));
         }
@@ -1071,7 +1071,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         foreach (var fault in new[] { TimingFault.AfterSpoolBeforeAppend, TimingFault.AfterFlushBeforeAck,
                      TimingFault.None, TimingFault.BeforeSpool })
         {
-            var root = TempDir();
+            var root = Directory.CreateDirectory(Path.Combine(TempDir(), "run")).FullName;
             var writer = new CheckpointBuildObservation(root, "run", null, null, clock);
             var attempted = writer.Begin("grouped-producer", "build-1", "sample", ObservationSource);
             writer.Complete(attempted, "ok", "verified");
@@ -1090,7 +1090,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             if (fault == TimingFault.BeforeSpool)
             {
                 diagnostics.Single().ShouldContain("coverage=unknown");
-                (await BuildObservationReplay.ReadAsync(root, deadline.Token)).CoverageReason.ShouldBe("observation-missing");
+                (await BuildObservationReplay.ReadAsync(root, deadline.Token)).CoverageReason.ShouldBe("observation-batch-incomplete");
                 continue;
             }
             if (fault == TimingFault.AfterSpoolBeforeAppend)
@@ -1101,7 +1101,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             recorded.EventId.ShouldBe(eventId, "after-spool-before-append");
             recorded.BuildPhase!.BuildId.ShouldBe("build-1");
             recorded.BuildPhase.RequestedAt.ShouldBe(ObservationEpoch);
-            reopened.CoverageReason.ShouldBeNull();
+            reopened.CoverageReason.ShouldBe(fault == TimingFault.None ? null : "observation-batch-incomplete");
             (await BuildObservationReplay.ReadAsync(root, deadline.Token)).Events.Count.ShouldBe(1);
             if (fault == TimingFault.None)
                 replaySample = recorded;
@@ -1116,7 +1116,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             }
         }
 
-        var busyRoot = TempDir();
+        var busyRoot = Directory.CreateDirectory(Path.Combine(TempDir(), "run")).FullName;
         var busyPath = CheckpointBuildObservation.JournalRoot(busyRoot);
         var heldShard = TimingJournal.Open(busyPath);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1126,6 +1126,12 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             entered.TrySetResult();
             await release.Task.WaitAsync(deadline.Token);
         };
+        var staging = TimingJournal.Open(busyPath);
+        staging.Fault = TimingFault.AfterSpoolBeforeAppend;
+        var staged = replaySample.ShouldNotBeNull();
+        await Should.ThrowAsync<TimingPersistenceException>(() => staging.AppendAsync(staged, deadline.Token));
+        File.Exists(Path.Combine(busyPath, "spool", staged.EventId + ".json")).ShouldBeTrue();
+
         var held = heldShard.AppendAsync(new TimingEvent
         {
             RunId = "run", EventId = "busy-fixture", EventKind = "fixture", StartedAt = ObservationEpoch,
@@ -1134,11 +1140,6 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         try
         {
             await entered.Task.WaitAsync(deadline.Token);
-            var staging = TimingJournal.Open(busyPath);
-            staging.Fault = TimingFault.AfterSpoolBeforeAppend;
-            var staged = replaySample.ShouldNotBeNull();
-            await Should.ThrowAsync<TimingPersistenceException>(() => staging.AppendAsync(staged, deadline.Token));
-            File.Exists(Path.Combine(busyPath, "spool", staged.EventId + ".json")).ShouldBeTrue();
             reading = BuildObservationReplay.ReadAsync(busyRoot, deadline.Token);
             reading.IsCompleted.ShouldBeFalse("busy-shard-awaits-release");
         }
@@ -1151,7 +1152,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         }
         (await reading!).Events.Single().EventId.ShouldBe(replaySample!.EventId, "busy-shard-readback");
 
-        var quotaRoot = TempDir();
+        var quotaRoot = Directory.CreateDirectory(Path.Combine(TempDir(), "run")).FullName;
         var capped = new CheckpointBuildObservation(quotaRoot, "quota", null, null, clock, eventLimit: 3);
         foreach (var build in new[] { "first", "second", "overflow" })
             capped.Complete(capped.Begin("grouped-producer", build, "sample", ObservationSource), "ok", "verified");
@@ -1161,7 +1162,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         retained.Events.Select(item => item.BuildPhase!.BuildId).ShouldBe(["first", "second"]);
         retained.CoverageReason.ShouldBe("observation-truncated");
 
-        var byteQuotaRoot = TempDir();
+        var byteQuotaRoot = Directory.CreateDirectory(Path.Combine(TempDir(), "run")).FullName;
         var byteCapped = new CheckpointBuildObservation(byteQuotaRoot, "byte-quota", null, null, clock, byteLimit: 6000);
         foreach (var build in Enumerable.Range(0, 10))
             byteCapped.Complete(byteCapped.Begin("grouped-producer", $"build-{build}", new string('p', 240),

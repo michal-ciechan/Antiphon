@@ -99,23 +99,36 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         try
         {
-            var path = JournalRoot(runDirectory);
-            SafeWrite.Require(SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(runDirectory)));
-            var journal = (open ?? TimingJournal.Open)(path);
+            using var taskLock = await BuildObservationReplay.LockTaskAsync(runDirectory, budget.Token).ConfigureAwait(false);
+            var records = new List<TimingEvent>(_records);
             if (_truncated)
             {
                 var marker = Event("build-observation-coverage", "", _records.FirstOrDefault()?.StartedAt ?? time.GetUtcNow());
                 marker.UnavailableReason = "observation-truncated";
-                await journal.AppendAsync(marker, budget.Token).ConfigureAwait(false);
+                records.Insert(0, marker);
             }
-            foreach (var record in _records)
+            var shards = records.Select(record => record.StartedAt!.Value.UtcDateTime.Date).Distinct().Count();
+            var stagingBytes = records.Max(record => JsonSerializer.SerializeToUtf8Bytes(record, TimingJournal.Json).Length);
+            if (!BuildObservationReplay.WithinTaskBudget(runDirectory, shards,
+                    _recordBytes + DiagnosticReserve + stagingBytes, budget.Token))
+                throw new TimingReadBoundException();
+
+            var path = JournalRoot(runDirectory);
+            SafeWrite.Require(SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(runDirectory)));
+            var pending = Path.Combine(path, BuildObservationReplay.BatchFile);
+            SafeWrite.Require(SafeWrite.Text(pending, "observation-batch-incomplete", SafeWrite.Under(path)));
+            var journal = open?.Invoke(path) ?? TimingJournal.Open(path, ByteLimit);
+            foreach (var record in records)
             {
-                record.BuildPhase = record.BuildPhase! with
-                {
-                    CleanupStartedAt = cleanupStartedAt, CleanupEndedAt = cleanupEndedAt, OutputsCleaned = outputsCleaned,
-                };
+                if (record.BuildPhase is { } phase)
+                    record.BuildPhase = phase with
+                    {
+                        CleanupStartedAt = cleanupStartedAt, CleanupEndedAt = cleanupEndedAt, OutputsCleaned = outputsCleaned,
+                    };
                 await journal.AppendAsync(record, budget.Token).ConfigureAwait(false);
             }
+            budget.Token.ThrowIfCancellationRequested();
+            File.Delete(pending);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or OperationCanceledException)
         {

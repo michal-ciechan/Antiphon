@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Antiphon.Tests.TestHelpers;
 using Antiphon.Checkpoints;
 using Shouldly;
 using TUnit.Core;
@@ -169,16 +171,122 @@ public sealed class TimingJournalTests : CheckpointTestBase
         corrupt.CorruptLines.Count.ShouldBe(1, "corrupt-not-truncated");
     }
 
-    [Test]
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
     public async Task C2103_replay_reports_torn_stage_with_its_filename()
     {
         var root = Fresh("torn-stage");
         var journal = CheckpointBuildObservation.JournalRoot(root);
-        var spool = Directory.CreateDirectory(Path.Combine(journal, "spool")).FullName;
-        const string name = "interrupted.json";
-        await File.WriteAllTextAsync(Path.Combine(spool, name), "{\"eventId\":");
-        var read = await BuildObservationReplay.ReadAsync(root, CancellationToken.None);
-        read.CoverageReason.ShouldNotBeNull().ShouldContain(name);
+        var spool = Path.Combine(journal, "spool");
+        var script = WriteJournalChild(root);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var producer = StartJournalChild(script, "stage", journal);
+        string partial;
+        try
+        {
+            do
+            {
+                await Task.Delay(25, deadline.Token);
+                producer.HasExited.ShouldBeFalse("producer holds the partial stage open");
+                partial = Directory.Exists(spool)
+                    ? Directory.EnumerateFiles(spool).FirstOrDefault(path => new FileInfo(path).Length > 0) ?? ""
+                    : "";
+            } while (partial.Length == 0);
+            partial.ShouldEndWith(".tmp", "the finalized stage name stays absent during the write");
+            Directory.GetFiles(spool, "*.json").ShouldBeEmpty();
+        }
+        finally
+        {
+            if (!producer.HasExited)
+                producer.Kill(entireProcessTree: true);
+            await producer.WaitForExitAsync(CancellationToken.None);
+        }
+
+        var read = await BuildObservationReplay.ReadAsync(root, deadline.Token);
+        read.Events.ShouldBeEmpty();
+        read.CoverageReason.ShouldBe("observation-torn-stage:" + Path.GetFileName(partial));
+
+        // Retained evidence may have been produced by the original writer.
+        const string legacy = "legacy-torn.json";
+        File.Move(partial, Path.Combine(spool, legacy));
+        read = await BuildObservationReplay.ReadAsync(root, deadline.Token);
+        read.CoverageReason.ShouldBe("observation-invalid-stage:" + legacy);
+    }
+
+    [Test, ParallelLimiter<ProcessSpawnLimit>]
+    public async Task C2103_concurrent_recovery_counts_the_staged_event_once()
+    {
+        var root = Fresh("concurrent-recovery");
+        var path = CheckpointBuildObservation.JournalRoot(root);
+        var journal = TimingJournal.Open(path);
+        journal.Fault = TimingFault.AfterSpoolBeforeAppend;
+        await Should.ThrowAsync<TimingPersistenceException>(() => journal.AppendAsync(Event("pending", "fixture", "run")));
+        var script = WriteJournalChild(root);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var first = StartJournalChild(script, "recover", path);
+        using var second = StartJournalChild(script, "recover", path);
+        try
+        {
+            while (!File.Exists(Path.Combine(root, "ready-" + first.Id)) ||
+                   !File.Exists(Path.Combine(root, "ready-" + second.Id)))
+                await Task.Delay(25, deadline.Token);
+            File.WriteAllText(Path.Combine(root, "go"), "");
+            await Task.WhenAll(first.WaitForExitAsync(deadline.Token), second.WaitForExitAsync(deadline.Token));
+            foreach (var child in new[] { first, second })
+                child.ExitCode.ShouldBe(0, await child.StandardError.ReadToEndAsync(deadline.Token));
+
+            var read = TimingJournal.Read(path);
+            read.CorruptLines.ShouldBeEmpty();
+            read.Events.Select(item => item.EventId).ShouldBe(["pending"]);
+            Directory.GetFiles(Path.Combine(path, "spool"), "*.json").ShouldBeEmpty();
+            var files = Directory.GetFiles(Path.Combine(path, "runs"), "events.jsonl", SearchOption.AllDirectories);
+            File.ReadAllLines(files.Single()).Length.ShouldBe(1, "physical journal line count before deduplication");
+        }
+        finally
+        {
+            foreach (var child in new[] { first, second })
+            {
+                if (!child.HasExited)
+                    child.Kill(entireProcessTree: true);
+                await child.WaitForExitAsync(CancellationToken.None);
+            }
+        }
+    }
+
+    private static string WriteJournalChild(string root)
+    {
+        var script = Path.Combine(root, "journal-child.ps1");
+        File.WriteAllText(script, """
+            param($assembly, $mode, $journalRoot)
+            $ErrorActionPreference = 'Stop'
+            [void][Reflection.Assembly]::LoadFrom($assembly)
+            $journal = [Antiphon.Checkpoints.TimingJournal]::Open($journalRoot)
+            if ($mode -eq 'stage') {
+                $inputPath = [Linq.Expressions.Expression]::Parameter([string], 'path')
+                $blocked = [Linq.Expressions.Expression]::Constant([Threading.Tasks.Task]::Delay(30000), [Threading.Tasks.Task])
+                $journal.AfterPartialStage = [Linq.Expressions.Expression]::Lambda(
+                    [Func[string,Threading.Tasks.Task]], $blocked, [Linq.Expressions.ParameterExpression[]]@($inputPath)).Compile()
+                $event = [Antiphon.Checkpoints.TimingEvent]::new()
+                $event.EventId = 'partial'
+                $event.RunId = 'run'
+                $event.EventKind = 'build-observed'
+                [void]$journal.AppendAsync($event, [Threading.CancellationToken]::None).GetAwaiter().GetResult()
+                exit 0
+            }
+            $root = Split-Path $journalRoot
+            [IO.File]::WriteAllText((Join-Path $root "ready-$PID"), '')
+            while (!(Test-Path (Join-Path $root 'go'))) { Start-Sleep -Milliseconds 25 }
+            $journal.ImportSpoolAsync([Threading.CancellationToken]::None).GetAwaiter().GetResult()
+            """);
+        return script;
+    }
+
+    private static Process StartJournalChild(string script, string mode, string journalRoot)
+    {
+        var start = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardError = true };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-File", script,
+                     typeof(TimingJournal).Assembly.Location, mode, journalRoot })
+            start.ArgumentList.Add(argument);
+        return Process.Start(start)!;
     }
 
     [Test]
@@ -212,10 +320,8 @@ public sealed class TimingJournalTests : CheckpointTestBase
         for (var i = 0; i < 17; i++)
         {
             run = Directory.CreateDirectory(Path.Combine(task, $"run-{i}")).FullName;
-            var observation = new CheckpointBuildObservation(run, $"run-{i}", null, null, TimeProvider.System);
-            observation.Complete(observation.Begin("grouped-producer", "build", "sample", SourceObservation.Unknown("fixture")),
-                "ok", "verified");
-            await observation.PublishAsync(null, TextWriter.Null.WriteLine);
+            await TimingJournal.Open(CheckpointBuildObservation.JournalRoot(run))
+                .AppendAsync(Event($"existing-{i}", "build-observed", $"run-{i}"));
         }
         var read = await BuildObservationReplay.ReadAsync(run!, CancellationToken.None);
         read.CoverageReason.ShouldBe("observation-read-bound-exceeded");
