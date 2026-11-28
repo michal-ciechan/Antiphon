@@ -2392,7 +2392,7 @@ public sealed partial class SessionMessageQueueService
         return Task.FromResult(false);
     }
 
-    private async Task<bool> CancelDeadBriefsAsync(AppDbContext db,
+    private async Task<IReadOnlyDictionary<Guid, Guid>> InspectPendingBriefsAsync(AppDbContext db,
         IEnumerable<SessionQueuedMessage> messages, DateTime currentGeneration, CancellationToken ct)
     {
         var pending = messages.Where(m => m.Status == QueuedMessageStatus.Pending
@@ -2400,9 +2400,9 @@ public sealed partial class SessionMessageQueueService
         var changed = await CancelExpiredBriefsAsync(db, pending, ct);
         var taskIds = pending.Where(m => m.Status == QueuedMessageStatus.Pending)
             .Select(m => m.ExecutionTaskId!.Value).Distinct().ToList();
-        if (taskIds.Count == 0) return changed;
+        if (taskIds.Count == 0) return new Dictionary<Guid, Guid>();
         var tasks = await db.AgentTasks.AsNoTracking().Where(t => taskIds.Contains(t.Id))
-            .Select(t => new { t.Id, t.Status, ReviewerClosed = t.ReviewerRunId != null
+            .Select(t => new { t.Id, t.Status, t.ReviewerRunId, ReviewerClosed = t.ReviewerRunId != null
                 && !db.ReviewRuns.Any(r => r.Id == t.ReviewerRunId && r.Status != ReviewRunStatus.Closed) })
             .ToDictionaryAsync(t => t.Id, ct);
         foreach (var message in pending.Where(m => m.Status == QueuedMessageStatus.Pending))
@@ -2423,7 +2423,7 @@ public sealed partial class SessionMessageQueueService
                 untyped ? "never typed" : "delivery generation changed");
         }
         if (changed) await db.SaveChangesAsync(ct);
-        return changed;
+        return tasks.Values.Where(t => t.ReviewerRunId != null).ToDictionary(t => t.Id, t => t.ReviewerRunId!.Value);
     }
 
     // Human SendNow and first-input deadline checks deliberately retain expiry-only semantics.
@@ -2648,8 +2648,8 @@ public sealed partial class SessionMessageQueueService
         var sessionKind = attemptSession.AgentKind;
         pending = pending.Where(m => !StandingResumeNote.IsNote(m)
             || m.RuntimeActionKey == StandingResumeNote.Key(sessionGeneration)).ToList();
-        if (await CancelDeadBriefsAsync(db, pending, sessionGeneration, ct))
-            pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
+        var reviewerRuns = await InspectPendingBriefsAsync(db, pending, sessionGeneration, ct);
+        pending = pending.Where(m => m.Status == QueuedMessageStatus.Pending).ToList();
         // CARD-0330: a completion note the distiller is still improving is not in the flush's
         // head run. SendNow ignores holds; a HoldUntil in the past is not a hold.
         var nowUtc = UtcNow();
@@ -3024,7 +3024,7 @@ public sealed partial class SessionMessageQueueService
             capturedGeneration = await CaptureSessionGenerationAsync(sessionId, ct);
             outcome = await DeliverAsync(sessionId, body, ct, baseline, ceilings, FirstInputDeadline(run),
                 pointerAttempt: PointerFor(rulesSession.AgentKind, head, sessionGeneration),
-                resumeNote: StandingResumeNote.IsNote(head), submission: SubmissionFor(db, run));
+                resumeNote: StandingResumeNote.IsNote(head), submission: SubmissionFor(db, run, reviewerRuns));
         }
         catch (OptionalBriefExpiredException)
         {

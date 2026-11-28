@@ -10,10 +10,13 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed partial class SessionMessageQueueService
 {
-    private sealed record QueuedSubmission(AppDbContext Db, IReadOnlyList<SessionQueuedMessage> Run);
+    private sealed record QueuedSubmission(AppDbContext Db, IReadOnlyList<SessionQueuedMessage> Run,
+        IReadOnlyDictionary<Guid, Guid>? ReviewerRuns);
 
-    private static QueuedSubmission? SubmissionFor(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run) =>
-        run.Any(m => m.ExecutionTaskId != null) ? new QueuedSubmission(db, run) : null;
+    private static QueuedSubmission? SubmissionFor(AppDbContext db, IReadOnlyList<SessionQueuedMessage> run,
+        IReadOnlyDictionary<Guid, Guid>? reviewerRuns = null) =>
+        run.Any(m => m.ExecutionTaskId is { } id && (reviewerRuns is null || reviewerRuns.ContainsKey(id)))
+            ? new QueuedSubmission(db, run, reviewerRuns) : null;
 
     private enum QueueSubmitResult { WroteEnter, Settled, StopRetrying }
 
@@ -22,13 +25,17 @@ public sealed partial class SessionMessageQueueService
     {
         if (submission is not null)
         {
-            var (db, run) = submission;
+            var (db, run, reviewerRuns) = submission;
             var tasks = run.Where(m => m.ExecutionTaskId != null).Select(m => m.ExecutionTaskId!.Value).Distinct().ToArray();
-            var links = await db.AgentTasks.AsNoTracking().Where(t => tasks.Contains(t.Id) && t.ReviewerRunId != null)
-                .Select(t => new { t.Id, RunId = t.ReviewerRunId!.Value }).ToListAsync(ct);
+            // A pending flush already resolved the immutable task linkage. Interrupted Enter and
+            // Send Now can arrive without that read. Each Enter still locks the run's live status.
+            var links = reviewerRuns is null
+                ? await db.AgentTasks.AsNoTracking().Where(t => tasks.Contains(t.Id) && t.ReviewerRunId != null)
+                    .ToDictionaryAsync(t => t.Id, t => t.ReviewerRunId!.Value, ct)
+                : reviewerRuns.Where(link => tasks.Contains(link.Key)).ToDictionary(link => link.Key, link => link.Value);
             if (links.Count != 0)
             {
-                var runIds = links.Select(l => l.RunId).Distinct().ToArray();
+                var runIds = links.Values.Distinct().ToArray();
                 HashSet<Guid> refused;
                 await using (var transaction = await db.Database.BeginTransactionAsync(ct))
                 {
@@ -44,7 +51,7 @@ public sealed partial class SessionMessageQueueService
                         return QueueSubmitResult.WroteEnter;
                     }
 
-                    refused = links.Where(l => !open.Contains(l.RunId)).Select(l => l.Id).ToHashSet();
+                    refused = links.Where(link => !open.Contains(link.Value)).Select(link => link.Key).ToHashSet();
                 }
                 return await RefuseClosedReviewerBriefAsync(submission, refused, sessionId, body, kind, retry, ct);
             }
@@ -57,7 +64,7 @@ public sealed partial class SessionMessageQueueService
     private async Task<QueueSubmitResult> RefuseClosedReviewerBriefAsync(QueuedSubmission submission,
         IReadOnlySet<Guid> refused, Guid sessionId, string body, AgentKind? kind, bool retry, CancellationToken ct)
     {
-        var (db, run) = submission;
+        var (db, run, _) = submission;
         await _runtime.CatchUpTranscriptAsync(sessionId, ct);
         if ((await LateConfirmAttemptedMessagesAsync(db, sessionId, run, ct)).Handled > 0)
             return QueueSubmitResult.Settled;
