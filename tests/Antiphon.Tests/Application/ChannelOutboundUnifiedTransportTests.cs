@@ -84,6 +84,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
             timing?.SetTag("c519.cut", cut);
             timing?.SetTag("c519.busy", busy);
             timing?.SetTag("c519.late-gateway", lateGateway);
+            var defaultSettle = kind == "trailing" && !busy && !lateGateway;
+            var watchRedraw = defaultSettle && cut == "confirm-save";
+            timing?.SetTag("c519.default-settle", defaultSettle);
             using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var fault = new HandoffFault(cut);
             var refusalSave = new RefusalSaveFault(fault);
@@ -105,12 +108,21 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         return service;
                     });
                 }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave),
-                // The fake adapter writes the complete prompt in its submit callback. The matrix
-                // exercises durable handoff faults, so it does not need a terminal redraw window.
-                clock: clock, postEvidenceSettleMs: 0);
+                // Keep the default settle on one intact delivery path through every injected cut.
+                clock: clock, postEvidenceSettleMs: defaultSettle ? null : 0);
             producer.Inner = w.Producer;
+            if (watchRedraw)
+                WatchComposerRedraw(w.H.Adapter);
             using (TestTrace.ChunkSpan("C519 receive source"))
                 await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
+            if (watchRedraw)
+            {
+                await using var db = w.Db();
+                var source = await db.SessionQueuedMessages.SingleAsync(m => m.Id == w.MemberId, scenario.Token);
+                source.LastDeliveryBaselineSequence.ShouldBeNull("the first delivery has no observable transcript floor");
+                w.H.Adapter.Inputs.Count(input => input == "\r").ShouldBe(2,
+                    "a redraw before Enter supplies no submit evidence, so the swallowed Enter must be retried");
+            }
             if (cut == "capture") fault.Armed = true;
             using (TestTrace.ChunkSpan("C519 capture turn"))
                 await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
@@ -176,6 +188,41 @@ public sealed class ChannelOutboundUnifiedTransportTests
             await w.AssertReceiptAsync();
             scenario.Token.ThrowIfCancellationRequested();
         }
+    }
+
+    private static void WatchComposerRedraw(FakeAgentProtocolAdapter adapter)
+    {
+        // A silent first Enter leaves the draft in place. If the earlier redraw
+        // is mistaken for submit evidence, the queue never retries that Enter.
+        adapter.SwallowSubmits = 1;
+        adapter.SubmitAck = "";
+        var samples = 0;
+        var bodyWritten = false;
+        long? redraw = null;
+        adapter.BeforeRenderedSnapshot = () =>
+        {
+            // Composer evidence, initial settle sample, then a redraw on the next poll.
+            if (bodyWritten && ++samples == 3)
+            {
+                adapter.Emit("\nComposer redraw\n");
+                redraw = Stopwatch.GetTimestamp();
+            }
+        };
+        adapter.BeforeInput = (input, _) =>
+        {
+            if (input.Contains("whole source HEAD ", StringComparison.Ordinal))
+                bodyWritten = true;
+            if (input == "\r" && bodyWritten)
+            {
+                redraw.ShouldNotBeNull("the composer must be sampled again before Enter");
+                Stopwatch.GetElapsedTime(redraw.Value).ShouldBeGreaterThanOrEqualTo(
+                    TimeSpan.FromMilliseconds(new DeliveryVerificationSettings().PostEvidenceSettleMs),
+                    "the redraw must be inside the settle window, before Enter supplies submit evidence");
+                adapter.BeforeRenderedSnapshot = null;
+                adapter.BeforeInput = null;
+            }
+            return Task.CompletedTask;
+        };
     }
 
     private static async Task ReceiveSourceAsync(UnifiedOutboundTransport w, string kind, bool busy,
@@ -470,7 +517,6 @@ public sealed class ChannelOutboundUnifiedTransportTests
             // recovery's.
             await using var w = await UnifiedOutboundTransport.CreateAsync(broker,
                 warmProbes: 2 + (cut is "conversion-dispatched" or "enqueue-refused" ? 1 : 0) + (cut == "result-committed" ? 1 : 0),
-                // Both the source and converter fakes record prompt evidence before their submit callbacks return.
                 postEvidenceSettleMs: 0,
                 configure: services =>
             {
@@ -561,6 +607,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
                 });
             };
             await ReceiveSourceAsync(w, "main", false, new HandoffFault("none"), scenario.Token);
+            // The source prompt is setup here. Use the default for the actual converter handoff
+            // on the idle representative of each cut.
+            if (!busy)
+                w.H.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification
+                    .PostEvidenceSettleMs = new DeliveryVerificationSettings().PostEvidenceSettleMs;
             await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
             await w.H.TickOutboundAsync();
             var delivery = (await w.DeliveryAsync("main"))!;
