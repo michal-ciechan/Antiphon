@@ -140,7 +140,7 @@ test('C2109_S1_diagnostic_focus', async () => {
 
   screen.getByRole('button', { name: 'await-merge → base-drift' }).focus()
   await user.keyboard('{Enter}')
-  expect(screen.getByRole('heading', { name: 'base-drift' })).toHaveFocus()
+  await waitFor(() => expect(screen.getByRole('heading', { name: 'base-drift' })).toHaveFocus())
   expect(within(screen.getByTestId('graph-node-base-drift')).getByLabelText('1 error')).toBeVisible()
   expect(screen.getAllByTestId('graph-edge').filter((element) => element.textContent?.includes('1 warning'))).toHaveLength(1)
   await waitFor(() => expect(fitView).toHaveBeenCalledWith(expect.objectContaining({
@@ -148,8 +148,10 @@ test('C2109_S1_diagnostic_focus', async () => {
   })))
 
   const toggle = screen.getByRole('button', { name: 'Intake' })
+  expect(screen.getByTestId('graph-node-intake')).toBeVisible()
   toggle.focus()
   await user.keyboard('{Enter}')
+  expect(screen.queryByTestId('graph-node-intake')).not.toBeInTheDocument()
   expect(toggle).toHaveFocus()
 })
 

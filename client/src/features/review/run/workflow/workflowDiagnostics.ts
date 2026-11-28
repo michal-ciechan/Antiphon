@@ -9,4 +9,3 @@ export function diagnosticCounts(diagnostics: readonly WorkflowDiagnosticDto[]) 
   ].filter(Boolean).join(', ')
   return { errors, label }
 }
-

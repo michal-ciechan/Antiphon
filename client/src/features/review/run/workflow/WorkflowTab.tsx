@@ -187,12 +187,14 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   const activeFlow = fullscreen ? fullscreenFlow : inlineFlow
   useEffect(() => {
     if (!diagnosticFocus || !selectedId || parseNodeId(selectedId).stepId !== diagnosticFocus.target) return
-    inspectorHeading.current?.focus()
     const nodes = layout.nodes
       .filter((node) => diagnosticFocus.endpoints.includes(node.stepId))
       .map((node) => ({ id: node.id }))
-    if (!activeFlow || nodes.length === 0) return
-    const frame = requestAnimationFrame(() => void activeFlow.fitView({ nodes, maxZoom: 1.3, padding: 0.3 }))
+    const frame = requestAnimationFrame(() => {
+      inspectorHeading.current?.focus()
+      if (nodes.length > 0) void activeFlow?.fitView({ nodes, maxZoom: 1.3, padding: 0.3 })
+      setDiagnosticFocus(null)
+    })
     return () => cancelAnimationFrame(frame)
   }, [activeFlow, diagnosticFocus, layout.nodes, selectedId])
 
