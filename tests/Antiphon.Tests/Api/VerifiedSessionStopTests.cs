@@ -10,6 +10,11 @@ using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Security;
+using Antiphon.Server.Infrastructure.Realtime;
+using Antiphon.Tests.Application;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
 using Antiphon.SessionRunner.Contracts;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.AspNetCore.Builder;
@@ -54,9 +59,51 @@ public sealed class VerifiedSessionStopTests
     [Arguments("new-generation")]
     public Task Stop_binds_to_the_verified_unattached_and_unowned_seat(string scenario) => RunStopAsync(scenario);
 
+    [Test]
+    public Task Stop_refuses_an_open_task() => RunStopAsync("open-task");
+
+    [Test]
+    public Task Stop_refuses_a_changed_task_revision() => RunStopAsync("revised-task");
+
+    [Test]
+    public Task Stop_refuses_a_new_turn_end_after_inspection() => RunStopAsync("changed-turn-end");
+
+    [Test]
+    public Task Stop_refuses_Claude_PtyHost_with_unknown_attachment() => RunStopAsync("claude-pty");
+
+    [Test]
+    public Task Stop_refuses_a_standing_seat() => RunStopAsync("standing");
+
+    [Test]
+    public Task Stop_refuses_an_AlwaysOn_Check_seat() => RunStopAsync("always-on-check");
+
+    [Test]
+    public Task Stop_refuses_mismatched_exit_generation() => RunStopAsync("wrong-exit-generation");
+
+    [Test]
+    public Task Input_POST_is_refused_while_stop_is_in_flight() => RunStopAsync("input-during-stop");
+
+    [Test]
+    public Task Terminal_opening_is_refused_while_stop_is_in_flight() => RunStopAsync("open-during-stop");
+
+    [Test]
+    public Task Terminal_reconnecting_is_refused_while_stop_is_in_flight() => RunStopAsync("reconnect-during-stop");
+
+    [Test]
+    public Task Lost_readback_keeps_warm_claims_off_the_stopped_generation() => RunStopAsync("lost-readback-claim");
+
+    [Test]
+    public Task Confirmed_exit_releases_the_intent_before_the_next_claim() => RunStopAsync("confirmed-claim");
+
     private static async Task RunStopAsync(string scenario)
     {
         var runner = new FakeSessionRunnerClient();
+        var inputs = new List<string>();
+        runner.SendInputOverride = (_, input, _) =>
+        {
+            inputs.Add(input);
+            return Task.CompletedTask;
+        };
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         await using var harness = await BridgeQueueHarness.CreateAsync(new()
         {
@@ -68,9 +115,11 @@ public sealed class VerifiedSessionStopTests
         var id = harness.SessionId;
         var nativeAttach = scenario == "attached";
         var unowned = scenario is "idle" or "unconfirmed" or "new-generation";
+        var browserRace = scenario is "input-during-stop" or "open-during-stop" or "reconnect-during-stop";
+        var dispatchRace = scenario is "lost-readback-claim" or "confirmed-claim";
         await using var db = harness.CreateObserverContext();
         var session = await db.AgentSessions.SingleAsync(s => s.Id == id);
-        session.AgentKind = nativeAttach ? AgentKind.ClaudeCode : AgentKind.Codex;
+        session.AgentKind = nativeAttach || scenario == "claude-pty" ? AgentKind.ClaudeCode : AgentKind.Codex;
         session.SessionBackend = nativeAttach ? SessionBackend.Herdr : SessionBackend.PtyHost;
         var agent = await db.Agents.SingleAsync(a => a.Id == harness.AgentId);
         agent.IsPoolDelegate = true;
@@ -78,6 +127,19 @@ public sealed class VerifiedSessionStopTests
         agent.PoolIdleSince = session.StartedAt;
         agent.BoardId = null;
         agent.RemoteControlEnabled = false;
+        if (scenario == "standing")
+            session.StandingAgentId = agent.Id;
+        if (scenario == "always-on-check")
+        {
+            agent.AlwaysOn = true;
+            agent.StandingSpecialistRole = StandingSpecialistSeatPolicy.Role;
+        }
+        if (dispatchRace)
+        {
+            agent.Kind = AgentKind.Codex;
+            agent.ModelLevel = AgentModelLevel.Medium;
+            agent.PoolIdleSince = session.StartedAt.AddMinutes(-3);
+        }
         if (unowned)
             agent.PersistentSessionId = null;
         db.TranscriptEntries.Add(new TranscriptEntry
@@ -85,6 +147,18 @@ public sealed class VerifiedSessionStopTests
             AgentSessionId = id, Sequence = 1, Kind = TranscriptKinds.TurnEnd,
             Timestamp = session.StartedAt, CreatedAt = session.StartedAt,
         });
+        if (scenario is "open-task" or "revised-task")
+        {
+            var taskId = Guid.NewGuid();
+            db.AgentTasks.Add(new AgentTask
+            {
+                Id = taskId, RootTaskId = taskId, AgentId = agent.Id, AgentSessionId = id,
+                Status = scenario == "open-task" ? AgentTaskStatus.Working : AgentTaskStatus.Succeeded,
+                WorkingDirectory = session.Cwd, CreatedAt = session.StartedAt.AddSeconds(-1),
+                CompletedAt = scenario == "open-task" ? null : session.StartedAt,
+            });
+        }
+
         var token = Guid.NewGuid().ToString("N");
         var callerId = Guid.NewGuid();
         db.AgentTasks.Add(new AgentTask
@@ -99,10 +173,40 @@ public sealed class VerifiedSessionStopTests
         await db.SaveChangesAsync();
         await db.Entry(session).ReloadAsync();
         var generation = session.StartedAt;
-        runner.GetOverride = (_, _) => Task.FromResult(new SessionRunnerSessionDto(id, 123, generation,
-            scenario == "unconfirmed" || runner.KillCalls + runner.KillGenerationCalls.Count == 0 ? "Running" : "Exited",
-            null, AgentExitReason.Unknown, 0, Backend: nativeAttach ? SessionBackends.Herdr : SessionBackends.PtyHost,
-            TranscriptBound: true, HerdrOrigin: nativeAttach ? HerdrPaneOrigins.Attached : null, AcceptedStartedAt: generation));
+        var fenceEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFence = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runnerReads = 0;
+        runner.GetOverride = async (_, ct) =>
+        {
+            var read = Interlocked.Increment(ref runnerReads);
+            var afterKill = runner.KillCalls + runner.KillGenerationCalls.Count != 0;
+            // The inspection has already read once. The second read runs under the PostgreSQL
+            // dispatch fence. Browser tests pause readback after the command has been issued.
+            if (dispatchRace && read == 2 || browserRace && afterKill && !fenceEntered.Task.IsCompleted)
+            {
+                fenceEntered.TrySetResult();
+                await releaseFence.Task.WaitAsync(ct);
+            }
+            if (scenario == "changed-turn-end" && read == 2)
+            {
+                await using var writer = harness.CreateObserverContext();
+                writer.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    AgentSessionId = id, Sequence = 2, Kind = TranscriptKinds.TurnEnd,
+                    Timestamp = generation.AddSeconds(1), CreatedAt = generation.AddSeconds(1),
+                });
+                await writer.SaveChangesAsync(ct);
+            }
+            if (afterKill && scenario == "lost-readback-claim")
+                throw new HttpRequestException("Runner stop readback was lost");
+            var status = afterKill && scenario != "unconfirmed" ? "Exited" : "Running";
+            var accepted = afterKill && scenario == "wrong-exit-generation" ? generation.AddSeconds(1) : generation;
+            return new SessionRunnerSessionDto(id, 123, generation, status,
+                null, AgentExitReason.KilledByRequest, 0,
+                Backend: nativeAttach ? SessionBackends.Herdr : SessionBackends.PtyHost,
+                TranscriptBound: true, HerdrOrigin: nativeAttach ? HerdrPaneOrigins.Attached : null,
+                AcceptedStartedAt: accepted);
+        };
 
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -129,10 +233,20 @@ public sealed class VerifiedSessionStopTests
         builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
         builder.Services.AddSingleton<SessionTerminalAttachments>();
         builder.Services.AddScoped<VerifiedSessionStopService>();
+        if (browserRace)
+        {
+            builder.Services.AddSignalR();
+            builder.Services.AddScoped<IAuditService, AuditService>();
+            builder.Services.AddScoped(_ => ActivatorUtilities.CreateInstance<AgentChannelService>(harness.Scope.ServiceProvider));
+        }
         await using var app = builder.Build();
         app.UseMiddleware<ExceptionMiddleware>();
         app.UseMiddleware<CurrentUserMiddleware>();
-        app.MapGroup("/api/sessions").MapSessionKill();
+        var sessions = app.MapGroup("/api/sessions");
+        sessions.MapSessionKill();
+        sessions.MapSessionInput();
+        if (browserRace)
+            app.MapHub<AntiphonHub>("/hubs/antiphon");
         await app.StartAsync();
         if (scenario == "browser")
             app.Services.GetRequiredService<SessionTerminalAttachments>().TryAttach(id, "open-terminal").ShouldBeTrue();
@@ -142,20 +256,32 @@ public sealed class VerifiedSessionStopTests
         else if (scenario != "no-token")
             client.DefaultRequestHeaders.Add(AgentTaskEndpoints.TokenHeader,
                 scenario == "invalid-token" ? "invalid-stop-test-token" : token);
+        VerifiedSessionStopPreconditions snapshot;
         await using (var inspection = app.Services.CreateAsyncScope())
         {
-            var snapshot = await inspection.ServiceProvider.GetRequiredService<VerifiedSessionStopService>()
+            snapshot = await inspection.ServiceProvider.GetRequiredService<VerifiedSessionStopService>()
                 .InspectAsync(id, CancellationToken.None);
             snapshot.Generation.ShouldBe(generation);
             snapshot.OwnerId.ShouldBe(unowned ? null : agent.Id);
-            snapshot.OpenTaskId.ShouldBeNull();
+            snapshot.OpenTaskId.HasValue.ShouldBe(scenario == "open-task");
             snapshot.TurnEndSequence.ShouldBe(1L);
-            snapshot.Attachment.ShouldBe(scenario is "attached" or "browser" ? "Attached" : "Unattached");
+            snapshot.Attachment.ShouldBe(scenario switch
+            {
+                "attached" or "browser" => "Attached",
+                "claude-pty" => "Unknown",
+                _ => "Unattached",
+            });
+            snapshot.ProtectedOwner.ShouldBe(scenario is "standing" or "always-on-check");
         }
         var expected = scenario == "new-generation" ? generation.AddSeconds(-1) : generation;
         var path = $"/api/sessions/{id}/kill?expectedGeneration={Uri.EscapeDataString(expected.ToString("O"))}&expectedTurnEndSequence=1";
         if (!unowned)
             path += $"&expectedOwnerId={agent.Id}";
+        if (snapshot.LastTaskId is Guid taskIdFromInspection)
+            path += $"&expectedLastTaskId={taskIdFromInspection}&expectedLastTaskRevision={snapshot.LastTaskRevision}";
+        if (scenario == "revised-task")
+            await db.AgentTasks.Where(t => t.Id == snapshot.LastTaskId).ExecuteUpdateAsync(setters =>
+                setters.SetProperty(t => t.ConcurrencyToken, Guid.NewGuid()));
         if (scenario is "legacy-no-operator" or "legacy-operator")
             path = $"/api/sessions/{id}/kill";
 
@@ -199,6 +325,106 @@ public sealed class VerifiedSessionStopTests
             }
             response = await stop;
             waitedForClaim.ShouldBeTrue("the stop must wait for the concrete dispatch row lock");
+        }
+        else if (browserRace)
+        {
+            await using var terminal = new HubConnectionBuilder()
+                .WithUrl(new Uri(client.BaseAddress!, "/hubs/antiphon"), options =>
+                {
+                    options.Transports = HttpTransportType.LongPolling;
+                    options.HttpMessageHandlerFactory = _ => app.GetTestServer().CreateHandler();
+                }).Build();
+            var group = $"session-{id:D}";
+            if (scenario == "reconnect-during-stop")
+            {
+                await terminal.StartAsync(bound.Token);
+                await terminal.InvokeAsync("JoinGroup", group, bound.Token);
+                await terminal.StopAsync(bound.Token);
+                var attachments = app.Services.GetRequiredService<SessionTerminalAttachments>();
+                while (attachments.IsAttached(id))
+                    await Task.Delay(20, bound.Token);
+            }
+            var stop = client.PostAsync(path, null, bound.Token);
+            try
+            {
+                await fenceEntered.Task.WaitAsync(bound.Token);
+                if (scenario == "input-during-stop")
+                {
+                    using var input = await client.PostAsJsonAsync($"/api/sessions/{id}/input", new { input = "forbidden" }, bound.Token);
+                    input.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+                    (await input.Content.ReadAsStringAsync(bound.Token)).ShouldContain("session_stop_in_flight");
+                    inputs.ShouldBeEmpty();
+                }
+                else
+                {
+                    await terminal.StartAsync(bound.Token);
+                    var refusal = await Should.ThrowAsync<HubException>(() => terminal.InvokeAsync("JoinGroup", group, bound.Token));
+                    refusal.Message.ShouldContain("being stopped");
+                }
+            }
+            finally
+            {
+                releaseFence.TrySetResult();
+                response = await stop;
+            }
+            using (response)
+            {
+                response.StatusCode.ShouldBe(HttpStatusCode.OK);
+                runner.KillGenerationCalls.ShouldBe([(id, generation)]);
+            }
+            return;
+        }
+        else if (dispatchRace)
+        {
+            var task = await AgentTaskPoolTests.SeedQueuedTaskAsync(session.Cwd, agent.ModelLevel,
+                pinnedAgentId: agent.Id, kind: AgentKind.Codex, connectionString: schema.ConnectionString);
+            var (dispatcher, _, provider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
+            await using var owner = provider;
+            var stop = client.PostAsync(path, null, bound.Token);
+            try
+            {
+                await fenceEntered.Task.WaitAsync(bound.Token);
+                // Probe an actual PostgreSQL row conflict from the real dispatcher, not a timing
+                // assumption about when its continuation reaches FOR KEY SHARE.
+                var dispatch = dispatcher.TickAsync(bound.Token);
+                try
+                {
+                    await using var monitor = new NpgsqlConnection(schema.ConnectionString);
+                    await monitor.OpenAsync(bound.Token);
+                    await using var query = new NpgsqlCommand(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() "
+                        + "AND query LIKE '%FOR KEY SHARE%' AND cardinality(pg_blocking_pids(pid)) > 0)", monitor);
+                    bool waiting;
+                    do
+                    {
+                        waiting = (bool)(await query.ExecuteScalarAsync(bound.Token))!;
+                        if (!waiting && !dispatch.IsCompleted)
+                            await Task.Delay(20, bound.Token);
+                    } while (!waiting && !dispatch.IsCompleted);
+                    waiting.ShouldBeTrue("dispatch must meet the real stop fence");
+                }
+                finally
+                {
+                    releaseFence.TrySetResult();
+                    await dispatch;
+                }
+            }
+            finally
+            {
+                releaseFence.TrySetResult();
+                response = await stop;
+            }
+            using (response)
+                response.StatusCode.ShouldBe(scenario == "lost-readback-claim" ? HttpStatusCode.Conflict : HttpStatusCode.OK);
+
+            var (retry, _, retryProvider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
+            await using var retryOwner = retryProvider;
+            await retry.TickAsync(bound.Token);
+            var dispatched = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, bound.Token);
+            dispatched.AgentSessionId.ShouldNotBe(id, "the dispatcher must never claim the stopped generation");
+            if (scenario == "lost-readback-claim")
+                dispatched.Status.ShouldBe(AgentTaskStatus.Queued, "the pinned process is still reserved for reconciliation");
+            return;
         }
         else
         {
@@ -245,7 +471,7 @@ public sealed class VerifiedSessionStopTests
             else
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-                if (scenario == "unconfirmed")
+                if (scenario is "unconfirmed" or "wrong-exit-generation")
                     runner.KillGenerationCalls.ShouldBe([(id, generation)]);
                 else
                     runner.KillGenerationCalls.ShouldBeEmpty();

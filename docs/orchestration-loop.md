@@ -93,7 +93,9 @@ four-hour drain cap, under [that procedure](docker-stack.md#staged-server2-rolli
 <a id="verified-single-session-stop"></a>
 ### Verified single-session stop (operator, 2026-11-27)
 
-An orchestrator may stop one session through the conditional `POST /api/sessions/{id}/kill`.
+An orchestrator may stop one eligible Codex or Grok PtyHost session through the conditional
+`POST /api/sessions/{id}/kill` with its scoped task credential (`X-Antiphon-Task-Token`).
+Claude attachment cannot currently be verified for this procedure.
 
 1. Match the session to the current `GET /api/session-runners/{runnerId}/slots` row and read
    `GET /api/sessions/{id}/stop-preconditions`. Require `runnerStatus: Running`, `openTaskId: null`,

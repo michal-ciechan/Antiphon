@@ -1631,7 +1631,7 @@ public class AgentTaskPoolTests
 
     // ---- helpers ---------------------------------------------------------------------------
 
-    private static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider)
+    internal static (AgentTaskDispatcher Dispatcher, RecordingSessionStopper Stopper, ServiceProvider Provider)
         CreateHarness(TimeProvider? timeProvider = null, string? connectionString = null,
             List<RecordingLogEntry>? logs = null, Action<IServiceCollection>? configureServices = null)
     {
@@ -1747,7 +1747,7 @@ public class AgentTaskPoolTests
         return project.Id;
     }
 
-    private static async Task<AgentTask> SeedQueuedTaskAsync(
+    internal static async Task<AgentTask> SeedQueuedTaskAsync(
         string directory,
         AgentModelLevel level,
         string goal = "do the next piece of work",

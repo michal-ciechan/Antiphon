@@ -1,6 +1,7 @@
 import { HttpResponse, http } from 'msw'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Terminal } from '@xterm/xterm'
+import { act } from '@testing-library/react'
 import { renderWithProviders, waitFor } from '../../test/utils'
 import { server } from '../../test/mocks/server'
 import { SessionTerminal } from './SessionTerminal'
@@ -146,6 +147,37 @@ describe('SessionTerminal', () => {
     signalrMock.connection.on.mockClear()
     signalrMock.connection.off.mockClear()
     signalrMock.connection.onreconnected.mockClear()
+  })
+
+  it('keeps input disabled until the initial and renewed join are acknowledged', async () => {
+    const inputSpy = vi.fn()
+    server.use(
+      http.get('/api/sessions/session-1/buffer', () =>
+        HttpResponse.json({ sessionId: 'session-1', buffer: '', lastSequence: 0 })),
+      http.post('/api/sessions/session-1/input', async ({ request }) => {
+        inputSpy(await request.json())
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    let acknowledge!: () => void
+    const firstJoin = new Promise<void>((resolve) => { acknowledge = resolve })
+    signalrMock.connection.invoke.mockImplementationOnce(() => firstJoin.then(() => undefined))
+    renderWithProviders(<SessionTerminal session={runningSession} />)
+
+    const terminal = xtermMock.instances[0]
+    await waitFor(() => expect(signalrMock.connection.invoke).toHaveBeenCalledWith('JoinGroup', 'session-session-1'))
+    expect(terminal.options?.disableStdin).toBe(true)
+    terminal.onDataHandler?.('before acknowledgement')
+    await act(async () => { acknowledge() })
+    expect(terminal.options?.disableStdin).toBe(false)
+    terminal.onDataHandler?.('after acknowledgement')
+    await waitFor(() => expect(inputSpy.mock.calls).toEqual([[{ input: 'after acknowledgement' }]]))
+
+    signalrMock.connection.invoke.mockRejectedValueOnce(new Error('The session is being stopped.'))
+    await act(async () => { signalrMock.connection.reconnected?.() })
+    expect(terminal.options?.disableStdin).toBe(true)
+    terminal.onDataHandler?.('after refusal')
+    expect(inputSpy.mock.calls).toEqual([[{ input: 'after acknowledgement' }]])
   })
 
   it('writes backlog, appends matching live deltas, sends input, resizes, and leaves the group', async () => {

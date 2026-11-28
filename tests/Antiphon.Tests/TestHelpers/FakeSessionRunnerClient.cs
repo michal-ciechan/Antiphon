@@ -20,6 +20,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
     public Func<ConflictException>? StartRefusal { get; set; }
     public Func<CancellationToken, Task<IReadOnlyList<SessionRunnerSessionDto>>>? ListOverride { get; set; }
     public Func<Guid, CancellationToken, Task<SessionRunnerSessionDto>>? GetOverride { get; set; }
+    public Func<Guid, string, CancellationToken, Task>? SendInputOverride { get; set; }
     public Func<Task<SessionRunnerSessionDto>>? ReleaseSlotOverride { get; set; }
 
     public IReadOnlyList<string>? ExtraFeatures { get; set; }
@@ -148,7 +149,7 @@ internal sealed class FakeSessionRunnerClient : ISessionRunnerClient
         throw new NotSupportedException();
 
     public Task SendInputAsync(Guid sessionId, string input, CancellationToken ct) =>
-        throw new NotSupportedException();
+        SendInputOverride?.Invoke(sessionId, input, ct) ?? throw new NotSupportedException();
 
     public Task ClearLiveBufferAsync(Guid sessionId, CancellationToken ct) =>
         throw new NotSupportedException();

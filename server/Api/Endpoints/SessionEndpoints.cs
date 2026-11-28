@@ -67,15 +67,7 @@ public static class SessionEndpoints
             return Results.Ok(await service.GetTranscriptAsync(id, since ?? 0, cancellationToken));
         });
 
-        sessions.MapPost("/{id:guid}/input", async (
-            Guid id,
-            SendSessionInputRequest request,
-            AgentSessionService service,
-            CancellationToken cancellationToken) =>
-        {
-            await service.SendInputAsync(id, request.Input, cancellationToken);
-            return Results.NoContent();
-        });
+        sessions.MapSessionInput();
 
         sessions.MapGet("/{id:guid}/commands", async (
             Guid id,
@@ -177,6 +169,17 @@ public static class SessionEndpoints
 
         sessions.MapSessionKill();
     }
+
+    public static RouteHandlerBuilder MapSessionInput(this IEndpointRouteBuilder sessions) =>
+        sessions.MapPost("/{id:guid}/input", async (
+            Guid id,
+            SendSessionInputRequest request,
+            AgentSessionService service,
+            CancellationToken cancellationToken) =>
+        {
+            await service.SendInputAsync(id, request.Input, cancellationToken);
+            return Results.NoContent();
+        });
 
     public static RouteHandlerBuilder MapSessionKill(this IEndpointRouteBuilder sessions) =>
         sessions.MapPost("/{id:guid}/kill", async (
