@@ -23,10 +23,12 @@ vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
 // (global revision 7), G-empty, P0 (project without a row), P3/P4 (project overrides), P5/G8 (the
 // conflict refresh) and one history row r3.
 const P = '05060000-0000-4000-8000-000000000001'
-const ROLES = [
+const ALL_ROLES = [
   'Custom', 'Plan', 'Code', 'Review', 'Debug', 'Coverage', 'Docs', 'Commit', 'Test', 'Deploy', 'Merge',
   'Investigate', 'TestDesign', 'Mutation',
 ]
+// Editing cases exercise these three roles. Roster cases supply the full server catalogue.
+const ROLES = ['Plan', 'Code', 'Review']
 const RANGES = { parallelMin: 1, parallelMax: 512, queuedMin: 0, queuedMax: 4096 }
 const SEED = {
   origin: 'startupConfiguration',
@@ -58,7 +60,7 @@ function defaultEffective(globalRevision: number): DispatchConcurrencyEffectiveD
 }
 
 /** G7 effective: overall 4/12 global; Code parallel 3 global; Review queued 5 global; others default. */
-function g7Effective(globalRevision: number, projectRevision: number, codeParallel = 3): DispatchConcurrencyEffectiveDto {
+function g7Effective(globalRevision: number, projectRevision: number, codeParallel = 3, roles = ROLES): DispatchConcurrencyEffectiveDto {
   return {
     mode: 'LegacyOpen',
     modeSource: 'default',
@@ -66,7 +68,7 @@ function g7Effective(globalRevision: number, projectRevision: number, codeParall
     maxParallelSource: 'global',
     maxQueued: 12,
     maxQueuedSource: 'global',
-    roles: ROLES.map((role) =>
+    roles: roles.map((role) =>
       role === 'Code'
         ? { role, maxParallel: codeParallel, maxParallelSource: 'global', maxQueued: null, maxQueuedSource: 'default', combinedParallel: codeParallel }
         : role === 'Review'
@@ -339,16 +341,18 @@ function fakeHub() {
 
 it('C506 V08 rows-and-sources', async () => {
   // Code is a project "No limit" override: the role value is null, the effective cap is the overall 4.
-  const dto = project(4, 7, { schemaVersion: 1, roles: { Code: { maxParallel: null }, Review: { maxQueued: null } } }, g7Effective(7, 4),
-    withRole(withRole(g7Effective(7, 4), 'Code', { maxParallel: null, maxParallelSource: 'project', combinedParallel: 4 }),
-      'Review', { maxQueued: null, maxQueuedSource: 'project' }))
+  const inherited = g7Effective(7, 4, 3, ALL_ROLES)
+  const dto = project(4, 7, { schemaVersion: 1, roles: { Code: { maxParallel: null }, Review: { maxQueued: null } } }, inherited,
+    withRole(withRole(inherited, 'Code', { maxParallel: null, maxParallelSource: 'project', combinedParallel: 4 }),
+      'Review', { maxQueued: null, maxQueuedSource: 'project' }),
+    { supportedRoles: ALL_ROLES })
   serve(P, { ...dto, occupancy: { ...dto.occupancy, queuedRemaining: null } })
   renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
   await loaded()
 
   expect(screen.getAllByTestId(/^dispatch-concurrency-row-/)).toHaveLength(15)
   expect(screen.getByTestId('dispatch-concurrency-row-overall')).toHaveTextContent('Overall')
-  for (const role of ROLES) expect(screen.getByTestId(`dispatch-concurrency-row-${role}`)).toHaveTextContent(role)
+  for (const role of ALL_ROLES) expect(screen.getByTestId(`dispatch-concurrency-row-${role}`)).toHaveTextContent(role)
 
   const codeInherited = screen.getByTestId('dispatch-concurrency-inherited-Code-maxParallel')
   expect(codeInherited).toHaveTextContent('3')
@@ -378,8 +382,8 @@ it('C506 V08 rows-and-sources', async () => {
 })
 
 it('C506 V08 dto-only-role', async () => {
-  const roles = [...ROLES, 'FutureRole']
-  const inherited = { ...g7Effective(7, 0), roles: [...g7Effective(7, 0).roles, defaultRole('FutureRole')] }
+  const roles = [...ALL_ROLES, 'FutureRole']
+  const inherited = g7Effective(7, 0, 3, roles)
   const dto: DispatchConcurrencyProjectDto = { ...P0, supportedRoles: roles, inherited, effective: inherited }
   serve(P, dto)
   renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
@@ -886,8 +890,8 @@ it('C506 V13 field-error', async () => {
 })
 
 it('C506 V13 unknown-role', async () => {
-  const roles = [...ROLES, 'FutureRole']
-  const inherited = { ...g7Effective(7, 0), roles: [...g7Effective(7, 0).roles, defaultRole('FutureRole')] }
+  const roles = [...ALL_ROLES, 'FutureRole']
+  const inherited = g7Effective(7, 0, 3, roles)
   const state = serve(P, { ...P0, supportedRoles: roles, inherited, effective: inherited },
     () => F422({ roles: ["Unknown role 'FutureRole'."] }))
   const { queryClient } = renderWithProviders(<DispatchConcurrencyEditor projectId={P} />)
