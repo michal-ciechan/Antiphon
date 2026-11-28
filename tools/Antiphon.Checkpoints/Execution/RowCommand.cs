@@ -117,7 +117,7 @@ internal static class RowCommand
                 runtime.EnvironmentLookup("ANTIPHON_SESSION_ID"), time)
             : null;
         var observed = observation?.Begin(input.NoBuild ? "standalone-replay" : "standalone-composite",
-            outputPath.TrimEnd('/'), project, start);
+            outputPath.TrimEnd('/'), CheckpointBuildObservation.ProjectDigest(project), start);
         var properties = replay?.Properties;
         if (observed is not null && !input.NoBuild)
         {

@@ -864,8 +864,9 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             grouped: false, fails: false, TimingFault.None, project: project, refuse: true);
         result.Exit.ShouldBe(ExitCodes.Invalid);
         result.Commands.ShouldBeEmpty();
-        var phase = result.Read.Events.Single().BuildPhase!;
-        System.Text.Json.JsonSerializer.Serialize(phase, TimingJournal.Json).ShouldNotContain(project);
+        var observation = result.Read.Events.Single();
+        System.Text.Json.JsonSerializer.Serialize(observation, TimingJournal.Json).ShouldNotContain(project);
+        observation.BuildPhase!.Project.ShouldNotBeNull().ShouldMatch("^[0-9a-f]{64}$");
     }
 
     private static async Task<ObservationArm> RunObservationArmAsync(string repo, string results,

@@ -184,5 +184,9 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
     private static string? Hex(string? value, int min, int max) => value is not null &&
         (value.Length == min || value.Length == max) && value.All(Uri.IsHexDigit) ? value : null;
 
+    internal static string? ProjectDigest(string project) => project.Length <= 4096
+        ? Digest(Encoding.UTF8.GetBytes(project.Replace('\\', '/')))
+        : null;
+
     private static string Digest(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 }
