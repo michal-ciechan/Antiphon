@@ -349,6 +349,12 @@ try
     builder.Services.AddOptions<WorktreeResidueSettings>()
         .Bind(builder.Configuration.GetSection("WorktreeResidue"))
         .ValidateOnStart();
+    builder.Services.AddOptions<WorkspaceAdmissionSettings>()
+        .Bind(builder.Configuration.GetSection(WorkspaceAdmissionSettings.SectionName))
+        .Validate(s => s.LockTimeoutMilliseconds is >= WorkspaceAdmissionSettings.MinimumLockTimeoutMilliseconds
+            and <= WorkspaceAdmissionSettings.MaximumLockTimeoutMilliseconds,
+            "WorkspaceAdmission:LockTimeoutMilliseconds must be between 100 and 10000.")
+        .ValidateOnStart();
     // CARD-0665: the ignored-content allowlist every guarded worktree removal consults.
     builder.Services.AddSingleton<IValidateOptions<WorktreeCleanupSettings>, WorktreeCleanupSettingsValidator>();
     builder.Services.AddOptions<WorktreeCleanupSettings>()

@@ -473,6 +473,50 @@ reusable directory `<allowed>/worktrees/ws-NN` from its pool (`RunnerWorkspaceSl
   next task's `WorkspaceSlotDecision` event (`reason=roles_none`) confirms a rollback.
 - Windows slot allow-list (CARD-0824 S3). A Windows runner leases only when `Delegation:WindowsSlotRunnerIds` contains its id and `Delegation:WindowsSlotRoles` admits the role. The id list defaults to empty and the role string defaults to `none` (decision reason `windows_roles_none`). The catalogue id `desktop` never leases, even when it is listed. server2 ignores both keys and keeps `Delegation:WorkspaceSlotRoles`. Clearing `WindowsSlotRunnerIds` is the soft rollback: no new Windows leases, and releases continue. The Windows slot root is the short path `C:/Antiphon/slots` (`C:/Antiphon/slots/worktrees/ws-NN`). `PhoneHome:WorkspaceSlots:RcFencePath` defaults empty, so cold and scheduled wipes are not fenced; the desktop environment sets the qualification lock in S4.
 
+## Workspace admission contention
+
+PostgreSQL transaction advisory key `(1017,459)` serializes workspace consumers with retirement
+and CardDone cleanup intent. `WorkspaceAdmission__LockTimeoutMilliseconds` defaults to 2,000 ms
+and accepts 100 through 10,000 ms. The transaction uses the shorter of this bound and an existing
+nonzero PostgreSQL `lock_timeout` for the advisory wait, then restores the previous value. A
+lock timeout aborts the waiting transaction and its owner rolls it back.
+
+The HTTP retry response is `503` with problem code `workspace_admission_busy` and
+`Retry-After: 2` in seconds. Retry the same Create or Reply after that interval. A contended live
+Reply leaves the question answerable. For a released-seat answer, retry with the same answer so
+the server can continue the durable acceptance. A session waiting for an answer keeps its seat
+under the default parking configuration.
+
+A contended dispatch claim leaves the task Queued with a `workspace_admission_busy` Held
+event. The pipeline uses its `awaitingDispatch` queue reason when no other gate takes precedence.
+A retry deadline with jitter paces additional passes.
+If the launch claim already committed, the launch queue keeps ownership of the same Starting
+session generation while retrying admission. Reviewer creation waits for the next executor poll.
+Runner settlement defers the report for the transcript sweep when admission refused before
+source observation. An existing sync debt retains its retry. The residue sweep records a
+Deferred candidate and visits the remaining items. A durable complete removal record lets the
+next pass finish retirement without issuing another removal.
+
+| Path reaching `(1017,459)` | Lock order |
+|---|---|
+| Card-bound Create | `Cards FOR NO KEY UPDATE` → optional handoff or verification-owner row locks → advisory lock in a separate journal transaction. |
+| Dispatch claim | Optional capacity and owner locks → `AgentTasks FOR UPDATE` → advisory lock in the journal transaction. |
+| Desktop CardDone intent | `Cards FOR UPDATE` → `AgentTasks FOR UPDATE` → advisory lock → retirement, reservation, target and endpoint writes. |
+| Mirror CardDone intent | `Cards FOR UPDATE` → cleanup endpoint `FOR UPDATE` → `AgentTasks FOR UPDATE` → advisory lock → fence and intent writes. Recorded-intent replay bypasses admission. |
+| Journal consumer and retirement claim | Advisory lock → reservation reads and writes. Task and session lookups are plain reads. Reservation inserts have no task or session foreign key. |
+| Reply, refine, requeue, land, attach, launch, sync and park publication | The journal transaction owns the advisory lock. Live Reply takes the recipient semaphore first. Released-seat answer acceptance and park intent commit their row locks before journal admission. |
+| Outbound conversion Create | Delivery advisory lock and delivery-row fence → Create admission. |
+
+Both CardDone intent paths take their row locks first so a Create waiting for admission can
+finish while holding its card row. Git inspection, artifact I/O and runner calls run outside
+the advisory critical sections. The incident's original idle holder has no confirmed application
+path.
+
+The normal hold-time p99 under shared-disk load is unmeasured. After activation, collect
+`WaitMilliseconds` and `HoldMilliseconds` from the Debug log `Workspace admission lock released`.
+Waits over one second emit a Warning with the wait duration and acquisition outcome.
+CARD-2118 owns `idle_in_transaction_session_timeout` and PostgreSQL keepalive settings.
+
 ## Dormant terminal runner seat integration (CARD-0667 S4b)
 
 `TerminalRunnerSeatRelease:AutomaticEnabled` remains false. When explicitly enabled,

@@ -16,7 +16,8 @@ namespace Antiphon.Server.Application.Services;
 public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git,
     CardDoneArtifactPreservation artifacts, TaskWorktreeRetirementService retirement,
     WorkspaceUseAdmission admission, TimeProvider clock, IOptions<WorktreeResidueSettings> settings,
-    IOptions<GitSettings> gitSettings, AgentTaskLandService land)
+    IOptions<GitSettings> gitSettings, AgentTaskLandService land,
+    IOptions<WorkspaceAdmissionSettings>? admissionSettings = null, ILogger<CardWorktreeCleanupExecutor>? logger = null)
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
@@ -86,6 +87,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         // Take row locks before the shared admission lock. Create can hold the card row
         // while admitting a consumer, so this order also prevents a cross-connection cycle.
         // Git inspection and artifact preservation finished above.
+        using (var admissionLock = new WorkspaceReservationJournal.AdmissionLock(admissionSettings, logger))
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
             var card = await db.Cards.FromSqlInterpolated($"SELECT * FROM \"Cards\" WHERE \"Id\" = {endpoint.Target.Cleanup.CardId} FOR UPDATE")
@@ -102,7 +104,14 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
                 return await RecordDesktopDecisionAsync(endpoint, intentDesktop, ct);
             }
             if (DesktopBoundaryAsync is not null) await DesktopBoundaryAsync("unsafe:card-intent", task.Id, ct);
-            await WorkspaceReservationJournal.LockAdmissionAsync(db, ct);
+            try
+            {
+                await admissionLock.AcquireAsync(db, ct);
+            }
+            catch (WorkspaceAdmissionBusyException)
+            {
+                return new(false, false, false, WorkspaceAdmissionBusyException.ProblemCode);
+            }
             reason = !DoneAuthorizes(card) || currentGeneration != endpoint.Target.Cleanup.DoneRevisionId
                 ? "done_generation_revoked"
                 : fresh.Attempt != task.Attempt || fresh.Status != task.Status
@@ -122,6 +131,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
             if (reason is not null)
             {
                 await tx.RollbackAsync(ct);
+                admissionLock.Released();
                 return await RefuseAsync(endpoint, reason, ct);
             }
             if (priorRelease is not null)
@@ -129,6 +139,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
                 if (priorRelease.CommandIntentId is not null)
                 {
                     await tx.RollbackAsync(ct);
+                    admissionLock.Released();
                     return await RefuseAsync(endpoint, "retirement_in_progress", ct);
                 }
                 await db.TaskWorktreeRetirements.Where(r => r.Id == priorRelease.Id)

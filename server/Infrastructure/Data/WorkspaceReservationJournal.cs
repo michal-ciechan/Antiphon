@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Globalization;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
@@ -15,7 +17,9 @@ namespace Antiphon.Server.Infrastructure.Data;
 public sealed class WorkspaceReservationJournal(
     IServiceScopeFactory scopes,
     TimeProvider clock,
-    IOptions<WorktreeResidueSettings>? settings = null) : IWorkspaceReservationJournal
+    IOptions<WorktreeResidueSettings>? settings = null,
+    IOptions<WorkspaceAdmissionSettings>? admissionSettings = null,
+    ILogger<WorkspaceReservationJournal>? logger = null) : IWorkspaceReservationJournal
 {
     /// <summary>CARD-0664 D-9: <c>WorktreeResidue:LaunchGraceMinutes</c>, clamped to at least one minute.</summary>
     private TimeSpan LaunchGrace => TimeSpan.FromMinutes(Math.Max(1, settings?.Value.LaunchGraceMinutes ?? 15));
@@ -48,8 +52,9 @@ public sealed class WorkspaceReservationJournal(
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var admissionLock = new AdmissionLock(admissionSettings, logger);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await LockAdmissionAsync(db, ct);
+        await admissionLock.AcquireAsync(db, ct);
         var blocking = await db.WorkspaceUseReservations
             .Where(r => r.Active && (r.Kind == WorkspaceReservationKind.Retirement || r.Kind == WorkspaceReservationKind.HistoricalFence))
             .ToListAsync(ct);
@@ -85,8 +90,9 @@ public sealed class WorkspaceReservationJournal(
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        using var admissionLock = new AdmissionLock(admissionSettings, logger);
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await LockAdmissionAsync(db, ct);
+        await admissionLock.AcquireAsync(db, ct);
         var existing = await db.WorkspaceUseReservations
             .Where(r => r.Active)
             .ToListAsync(ct);
@@ -277,30 +283,75 @@ public sealed class WorkspaceReservationJournal(
             .ToList();
     }
 
-    // Also acquired by CardDone intent admission. Keep the existing database lock timeout
-    // for the other statements in the transaction and respect a shorter configured timeout.
-    internal static async Task LockAdmissionAsync(AppDbContext db, CancellationToken ct)
+    // Declare the observation outside the owning transaction so disposal measures through
+    // transaction cleanup on both commit and rollback. CardDone uses the same bound and timing.
+    internal sealed class AdmissionLock(IOptions<WorkspaceAdmissionSettings>? settings, ILogger? logger) : IDisposable
     {
-        try
+        private long? _acquiredAt;
+        private double _waitMilliseconds;
+
+        internal async Task AcquireAsync(AppDbContext db, CancellationToken ct)
         {
-            await db.Database.ExecuteSqlRawAsync("""
+            // PostgreSQL does not bind parameters inside a DO body. Substitute only an
+            // invariant integer and keep a shorter existing timeout for this wait.
+            var timeout = Math.Clamp(
+                settings?.Value.LockTimeoutMilliseconds ?? WorkspaceAdmissionSettings.DefaultLockTimeoutMilliseconds,
+                WorkspaceAdmissionSettings.MinimumLockTimeoutMilliseconds,
+                WorkspaceAdmissionSettings.MaximumLockTimeoutMilliseconds).ToString(CultureInfo.InvariantCulture);
+            var sql = $$"""
                 DO $admission$
                 DECLARE
                     previous_timeout text := current_setting('lock_timeout');
                 BEGIN
                     IF previous_timeout::interval = interval '0 seconds'
-                        OR previous_timeout::interval > interval '2 seconds' THEN
-                        PERFORM set_config('lock_timeout', '2s', true);
+                        OR previous_timeout::interval > interval '{{timeout}} milliseconds' THEN
+                        PERFORM set_config('lock_timeout', '{{timeout}}ms', true);
                     END IF;
                     PERFORM pg_advisory_xact_lock(1017, 459);
                     PERFORM set_config('lock_timeout', previous_timeout, true);
                 END;
                 $admission$;
-                """, ct);
+                """;
+
+            var waitStarted = Stopwatch.GetTimestamp();
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(sql, ct);
+                _acquiredAt = Stopwatch.GetTimestamp();
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
+            {
+                throw new WorkspaceAdmissionBusyException(ex);
+            }
+            finally
+            {
+                _waitMilliseconds = Stopwatch.GetElapsedTime(waitStarted, _acquiredAt ?? Stopwatch.GetTimestamp()).TotalMilliseconds;
+                if (!_acquiredAt.HasValue)
+                {
+                    WarnOnSlowWait(acquired: false);
+                    logger?.LogDebug("Workspace admission lock unavailable after {WaitMilliseconds} ms", _waitMilliseconds);
+                }
+            }
         }
-        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.LockNotAvailable)
+
+        internal void Released()
         {
-            throw new WorkspaceAdmissionBusyException(ex);
+            if (_acquiredAt is not long acquiredAt)
+                return;
+            _acquiredAt = null;
+            var holdMilliseconds = Stopwatch.GetElapsedTime(acquiredAt).TotalMilliseconds;
+            WarnOnSlowWait(acquired: true);
+            logger?.LogDebug("Workspace admission lock released after waiting {WaitMilliseconds} ms and holding {HoldMilliseconds} ms",
+                _waitMilliseconds, holdMilliseconds);
         }
+
+        private void WarnOnSlowWait(bool acquired)
+        {
+            if (_waitMilliseconds > 1_000)
+                logger?.LogWarning("Workspace admission lock wait exceeded one second ({WaitMilliseconds} ms, acquired={Acquired})",
+                    _waitMilliseconds, acquired);
+        }
+
+        public void Dispose() => Released();
     }
 }

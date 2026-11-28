@@ -20,7 +20,8 @@ namespace Antiphon.Server.Application.Services;
 public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRunnerDirectory runners,
     ILandingGit git, CardDoneArtifactPreservation artifacts, WorkspaceUseAdmission admission, TimeProvider clock,
     IOptions<WorktreeResidueSettings> settings, ICompletedCardWorkspaceClient? testClient = null,
-    IOptions<PhoneHomeRunnerSettings>? phoneHome = null)
+    IOptions<PhoneHomeRunnerSettings>? phoneHome = null,
+    IOptions<WorkspaceAdmissionSettings>? admissionSettings = null, ILogger<CardWorktreeMirrorCleanupService>? logger = null)
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
@@ -94,6 +95,7 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
 
         // Take row locks before the shared admission lock, in the same order as Create and
         // desktop cleanup. Inspection, artifact reads and outbound socket work are outside.
+        using (var admissionLock = new WorkspaceReservationJournal.AdmissionLock(admissionSettings, logger))
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
             await db.Cards.FromSqlInterpolated($"SELECT * FROM \"Cards\" WHERE \"Id\" = {command.CardId} FOR UPDATE")
@@ -110,7 +112,14 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
             {
                 var fresh = await db.AgentTasks.FromSqlInterpolated($"SELECT * FROM \"AgentTasks\" WHERE \"Id\" = {task.Id} FOR UPDATE")
                     .AsNoTracking().SingleAsync(ct);
-                await WorkspaceReservationJournal.LockAdmissionAsync(db, ct);
+                try
+                {
+                    await admissionLock.AcquireAsync(db, ct);
+                }
+                catch (WorkspaceAdmissionBusyException)
+                {
+                    return Hold(WorkspaceAdmissionBusyException.ProblemCode);
+                }
                 var freshBinding = await db.TaskWorktreeMirrorBindings.AsNoTracking().SingleAsync(b => b.Id == row.Id, ct);
                 var reason = await EligibilityAsync(fresh, endpoint, freshBinding, ct);
                 if (reason is null && (fresh.Result != task.Result || fresh.ResultFilePath != task.ResultFilePath
@@ -121,7 +130,11 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
                 var currentPublication = await PublicationAsync(fresh, endpoint, freshBinding, inspection.HeadSha, destination.Fingerprint, ct);
                 if (reason is null && JsonSerializer.Serialize(currentPublication) != JsonSerializer.Serialize(publication)) reason = "publication_identity_changed";
                 if (reason is not null)
-                { await tx.RollbackAsync(ct); return await RefuseAsync(endpoint, reason, ct); }
+                {
+                    await tx.RollbackAsync(ct);
+                    admissionLock.Released();
+                    return await RefuseAsync(endpoint, reason, ct);
+                }
                 endpoint.OperationId = command.OperationId;
                 endpoint.ImmutableRequest = JsonSerializer.SerializeToUtf8Bytes(command, PhoneHomeFraming.Json);
                 endpoint.RequestDigest = CompletedCardWorkspaceContract.CanonicalDigest(Encoding.UTF8.GetString(endpoint.ImmutableRequest));

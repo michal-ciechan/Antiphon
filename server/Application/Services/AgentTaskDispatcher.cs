@@ -5864,11 +5864,6 @@ public sealed partial class AgentTaskDispatcher
         await _db.Entry(claimed).ReloadAsync(ct);
         // Ends the claim span on this path; an exception before here leaves it unexported only.
         claimSpan?.Dispose();
-        if (claimed.DispatchNotBeforeAt > UtcNow())
-        {
-            await transaction.RollbackAsync(ct);
-            return DispatchOneResult.NotClaimed;
-        }
         if (claimed.DesktopWorkspaceKind == DesktopWorkspaceKind.RefOnly
             && (string.IsNullOrWhiteSpace(claimed.RunnerId) || RunnerRequestIntent.IsDesktopAlias(claimed.RunnerId)))
         {
@@ -5941,6 +5936,12 @@ public sealed partial class AgentTaskDispatcher
                 .FirstOrDefaultAsync(a => a.Id == pinnedAgentId, ct);
             if (pinnedAgent is not null && !string.IsNullOrWhiteSpace(pinnedAgent.WorkingDirectory))
                 claimed.WorkingDirectory = pinnedAgent.WorkingDirectory;
+        }
+
+        if (claimed.DispatchNotBeforeAt > UtcNow())
+        {
+            await transaction.RollbackAsync(ct);
+            return DispatchOneResult.NotClaimed;
         }
 
         // CARD-0664 D-7: a first Worktree dispatch has no leaf yet; its key would be the repository
