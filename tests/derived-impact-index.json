@@ -1740,9 +1740,9 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 66,
+      "classes": 67,
       "reason": "cap",
-      "owed": 41,
+      "owed": 42,
       "first": [
         "LandNonCodeSkipTests",
         "LibGit2VsGitInspectionTests",
@@ -1965,26 +1965,27 @@
     },
     {
       "path": "src/Antiphon.SessionRunner/HerdrClient.cs",
-      "classes": 37,
+      "classes": 38,
       "reason": "cap",
-      "owed": 12,
+      "owed": 13,
       "first": [
+        "GrokRulesHerdrAcceptanceTests",
         "GrokRulesRunnerRefusalTests",
         "GrokRulesStoreFailureTests",
         "HerdrLabelFollowLiveTests",
         "RunnerAbsenceEvidenceRuntimeTests",
         "UnixPtyArgvAdmissionTests",
         "HerdrPaneDisposalServiceTests",
-        "HerdrGrokNativeSessionLiveTests",
-        "HerdrLabelObservationTests"
+        "HerdrGrokNativeSessionLiveTests"
       ]
     },
     {
       "path": "src/Antiphon.SessionRunner/HerdrPaneSidecar.cs",
-      "classes": 31,
+      "classes": 32,
       "reason": "cap",
-      "owed": 6,
+      "owed": 7,
       "first": [
+        "GrokRulesAdoptionTests",
         "GrokRulesHerdrAcceptanceTests",
         "GrokRulesRunnerRefusalTests",
         "GrokRulesStoreFailureTests",
@@ -18936,6 +18937,7 @@
       "path": "src/Antiphon.PtyHost.Protocol/PtyHostMessages.cs",
       "classes": [
         "Card2060PlacementHandshakeTests",
+        "HostCustodyPlatformTests",
         "LinuxCgroupCustodyTests",
         "PhoneHomeCommandDispatcherTests"
       ]
@@ -19977,12 +19979,12 @@
         "GrokHerdrRealCliStubProxyCanaryTests",
         "GrokRulesAdoptionTests",
         "GrokRulesFileLaunchTests",
-        "GrokRulesHerdrAcceptanceTests",
         "HerdrAdoptionSweepTests",
         "HerdrAlwaysOnChannelParityTests",
         "HerdrAttachTests",
         "HerdrClientTests",
         "HerdrEventPumpTests",
+        "HerdrLabelFollowSchedulingTests",
         "HerdrLaunchShapeTests",
         "HerdrNamedTabPlacementLiveTests",
         "HerdrNamedTabPlacementTests",
@@ -20132,12 +20134,12 @@
         "CodexHerdrRealCliStubProxyCanaryTests",
         "CodexLaunchRefusalTests",
         "CompletedCardWorkspaceRemovalTests",
-        "GrokRulesAdoptionTests",
         "GrokRulesFileLaunchTests",
         "HerdrAdoptionSweepTests",
         "HerdrAlwaysOnChannelParityTests",
         "HerdrAttachTests",
         "HerdrGrokNativeSessionLiveTests",
+        "HerdrLabelFollowSchedulingTests",
         "HerdrLabelFollowWireTests",
         "HerdrLaunchShapeTests",
         "HerdrNamedTabPlacementTests",
@@ -20194,6 +20196,12 @@
         "HerdrRunnerSessionTests",
         "HerdrStatusPushTests",
         "HerdrTransportTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/HerdrSnapshotFile.cs",
+      "classes": [
+        "HerdrLabelFollowSchedulingTests"
       ]
     },
     {
@@ -29559,6 +29567,7 @@
       "path": "tests/Shared/NativeWindowsGate.cs",
       "classes": [
         "C0824WindowsSlotHolderTests",
+        "HerdrLabelFollowSchedulingTests",
         "NativeWindowsFixtureGateTests",
         "OutputDistillationApplyCanaryTests",
         "WorktreeLockDiagnosticsWindowsTests"
@@ -29669,13 +29678,15 @@
       "path": "tests/Shared/TestTrace.cs",
       "classes": [
         "CodexCliObservationTests",
+        "HerdrLabelFollowSchedulingTests",
         "TestTraceSummaryTests"
       ]
     },
     {
       "path": "tests/Shared/TestTraceOtlp.cs",
       "classes": [
-        "CodexCliObservationTests"
+        "CodexCliObservationTests",
+        "HerdrLabelFollowSchedulingTests"
       ]
     },
     {
