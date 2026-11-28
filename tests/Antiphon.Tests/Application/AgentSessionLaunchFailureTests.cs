@@ -2071,6 +2071,14 @@ public class AgentSessionLaunchFailureTests
         var resumed = new FakeAgentProtocolAdapter();
         var duplicate = new FakeAgentProtocolAdapter();
         await using var recovered = await OpenAsync([resumed, duplicate], sessionId, agentId);
+        foreach (var recipient in new[] { resumed, duplicate })
+        {
+            recipient.RegisterOnStart = recovered.Runtime;
+            recipient.DialogGuardEnabled = true;
+            recipient.ClaudeComposerChrome = true;
+            recipient.DialogAdopted = true;
+            recipient.OnSubmitted = submitted => recovered.InsertStoreVisibleTurnAsync(submitted, "fixture continuation answer");
+        }
         var startupSequence = await recovered.InsertTranscriptEntryAsync(TranscriptKinds.AssistantText,
             "synthetic startup output");
         await recovered.InsertTranscriptEntryAsync(TranscriptKinds.TurnEnd, stopReason: "end_turn");
@@ -2094,10 +2102,25 @@ public class AgentSessionLaunchFailureTests
             && t.Kind == TranscriptKinds.SessionRestartBoundary);
         replayed.Id.ShouldBe(boundary.Id);
         replayed.StopReason.ShouldBe(ChannelRestartContinuation.Queued);
-        resumed.SubmittedBodies.ShouldBe([continued.Body]);
+        continued.Status.ShouldBe(QueuedMessageStatus.Pending, "retain the committed continuation while input is withheld");
+        resumed.SubmittedBodies.ShouldBeEmpty();
+        duplicate.SubmittedBodies.ShouldBeEmpty();
+
+        resumed.AdoptedHistoryVerified = true;
+        duplicate.AdoptedHistoryVerified = true;
+        await recovered.Queue.FlushSessionAsync(sessionId, CancellationToken.None);
+        await recovered.Queue.FlushSessionAsync(sessionId, CancellationToken.None);
+
+        resumed.SubmittedBodies.Concat(duplicate.SubmittedBodies).ShouldBe([continued.Body]);
+        recovered.Adapter.Inputs.ShouldBeEmpty();
+        var delivered = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == continued.Id);
+        delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        delivered.DeliveryAttempts.ShouldBe(1);
+        delivered.LastDeliveryBaselineSequence.ShouldNotBeNull().ShouldBeGreaterThanOrEqualTo(boundary.Sequence);
         (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == sessionId
             && t.Sequence > boundary.Sequence && t.Kind == TranscriptKinds.UserPrompt && t.Text == continued.Body))
             .ShouldBe(1);
+        recovered.Messaging.SentReplies.ShouldBeEmpty();
 
         Task<BridgeQueueHarness> OpenAsync(FakeAgentProtocolAdapter[] adapters, Guid? session = null,
             Guid? agent = null, Action<DbContextOptionsBuilder>? configureDb = null) =>
