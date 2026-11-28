@@ -4,7 +4,6 @@ using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -91,7 +90,9 @@ public static class ReviewRunEndpoints
         workflows.MapGet("/default", (ReviewWorkflowService service) => Results.Ok(service.GetDefault()));
         workflows.MapGet("/revisions/{id:guid}", async (Guid id, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.GetWorkflowRevisionAsync(id, ct)));
-        workflows.MapPost("/validate", ValidateWorkflowAsync).Accepts<JsonElement>("application/json");
+        workflows.MapPost("/validate", (JsonElement graph, ReviewWorkflowService service) =>
+            Results.Ok(service.Validate(ReviewWorkflowService.ReadCandidate(graph))))
+            .Finally(MapValidationBindingErrors);
 
         // Code host polling (design 8.5): the settings and the last pass; a pass on demand, even with the timer off.
         var polling = app.MapGroup("/api/review-polling").WithTags("Review engine");
@@ -116,24 +117,25 @@ public static class ReviewRunEndpoints
     /// <summary>How long <c>POST /api/review-polling/poll</c> waits for its pass; a cut-short pass records the repos it reached.</summary>
     public static readonly TimeSpan PollTimeout = TimeSpan.FromSeconds(90);
 
-    private static async Task<IResult> ValidateWorkflowAsync(HttpRequest request, ReviewWorkflowService service, CancellationToken ct)
+    private static void MapValidationBindingErrors(EndpointBuilder endpoint)
     {
-        if (request.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody == false)
-            throw InvalidWorkflowJson();
-        if (!request.HasJsonContentType())
-            throw new BadHttpRequestException("Expected JSON content.", StatusCodes.Status415UnsupportedMediaType);
+        var bindAndValidate = endpoint.RequestDelegate
+            ?? throw new InvalidOperationException("Workflow validation has no request delegate.");
+        endpoint.RequestDelegate = async context =>
+        {
+            try
+            {
+                await bindAndValidate(context);
+            }
+            catch (BadHttpRequestException ex) when (ex.StatusCode == StatusCodes.Status400BadRequest && !context.Response.HasStarted)
+            {
+                throw InvalidWorkflowJson();
+            }
 
-        // Reading the body here lets this route report JSON parser failures in its Problem Details contract.
-        JsonElement graph;
-        try
-        {
-            graph = await request.ReadFromJsonAsync<JsonElement>(ct);
-        }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
-        {
-            throw InvalidWorkflowJson();
-        }
-        return Results.Ok(service.Validate(ReviewWorkflowService.ReadCandidate(graph)));
+            // Outside Development, the binder can set 400 without writing a response.
+            if (context.Response is { StatusCode: StatusCodes.Status400BadRequest, HasStarted: false })
+                throw InvalidWorkflowJson();
+        };
     }
 
     private static BadRequestException InvalidWorkflowJson() =>
