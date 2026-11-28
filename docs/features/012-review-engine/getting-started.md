@@ -819,6 +819,11 @@ The engine still decides which findings are posted and where. A summary is poste
 least one finding qualifies and the code host accepts reviews on the PR. A configured public run
 URL is added once after rendering and is also appended to each inline comment.
 
+The executor polls eligible work every 10 seconds by default. If a worker disappears after
+committing Verify, another worker can claim the Running review after the lease expires
+(300 seconds by default) and continue to Publish from that committed result. An executor error
+that marks the run Failed leaves it outside the poll. Refresh retries a failed run.
+
 ## 11. Check that it works
 
 1. `GET /health` answers.
