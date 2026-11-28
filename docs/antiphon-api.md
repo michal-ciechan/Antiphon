@@ -9,11 +9,15 @@ It is **not** a generated schema reference, and it deliberately does not restate
 Where a body's exact shape matters, the DTO record in `server/Application/Dtos/` is the authority
 and is named here.
 
-## 0. Read this first: there is no authentication
+## 0. Authentication
 
-`CurrentUserMiddleware` resolves **every** request to a hardcoded seeded admin
-(`a0000000-0000-0000-0000-000000000001`, `admin`). There is no `UseAuthentication`, no
-`UseAuthorization`, and no `RequireAuthorization` anywhere in `server/Program.cs`.
+In the default `Review:Auth:Mode=None`, the review sign-in gate lets requests through and
+`CurrentUserMiddleware` resolves the application user to the seeded admin
+(`a0000000-0000-0000-0000-000000000001`, `admin`). In `GitHub` mode, the
+`antiphon.review.session` cookie is required for `/api` and `/hubs` requests.
+`/api/review-auth/*` and `/api/version` remain open. A request without a valid session returns
+401 `{ error: "sign_in_required", title, signInUrl }` with `signInUrl` set to
+`/api/review-auth/login`. [GitHub sign-in setup](features/012-review-engine/getting-started.md#71-signing-in-and-who-is-acting)
 
 Some endpoints are correspondingly powerful: `GET /api/filesystem/browse` enumerates arbitrary
 directories on the host, and its own source comment says so — *"intended for the single-user
@@ -1214,6 +1218,51 @@ GET    /api/workflows/{id}/artifacts/{stageExecutionId}/section-reviews
 POST   /api/workflows/{id}/artifacts/{stageExecutionId}/section-reviews
 DELETE /api/workflows/{id}/artifacts/{stageExecutionId}/section-reviews/{**sectionPath}
 ```
+
+### Review engine
+
+`ReviewRunEndpoints.cs` and `ReviewAuthEndpoints.cs` serve the PR review engine. See the
+[feature API contract](features/012-review-engine/api.md) for DTO fields, enums and errors and
+the [operator examples](ops-http.md#pr-review-engine) for common reads. IDs are GUIDs.
+Success is HTTP 200 unless shown otherwise. The [sign-in gate](#0-authentication) applies to these
+routes except the four `/api/review-auth/*` routes. In GitHub mode, gate decisions follow
+`Review:Auth:RequiredRepoPermission` and the viewer's access grants. People in
+`Review:Auth:AllowedLogins` have a grant for gate decisions on every review repo. The gate reports
+`viewerCanDecide` and `viewerCannotDecideReason`.
+
+| Method | Route | Request | Response |
+|---|---|---|---|
+| GET | `/api/review-runs` | Optional query `status`, `repo`, `stage`, `q` (title, repo, author or PR number) | `{ items: ReviewRunSummaryDto[], total }`, newest update first |
+| GET | `/api/review-runs/kpis` | | `ReviewKpisDto` with counts, rounds, cost and model usage |
+| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub takes `owner/name` and a positive `prNumber`. Local requires `baseSha` and defaults `headSha` to `HEAD`. | 201 `ReviewRunDetailDto` with a `Location` header for the new run. GitHub intake will include an `existing` flag (pending GH-56). |
+| POST | `/api/review-runs/demo` | No body | `{ items: ReviewRunSummaryDto[], total }` for seeded runs. 404 when `Review:DemoSeedEnabled` is false. |
+| GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` with iterations, node executions and gates |
+| GET | `/api/review-runs/{id}/findings` | Optional query `status` | `{ items: ReviewFindingDto[], total }`, including response history |
+| GET | `/api/review-runs/{id}/packs/{iteration}/{group}` | Integer iteration and reviewer group key | Stored pack as `text/markdown; charset=utf-8`. 404 for a missing pack. |
+| POST | `/api/review-runs/{id}/refresh` | No body | 202 with an empty body. Checks the code host and queues follow-up work when needed. |
+| POST | `/api/review-runs/{id}/rounds` | Optional body `{ steerPrompt? }` | `ReviewRunDetailDto` after requesting another review at the current head |
+| POST | `/api/review-runs/{id}/close` (pending GH-56) | Close request | See [GH-56](https://github.com/michal-ciechan/Antiphon/issues/56). |
+| POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` | `{ items: ReviewFindingDto[] }` |
+| POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` (`{ action, reasonCategory?, scope?, text? }`) | Updated `ReviewFindingDto` |
+| GET | `/api/review-queue` | Optional query `scope` (`Mine`, `Teams`, `All`, default `All`) and `login` (for `Mine`) | `{ items: QueueItemDto[], total }` with gate, run and SLA information |
+| POST | `/api/review-gates/{id}/assign` | Optional body `{ login? }`. Omit login to pick an eligible user code owner. | Updated `ReviewGateDto` |
+| POST | `/api/review-gates/{id}/pass` | `{ reason }` | Updated `ReviewGateDto` after returning the gate to the queue |
+| POST | `/api/review-gates/{id}/decision` | `{ decision, steerPrompt? }`. Use one of the gate's `allowedDecisions`. | Updated `ReviewRunDetailDto` |
+| GET | `/api/review-me` | Optional `X-Review-Viewer` header in `None` mode when `Review:AllowViewerHeader` is enabled | `ReviewViewerDto` (`{ login, displayName, teams }`) |
+| GET | `/api/review-workflows/default` | | Default `WorkflowGraphDto` |
+| GET | `/api/review-workflows/revisions/{id}` | Workflow revision GUID | Saved `WorkflowGraphDto` |
+| POST | `/api/review-workflows/validate` | `WorkflowGraphDto` | `WorkflowValidationDto` (`{ valid, diagnostics }`) |
+| GET | `/api/review-polling` | | `ReviewPollingDto` with settings, running state and last pass |
+| POST | `/api/review-polling/poll` | No body | `ReviewPollingDto` after an on-demand pass. Per-repo failures appear in `lastPass.repos[].error`. |
+| GET | `/api/review-auth/status` | | `{ mode, signedIn, login, displayName }`. Mode is `None` or `GitHub`. |
+| GET | `/api/review-auth/login` | Optional query `returnUrl` (local path) | 302 to GitHub with a 10-minute sign-in state cookie. 404 in `None` mode. |
+| GET | `/api/review-auth/callback` | OAuth query `code` and `state` with the sign-in state cookie, or `error` on cancellation | Sets the session cookie and redirects to the return path (302). HTML error page on failure. |
+| POST | `/api/review-auth/logout` | No body | Clears the session cookie and returns an HTML signed-out page |
+
+**GH-56 integration note.** Fold the GH-56 list, intake, detail, refresh and rounds entries into
+the five matching rows of this table. Fill in the single close row in each API map. When GH-56
+lands, remove the pending markers from both maps, the temporary allowance in the route guard and
+this note. [GH-56](https://github.com/michal-ciechan/Antiphon/issues/56)
 
 ### Review surface
 

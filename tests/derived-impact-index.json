@@ -111,7 +111,7 @@
     },
     {
       "path": "Antiphon.sln",
-      "classes": 371,
+      "classes": 372,
       "reason": "allowlist"
     },
     {
@@ -2143,9 +2143,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/Application/DelegateScriptRunner.cs",
-      "classes": 143,
+      "classes": 144,
       "reason": "cap",
-      "owed": 118,
+      "owed": 119,
       "first": [
         "DelegateScriptVerificationRoundTests",
         "NightlyVerificationContractTests",
@@ -2315,9 +2315,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/AntiphonWebAppFactory.cs",
-      "classes": 71,
+      "classes": 72,
       "reason": "cap",
-      "owed": 46,
+      "owed": 47,
       "first": [
         "CardThreadEndpointTests",
         "ClosedCardSweepApiTests",
@@ -18546,6 +18546,7 @@
         "HerdrAlwaysOnChannelParityTests",
         "IncidentPageNotifierTests",
         "KafkaInboundCommitTests",
+        "ReviewEngineRouteDocumentationTests",
         "TaskPlatformDispatchTests",
         "TrackerSyncNotifierTests"
       ]
