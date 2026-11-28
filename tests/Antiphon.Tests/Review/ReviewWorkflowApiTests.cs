@@ -121,6 +121,112 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
     }
 
     [Test]
+    [Arguments("AnotherRound", "Queued", "Intake", "another-round")]
+    [Arguments("Approve", "Queued", "Approval", "approve")]
+    [Arguments("Close", "Closed", "Done", "close")]
+    public async Task S1_gate_validation_matches_durable_decision_transitions(
+        string decision, string status, string stage, string outcome)
+    {
+        using var client = factory.CreateClient();
+        var definition = ReviewWorkflowYaml.LoadDefault();
+        var graphWithoutAnotherRound = definition with
+        {
+            Edges = definition.Edges.Where(edge => edge.From != "human-review" || edge.Label != "another-round").ToArray(),
+        };
+        graphWithoutAnotherRound.Edges.Count.ShouldBe(definition.Edges.Count - 1);
+
+        // Walked gates need a route for approval. The other decisions take effect in the decision API.
+        var variant = decision == "AnotherRound" ? graphWithoutAnotherRound : definition;
+        var candidate = decision == "Approve" ? definition with
+        {
+            Edges = definition.Edges.Where(edge => edge.From != "human-review" || edge.Label != "approve").ToArray(),
+        } : variant;
+        using var validated = await client.PostAsJsonAsync(ValidatePath, WorkflowJson(candidate));
+        validated.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var validation = (await validated.Content.ReadFromJsonAsync<WorkflowValidationDto>())!;
+        if (decision == "Approve")
+            validation.Diagnostics.ShouldContain(d => d.Code == "missing-successor" && d.NodeIds.Contains("human-review"));
+        else
+            validation.Valid.ShouldBeTrue(string.Join(", ", validation.Diagnostics.Select(d => d.Message)));
+
+        var run = await SeedAsync("test/gate-transitions", variant);
+        var gateId = await SeedWaitingGateAsync(run.Id);
+        using var rejected = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Reject" });
+        rejected.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        using var decided = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision });
+        decided.StatusCode.ShouldBe(HttpStatusCode.OK, await decided.Content.ReadAsStringAsync());
+
+        var updated = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
+        updated.GetProperty("workflowRevisionId").GetGuid().ShouldBe(run.WorkflowRevisionId!.Value);
+        updated.GetProperty("status").GetString().ShouldBe(status);
+        updated.GetProperty("stage").GetString().ShouldBe(stage);
+        updated.GetProperty("gates").EnumerateArray().Single().GetProperty("decision").GetString().ShouldBe(decision);
+        var nodes = updated.GetProperty("nodes").EnumerateArray().ToList();
+        nodes.Single(node => node.GetProperty("nodeId").GetString() == "human-review").GetProperty("outcome").GetString().ShouldBe(outcome);
+        if (decision == "AnotherRound")
+        {
+            updated.GetProperty("round").GetInt32().ShouldBe(run.Round + 1);
+            updated.GetProperty("iterations").EnumerateArray()
+                .ShouldContain(i => i.GetProperty("iteration").GetInt32() == 2 && i.GetProperty("trigger").GetString() == outcome);
+            nodes.ShouldContain(node => node.GetProperty("nodeId").GetString() == "intake"
+                && node.GetProperty("iteration").GetInt32() == 2 && node.GetProperty("status").GetString() == "Pending");
+        }
+        else
+        {
+            updated.GetProperty("iterations").GetArrayLength().ShouldBe(1);
+        }
+    }
+
+    [Test]
+    public async Task S1_gate_admission_uses_the_pinned_revision()
+    {
+        using var client = factory.CreateClient();
+        var embedded = ReviewWorkflowYaml.LoadDefault();
+        var variant = embedded with
+        {
+            Nodes = embedded.Nodes.Select(node => node.Id == "human-review"
+                ? node with { Params = new Dictionary<string, object?>(node.Params) { ["decisions"] = new object[] { "close" } } }
+                : node).ToArray(),
+            Edges = embedded.Edges.Where(edge => edge.From != "human-review").ToArray(),
+        };
+        using var response = await client.PostAsJsonAsync(ValidatePath, WorkflowJson(variant));
+        var validation = (await response.Content.ReadFromJsonAsync<WorkflowValidationDto>())!;
+        validation.Valid.ShouldBeTrue(string.Join(", ", validation.Diagnostics.Select(d => d.Message)));
+
+        var run = await SeedAsync("test/pinned-gate", variant);
+        var gateId = await SeedWaitingGateAsync(run.Id);
+        var before = await client.GetFromJsonAsync<JsonElement>($"/api/review-runs/{run.Id}");
+        before.GetProperty("gates").EnumerateArray().Single().GetProperty("allowedDecisions").EnumerateArray()
+            .Select(value => value.GetString()).ShouldBe(["Close"]);
+
+        using var refused = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Approve" });
+        await AssertProblemAsync(refused, HttpStatusCode.Conflict, "review_gate_decision_not_allowed");
+        using var closed = await client.PostAsJsonAsync($"/api/review-gates/{gateId}/decision", new { decision = "Close" });
+        closed.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    private async Task<Guid> SeedWaitingGateAsync(Guid runId)
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var iteration = await db.ReviewIterations.SingleAsync(i => i.RunId == runId);
+        iteration.HeadSha = new string('a', 40);
+        var gate = new ReviewGate
+        {
+            Id = Guid.NewGuid(), RunId = runId, NodeId = "human-review", Kind = ReviewGateKind.ReviewGate,
+            Iteration = 1, Status = ReviewQueueItemStatus.Unassigned, OpenedAt = SeedTime,
+        };
+        db.ReviewGates.Add(gate);
+        db.ReviewNodeExecutions.Add(new ReviewNodeExecution
+        {
+            Id = Guid.NewGuid(), RunId = runId, NodeId = "human-review", Kind = ReviewNodeKind.Gate,
+            Iteration = 1, Sequence = 2, Status = ReviewNodeStatus.Waiting, StartedAt = SeedTime,
+        });
+        await db.SaveChangesAsync();
+        return gate.Id;
+    }
+
+    [Test]
     public async Task The_default_graph_validates_and_a_loop_without_a_gate_does_not()
     {
         using var client = factory.CreateClient();
