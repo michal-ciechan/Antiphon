@@ -1,10 +1,17 @@
 using System.Text.RegularExpressions;
+using Antiphon.Messaging.Client;
+using Antiphon.Messaging.Client.Testing;
 using Antiphon.Tests.TestHelpers;
+using Markdig;
+using Markdig.Extensions.Tables;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Shouldly;
 using TUnit.Core;
 
@@ -12,11 +19,14 @@ namespace Antiphon.Tests.Application;
 
 [Category("Integration")]
 [ParallelLimiter<ProcessSpawnLimit>]
-[ClassDataSource<AntiphonWebAppFactory>(Shared = SharedType.PerTestSession)]
-public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory factory)
+[ClassDataSource<ReviewEngineRouteDocumentationTests.RouteMapWebAppFactory>(Shared = SharedType.PerTestSession)]
+public sealed class ReviewEngineRouteDocumentationTests(ReviewEngineRouteDocumentationTests.RouteMapWebAppFactory factory)
 {
     private const string PendingMarker = "(pending GH-56)";
     private const string PendingCloseRoute = "POST /api/review-runs/{id}/close";
+    private static readonly MarkdownPipeline MarkdownTables = new MarkdownPipelineBuilder()
+        .UsePipeTables(new PipeTableOptions { UseHeaderForColumnCount = true })
+        .Build();
 
     [Test]
     public void Api_maps_match_the_registered_review_engine_routes()
@@ -50,7 +60,7 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
         registered.ShouldBe(new[] { "GET /api/review-fixture/{id}/constant" });
 
         const string row = "| GET | `/api/review-fixture/{id}/constant` | A registered route |";
-        AssertDocumentedRoutes("fixture", [row], registered, registered);
+        AssertDocumentedRoutes("fixture", RouteTable(row), registered, registered);
         var failure = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", [], registered, registered));
         failure.Message.ShouldContain("Missing from fixture");
         failure.Message.ShouldContain("GET /api/review-fixture/{id}/constant");
@@ -61,7 +71,7 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
     {
         const string route = "GET /api/review-me";
         var registered = new HashSet<string>(StringComparer.Ordinal) { route };
-        string[] rows = ["| GET | `/api/review-me` | Viewer |", "| POST | `/api/review-me` | Unregistered method |"];
+        var rows = RouteTable("| GET | `/api/review-me` | Viewer |", "| POST | `/api/review-me` | Unregistered method |");
 
         var failure = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", rows, registered, registered));
         failure.Message.ShouldContain("Unregistered in fixture");
@@ -82,12 +92,18 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
             "| POST | `/api/review-left\\|right` | Escaped pipe in a path |");
         var failure = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", table, registered, registered));
         failure.Message.ShouldContain("Unregistered in fixture");
-        foreach (var route in new[] { "POST /api/review-me", "PUT /api/review-me", "PATCH /api/review-me",
-                     "DELETE /api/review-me", "POST /api/review-left|right" })
+        string[] unregisteredRoutes =
+        [
+            "POST /api/review-me", "PUT /api/review-me", "PATCH /api/review-me",
+            "DELETE /api/review-me", "POST /api/review-left|right",
+        ];
+        foreach (var route in unregisteredRoutes)
             failure.Message.ShouldContain(route);
 
         string[] codeExamples =
         [
+            "    | POST | `/api/review-indented-code` | Indentation ends the table |",
+            "| POST | `/api/review-outside-table` | Paragraph after indented code |",
             "",
             "    | Method | Path | Description |",
             "    | --- | --- | --- |",
@@ -102,9 +118,6 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
         AssertDocumentedRoutes("fixture", [.. RouteTable(viewer), .. codeExamples], registered, registered);
     }
 
-    private static string[] RouteTable(params string[] rows) =>
-        ["| Method | Path | Description |", "| --- | --- | --- |", .. rows];
-
     [Test]
     public void Only_the_unregistered_close_route_can_be_marked_pending_GH56()
     {
@@ -112,18 +125,21 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
         const string intakeRow = "| POST | `/api/review-runs` | `existing` response flag (pending GH-56) |";
         const string closeRow = "| POST | `/api/review-runs/{id}/close` (pending GH-56) | Close the run |";
         var registered = new HashSet<string>(StringComparer.Ordinal) { intake };
-        AssertDocumentedRoutes("fixture", [intakeRow, closeRow], registered, registered);
+        AssertDocumentedRoutes("fixture", RouteTable(intakeRow, closeRow), registered, registered);
 
         const string bogusRow = "| POST | `/api/review-runs/{id}/bogus` (pending GH-56) | Unknown route |";
-        var bogus = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", [intakeRow, bogusRow], registered, registered));
+        var bogus = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", RouteTable(intakeRow, bogusRow), registered, registered));
         bogus.Message.ShouldContain("Invalid pending route in fixture");
         bogus.Message.ShouldContain("POST /api/review-runs/{id}/bogus");
 
         registered.Add(PendingCloseRoute);
-        var stale = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", [intakeRow, closeRow], registered, registered));
+        var stale = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", RouteTable(intakeRow, closeRow), registered, registered));
         stale.Message.ShouldContain("Invalid pending route in fixture");
         stale.Message.ShouldContain(PendingCloseRoute);
     }
+
+    private static string[] RouteTable(params string[] rows) =>
+        ["| Method | Path | Description |", "| --- | --- | --- |", .. rows];
 
     private static HashSet<string> ReviewRoutes(IEnumerable<Endpoint> endpoints)
     {
@@ -162,11 +178,7 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
     private static void AssertDocumentedRoutes(
         string document, IEnumerable<string> lines, IReadOnlySet<string> registered, IEnumerable<string> required)
     {
-        var rows = lines
-            .Select(line => Regex.Match(line, """^\|\s*([A-Z]+)\s*\|\s*`(/api/review-[^`]+)`([^|]*)\|"""))
-            .Where(match => match.Success)
-            .Select(match => (Route: $"{match.Groups[1].Value} {match.Groups[2].Value}", Annotation: match.Groups[3].Value.Trim()))
-            .ToArray();
+        var rows = ReadTableRoutes(lines.ToArray()).ToArray();
 
         rows.Where(row => row.Annotation.Length > 0
                 && (row.Annotation != PendingMarker || row.Route != PendingCloseRoute || registered.Contains(row.Route)))
@@ -177,5 +189,52 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
         var documented = rows.Where(row => row.Annotation.Length == 0).Select(row => row.Route).ToArray();
         required.Except(documented).Order(StringComparer.Ordinal).ShouldBeEmpty($"Missing from {document}");
         documented.Except(registered).Order(StringComparer.Ordinal).ShouldBeEmpty($"Unregistered in {document}");
+    }
+
+    private static IEnumerable<(string Route, string Annotation)> ReadTableRoutes(string[] lines)
+    {
+        var markdown = string.Join('\n', lines);
+        foreach (var table in Markdown.Parse(markdown, MarkdownTables).Descendants<Table>())
+        {
+            foreach (var row in table.OfType<TableRow>().Where(row => !row.IsHeader))
+            {
+                // GFM ends a top-level table at an indented code block. Markdig can absorb it as rows.
+                if (table.Parent is MarkdownDocument && Regex.IsMatch(lines[row.Line], @"^(?: {4}| {0,3}\t)"))
+                    break;
+
+                if (row.Count < 2)
+                    continue;
+
+                var method = CellText((TableCell)row[0], markdown).Trim('`');
+                if (method.Length == 0 || !method.All(char.IsAsciiLetterUpper))
+                    continue;
+
+                var pathCell = CellText((TableCell)row[1], markdown);
+                var match = Regex.Match(pathCell, """^(?:`(?<path>/api/review-[^`]+)`|(?<path>/api/review-\S+))(?<annotation>.*)$""");
+                if (match.Success)
+                    yield return ($"{method} {match.Groups["path"].Value}", match.Groups["annotation"].Value.Trim());
+            }
+        }
+    }
+
+    private static string CellText(TableCell cell, string markdown)
+    {
+        var inlines = cell.OfType<ParagraphBlock>().FirstOrDefault()?.Inline;
+        return inlines is null ? string.Empty : string.Concat(inlines.Select(inline => inline switch
+        {
+            LiteralInline literal => literal.Content.ToString(),
+            CodeInline code => $"`{code.Content.Replace(@"\|", "|", StringComparison.Ordinal)}`",
+            _ => markdown.Substring(inline.Span.Start, inline.Span.Length),
+        })).Trim();
+    }
+
+    public sealed class RouteMapWebAppFactory : AntiphonWebAppFactory
+    {
+        protected override void ApplyTestOverrides(IServiceCollection services)
+        {
+            var messaging = new FakeAntiphonMessagingClient();
+            services.Replace(ServiceDescriptor.Singleton<IAntiphonMessagingProducer>(messaging));
+            services.Replace(ServiceDescriptor.Singleton<IAntiphonMessagingConsumer>(messaging));
+        }
     }
 }
