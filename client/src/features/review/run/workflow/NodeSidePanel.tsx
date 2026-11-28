@@ -7,7 +7,7 @@ import { SectionLabel } from '../../components/SectionLabel'
 import { ModelBadge } from '../../components/ReviewBadges'
 import { NODE_KIND_META, NODE_STATUS_META, tolerant } from '../../reviewMeta'
 import { fmtDuration, fmtTokens } from '../../reviewFormat'
-import { outputPage, OUTPUT_PAGE_SIZE, summaryPreview } from './executionOutput'
+import { outputPage, OUTPUT_PAGE_SIZE, summaryPreview, summaryWithoutLegacyWarnings } from './executionOutput'
 import classes from './NodeSidePanel.module.css'
 
 const WRAP_OUTPUT = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const
@@ -94,7 +94,7 @@ function SummaryOutput({ body }: { body: string }) {
 }
 
 function ExecutionOutput({ execution, current }: { execution: NodeExecutionDto; current: boolean }) {
-  const body = execution.summary ?? ''
+  const body = summaryWithoutLegacyWarnings(execution)
   const warnings = execution.warnings ?? []
   const hasBody = body.length > OUTPUT_PAGE_SIZE || body.trim().length > 0
   if (!hasBody && warnings.length === 0) return null

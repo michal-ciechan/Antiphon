@@ -311,6 +311,9 @@ public sealed class ReviewWorkflowExecutor(
             ? $"Failed, continued (onFailure: continue): {degraded}\n{result.Summary}"
             : result.Summary;
         execution.Warnings = walk.Warnings.Count > 0 ? walk.Warnings.ToArray() : null;
+        // Already-open browser bundles read refused statuses from the summary.
+        if (execution.Warnings is { } warnings)
+            execution.Summary = $"{execution.Summary}\n{string.Join("\n", warnings)}";
         if (result.Output is not null)
             execution.OutputJson = ReviewWalk.ToJson(result.Output);
         if (result.Usage is { } usage)

@@ -1,5 +1,26 @@
+import type { NodeExecutionDto } from '../../../../api/reviewEngine'
+
 const GRAPH_PREVIEW_SIZE = 160
 export const OUTPUT_PAGE_SIZE = 4096
+
+export function summaryWithoutLegacyWarnings(execution: NodeExecutionDto): string {
+  const summary = execution.summary ?? ''
+  if (!execution.warnings?.length) return summary
+
+  // The executor appends the structured warnings verbatim before any missing-edge failure.
+  // Matching the whole block preserves warning-like lines inside filenames and other output.
+  const block = '\n' + execution.warnings.join('\n')
+  if (summary.endsWith(block)) return summary.slice(0, -block.length)
+
+  if (execution.status === 'Failed') {
+    const routeFailure = `\nNo edge leaves '${execution.nodeId}' for outcome '${execution.outcome ?? '(none)'}'.`
+    const routeStart = summary.length - routeFailure.length
+    if (summary.endsWith(routeFailure) && summary.endsWith(block, routeStart)) {
+      return summary.slice(0, routeStart - block.length) + routeFailure
+    }
+  }
+  return summary
+}
 
 function textBoundary(text: string, index: number): number {
   const char = text.charCodeAt(index)

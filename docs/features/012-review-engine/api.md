@@ -73,6 +73,7 @@ interface NodeExecutionDto {
   provider: string | null; model: string | null; transport: Transport | null
   inputTokens: number; outputTokens: number; costUsd: number
   startedAt: string | null; completedAt: string | null; summary: string | null
+  warnings?: string[] | null
 }
 
 interface ReviewIterationDto {
@@ -163,6 +164,12 @@ interface ReviewPollingPassDto {
 
 interface WorkflowValidationDto { valid: boolean; diagnostics: { severity: 'Error' | 'Warning'; code: string; message: string; nodeIds: string[]; edge: { from: string; to: string } | null }[] }
 ```
+
+`NodeExecutionDto.warnings` is additive and may be absent or `null`. Executions created
+before the warnings migration keep their literal summaries. New executions with a refused
+commit status also include its warning lines in `summary` for already-open clients.
+Updated clients render the structured list and remove its matching legacy block from the
+displayed summary.
 
 ## Routes
 

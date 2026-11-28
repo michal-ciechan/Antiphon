@@ -384,6 +384,11 @@ has a failure badge. A successful step shows its recorded route or a one-line ou
 The step window preserves the summary's line breaks and lists refused commit statuses under
 Warnings. The execution table scrolls horizontally inside the window and accepts keyboard focus.
 
+The server can restart before the client bundle is deployed. It writes refused commit status
+warnings in the legacy summary format as well as the structured field, so already-open tabs
+still display them. The updated bundle displays each structured warning once and keeps the
+rest of the summary verbatim.
+
 ### 3.5 Other workflows on the same engine
 
 | Workflow | Trigger | Shape |
