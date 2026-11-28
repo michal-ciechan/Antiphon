@@ -16,7 +16,7 @@ import {
 import type { NodeExecutionDto, NodeKind, NodeStatus, WorkflowNodeDto } from '../../../../api/reviewEngine'
 import { NODE_KIND_META, NODE_STATUS_META, modelColor, modelShort } from '../../reviewMeta'
 import { fmtTokens } from '../../reviewFormat'
-import { splitExecutionOutput } from './executionOutput'
+import { graphSummaryPreview } from './executionOutput'
 import { NODE_H, NODE_W, type Dir } from './workflowLayout'
 
 const KIND_ICON: Record<NodeKind, ReactNode> = {
@@ -116,7 +116,7 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
   const outcome = routes.length > 0
     ? routes.join(', ')
     : status === 'Succeeded' && execs.length === 1
-      ? splitExecutionOutput(execs[0].summary).body.trim().split('\n', 1)[0]
+      ? graphSummaryPreview(execs[0].summary)
       : ''
   return (
     <Box
@@ -167,7 +167,7 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
         ) : (
           <Text size="10px" fw={600} c={status === 'Running' ? 'active.3' : 'dimmed'}>{meta.label}</Text>
         )}
-        {outcome && <Text size="10px" c="blue.3" truncate title={outcome}>{outcome}</Text>}
+        {outcome && <Text size="10px" c="blue.3" truncate title={routes.length > 0 ? outcome : undefined}>{outcome}</Text>}
       </Group>
       {item ? (
         <Text size="10px" c="dimmed" truncate>

@@ -1,4 +1,5 @@
-import { Badge, Box, Code, Group, Paper, Stack, Table, Text } from '@mantine/core'
+import { Badge, Box, Button, Code, Group, Paper, Stack, Table, Text } from '@mantine/core'
+import { useState } from 'react'
 import { TbAlertTriangle } from 'react-icons/tb'
 import type { DiagnosticSeverity, NodeExecutionDto, WorkflowDiagnosticDto, WorkflowNodeDto, WorkflowValidationDto } from '../../../../api/reviewEngine'
 import { CostText } from '../../components/CostText'
@@ -6,7 +7,7 @@ import { SectionLabel } from '../../components/SectionLabel'
 import { ModelBadge } from '../../components/ReviewBadges'
 import { NODE_KIND_META, NODE_STATUS_META, tolerant } from '../../reviewMeta'
 import { fmtDuration, fmtTokens } from '../../reviewFormat'
-import { splitExecutionOutput } from './executionOutput'
+import { outputPage, OUTPUT_PAGE_SIZE, splitExecutionOutput, summaryPreview } from './executionOutput'
 import classes from './NodeSidePanel.module.css'
 
 const WRAP_OUTPUT = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const
@@ -62,9 +63,39 @@ function ExecRow({ e, current, now, showItem, showOutcome }: { e: NodeExecutionD
   )
 }
 
+function SummaryOutput({ body }: { body: string }) {
+  const [page, setPage] = useState<number | null>(null)
+  const preview = summaryPreview(body)
+  const pages = Math.ceil(body.length / OUTPUT_PAGE_SIZE)
+  const shownPage = Math.min(page ?? 0, pages - 1)
+  return (
+    <>
+      <Text component="pre" m={0} size="xs" ff="monospace" style={WRAP_OUTPUT}>
+        {page === null ? preview : outputPage(body, shownPage)}
+      </Text>
+      {preview.length < body.length && (
+        <Stack gap={4} mt={4} align="start">
+          <Button variant="subtle" size="compact-xs" onClick={() => setPage(page === null ? 0 : null)}>
+            {page === null ? 'Show full output' : 'Show preview'}
+          </Button>
+          {page !== null && pages > 1 && (
+            <Group gap={4}>
+              <Button variant="default" size="compact-xs" disabled={shownPage === 0} onClick={() => setPage(0)}>First page</Button>
+              <Button variant="default" size="compact-xs" disabled={shownPage === 0} onClick={() => setPage(shownPage - 1)}>Previous page</Button>
+              <Text size="xs" aria-live="polite">Page {shownPage + 1} of {pages}</Text>
+              <Button variant="default" size="compact-xs" disabled={shownPage === pages - 1} onClick={() => setPage(shownPage + 1)}>Next page</Button>
+              <Button variant="default" size="compact-xs" disabled={shownPage === pages - 1} onClick={() => setPage(pages - 1)}>Last page</Button>
+            </Group>
+          )}
+        </Stack>
+      )}
+    </>
+  )
+}
+
 function ExecutionOutput({ execution, current }: { execution: NodeExecutionDto; current: boolean }) {
   const { body, warnings } = splitExecutionOutput(execution.summary)
-  const hasBody = body.trim().length > 0
+  const hasBody = body.length > OUTPUT_PAGE_SIZE || body.trim().length > 0
   if (!hasBody && warnings.length === 0) return null
 
   return (
@@ -76,11 +107,7 @@ function ExecutionOutput({ execution, current }: { execution: NodeExecutionDto; 
       <Text size="xs" fw={600} c={current ? undefined : 'dimmed'} mb={4}>
         it{execution.iteration}{execution.itemKey ? ` · ${execution.itemKey}` : ''}
       </Text>
-      {hasBody && (
-        <Text component="pre" m={0} size="xs" ff="monospace" style={WRAP_OUTPUT}>
-          {body}
-        </Text>
-      )}
+      {hasBody && <SummaryOutput body={body} />}
       {warnings.length > 0 && (
         <Box mt={hasBody ? 'xs' : 0} className={classes.warnings}>
           <Group gap={4} mb={2}>
