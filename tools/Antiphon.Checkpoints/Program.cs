@@ -25,7 +25,9 @@ public static class Program
         {
             var token = work ? cancellation.Token : CancellationToken.None;
             var runtime = runtimeFactory?.Invoke(token) ?? new CheckpointApp.Runtime { CancellationToken = token };
-            return await RunAsync(args, runtime).ConfigureAwait(false);
+            var exit = await RunAsync(args, runtime).ConfigureAwait(false);
+            await runtime.BuildObservationPublication.FlushOnExitAsync().ConfigureAwait(false);
+            return exit;
         }
         catch (ManifestValidationException ex)
         {

@@ -117,6 +117,19 @@ internal static class RowCommand
             : null;
         var observed = observation?.Begin(input.NoBuild ? "standalone-replay" : "standalone-composite",
             outputPath.TrimEnd('/'), project, start);
+        var properties = replay?.Properties;
+        if (observed is not null && !input.NoBuild)
+        {
+            try
+            {
+                properties = BuildStep.PropertyArguments(input.Properties, platform.IsWindows, input.Repeat, input.CanonicalProject);
+                observed.RecordProperties(properties);
+            }
+            catch (ManifestValidationException)
+            {
+                // Keep argument validation and slot refusal ordering in the row runner.
+            }
+        }
 
         // (4) The host build slot (CARD-0589), after every input check so an invalid row never waits.
         SlotLease lease;
@@ -174,7 +187,7 @@ internal static class RowCommand
                 Repeat = input.Repeat,
                 Expect = input.Expect,
                 Properties = input.Properties,
-                ResolvedBuildProperties = replay?.Properties,
+                ResolvedBuildProperties = properties,
                 IntermediateCache = replayCache,
                 BuildObservation = observed,
                 Commit = row.Commit,
@@ -221,7 +234,8 @@ internal static class RowCommand
             {
                 observation!.Complete(observed, observedResult?.BuildState ?? "interrupted", source.BuildSource,
                     observedResult?.Timings?.TestHostWallSeconds);
-                await observation.PublishAsync(runtime.BuildObservationJournal, Console.Error.WriteLine).ConfigureAwait(false);
+                runtime.BuildObservationPublication.Queue(token => observation.PublishAsync(
+                    runtime.BuildObservationJournal, Console.Error.WriteLine, cancellationToken: token));
             }
         }
     }

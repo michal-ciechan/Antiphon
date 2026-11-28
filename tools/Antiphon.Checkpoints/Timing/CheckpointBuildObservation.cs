@@ -15,7 +15,7 @@ public sealed record CheckpointBuildPhase(
     public string CustodyCoverageReason { get; init; } = "custody-record-unreachable";
 }
 
-// Collect scalar facts during execution. Only the terminal path opens the shared journal.
+// Collect scalar facts during execution and hand them to the observation worker.
 internal sealed class CheckpointBuildObservation(string runDirectory, string runId, string? taskId,
     string? attemptId, TimeProvider time, int eventLimit = CheckpointBuildObservation.EventLimit,
     int byteLimit = CheckpointBuildObservation.ByteLimit)
@@ -92,11 +92,13 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
     }
 
     internal async Task PublishAsync(Func<string, TimingJournal>? open, Action<string> diagnostic,
-        DateTimeOffset? cleanupStartedAt = null, DateTimeOffset? cleanupEndedAt = null, bool? outputsCleaned = null)
+        DateTimeOffset? cleanupStartedAt = null, DateTimeOffset? cleanupEndedAt = null, bool? outputsCleaned = null,
+        CancellationToken cancellationToken = default)
     {
         if (_records.Count == 0 && !_truncated)
             return;
-        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(2));
         try
         {
             using var taskLock = await BuildObservationReplay.LockTaskAsync(runDirectory, budget.Token).ConfigureAwait(false);
@@ -114,6 +116,7 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
                 throw new TimingReadBoundException();
 
             var path = JournalRoot(runDirectory);
+            budget.Token.ThrowIfCancellationRequested();
             SafeWrite.Require(SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(runDirectory)));
             var pending = Path.Combine(path, BuildObservationReplay.BatchFile);
             SafeWrite.Require(SafeWrite.Text(pending, "observation-batch-incomplete", SafeWrite.Under(path)));
@@ -132,7 +135,11 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or OperationCanceledException)
         {
-            try { diagnostic("BUILD OBSERVATION coverage=unknown reason=journal-" + ex.GetType().Name); }
+            try
+            {
+                var reason = ex is OperationCanceledException ? "publication-timeout" : "journal-" + ex.GetType().Name;
+                diagnostic("BUILD OBSERVATION coverage=unknown reason=" + reason);
+            }
             catch (Exception logError) when (logError is IOException or InvalidOperationException or UnauthorizedAccessException) { }
         }
     }

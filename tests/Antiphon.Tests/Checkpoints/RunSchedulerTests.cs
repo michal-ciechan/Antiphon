@@ -813,24 +813,31 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"), """<Project Sdk="Microsoft.NET.Sdk" />""");
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var release = new ManualResetEventSlim();
-            var arm = RunObservationArmAsync(repo, Path.Combine(repo, ".antiphon", "checkpoints"),
+            var publication = new BuildObservationPublication();
+            var results = Path.Combine(repo, ".antiphon", "checkpoints");
+            var arm = Task.Run(() => RunObservationArmAsync(repo, results,
                 grouped, fails: true, TimingFault.None, journal => journal.FlushGate = () =>
                 {
                     entered.TrySetResult();
-                    release.Wait(TimeSpan.FromSeconds(5));
+                    release.Wait(TimeSpan.FromSeconds(8));
                     return Task.CompletedTask;
-                });
+                }, stalledPublication: publication));
             try
             {
                 await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 var result = await arm.WaitAsync(TimeSpan.FromSeconds(3));
                 result.Exit.ShouldBe(ExitCodes.FailedTests);
+                publication.Completion.IsCompleted.ShouldBeFalse("the verdict is available while the sink is blocked");
             }
             finally
             {
                 release.Set();
                 await arm;
+                await publication.Completion;
             }
+            var run = Directory.GetDirectories(results).Single();
+            var read = await BuildObservationReplay.ReadAsync(run, CancellationToken.None);
+            read.CoverageReason.ShouldBe("observation-batch-incomplete");
         }
     }
 
@@ -863,7 +870,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
 
     private static async Task<ObservationArm> RunObservationArmAsync(string repo, string results,
         bool grouped, bool fails, TimingFault? fault, Action<TimingJournal>? configureJournal = null,
-        string project = "sample", bool refuse = false)
+        string project = "sample", bool refuse = false, BuildObservationPublication? stalledPublication = null)
     {
         var clock = new ControlledTimeProvider(ObservationEpoch);
         var driver = new FakeDriver();
@@ -882,6 +889,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             RowStamp = () => "20261127-000000-abcd", RunStamp = () => "20261127-000000-abcd",
             ReportHost = new ReportHost { Os = "fixture", Cores = 6, MemAvailableMb = 65536, LoadAvg = "fixture" },
             HostSnapshotText = "fixture", GitSnapshotText = "fixture",
+            BuildObservationPublication = stalledPublication ?? new(),
             BuildObservationJournal = path =>
             {
                 var journal = TimingJournal.Open(path);
@@ -916,6 +924,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
                 Commit = ObservationSource.Commit!, Branch = "fixture", KeepOutputs = true, ObserveBuilds = fault.HasValue,
             }, repo, runtime);
             exit = await CheckpointApp.ExecuteAsync(run, deadline.Token, runtime);
+            await runtime.BuildObservationPublication.FlushOnExitAsync();
         }
         else
         {
@@ -923,7 +932,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
                 "--filter", ObservationFilter, "--results-root", results, "--min-executed", "1"];
             if (fault.HasValue)
                 args = [.. args, "--observe-builds"];
-            exit = await Antiphon.Checkpoints.Program.RunAsync(args, runtime);
+            exit = await Antiphon.Checkpoints.Program.MainAsync(args, runtimeFactory: _ => runtime);
             run = Path.Combine(results, "CP-1-20261127-000000-abcd");
         }
         var milliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -932,6 +941,8 @@ public sealed class RunSchedulerTests : CheckpointTestBase
         var report = ReceiptJson.Parse<ReportModel>(System.Text.Encoding.UTF8.GetString(json), ReportWriter.Json);
         var row = report.Rows.Single();
         var trx = refuse ? new TrxParseResult() : TrxReport.Parse(row.Trx!);
+        if (stalledPublication is not null)
+            return new(exit, driver.Calls, slots.Events, json, markdown, row.Line!, trx, new([], null), milliseconds);
         var read = await BuildObservationReplay.ReadAsync(run, deadline.Token);
         if (grouped)
             RunOwnershipStore.Read(run, runtime.CleanupContext).ShouldNotBeNull().Launched.ShouldBeNull();

@@ -49,6 +49,7 @@ public static class CheckpointApp
         internal Func<string>? RunStamp { get; init; }
         internal ReportHost? ReportHost { get; init; }
         internal Func<string, TimingJournal>? BuildObservationJournal { get; init; }
+        internal BuildObservationPublication BuildObservationPublication { get; init; } = new();
         internal string? HostSnapshotText { get; init; }
         internal string? GitSnapshotText { get; init; }
     }
@@ -566,9 +567,6 @@ public static class CheckpointApp
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        if (buildObservation is not null)
-            await buildObservation.PublishAsync(runtime.BuildObservationJournal, Note,
-                cleanupStartedAt, cleanupEndedAt, model.CleanedOutputs).ConfigureAwait(false);
         Note("done exit=" + model.ExitCode);
         await logWriter.FlushAsync().ConfigureAwait(false);
         await logWriter.DisposeAsync().ConfigureAwait(false);
@@ -576,6 +574,9 @@ public static class CheckpointApp
         try { Finish(state, model.ExitCode, Publish, () => { }, _ => { }, context, model.EndedAt); }
         catch (StatePublicationException ex)
         { return await RetainPublicationFailure(ex).ConfigureAwait(false); }
+        if (buildObservation is not null)
+            runtime.BuildObservationPublication.Queue(token => buildObservation.PublishAsync(
+                runtime.BuildObservationJournal, Console.Error.WriteLine, cleanupStartedAt, cleanupEndedAt, model.CleanedOutputs, token));
         return model.ExitCode;
         }
         finally

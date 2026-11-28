@@ -134,8 +134,6 @@ public sealed class RowRunner
         var properties = (request.ResolvedBuildProperties ?? BuildStep.PropertyArguments(
             request.Properties, _platform.IsWindows, request.Repeat,
             request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null)).ToList();
-        if (!request.NoBuild)
-            request.BuildObservation?.RecordProperties(properties);
         var runOutput = request.OutputPath ?? "";
         if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
             runOutput = BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, request.Project, request.OutputPath).Owned;
