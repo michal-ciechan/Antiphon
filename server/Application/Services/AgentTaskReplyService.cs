@@ -496,9 +496,6 @@ public sealed partial class AgentTaskReplyService
                 replyEvent.AgentSessionId = blockedSessionId;
                 replyEvent.InputBody = blockedBody;
                 db.AgentTaskEvents.Add(replyEvent);
-                await db.SaveChangesAsync(ct);
-                saved = true;
-                answerGate?.Release(); answerGate = null;
 
                 // The marker rides the answer so the delegate's NEXT turn correlates back to this task.
                 var blockedSession = await db.AgentSessions.AsNoTracking()
@@ -511,11 +508,12 @@ public sealed partial class AgentTaskReplyService
                 {
                     db.AgentTaskEvents.Add(NewEvent(taskId, AgentTaskEventType.Warning,
                         $"task_input_file_unavailable: {AgentTaskInputService.Route(taskId, replyEvent.Id)}", now));
-                    await db.SaveChangesAsync(ct);
                 }
-                await queue.EnqueueAsync(blockedSessionId, replyWire, MessageSendMode.WhenIdle, ct,
-                    QueuedMessageOrigin.Delegation,
-                    conversationKey: AgentTaskInputService.ConversationKey(taskId, replyEvent.Id));
+                // Persist the accepted answer and the recipient's queue row together while
+                // holding the recipient gate. An insert failure leaves the question answerable.
+                await queue.EnqueueBlockedReplyLockedAsync(db, blockedSessionId, replyWire,
+                    AgentTaskInputService.ConversationKey(taskId, replyEvent.Id), () => saved = true, ct);
+                answerGate?.Release(); answerGate = null;
 
                 await PublishAsync(task, ct);
                 var blockedFamily = await db.AgentTasks.AsNoTracking().Where(t => t.RootTaskId == task.RootTaskId).ToListAsync(ct);

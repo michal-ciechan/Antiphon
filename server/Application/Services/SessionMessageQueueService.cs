@@ -496,6 +496,15 @@ public sealed partial class SessionMessageQueueService
             channelMemberInboundIds: channelMemberInboundIds, reviewThreadId: reviewThreadId,
             runtimeActionKey: runtimeActionKey, lockWait: lockWait, ct: ct);
 
+    /// <summary>
+    /// The Reply producer holds the recipient gate. Save its task state and event in the
+    /// same SaveChanges as the pending input, then use the ordinary WhenIdle delivery path.
+    /// </summary>
+    internal Task<SessionQueueDto> EnqueueBlockedReplyLockedAsync(
+        AppDbContext replyContext, Guid sessionId, string body, string conversationKey, Action onCommitted, CancellationToken ct) =>
+        EnqueueCoreAsync(sessionId, body, MessageSendMode.WhenIdle, QueuedMessageOrigin.Delegation,
+            conversationKey, onCreated: _ => onCommitted(), blockedReplyContext: replyContext, ct: ct);
+
     internal async Task<Guid> EnqueueMentionAsync(Guid sessionId, string body, Guid occurrenceId, CancellationToken ct)
     {
         if (occurrenceId == Guid.Empty)
@@ -535,6 +544,7 @@ public sealed partial class SessionMessageQueueService
         Guid? reviewThreadId = null, string? runtimeActionKey = null,
         Guid? sourceTaskSupervisionNoticeId = null,
         TimeSpan? lockWait = null,
+        AppDbContext? blockedReplyContext = null,
         CancellationToken ct = default)
     {
         var trimmed = (body ?? string.Empty).Trim();
@@ -690,16 +700,19 @@ public sealed partial class SessionMessageQueueService
             return (await GetQueueAsync(sessionId, ct)) with { LastDelivery = ToReceipt(outcome) };
         }
 
-        var sem = GetLock(sessionId);
-        if (lockWait is { } bound)
+        var sem = blockedReplyContext is null ? GetLock(sessionId) : null;
+        if (sem is not null)
         {
-            if (!await sem.WaitAsync(bound, ct)) throw new SessionQueueBusyException(sessionId);
+            if (lockWait is { } bound)
+            {
+                if (!await sem.WaitAsync(bound, ct)) throw new SessionQueueBusyException(sessionId);
+            }
+            else await sem.WaitAsync(ct);
         }
-        else await sem.WaitAsync(ct);
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var db = blockedReplyContext ?? scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var now = UtcNow();
 
             if (sourceTaskSupervisionNoticeId is { } supervisionId)
@@ -1005,7 +1018,7 @@ public sealed partial class SessionMessageQueueService
         }
         finally
         {
-            sem.Release();
+            sem?.Release();
         }
 
         var dto = await GetQueueAsync(sessionId, ct);
