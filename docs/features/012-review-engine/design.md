@@ -900,14 +900,16 @@ level labels. The call record includes the resolved `model`, `usage.input_tokens
 
 - **Cost basis.** Every dialect's cost is an **actual** cost, as the table gives it, and is recorded
   as such in `llm_call` (D-20).
-- **Provider errors.** An HTTP 400 stops the chain as `Rejected` and records a rejected call.
-  The client reads at most 16 KiB plus one byte from the error stream and accepts at most 12
+- **Provider errors.** An HTTP 400 records one rejected call and stops the chain as `Rejected`
+  without fallback, including when the diagnostic body stalls. Caller cancellation still
+  propagates. Error-stream reads get up to two seconds, bounded by the remaining provider and
+  HTTP client deadlines. The client reads at most 16 KiB plus one byte and accepts at most 12
   levels of JSON nesting, 256 value nodes and 64 items per array. It publishes fixed validation
   reasons from recognized error envelopes or TypeSafe `detail`, with recognized schema paths
   where available. Question names in a path become zero-based positions in the request. The
-  projected diagnostic is limited to 300 characters. Malformed, undecodable or over-limit
-  bodies use the fixed message “Provider diagnostic omitted,” as do bodies without a recognized
-  reason.
+  projected diagnostic is limited to 300 characters. Stalled, unreadable, malformed, undecodable
+  or over-limit bodies use the fixed message `Provider diagnostic omitted.`, as do bodies
+  without a recognized reason.
 - **Auth.** Every dialect sends `Authorization: Bearer <key>`. Enterprise uses the existing proxy
   virtual key, which is the same key used for its OpenAI-compatible endpoints, with no separate Jev
   key. Keys go through Antiphon credential custody (`docs/agent-credentials.md`).

@@ -20,6 +20,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
     public const string CostHeader = "x-litellm-response-cost";
     private const int MaxErrorTextLength = 300;
     private const int MaxErrorBodyBytes = 16 * 1024;
+    private const int MaxErrorReadSeconds = 2;
     private const int MaxErrorDepth = 12;
     private const int MaxErrorNodes = 256;
     private const int MaxErrorArrayItems = 64;
@@ -47,6 +48,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
 
         // With ResponseHeadersRead, the client's timeout only covers the headers. Keep the
         // same deadline for content reads while passing the caller's cancellation through.
+        var callerToken = options.CallerCancellationToken ?? ct;
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
         budget.CancelAfter(http.Timeout);
         try
@@ -55,8 +57,10 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
             if (!response.IsSuccessStatusCode)
             {
                 var status = (int)response.StatusCode;
+                var kind = Classify(status);
                 var diagnostic = await ErrorTextAsync(response.Content, request.Questions, budget.Token);
-                throw new DecisionProviderException(Classify(status), $"HTTP {status}: {diagnostic}", status);
+                callerToken.ThrowIfCancellationRequested();
+                throw new DecisionProviderException(kind, $"HTTP {status}: {diagnostic}", status);
             }
 
             var body = await response.Content.ReadAsStringAsync(budget.Token);
@@ -87,7 +91,7 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         {
             throw new DecisionProviderException(DecisionFailureKind.Unavailable, $"Transport failure: {ex.Message}");
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             throw new DecisionProviderException(DecisionFailureKind.Timeout, "The HTTP client timed out.");
         }
@@ -158,21 +162,25 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
     private static async Task<string> ErrorTextAsync(HttpContent content, IReadOnlyList<DecisionQuestion> questions,
         CancellationToken ct)
     {
+        // The status is already known. Allow at most two seconds for its diagnostic, bounded
+        // by the remaining provider and HttpClient deadlines. The caller checks cancellation separately.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(MaxErrorReadSeconds));
         // SendAsync uses ResponseHeadersRead so the error body has not been buffered.
         // Reserve one extra byte to distinguish an exact-limit body from a truncated one.
         var buffer = new byte[MaxErrorBodyBytes + 1];
         int bytes;
         try
         {
-            using var stream = await content.ReadAsStreamAsync(ct);
-            bytes = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken: ct);
+            using var stream = await content.ReadAsStreamAsync(budget.Token);
+            bytes = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken: budget.Token);
         }
-        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
         {
             return DiagnosticOmitted;
         }
 
-        if (bytes > MaxErrorBodyBytes)
+        if (budget.IsCancellationRequested || bytes > MaxErrorBodyBytes)
             return DiagnosticOmitted;
 
         try
