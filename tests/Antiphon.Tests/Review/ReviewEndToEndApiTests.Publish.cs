@@ -215,6 +215,47 @@ public partial class ReviewEndToEndApiTests
     }
 
     [Test]
+    public async Task C2110_S1_pg_Authored_summary_budget_includes_the_recipient_backlink()
+    {
+        var candidate = PublishCandidate("A", "Budget boundary finding", 55) with { InDiff = false };
+        var settings = factory.Services.GetRequiredService<IOptions<ReviewSettings>>().Value;
+        var publicBaseUrl = settings.PublicBaseUrl;
+        try
+        {
+            settings.PublicBaseUrl = "https://antiphon.test";
+            const string section = "\nListed here only:\n- F1 major · src&#47;Lease&#46;&#8203;cs&#58;&#8203;55: Budget boundary finding";
+            const int repetitions = 50;
+            var titleBytes = (ReviewSummaryRenderer.MaxCustomBodyBytes - System.Text.Encoding.UTF8.GetByteCount(section)
+                - 2 * repetitions) / repetitions;
+            // The fallback is short. The template by itself fits, while the final body with the link does not.
+            var graph = PublishGraph(new Dictionary<string, object?>
+            {
+                ["summaryTemplate"] = string.Concat(Enumerable.Repeat("{{run.title}}\n\n", repetitions)) + "{{findings}}",
+            });
+            var repeatedTitle = new string('X', titleBytes);
+            var pr = factory.Host.Open(21113, "Budget fixture", "dana", BaseSha, HeadSha, Files, Diff);
+            var id = await WalkPublishAsync(21113, graph,
+            [
+                Producer("collate", ReviewNodeKind.Join, 1, new CollateOutput([candidate], [], [])),
+                Producer("verify", ReviewNodeKind.Completion, 2, new VerifyOutput(["A"], [], true)),
+            ], arrange: run => run.Subject.Title = repeatedTitle);
+
+            await using var reader = factory.Services.CreateAsyncScope();
+            var db = reader.ServiceProvider.GetRequiredService<AppDbContext>();
+            var publish = await db.ReviewNodeExecutions.AsNoTracking().SingleAsync(n => n.RunId == id && n.NodeId == "publish");
+            var body = Receipt(pr, ReviewWalk.Output<PublishOutput>(publish).ShouldNotBeNull()).Review.Body;
+            System.Text.Encoding.UTF8.GetByteCount(body).ShouldBeLessThanOrEqualTo(ReviewSummaryRenderer.MaxCustomBodyBytes);
+            body.ShouldStartWith("**Antiphon review**");
+            body.ShouldContain(candidate.Title);
+            body.Split(FixtureRunLink(id), StringSplitOptions.None).Length.ShouldBe(2);
+        }
+        finally
+        {
+            settings.PublicBaseUrl = publicBaseUrl;
+        }
+    }
+
+    [Test]
     public async Task C2110_S1_pg_Legacy_default_body_and_inline_comments_are_exact()
     {
         var graph = PublishGraph(new Dictionary<string, object?>());

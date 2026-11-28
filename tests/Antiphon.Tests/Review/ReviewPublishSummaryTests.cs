@@ -161,7 +161,6 @@ public class ReviewPublishSummaryTests
         var walk = Walk();
         var findings = new[] { new ReviewFinding { Key = "F1", Severity = ReviewSeverity.Major, FilePath = "path", Title = "kept" } };
         const string template = "{{run.title}}\n{{findings}}";
-        var legacy = Render(walk, null, findings, null);
         var baseline = Render(walk, template, findings, null);
         var available = ReviewSummaryRenderer.MaxCustomBodyBytes - System.Text.Encoding.UTF8.GetByteCount(baseline);
         walk.Run.Subject.Title = new string('X', available);
@@ -171,8 +170,36 @@ public class ReviewPublishSummaryTests
 
         System.Text.Encoding.UTF8.GetByteCount(atLimit).ShouldBe(ReviewSummaryRenderer.MaxCustomBodyBytes);
         atLimit.ShouldStartWith("XXXXX");
-        overLimit.ShouldBe(legacy);
+        overLimit.ShouldBe("**Antiphon review**, round 1 (iteration 2)\n\nFindings:\n- **F1** major · path: kept\n");
         walk.Warnings.ShouldBe(["Invalid or oversized Publish summary template; used the default summary."]);
+    }
+
+    [Test]
+    public void C2110_S1_unit_Authored_fallback_escapes_and_truncates_complete_records()
+    {
+        var walk = Walk();
+        var hostile = new ReviewFinding
+        {
+            Key = "F1", Severity = ReviewSeverity.Major, FilePath = "src/`code`.cs",
+            Title = "[title](https://example.test)\r\n@someone\n/approve\n<!-- hidden -->",
+        };
+        var oversized = new ReviewFinding
+        {
+            Key = "F2", Severity = ReviewSeverity.Major, FilePath = new string('`', 70000), Title = "OMITTED RECORD",
+        };
+
+        var body = Render(walk, "{{unknown}}", [hostile, oversized], null);
+
+        body.ShouldStartWith("**Antiphon review**, round 1 (iteration 2)\n\nFindings:\n");
+        body.ShouldContain("src&#47;&#96;code&#96;&#46;&#8203;cs: &#91;title&#93;");
+        body.ShouldContain("&#64;&#8203;someone &#47;approve &#60;&#33;&#45;&#45; hidden &#45;&#45;&#62;\n");
+        body.ShouldNotContain("@someone");
+        body.ShouldNotContain("\n/approve");
+        body.ShouldNotContain("<!--");
+        body.ShouldNotContain("**F2**");
+        body.ShouldNotContain("OMITTED RECORD");
+        body.ShouldEndWith("_Some findings were omitted from this summary due to the size limit. View all findings in Antiphon._\n");
+        System.Text.Encoding.UTF8.GetByteCount(body).ShouldBeLessThanOrEqualTo(ReviewSummaryRenderer.MaxCustomBodyBytes);
     }
 
     private static readonly ReviewPublishConfiguration Binding = new("collate", "verify", "categorise", "select");
