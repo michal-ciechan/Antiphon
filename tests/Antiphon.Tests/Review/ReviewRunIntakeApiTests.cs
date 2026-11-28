@@ -335,7 +335,7 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Open_legacy_slug_holds_both_parallel_intakes(CancellationToken ct)
     {
-        const int number = 209675;
+        const int number = 209681;
         using var client = OpenPullRequest(number);
         var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
         await MarkLegacyAsync(legacy, Repo, ct);
@@ -352,11 +352,11 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Open_legacy_slug_holds_trusted_comment_intake_without_GitHub_writes(CancellationToken ct)
     {
-        const int number = 209676;
+        const int number = 209682;
         using var client = OpenPullRequest(number);
         var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
         await MarkLegacyAsync(legacy, Repo, ct);
-        factory.Host.Comment(number, "209676", "maintainer", "OWNER", "/antiphon review");
+        factory.Host.Comment(number, "209682", "maintainer", "OWNER", "/antiphon review");
 
         factory.Host.IncludedPollPullRequests = new HashSet<int> { number };
         try
@@ -384,13 +384,15 @@ public sealed class ReviewRunIntakeApiTests(ReviewRunIntakeApiTests.Factory fact
     [Test]
     public async Task Verified_open_run_is_reused_even_when_a_legacy_slug_is_open(CancellationToken ct)
     {
-        const int number = 209677;
+        const int number = 209683;
         using var client = OpenPullRequest(number);
+        var pr = factory.Host.Pr(number);
+        var verifiedRepositoryId = pr.RepositoryId;
         var verified = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
-        factory.Host.Pr(number).RepositoryId = 24677;
+        pr.RepositoryId = 24677;
         var legacy = Id(await IntakeAsync(client, Repo, number, HttpStatusCode.Created, ct));
         await MarkLegacyAsync(legacy, Repo, ct);
-        factory.Host.Pr(number).RepositoryId = 1234;
+        pr.RepositoryId = verifiedRepositoryId;
 
         var existing = await IntakeAsync(client, Repo, number, HttpStatusCode.OK, ct);
 
