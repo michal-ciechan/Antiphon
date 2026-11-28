@@ -262,6 +262,12 @@ function serveRouting(options?: {
   const list = options?.list ?? listDto
   const effective = options?.effective ?? { Plan: planEffective, Code: codeEffective }
   server.use(
+    // Keep the policy section populated without rendering the full catalogue in every
+    // matrix case. Policy read-state cases below register their own full response.
+    http.get('/api/role-policy', () => HttpResponse.json({
+      ...ROLE_POLICY_FIXTURE,
+      roles: ROLE_POLICY_FIXTURE.roles.slice(0, 1),
+    })),
     http.get('/api/complexity-chains', ({ request }) => {
       const role = new URL(request.url).searchParams.get('role') as AgentTaskRole | null
       if (!role) return HttpResponse.json(list)
