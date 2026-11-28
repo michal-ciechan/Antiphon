@@ -2259,14 +2259,14 @@
       "reason": "cap",
       "owed": 43,
       "first": [
+        "NightlyHostTests",
         "NightlyRunParityTests",
         "NightlyRunTests",
         "RcFailureHistoryTests",
         "TestTimingsTwinTests",
         "TestTraceSummaryTests",
         "ToolchainFloorWarningTests",
-        "AwayDigestSendTests",
-        "C1744G3PhoneHomeSupervisionTests"
+        "AwayDigestSendTests"
       ]
     },
     {
@@ -26368,13 +26368,13 @@
         "ClassCostMeasurementTests",
         "CliEntryTests",
         "ClientChecksTests",
+        "ExpectedPlatformSkipRosterTests",
         "LandAuditToolResolverTests",
         "LandGraphCommandTests",
         "NightlyChunkRunnerTests",
         "NightlyDiscoveryParserTests",
         "NightlyExecutionDiagnosticTests",
         "NightlyHealthTests",
-        "NightlyHostTests",
         "NightlyTestHelpersTests",
         "NightlyTestsParityTests",
         "NightlyTestsRunTests",
