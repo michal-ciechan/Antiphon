@@ -88,7 +88,7 @@ public sealed class ReviewService(
         return new ReviewListDto<ReviewRunSummaryDto>(summaries, summaries.Count);
     }
 
-    public Task<ReviewRunDetailDto> GetRunAsync(Guid id, CancellationToken ct) => GetRunDetailAsync(id, reads.Runs, ct);
+    public Task<ReviewRunDetailDto> GetRunAsync(Guid id, CancellationToken ct) => GetRunDetailAsync(id, reads.Runs(viewer), ct);
 
     private Task<ReviewRunDetailDto> GetRunDetailAsync(Guid id, CancellationToken ct) =>
         GetRunDetailAsync(id, db.ReviewRuns.AsNoTracking(), ct);
@@ -531,7 +531,7 @@ public sealed class ReviewService(
 
     public async Task<WorkflowGraphDto> GetWorkflowRevisionAsync(Guid id, CancellationToken ct)
     {
-        var revision = await reads.GetRevisionAsync(id, ct);
+        var revision = await reads.GetRevisionAsync(id, viewer, ct);
         var graph = JsonSerializer.Deserialize<WorkflowGraphDto>(revision.GraphJson, GraphJson)
             ?? throw new InvalidOperationException($"Workflow revision {id} holds no graph.");
         return graph with { RevisionId = revision.Id, Hash = revision.Hash };
@@ -541,7 +541,7 @@ public sealed class ReviewService(
 
     public async Task<ReviewListDto<ReviewFindingDto>> ListFindingsAsync(Guid runId, ReviewFindingStatus? status, CancellationToken ct)
     {
-        await reads.RequireRunAsync(runId, ct);
+        await reads.RequireRunAsync(runId, viewer, ct);
         var query = db.ReviewFindings.AsNoTracking().Include(f => f.Events).Where(f => f.RunId == runId);
         if (status is { } s)
             query = query.Where(f => f.Status == s);

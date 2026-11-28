@@ -46,9 +46,9 @@ public static class ReviewRunEndpoints
             Results.Ok(await service.ListFindingsAsync(id, ParseEnum<ReviewFindingStatus>("status", status), ct)));
 
         // A reviewer's context pack as text, for a reviewer task whose pack is too large to inline in its brief.
-        runs.MapGet("/{id:guid}/packs/{iteration:int}/{group}", async (Guid id, int iteration, string group, AppDbContext db, ReviewReadScope reads, CancellationToken ct) =>
+        runs.MapGet("/{id:guid}/packs/{iteration:int}/{group}", async (Guid id, int iteration, string group, AppDbContext db, ReviewReadScope reads, ReviewViewer viewer, CancellationToken ct) =>
         {
-            await reads.RequireContextPackRunAsync(id, ct);
+            await reads.RequireContextPackRunAsync(id, viewer, ct);
             var content = await db.ReviewContextPacks.AsNoTracking()
                 .Where(p => p.RunId == id && p.Iteration == iteration && p.GroupKey == group)
                 .Select(p => p.Content)
