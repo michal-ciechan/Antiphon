@@ -32,10 +32,22 @@ internal sealed record ReviewStepContract(
     ReviewNodeKind Kind,
     IReadOnlyList<string> Outputs,
     ReviewStepChain? Chain = null,
-    bool AcceptsInputs = false);
+    bool AcceptsInputs = false,
+    IReadOnlyList<string>? RequiredSteps = null,
+    Func<WorkflowNode, IReadOnlyList<string>>? ControlOutcomes = null)
+{
+    public IEnumerable<string?> Outcomes(WorkflowNode node) => ControlOutcomes is not null
+        ? ControlOutcomes(node)
+        : Outputs.Count > 0 ? Outputs : new string?[] { null };
+}
 
 internal static class ReviewWorkflowSteps
 {
+    internal const string SelectChecks = "SelectChecks";
+    internal const string GroupChecks = "GroupChecks";
+    internal const string BuildPacks = "BuildPacks";
+    internal const string CollateFindings = "CollateFindings";
+
     internal delegate Task<NodeResult> Handler(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct);
 
     internal sealed record Registration(ReviewStepContract Contract, Handler Run);
@@ -45,9 +57,9 @@ internal static class ReviewWorkflowSteps
 
     private static readonly Dictionary<ReviewNodeKind, Registration> ControlSteps = new()
     {
-        [ReviewNodeKind.Gate] = new(new(ReviewNodeKind.Gate, []), ReviewDecideSteps.GateAsync),
-        [ReviewNodeKind.Wait] = new(new(ReviewNodeKind.Wait, []), ReviewDecideSteps.WaitAsync),
-        [ReviewNodeKind.FanOut] = new(new(ReviewNodeKind.FanOut, []), ReviewReviewSteps.FanOutAsync),
+        [ReviewNodeKind.Gate] = new(new(ReviewNodeKind.Gate, [], ControlOutcomes: ReviewDecideSteps.GateOutcomes), ReviewDecideSteps.GateAsync),
+        [ReviewNodeKind.Wait] = new(new(ReviewNodeKind.Wait, [], ControlOutcomes: ReviewDecideSteps.WaitOutcomes), ReviewDecideSteps.WaitAsync),
+        [ReviewNodeKind.FanOut] = new(new(ReviewNodeKind.FanOut, [], RequiredSteps: [GroupChecks, BuildPacks]), ReviewReviewSteps.FanOutAsync),
     };
 
     private static readonly Dictionary<string, Registration> Steps = new(StringComparer.Ordinal)
@@ -55,13 +67,13 @@ internal static class ReviewWorkflowSteps
         ["Intake"] = new(new(ReviewNodeKind.Code, []), ReviewIntakeSteps.IntakeAsync),
         ["Delta"] = new(new(ReviewNodeKind.Code, ["incremental", "full"], Decision), ReviewIntakeSteps.DeltaAsync),
         ["Categorise"] = new(new(ReviewNodeKind.Decision, ReviewCategorisation.ChangeKinds, DecisionWithEmptyDefault), ReviewIntakeSteps.CategoriseAsync),
-        ["SelectChecks"] = new(new(ReviewNodeKind.Decision, [], DecisionWithEmptyDefault), ReviewSelectionSteps.SelectChecksAsync),
-        ["GroupChecks"] = new(new(ReviewNodeKind.Code, []), ReviewSelectionSteps.GroupChecksAsync),
-        ["BuildPacks"] = new(new(ReviewNodeKind.Code, []), ReviewSelectionSteps.BuildPacksAsync),
-        ["CollateFindings"] = new(new(ReviewNodeKind.Join, []), ReviewReviewSteps.CollateAsync),
+        [SelectChecks] = new(new(ReviewNodeKind.Decision, [], DecisionWithEmptyDefault), ReviewSelectionSteps.SelectChecksAsync),
+        [GroupChecks] = new(new(ReviewNodeKind.Code, [], RequiredSteps: [SelectChecks]), ReviewSelectionSteps.GroupChecksAsync),
+        [BuildPacks] = new(new(ReviewNodeKind.Code, [], RequiredSteps: [GroupChecks]), ReviewSelectionSteps.BuildPacksAsync),
+        [CollateFindings] = new(new(ReviewNodeKind.Join, []), ReviewReviewSteps.CollateAsync),
         ["VerifyFindings"] = new(new(ReviewNodeKind.Completion, [],
-            new(ReviewChainFamily.Completion, ReviewCompletionSettings.DefaultChain)), ReviewReviewSteps.VerifyAsync),
-        ["Publish"] = new(new(ReviewNodeKind.Code, []), ReviewReviewSteps.PublishAsync),
+            new(ReviewChainFamily.Completion, ReviewCompletionSettings.DefaultChain), RequiredSteps: [CollateFindings]), ReviewReviewSteps.VerifyAsync),
+        ["Publish"] = new(new(ReviewNodeKind.Code, [], RequiredSteps: [CollateFindings]), ReviewReviewSteps.PublishAsync),
         ["RouteAfterRound"] = new(new(ReviewNodeKind.Code, ["bot-round-limit", "findings", "clean"]), ReviewDecideSteps.RouteAsync),
         ["NeedsHumanApproval"] = new(new(ReviewNodeKind.Code, ["yes", "no"]), ReviewDecideSteps.NeedsHumanApprovalAsync),
         ["BotApprove"] = new(new(ReviewNodeKind.Code, []), ReviewDecideSteps.BotApproveAsync),
@@ -76,7 +88,9 @@ internal static class ReviewWorkflowSteps
 
     public static Registration? Find(string? name) => name is null ? null : Steps.GetValueOrDefault(name);
 
-    public static Registration? Resolve(WorkflowNode node) => ControlSteps.GetValueOrDefault(node.Kind) ?? Find(node.Run);
+    public static Registration? Control(ReviewNodeKind kind) => ControlSteps.GetValueOrDefault(kind);
+
+    public static Registration? Resolve(WorkflowNode node) => Control(node.Kind) ?? Find(node.Run);
 
     public static string ChainName(WorkflowNode node) => Steps[node.Run!].Contract.Chain!.Resolve(node).Value;
 }

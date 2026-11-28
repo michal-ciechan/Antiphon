@@ -150,7 +150,7 @@ public static class ReviewSelectionSteps
     /// </summary>
     public static async Task<NodeResult> BuildPacksAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var groups = ReviewWalk.Output<GroupOutput>(walk.LatestOf("GroupChecks"))?.Groups ?? [];
+        var groups = ReviewWalk.Output<GroupOutput>(walk.LatestOf(ReviewWorkflowSteps.GroupChecks))?.Groups ?? [];
         var scope = await walk.ScopeAsync(ct);
         var diff = await walk.DiffAsync(scope.Range, ct);
         var checks = (await walk.ChecksAsync(ct)).Checks.ToDictionary(c => c.Id, StringComparer.OrdinalIgnoreCase);
@@ -203,7 +203,7 @@ public static class ReviewSelectionSteps
     /// <summary>The checks select picked in this iteration, from the catalogue.</summary>
     public static async Task<IReadOnlyList<ReviewCheck>> SelectedChecksAsync(ReviewWalk walk, CancellationToken ct)
     {
-        var ids = ReviewWalk.Output<SelectOutput>(walk.LatestOf("SelectChecks"))?.Selected ?? [];
+        var ids = ReviewWalk.Output<SelectOutput>(walk.LatestOf(ReviewWorkflowSteps.SelectChecks))?.Selected ?? [];
         var checks = (await walk.ChecksAsync(ct)).Checks.ToDictionary(c => c.Id, StringComparer.OrdinalIgnoreCase);
         return ids.Select(id => checks.GetValueOrDefault(id)).OfType<ReviewCheck>().ToList();
     }

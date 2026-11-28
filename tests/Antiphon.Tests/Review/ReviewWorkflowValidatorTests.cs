@@ -1,3 +1,4 @@
+using Antiphon.Checkpoints;
 using Antiphon.Server.Application.Review;
 using Antiphon.Server.Application.Review.Workflows;
 using Antiphon.Server.Domain.Enums;
@@ -185,6 +186,21 @@ public class ReviewWorkflowValidatorTests
         validation.Valid.ShouldBeTrue();
         workflow.BackEdges().Select(e => (e.From, e.To)).ShouldContain(("base-drift", "intake"));
         await Task.CompletedTask;
+    }
+
+    [Test]
+    public void The_shipped_design_workflow_has_executable_routes()
+    {
+        var path = Path.Combine(RepoPaths.FindRoot(AppContext.BaseDirectory), "docs", "features", "012-review-engine", "design.md");
+        var design = File.ReadAllText(path).ReplaceLineEndings("\n");
+        const string fence = "```yaml\n";
+        var start = design.IndexOf(fence + "workflow: pr-review\n", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        start += fence.Length;
+        var end = design.IndexOf("\n```", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        var validation = ReviewWorkflowValidator.Validate(ReviewWorkflowYaml.Parse(design[start..end]));
+        validation.Valid.ShouldBeTrue(string.Join(Environment.NewLine, validation.Diagnostics.Select(diagnostic => diagnostic.Message)));
     }
 
     [Test]

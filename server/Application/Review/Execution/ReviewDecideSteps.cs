@@ -27,6 +27,7 @@ public static class ReviewDecideSteps
 {
     /// <summary>Iteration triggers that start a round; a recheck or base re-review is the same round.</summary>
     public static readonly IReadOnlyList<string> RoundTriggers = ["opened", "manual", "push", "another-round"];
+    private const string ApproveOutcome = "approve";
 
     /// <summary>
     /// Route (design 3.3, 5): counts this round as bot-only (a human response or decision resets the
@@ -141,11 +142,11 @@ public static class ReviewDecideSteps
     {
         var repo = walk.Run.Subject.Repo;
         if (ReviewWorkflowPolicy.GatesOff(walk.Policy, node, repo).Value)
-            return NodeResult.Ok("approve", $"Gate off for {repo} (Review:Policy:GatesOff:{node.Id}): passed without a person", new GateSkipped(node.Id, repo));
+            return NodeResult.Ok(ApproveOutcome, $"Gate off for {repo} (Review:Policy:GatesOff:{node.Id}): passed without a person", new GateSkipped(node.Id, repo));
 
         var kind = GateKindOf(node);
-        if (kind == ReviewGateKind.MergeGate && (!walk.Host.Capabilities.CanMerge || walk.Run.Subject.PrNumber is null))
-            return NodeResult.Ok("approve", "Nothing for Antiphon to merge here (no PR, or the code host cannot merge): passed, the merge is left to the author",
+        if (CanSkipMergeGate(kind) && (!walk.Host.Capabilities.CanMerge || walk.Run.Subject.PrNumber is null))
+            return NodeResult.Ok(ApproveOutcome, "Nothing for Antiphon to merge here (no PR, or the code host cannot merge): passed, the merge is left to the author",
                 new GateSkipped(node.Id, repo));
 
         var gate = await walk.Db.ReviewGates.FirstOrDefaultAsync(g => g.RunId == walk.Run.Id && g.NodeId == node.Id
@@ -189,13 +190,20 @@ public static class ReviewDecideSteps
     public static bool IsOptional(WorkflowNode node) =>
         string.Equals(node.StringParam("optional"), "true", StringComparison.OrdinalIgnoreCase);
 
+    private static bool CanSkipMergeGate(ReviewGateKind kind) => kind == ReviewGateKind.MergeGate;
+
+    internal static IReadOnlyList<string> GateOutcomes(WorkflowNode node) =>
+        IsOptional(node) || CanSkipMergeGate(GateKindOf(node)) ? [.. node.Decisions, ApproveOutcome] : node.Decisions;
+
+    internal static IReadOnlyList<string> WaitOutcomes(WorkflowNode node) => node.ListParam("on");
+
     /// <summary>
     /// A wait (design 3.1): parks the run, with no seat held, on the events in <c>on</c>. Refresh turns
     /// code-host state into those events and completes the execution with the event as its outcome.
     /// </summary>
     public static Task<NodeResult> WaitAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var awaits = node.ListParam("on");
+        var awaits = WaitOutcomes(node);
         var park = awaits.Contains("merge")
             ? new ParkState(ReviewRunStatus.AwaitingMerge, ReviewStage.BranchMaintenance, ReviewWaitingOn.Author)
             : new ParkState(ReviewRunStatus.AwaitingFixes, ReviewStage.AwaitingFixes, ReviewWaitingOn.Author);

@@ -64,7 +64,7 @@ public static class ReviewReviewSteps
     {
         var childNodeId = node.StringParam("node") ?? "reviewer";
         var childKind = walk.Workflow.Node(childNodeId)?.Kind ?? ReviewNodeKind.Agent;
-        var groups = ReviewWalk.Output<GroupOutput>(walk.LatestOf("GroupChecks"))?.Groups ?? [];
+        var groups = ReviewWalk.Output<GroupOutput>(walk.LatestOf(ReviewWorkflowSteps.GroupChecks))?.Groups ?? [];
         if (groups.Count == 0)
             return NodeResult.Ok(null, "No reviewer groups: nothing to review");
 
@@ -160,6 +160,8 @@ public static class ReviewReviewSteps
             + string.Join(", ", children.Select(c => $"{c.Group.Key} {ReviewWalk.Output<ReviewerOutput>(c.Child)?.Findings.Count ?? 0}")));
     }
 
+    internal static string CollatedFanOutId(WorkflowNode node) => node.StringParam("from") ?? "review";
+
     /// <summary>
     /// Collate (design 4.8): every reviewer's findings, duplicates collapsed (same file, anchor and
     /// check, keeping the most severe), duplicates of open findings dropped, and each anchor resolved
@@ -167,7 +169,7 @@ public static class ReviewReviewSteps
     /// </summary>
     public static async Task<NodeResult> CollateAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var from = node.StringParam("from") ?? "review";
+        var from = CollatedFanOutId(node);
         var childNodeId = walk.Workflow.Node(from)?.StringParam("node") ?? "reviewer";
         var outputs = walk.Run.Nodes
             .Where(n => n.NodeId == childNodeId && n.Iteration == walk.Iteration.Iteration && n.ItemKey != null && n.Status == ReviewNodeStatus.Succeeded)
@@ -243,7 +245,7 @@ public static class ReviewReviewSteps
     /// </summary>
     public static async Task<NodeResult> VerifyAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var candidates = ReviewWalk.Output<CollateOutput>(walk.LatestOf("CollateFindings"))?.Candidates ?? [];
+        var candidates = ReviewWalk.Output<CollateOutput>(walk.LatestOf(ReviewWorkflowSteps.CollateFindings))?.Candidates ?? [];
         var all = candidates.Select(c => c.Cid).ToList();
         if (candidates.Count == 0)
             return NodeResult.Ok(null, "Nothing to verify", new VerifyOutput([], [], false));
@@ -330,7 +332,7 @@ public static class ReviewReviewSteps
     /// </summary>
     public static async Task<NodeResult> PublishAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct)
     {
-        var collated = ReviewWalk.Output<CollateOutput>(walk.LatestOf("CollateFindings"));
+        var collated = ReviewWalk.Output<CollateOutput>(walk.LatestOf(ReviewWorkflowSteps.CollateFindings));
         var verify = walk.LatestOf("VerifyFindings");
         var keptIds = ReviewWalk.Output<VerifyOutput>(verify)?.Kept ?? collated?.Candidates.Select(c => c.Cid).ToList() ?? [];
         var candidates = (collated?.Candidates ?? []).Where(c => keptIds.Contains(c.Cid)).ToList();

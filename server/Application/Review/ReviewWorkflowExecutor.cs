@@ -275,7 +275,7 @@ public sealed class ReviewWorkflowExecutor(
         // onFailure: continue (Review:Policy:OnFailure or the workflow) turns a failure into a fallback:
         // the run goes on along the node's fallback output, else its unlabelled edge.
         if (result.Kind == NodeResultKind.Failed && walk.ContinuesOnFailure(node))
-            result = new NodeResult(NodeResultKind.Succeeded, node.StringParam("fallback"), "Continued without this step.", result.Output, result.Usage)
+            result = new NodeResult(NodeResultKind.Succeeded, ReviewWorkflowRouting.FailureOutcome(node), "Continued without this step.", result.Output, result.Usage)
             {
                 Degraded = result.Summary,
             };
@@ -369,13 +369,12 @@ public sealed class ReviewWorkflowExecutor(
     {
         var edges = walk.Workflow.Edges.Where(e => e.From == node.Id).ToList();
         var outcome = execution.Outcome;
-        var edge = (outcome is null ? null : edges.FirstOrDefault(e => e.Labels.Contains(outcome, StringComparer.Ordinal)))
-            ?? edges.FirstOrDefault(e => e.Labels.Count == 0);
+        var edge = ReviewWorkflowRouting.NextEdge(edges, outcome);
         if (edge is null)
         {
-            if (outcome is "merge" or "close")
+            if (ReviewWorkflowRouting.TerminalStatus(outcome) is { } status)
             {
-                Finish(walk.Run, outcome == "merge" ? ReviewRunStatus.Merged : ReviewRunStatus.Closed, Now());
+                Finish(walk.Run, status, Now());
                 await SaveAndPublishAsync(walk, ct);
                 return false;
             }

@@ -138,7 +138,8 @@ public sealed class ReviewWalk(IServiceProvider services, AppDbContext db, Revie
     public static string OnFailure(ReviewPolicySettings policy, WorkflowNode node) =>
         ReviewWorkflowPolicy.OnFailure(policy, node).Value;
 
-    public string EntryNodeId => Workflow.Nodes.FirstOrDefault(n => n.Run == EntryRun)?.Id ?? Workflow.Nodes[0].Id;
+    public string EntryNodeId => ReviewWorkflowRouting.Entry(Workflow)?.Id
+        ?? throw new InvalidOperationException($"Workflow '{Workflow.Name}' has no entry node.");
 
     public CodeHostBinding Binding => _binding ??= Services.GetRequiredService<CodeHostRouter>().Resolve(Run.Subject);
 

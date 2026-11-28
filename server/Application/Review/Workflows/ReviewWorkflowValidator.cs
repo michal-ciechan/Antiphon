@@ -1,4 +1,5 @@
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Review.Execution;
 using Antiphon.Server.Domain.Enums;
 
 namespace Antiphon.Server.Application.Review.Workflows;
@@ -61,6 +62,9 @@ public static class ReviewWorkflowValidator
         public const string UnknownChain = "unknown-chain";
         public const string UnsupportedOutput = "unsupported-output";
         public const string AmbiguousRoute = "ambiguous-route";
+        public const string MissingEntry = "missing-entry";
+        public const string MissingSuccessor = "missing-successor";
+        public const string MissingFailureRoute = "missing-failure-route";
     }
 
     public static WorkflowValidation Validate(WorkflowDefinition workflow) =>
@@ -77,6 +81,8 @@ public static class ReviewWorkflowValidator
         ValidateStructure(graph, diagnostics);
         var childIds = workflow.Nodes.Where(node => node.Kind == ReviewNodeKind.FanOut)
             .Select(node => node.StringParam("node")).OfType<string>().ToHashSet(StringComparer.Ordinal);
+        if (graph.Entry is not { } entry || childIds.Contains(entry.Id))
+            diagnostics.Add(Error(Codes.MissingEntry, "A workflow needs an entry node that can run on its own.", []));
 
         foreach (var node in workflow.Nodes)
         {
@@ -89,7 +95,7 @@ public static class ReviewWorkflowValidator
                 continue;
             }
 
-            var contract = findStep(node.Run);
+            var contract = ReviewWorkflowSteps.Control(node.Kind)?.Contract ?? findStep(node.Run);
             switch (node.Kind)
             {
                 case ReviewNodeKind.Agent when childIds.Contains(node.Id) && node.Run is null:
@@ -108,6 +114,8 @@ public static class ReviewWorkflowValidator
             }
 
             ValidateParameters(graph, node, contract, chains, continuesOnFailure, diagnostics);
+            if (!childIds.Contains(node.Id) && contract?.Kind == node.Kind)
+                ValidateRequiredRoutes(graph, node, contract, continuesOnFailure, diagnostics);
         }
 
         var routes = new HashSet<(string NodeId, string? Label)>();
@@ -178,7 +186,7 @@ public static class ReviewWorkflowValidator
                 || (node.Params.ContainsKey("optional") && !bool.TryParse(node.StringParam("optional"), out _))
                 || (node.Params.ContainsKey("gateKind") && (!Enum.TryParse<ReviewGateKind>(node.StringParam("gateKind"), true, out var kind)
                     || !Enum.IsDefined(kind))),
-            ReviewNodeKind.Wait => node.ListParam("on") is var events && (events.Count == 0
+            ReviewNodeKind.Wait => ReviewDecideSteps.WaitOutcomes(node) is var events && (events.Count == 0
                 || events.Any(evt => evt is not ("push" or "merge" or "close" or "base-moved" or "recheck" or "update-requested"))),
             ReviewNodeKind.FanOut => (node.StringParam("over") is { } over && over != "groups")
                 || (graph.Node(node.StringParam("node") ?? "") is { } child && (child.Kind != ReviewNodeKind.Agent || child.Run is not null)),
@@ -196,10 +204,6 @@ public static class ReviewWorkflowValidator
         Func<WorkflowNode, bool>? continuesOnFailure,
         DiagnosticList diagnostics)
     {
-        if (node.Kind == ReviewNodeKind.Join && graph.Node(node.StringParam("from") ?? "review") is { } joined
-            && joined.Kind != ReviewNodeKind.FanOut)
-            diagnostics.Add(Error(Codes.InvalidParameter, $"Join '{node.Id}' must gather a fan-out.", [node.Id]));
-
         if (node.Params.TryGetValue("chain", out var authoredChain) && authoredChain is not (null or string))
             diagnostics.Add(Error(Codes.InvalidParameter, $"Node '{node.Id}' needs a text chain name.", [node.Id]));
         else if (contract?.Chain is { } chain && chains is not null && !chains.Contains(chain.Family, chain.Resolve(node).Value))
@@ -211,7 +215,7 @@ public static class ReviewWorkflowValidator
         if (node.Params.ContainsKey("fallback") && (node.Params["fallback"] is not string || string.IsNullOrWhiteSpace(fallback)))
             diagnostics.Add(Error(Codes.InvalidParameter, $"Node '{node.Id}' needs a nonempty fallback label.", [node.Id]));
 
-        if (contract is not null)
+        if (contract is { ControlOutcomes: null })
         {
             foreach (var output in node.ListParam("outputs").Distinct(StringComparer.Ordinal))
             {
@@ -245,18 +249,55 @@ public static class ReviewWorkflowValidator
         }
     }
 
+    private static void ValidateRequiredRoutes(
+        ValidationGraph graph,
+        WorkflowNode node,
+        ReviewStepContract contract,
+        Func<WorkflowNode, bool>? continuesOnFailure,
+        DiagnosticList diagnostics)
+    {
+        var edges = graph.Outgoing(node.Id);
+        bool HasRoute(string? outcome) => ReviewWorkflowRouting.NextEdge(edges, outcome) is not null
+            || ReviewWorkflowRouting.TerminalStatus(outcome) is not null;
+
+        foreach (var outcome in contract.Outcomes(node).Distinct(StringComparer.Ordinal))
+        {
+            if (!HasRoute(outcome))
+                diagnostics.Add(Error(Codes.MissingSuccessor,
+                    $"Node '{node.Id}' needs a route for '{outcome ?? "the unlabelled outcome"}'.", [node.Id]));
+        }
+
+        if (ContinuesOnFailure(node, continuesOnFailure) && !HasRoute(ReviewWorkflowRouting.FailureOutcome(node)))
+            diagnostics.Add(Error(Codes.MissingFailureRoute,
+                $"Node '{node.Id}' needs a route after a continued failure.", [node.Id]));
+
+        foreach (var step in contract.RequiredSteps ?? [])
+        {
+            if (!graph.HasPredecessor(node.Id, step, byStep: true))
+                diagnostics.Add(Error(Codes.UnavailableInput, $"Step '{step}' must precede '{node.Id}' on every path.", [node.Id]));
+        }
+
+        if (node.Run == ReviewWorkflowSteps.CollateFindings)
+        {
+            var fanOut = ReviewReviewSteps.CollatedFanOutId(node);
+            if (graph.Node(fanOut)?.Kind != ReviewNodeKind.FanOut)
+                diagnostics.Add(Error(Codes.InvalidParameter, $"Join '{node.Id}' must gather a fan-out.", [node.Id]));
+            else if (!graph.HasPredecessor(node.Id, fanOut, byStep: false))
+                diagnostics.Add(Error(Codes.UnavailableInput, $"Fan-out '{fanOut}' must precede '{node.Id}' on every path.", [node.Id]));
+        }
+    }
+
+    private static bool ContinuesOnFailure(WorkflowNode node, Func<WorkflowNode, bool>? resolve) =>
+        resolve?.Invoke(node) ?? node.StringParam("onFailure") == "continue";
+
     private static bool ProducerAvailable(
         ValidationGraph graph, WorkflowNode producer, WorkflowNode consumer, Func<WorkflowNode, bool>? continuesOnFailure)
     {
-        if (producer.Id == consumer.Id || graph.Definition.Nodes.FirstOrDefault() is not { } first)
+        if (producer.Id == consumer.Id || graph.Entry?.Id is not { } entry)
             return false;
 
-        var entry = graph.Definition.Nodes.FirstOrDefault(node => node.Run == "Intake")?.Id ?? first.Id;
-        var producerCanFail = continuesOnFailure?.Invoke(producer) ?? producer.StringParam("onFailure") == "continue";
-        var fallback = producer.StringParam("fallback");
-        var failedExit = producerCanFail
-            ? graph.Outgoing(producer.Id).FirstOrDefault(edge => fallback is not null && edge.Labels.Contains(fallback, StringComparer.Ordinal))
-                ?? graph.Outgoing(producer.Id).FirstOrDefault(edge => edge.Labels.Count == 0)
+        var failedExit = ContinuesOnFailure(producer, continuesOnFailure)
+            ? ReviewWorkflowRouting.NextEdge(graph.Outgoing(producer.Id), ReviewWorkflowRouting.FailureOutcome(producer))
             : null;
         var visited = new HashSet<(string Id, bool Produced)>();
         var pending = new Stack<(string Id, bool Produced)>();
@@ -352,8 +393,8 @@ public static class ReviewWorkflowValidator
             {
                 var allowed = source.Kind switch
                 {
-                    ReviewNodeKind.Gate => source.Decisions,
-                    ReviewNodeKind.Wait => source.ListParam("on"),
+                    ReviewNodeKind.Gate => ReviewDecideSteps.GateOutcomes(source),
+                    ReviewNodeKind.Wait => ReviewDecideSteps.WaitOutcomes(source),
                     _ => source.ListParam("outputs"),
                 };
                 if (allowed.Count > 0)
@@ -488,9 +529,48 @@ public static class ReviewWorkflowValidator
             .GroupBy(edge => edge.From, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
 
+        private readonly Dictionary<(string Producer, bool ByStep), HashSet<string>> _reachableWithout = [];
+        private HashSet<string>? _reachable;
+
         public WorkflowDefinition Definition { get; } = definition;
+        public WorkflowNode? Entry { get; } = ReviewWorkflowRouting.Entry(definition);
         public WorkflowNode? Node(string id) => _nodes.GetValueOrDefault(id);
         public IReadOnlyList<WorkflowEdge> Outgoing(string id) => _outgoing.GetValueOrDefault(id) ?? [];
+
+        public bool HasPredecessor(string consumer, string producer, bool byStep)
+        {
+            _reachable ??= Reachable(_ => false);
+            if (!_reachable.Contains(consumer))
+                return false;
+
+            if (!_reachableWithout.TryGetValue((producer, byStep), out var bypass))
+            {
+                bypass = Reachable(id => byStep ? Node(id)?.Run == producer : id == producer);
+                _reachableWithout.Add((producer, byStep), bypass);
+            }
+
+            return !bypass.Contains(consumer);
+        }
+
+        private HashSet<string> Reachable(Func<string, bool> stopAfter)
+        {
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Stack<string>();
+            if (Entry is { } entry)
+                pending.Push(entry.Id);
+            while (pending.TryPop(out var id))
+            {
+                if (!visited.Add(id) || stopAfter(id))
+                    continue;
+                foreach (var edge in Outgoing(id))
+                {
+                    pending.Push(edge.To);
+                    if (edge.Overflow is { } overflow)
+                        pending.Push(overflow);
+                }
+            }
+            return visited;
+        }
     }
 
     private sealed class DiagnosticList
