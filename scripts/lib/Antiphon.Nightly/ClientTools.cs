@@ -17,6 +17,7 @@ using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 
 namespace Antiphon.Nightly
 {
@@ -66,11 +67,13 @@ namespace Antiphon.Nightly
             }
             process.OutputDataReceived += (sender, e) => Line(e.Data);
             process.ErrorDataReceived += (sender, e) => Line(e.Data);
-            if (!process.Start()) throw new InvalidOperationException("the child did not start: " + launch.FileName);
+            using (ClientPhase.Start("client child start"))
+                if (!process.Start()) throw new InvalidOperationException("the child did not start: " + launch.FileName);
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             // Without a timeout WaitForExit also waits for the redirected streams to reach their end.
-            process.WaitForExit();
+            using (ClientPhase.Start("client child exit and output drain"))
+                process.WaitForExit();
             return process.ExitCode;
         }
 
@@ -192,22 +195,26 @@ namespace Antiphon.Nightly
             var lockPath = Path.Combine(ClientTools.Logs(files, repoRoot), LockName);
             var deadline = host.UtcNow + LockWait;
             Stream held = null;
-            while (held == null)
+            using (ClientPhase.Start("client npm lock wait"))
             {
-                try
+                while (held == null)
                 {
-                    held = files.File.Open(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-                }
-                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
-                {
-                    if (host.UtcNow > deadline)
+                    try
                     {
-                        host.Out.WriteLine("timed out waiting for the client npm ci lock at " + lockPath);
-                        return 1;
+                        held = files.File.Open(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                     }
-                    host.Sleep(LockRetry);
+                    catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                    {
+                        if (host.UtcNow > deadline)
+                        {
+                            host.Out.WriteLine("timed out waiting for the client npm ci lock at " + lockPath);
+                            return 1;
+                        }
+                        host.Sleep(LockRetry);
+                    }
                 }
             }
+            using (ClientPhase.Start("client npm lock held"))
             using (held)
             {
                 // A second look: the caller that held the lock before this one may have installed them.
@@ -215,9 +222,56 @@ namespace Antiphon.Nightly
                 host.Out.WriteLine("client dependencies are not installed - installing once under the npm ci lock.");
                 var clientDir = Path.Combine(repoRoot, "client");
                 var verb = files.File.Exists(Path.Combine(clientDir, "package-lock.json")) ? "ci" : "install";
-                var code = ClientTools.Invoke(tools, () => ClientTools.Npm(host, clientDir, verb), host.Out.WriteLine);
+                int code;
+                using (ClientPhase.Start("client npm " + verb))
+                    code = ClientTools.Invoke(tools, () => ClientTools.Npm(host, clientDir, verb), host.Out.WriteLine);
                 if (code != 0) host.Out.WriteLine("npm " + verb + " exited with code " + ClientTools.Number(code) + ".");
                 return code;
+            }
+        }
+    }
+
+    // Local trace records use the test-trace summary's span schema. Names are fixed by the
+    // launcher and carry neither command arguments nor output.
+    internal sealed class ClientPhase : IDisposable
+    {
+        private static readonly object WriteGate = new();
+        private readonly Activity _activity;
+        private readonly string _path;
+
+        private ClientPhase(string name, string directory)
+        {
+            _path = Path.Combine(directory, "test-trace-client-" + Environment.ProcessId + ".jsonl");
+            _activity = new Activity(name).SetIdFormat(ActivityIdFormat.W3C).Start();
+        }
+
+        public static ClientPhase Start(string name)
+        {
+            var directory = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TRACE_DIR");
+            return string.IsNullOrWhiteSpace(directory) ? null : new ClientPhase(name, directory);
+        }
+
+        public void Dispose()
+        {
+            _activity.Stop();
+            try
+            {
+                var record = JsonSerializer.Serialize(new
+                {
+                    TraceId = _activity.TraceId.ToHexString(),
+                    SpanId = _activity.SpanId.ToHexString(),
+                    ParentId = _activity.ParentSpanId == default ? null : _activity.ParentSpanId.ToHexString(),
+                    Source = "Antiphon.Nightly",
+                    Name = _activity.DisplayName,
+                    Start = _activity.StartTimeUtc,
+                    DurationMs = _activity.Duration.TotalMilliseconds,
+                    Pid = Environment.ProcessId,
+                });
+                lock (WriteGate) File.AppendAllText(_path, record + "\n");
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine("client trace write failed: " + ex.GetType().Name);
             }
         }
     }

@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { BoardColumnDto, BoardDetailDto, CardDto } from '../../api/boards'
 import snapshot from '../../test/fixtures/antiphon-board-2026-08-13.json'

@@ -525,6 +525,9 @@ namespace Antiphon.Nightly
             if (isClient)
             {
                 // The client suite is the CLI's test-client command on the checkout under test (its gates, then Vitest).
+                var clientTraceDirectory = Path.Combine(c.LogRoot, suiteId + "-" + chunkId + "-execution");
+                CreateChunkDirectory(host, clientTraceDirectory);
+                envMap["ANTIPHON_TEST_TRACE_DIR"] = clientTraceDirectory;
                 var cli = string.IsNullOrWhiteSpace(c.CliPath) ? System.Reflection.Assembly.GetEntryAssembly()?.Location ?? "" : c.CliPath;
                 if (string.IsNullOrWhiteSpace(cli)) throw new NightlyRefusal("client-cli-unresolved");
                 run = Launch(OwnedLaunch("dotnet", new[] { "exec", cli, "test-client", "--repo-root", c.RepoRoot, "--json-result-path", jsonPath }, c.RepoRoot, 1200000, envMap, logPath));

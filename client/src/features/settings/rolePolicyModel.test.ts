@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { RolePolicyRowDto } from '../../api/rolePolicy'
 import type { RoutingPinDto } from '../../api/routingPins'

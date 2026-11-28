@@ -1740,9 +1740,9 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 70,
+      "classes": 72,
       "reason": "cap",
-      "owed": 45,
+      "owed": 47,
       "first": [
         "LandNonCodeSkipTests",
         "LibGit2VsGitInspectionTests",
@@ -29818,6 +29818,8 @@
     {
       "path": "tests/Shared/TestTrace.cs",
       "classes": [
+        "AgentTaskLandActiveSourceClaimTests",
+        "C1514HostLoadNativeOverheadTests",
         "ChannelOutboundUnifiedTransportTests",
         "CodexCliObservationTests",
         "HerdrLabelFollowSchedulingTests",
@@ -29828,6 +29830,8 @@
     {
       "path": "tests/Shared/TestTraceOtlp.cs",
       "classes": [
+        "AgentTaskLandActiveSourceClaimTests",
+        "C1514HostLoadNativeOverheadTests",
         "ChannelOutboundUnifiedTransportTests",
         "CodexCliObservationTests",
         "HerdrLabelFollowSchedulingTests",

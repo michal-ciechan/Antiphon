@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { CardDto } from '../../api/boards'
 import { QUADRANT_ORDER } from '../board/cardRanking'

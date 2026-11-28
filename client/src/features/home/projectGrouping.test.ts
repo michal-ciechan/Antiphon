@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { AgentSummaryDto } from '../../api/agents'
 import type { AgentTaskSummaryDto } from '../../api/agentTasks'

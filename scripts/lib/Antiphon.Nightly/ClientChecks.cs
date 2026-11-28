@@ -69,6 +69,7 @@ namespace Antiphon.Nightly
         /// <summary>Lints, prints the verdict and returns eslint's exit code (1 when it is not installed or the file is missing).</summary>
         public static int Run(ClientLintOptions options, NightlyHost host, IFileSystem files, ClientToolRunner tools)
         {
+            using var phase = ClientPhase.Start("client lint");
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
             if (files == null) throw new ArgumentNullException(nameof(files));
@@ -110,8 +111,8 @@ namespace Antiphon.Nightly
                 var cache = System.IO.Path.Combine(clientDir, "node_modules", ".tmp", "eslintcache");
                 files.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(cache));
                 var arguments = new List<string> { eslint, ".", "--max-warnings", "0", "--cache", "--cache-strategy", "content", "--cache-location", cache };
-                // Bound the Windows cold full-client lint to two workers.
-                if (host.Probe.Platform() == "windows") arguments.AddRange(new[] { "--concurrency", "2" });
+                // Four workers gave the shortest cold Windows gate in the 2/3/4/6-worker sweep.
+                if (host.Probe.Platform() == "windows") arguments.AddRange(new[] { "--concurrency", "4" });
                 launch = new ClientToolLaunch("node", arguments, clientDir);
             }
             if (!ClientGate.Tee(files, logFile, false, host, tools, launch, out var code)) return 1;
@@ -155,6 +156,7 @@ namespace Antiphon.Nightly
         /// <summary>Typechecks, prints the verdict and returns the gate code (1 when tsc is not installed).</summary>
         public static int Run(ClientTypecheckOptions options, NightlyHost host, IFileSystem files, ClientToolRunner tools)
         {
+            using var phase = ClientPhase.Start("client typecheck");
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
             if (files == null) throw new ArgumentNullException(nameof(files));
@@ -188,6 +190,7 @@ namespace Antiphon.Nightly
                 for (var i = 0; i < Projects.Count; i++)
                 {
                     var project = Projects[i];
+                    using var projectPhase = ClientPhase.Start("client typecheck " + project);
                     var launch = new ClientToolLaunch("node", new[]
                     {
                         tsc, "-p", project, "--pretty", "false", "--noEmit", "--incremental",
@@ -277,6 +280,7 @@ namespace Antiphon.Nightly
         /// <summary>Installs what is missing, runs the gates and Vitest, prints the verdict and returns the first failing code.</summary>
         public static int Run(ClientTestsOptions options, NightlyHost host, IFileSystem files, ClientToolRunner tools)
         {
+            using var phase = ClientPhase.Start("client launcher");
             if (options == null) throw new ArgumentNullException(nameof(options));
             if (host == null) throw new ArgumentNullException(nameof(host));
             if (files == null) throw new ArgumentNullException(nameof(files));
@@ -287,8 +291,12 @@ namespace Antiphon.Nightly
             var required = new[] { vitest, ClientTools.Tsc(root), ClientTools.Eslint(root) };
             // A fresh linked worktree has no client/node_modules: install once here instead of failing the suite (the
             // install is somebody else's job no longer). Typecheck and lint share this one install (CARD-1393).
-            if (!required.All(files.File.Exists))
+            bool installed;
+            using (ClientPhase.Start("client dependency check"))
+                installed = required.All(files.File.Exists);
+            if (!installed)
             {
+                using var installPhase = ClientPhase.Start("client dependency install");
                 host.Out.WriteLine("client dependencies are not installed - installing once for vitest, tsc and eslint.");
                 var installCode = ClientNpmInstall.Install(root, required, host, files, tools);
                 if (installCode != 0) host.Out.WriteLine("npm ci exited with code " + ClientTools.Number(installCode) + ".");
@@ -320,7 +328,9 @@ namespace Antiphon.Nightly
             if (!string.IsNullOrWhiteSpace(options.JsonResultPath))
                 arguments.AddRange(new[] { "--reporter=default", "--reporter=json", "--outputFile", options.JsonResultPath });
             arguments.AddRange(options.Forward ?? Array.Empty<string>());
-            if (!ClientGate.Tee(files, logFile, false, host, tools, new ClientToolLaunch("node", arguments, clientDir), out var code)) return 1;
+            int code;
+            using (ClientPhase.Start("client Vitest"))
+                if (!ClientGate.Tee(files, logFile, false, host, tools, new ClientToolLaunch("node", arguments, clientDir), out code)) return 1;
             ClientGate.Footer(host, "CLIENT TESTS EXIT CODE: ", code, logFile);
             return code;
         }

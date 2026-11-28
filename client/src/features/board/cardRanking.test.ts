@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import table from './cardRanking.table.json'
 import { effectiveUrgency, quadrant, rank, type CardImportance, type CardUrgency } from './cardRanking'
