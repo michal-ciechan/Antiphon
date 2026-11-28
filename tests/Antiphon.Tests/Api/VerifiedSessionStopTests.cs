@@ -26,6 +26,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using Shouldly;
 using TUnit.Core;
@@ -231,7 +232,11 @@ public sealed class VerifiedSessionStopTests
         builder.Services.AddSingleton(harness.Runtime);
         builder.Services.AddSingleton(harness.Queue);
         builder.Services.AddSingleton(Options.Create(new AgentSessionSettings()));
-        builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
+        // The dispatcher barrier coordinates PostgreSQL locks. Its duration says nothing
+        // about runner I/O, so the exercise must not race the production read deadline.
+        builder.Services.AddSingleton<TimeProvider>(dispatchRace
+            ? new FakeTimeProvider(TimeProvider.System.GetUtcNow())
+            : TimeProvider.System);
         builder.Services.AddSingleton<SessionTerminalAttachments>();
         builder.Services.AddScoped<VerifiedSessionStopService>();
         if (browserRace)
@@ -381,20 +386,25 @@ public sealed class VerifiedSessionStopTests
                 pinnedAgentId: agent.Id, kind: AgentKind.Codex, connectionString: schema.ConnectionString);
             var (_, _, provider) = AgentTaskPoolTests.CreateHarness(connectionString: schema.ConnectionString);
             await using var owner = provider;
+            await using (var warmup = provider.CreateAsyncScope())
+            {
+                var warmDb = warmup.ServiceProvider.GetRequiredService<AppDbContext>();
+                await warmDb.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == task.Id, bound.Token);
+            }
+            await using var monitor = new NpgsqlConnection(schema.ConnectionString);
+            await monitor.OpenAsync(bound.Token);
             var stop = client.PostAsync(path, null, bound.Token);
             try
             {
                 await fenceEntered.Task.WaitAsync(bound.Token);
                 // Probe an actual PostgreSQL row conflict from the real dispatcher, not a timing
                 // assumption about when its continuation reaches FOR KEY SHARE.
-                var dispatch = TryWarmClaimAsync(provider, task.Id, bound.Token);
+                var claimant = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var dispatch = TryWarmClaimAsync(provider, task.Id, bound.Token, claimant);
                 try
                 {
-                    await using var monitor = new NpgsqlConnection(schema.ConnectionString);
-                    await monitor.OpenAsync(bound.Token);
-                    await using var query = new NpgsqlCommand(
-                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() "
-                        + "AND query LIKE '%FOR KEY SHARE%' AND cardinality(pg_blocking_pids(pid)) > 0)", monitor);
+                    await using var query = new NpgsqlCommand("SELECT cardinality(pg_blocking_pids(@claimant)) > 0", monitor);
+                    query.Parameters.AddWithValue("claimant", await claimant.Task.WaitAsync(bound.Token));
                     bool waiting;
                     do
                     {
@@ -500,12 +510,13 @@ public sealed class VerifiedSessionStopTests
     }
 
     private static async Task<AgentTaskDispatcher.ReuseOutcome> TryWarmClaimAsync(
-        IServiceProvider provider, Guid taskId, CancellationToken ct)
+        IServiceProvider provider, Guid taskId, CancellationToken ct, TaskCompletionSource<int>? claimant = null)
     {
         await using var scope = provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var dispatcher = scope.ServiceProvider.GetRequiredService<AgentTaskDispatcher>();
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        claimant?.SetResult(((NpgsqlConnection)db.Database.GetDbConnection()).ProcessID);
         var task = await db.AgentTasks.SingleAsync(t => t.Id == taskId, ct);
         var outcome = await dispatcher.TryReuseWarmAgentAsync(task, DateTime.UtcNow, ct);
         if (outcome == AgentTaskDispatcher.ReuseOutcome.Reused)
