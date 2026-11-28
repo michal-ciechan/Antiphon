@@ -410,6 +410,48 @@ public sealed class CheckpointSourceExecutionTests : CheckpointTestBase
     }
 
     [Test]
+    public async Task C2103_project_row_requires_verified_build_source()
+    {
+        var source = Observe(Sha, 0);
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+        const string build = "bin-c2103-source";
+        const string test = "Antiphon.Tests.ExampleSurfaceTests.case";
+        var manifest = new CheckpointManifest
+        {
+            Builds = [new BuildSpec { Id = build, Project = "sample", OutputPath = build + "/" }],
+            Checkpoints = [new CheckpointSpec
+            {
+                Id = "CP-1", After = ["all"], Build = build,
+                Filter = "/*/*/ExampleSurfaceTests/case", MinExecuted = 1, EstimatedMinutes = 1,
+            }],
+        };
+        var run = CheckpointApp.CreateRun(manifest, new RunRequest
+        {
+            Commit = Sha, Branch = "fixture", KeepOutputs = true, Slots = "off",
+        }, repo, new CheckpointApp.Runtime { SourceCapture = _ => source });
+        var driver = new FakeDriver();
+        driver.When(CheckpointFixtures.IsRun, (request, _) =>
+        {
+            CheckpointFixtures.WriteResults(CheckpointFixtures.TrxFile(request), (test, "Passed"));
+            return Task.FromResult(new DriverResult(0, "", ""));
+        });
+        (await CheckpointApp.ExecuteAsync(run, CancellationToken.None, Runtime(driver, _ => source))).ShouldBe(0);
+        (await ValidateFileWithVerbAsync(Path.Combine(run, "report.json"))).Exit.ShouldBe(0, "verified-project");
+
+        var report = Read(run);
+        var row = report.Rows.Single();
+        row.Source.BuildSource.ShouldBe("verified");
+        report.Source.BuildSource = row.Source.BuildSource = "notApplicable";
+        row.Line = row.Line!.Replace("buildSource=verified", "buildSource=notApplicable", StringComparison.Ordinal);
+        var refusal = await ValidateWithVerbAsync(report);
+        refusal.Exit.ShouldBe(2, "project-not-applicable");
+        refusal.Output.ShouldContain("reason=row_source_ineligible", Case.Sensitive, "project-not-applicable");
+        (await ValidateWithVerbAsync(ValidReport())).Exit.ShouldBe(0, "command-not-applicable");
+    }
+
+    [Test]
     public async Task validators_refuse_changed_count_tokens()
     {
         var report = CountReport();
