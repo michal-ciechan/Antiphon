@@ -620,8 +620,10 @@ public sealed partial class ChannelInboundRecoveryTests
                 await using var db = Db(h.ConnectionString);
                 var sequence = (await db.TranscriptEntries.Where(t => t.AgentSessionId == sessionId)
                     .MaxAsync(t => (long?)t.Sequence) ?? 0) + 1;
+                // The fake runner and the queue share the fixture clock. A wall-clock
+                // receipt can predate the simulated generation or the original attempt.
                 var record = new SessionRunnerTranscriptEvent(sessionId, sequence, TranscriptKinds.UserPrompt,
-                    Guid.NewGuid().ToString("N"), null, DateTimeOffset.UtcNow, "user", submitted,
+                    Guid.NewGuid().ToString("N"), null, h.Clock.GetUtcNow(), "user", submitted,
                     null, null, null, null, null);
                 h.Runner.SetTranscript(new SessionRunnerTranscriptDto(sessionId, [record], sequence));
                 await h.Runtime.SyncTranscriptAsync(sessionId, Ct);
@@ -1997,10 +1999,11 @@ public sealed partial class ChannelInboundRecoveryTests
     public async Task C593_Restart_DrainsToEligibleAndBusyRecipients()
     {
         await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        var clock = new ScaledTimeProvider(20);
         Guid agent; Guid session; string chat; string native;
         await using (var h = await CreateHarnessAsync(new()
         {
-            ConnectionString = schema.ConnectionString, ClockSpeed = 20,
+            ConnectionString = schema.ConnectionString, TimeProvider = clock,
             Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         }))
         {
@@ -2037,7 +2040,7 @@ public sealed partial class ChannelInboundRecoveryTests
         await using var recovered = await CreateHarnessAsync(new()
         {
             ConnectionString = schema.ConnectionString, AttachSessionId = session, AttachAgentId = agent,
-            Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
+            TimeProvider = clock, Bridge = Settings(), AlwaysOn = false, PreserveDatabaseOnDispose = true,
         });
         await InstallTranscriptReceipt(recovered);
         var recoveredBridge = Bridge(recovered);
