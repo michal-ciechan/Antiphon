@@ -116,7 +116,7 @@ public class ClaudeCliTransportTests
     }
 
     [Test]
-    public void The_cli_result_is_parsed_and_an_error_carries_the_cli_text()
+    public void The_cli_result_is_parsed_and_an_error_carries_a_safe_reason()
     {
         const string ok = """
             {"type":"result","subtype":"success","is_error":false,"result":"pong","total_cost_usd":0.0006598900000000001,
@@ -130,8 +130,10 @@ public class ClaudeCliTransportTests
             """{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login","api_error_status":null}""", ""));
         failed.Message.ShouldContain("Not logged in");
         failed.Message.ShouldContain("exit 1");
-        Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(2, "", "error: unknown option '--bogus'"))
-            .Message.ShouldContain("unknown option '--bogus'");
+        var unknownOption = Should.Throw<ClaudeCliException>(() => ClaudeCliProcess.Parse(2, "", "error: unknown option '--bogus'"));
+        unknownOption.Message.ShouldContain("CLI reported an unknown option");
+        unknownOption.Message.ShouldContain("exit 2");
+        unknownOption.Message.ShouldNotContain("--bogus");
 
         ClaudeCliProcess.Arguments(new ClaudeCliRequest("p", "haiku", [], ".", TimeSpan.FromMinutes(1)))
             .ShouldBe(["-p", "--model", "haiku", "--output-format", "json", "--tools", "", "--setting-sources", "", "--no-session-persistence",

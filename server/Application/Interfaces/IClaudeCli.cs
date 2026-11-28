@@ -8,8 +8,8 @@ namespace Antiphon.Server.Application.Interfaces;
 public interface IClaudeCli
 {
     /// <summary>
-    /// Runs <c>claude -p</c> once. Throws <see cref="ClaudeCliException"/> for a non-zero exit, an
-    /// <c>is_error</c> result, unparseable output or the request's timeout (the process tree is killed),
+    /// Runs <c>claude -p</c> once. Throws <see cref="ClaudeCliException"/> for launch or authentication
+    /// failures, a non-zero exit, an <c>is_error</c> result, unparseable output or the request's timeout,
     /// and <see cref="OperationCanceledException"/> when <paramref name="ct"/> is cancelled (also killed).
     /// </summary>
     Task<ClaudeCliResult> RunAsync(ClaudeCliRequest request, CancellationToken ct);
@@ -28,11 +28,25 @@ public sealed record ClaudeCliRequest(string Prompt, string Model, IReadOnlyList
 /// </summary>
 public sealed record ClaudeCliResult(string Text, string Model, long InputTokens, long OutputTokens, decimal CostUsd);
 
-/// <summary>A <c>claude -p</c> call failed. The message carries the CLI's error text, never the prompt.</summary>
-public sealed class ClaudeCliException(string message, bool timedOut = false) : Exception(message)
+public enum ClaudeCliFailureKind
 {
-    /// <summary>The call ran past its timeout and the process tree was killed.</summary>
-    public bool TimedOut { get; } = timedOut;
+    Unavailable,
+    Start,
+    Authentication,
+    Exit,
+    Timeout,
+}
+
+/// <summary>A <c>claude -p</c> call failed. Its message is suitable for the review node summary.</summary>
+public sealed class ClaudeCliException(string message, ClaudeCliFailureKind kind = ClaudeCliFailureKind.Unavailable) : Exception(message)
+{
+    public ClaudeCliException(string message, bool timedOut)
+        : this(message, timedOut ? ClaudeCliFailureKind.Timeout : ClaudeCliFailureKind.Unavailable)
+    {
+    }
+
+    public ClaudeCliFailureKind Kind { get; } = kind;
+    public bool TimedOut => Kind == ClaudeCliFailureKind.Timeout;
 }
 
 /// <summary>

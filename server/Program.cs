@@ -13,6 +13,7 @@ using Antiphon.Resilience;
 using Antiphon.Server.Infrastructure.Resilience;
 using Serilog;
 using Antiphon.Messaging.Client;
+using Antiphon.Server.Api;
 using Antiphon.Server.Api.Endpoints;
 using Antiphon.Server.Api.Middleware;
 using Antiphon.Server.Application.Interfaces;
@@ -38,6 +39,16 @@ using Antiphon.Server.Infrastructure.Security;
 using Antiphon.Server.Infrastructure.Supervision;
 using Antiphon.Server.Infrastructure.WorkspaceHooks;
 using Antiphon.Server.Infrastructure.WorkflowDefinitions;
+
+const string listReviewChains = "--list-review-chains";
+if (args.Contains(listReviewChains, StringComparer.Ordinal))
+{
+    var previewBuilder = WebApplication.CreateBuilder(args.Where(arg => arg != listReviewChains).ToArray());
+    previewBuilder.Services.AddReviewChainOptions(previewBuilder.Configuration);
+    using var preview = previewBuilder.Build();
+    ReviewChainRegistration.WriteEffectiveReviewChains(preview.Services, Console.Out);
+    return;
+}
 
 // Startup writes PROCESS-GLOBAL state: Serilog's static Log.Logger. WebApplicationFactory runs
 // this entry point once per factory, and the test assembly holds several of them (the shared
@@ -202,18 +213,7 @@ try
                 ? Microsoft.AspNetCore.Http.CookieSecurePolicy.Always
                 : Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest;
         });
-    builder.Services.AddOptions<ReviewDecisionSettings>()
-        .Bind(builder.Configuration.GetSection(ReviewDecisionSettings.SectionName))
-        .PostConfigure(s =>
-        {
-            s.ApplyDefaults();
-            // A provider names its key by configuration key only; the value never reaches a log.
-            foreach (var provider in s.Providers.Values)
-            {
-                if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
-                    provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
-            }
-        });
+    builder.Services.AddReviewChainOptions(builder.Configuration);
     builder.Services.AddOptions<ReviewCodeHostSettings>()
         .Bind(builder.Configuration.GetSection(ReviewCodeHostSettings.SectionName))
         .PostConfigure(s =>
@@ -234,20 +234,6 @@ try
         .Validate(s => ReviewAgentTransports.IsKnown(s.Transport),
             $"{ReviewAgentSettings.SectionName}:Transport must be '{ReviewAgentTransports.Delegation}' (the default) or '{ReviewAgentTransports.Cli}'.")
         .ValidateOnStart();
-    builder.Services.AddOptions<ReviewCompletionSettings>()
-        .Bind(builder.Configuration.GetSection(ReviewCompletionSettings.SectionName))
-        .PostConfigure(s =>
-        {
-            s.ApplyDefaultProviders();
-            // A provider names its key by configuration key only; the value never reaches a log.
-            foreach (var provider in s.Providers.Values)
-            {
-                if (string.IsNullOrEmpty(provider.ApiKey) && !string.IsNullOrWhiteSpace(provider.ApiKeyConfigKey))
-                    provider.ApiKey = builder.Configuration[provider.ApiKeyConfigKey];
-            }
-
-            s.ApplyDefaultChain();
-        });
     builder.Services.Configure<ReviewPolicySettings>(builder.Configuration.GetSection(ReviewPolicySettings.SectionName));
     builder.Services.Configure<ReviewPollingSettings>(builder.Configuration.GetSection(ReviewPollingSettings.SectionName));
     builder.Services.Configure<SessionRunnerSettings>(builder.Configuration.GetSection("SessionRunner"));

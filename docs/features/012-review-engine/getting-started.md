@@ -274,14 +274,22 @@ example `claude` logged in to a Claude subscription). There is no API key to set
 
 ### 5.2 Decisions and completions
 
-Each call goes to a **chain**: a list of providers tried in order. A provider moves on to the next
-entry when it fails, refuses a question, or answers below its `ConfidenceThreshold`. Chain entries
+Each call goes to a **chain**: a list of providers tried in order. The chain advances when a provider
+is unavailable, times out, refuses a question, or answers below its `ConfidenceThreshold`. A
+provider rejection stops the chain. Chain entries
 take a `Transport`:
 - `Http` (the default) for API providers;
 - `OneShot` for `claude-cli`;
 - `Seat` for delegated providers.
 
 The workflow uses the chains `decisions-default` and `completions-cheap`.
+
+Before a restart, run `dotnet Antiphon.Server.dll --list-review-chains` from the candidate
+server's content root with the same environment and configuration arguments as the service.
+It prints the effective decision and completion chains, entry indexes, provider names,
+transports and dialects, then exits before starting the server. If an existing `OneShot` entry
+uses an HTTP provider dialect, the server warns at startup and keeps serving through that HTTP
+adapter. Set the entry to `Transport: Http` to match the provider.
 
 **Defaults.** With no decisions configured, the server adds `jev` (with no base URL) and three
 placeholder seat providers, and none of these can answer yet. **Configuring any decisions provider
@@ -297,10 +305,12 @@ built-in providers are always present, and `completions-cheap` is built from whi
 
 So the shortest path to verification without the CLI is to set `Review:Secrets:AnthropicApiKey`.
 
-**`claude-cli`** (decisions or completions) needs only a `Model` (`haiku`, `sonnet`, or a full model
-id). It has no URL or key, and runs on the server machine's Claude Code sign-in. Give decisions a
-`TimeoutSeconds` of 120: the default of 30 is too short for a cold `claude -p` start. Its
-probabilities are not calibrated, so keep its `ConfidenceThreshold` at 0.
+**`claude-cli`** (decisions or completions) uses a `Model` (`haiku`, `sonnet`, or a full model id)
+and the server machine's Claude Code sign-in. It ignores `BaseUrl` and `ApiKeyConfigKey`. For
+proxy-backed decisions, use a Jev dialect such as `litellm-systemone` with `Transport: Http`.
+Start and sign-in failures stop the chain and appear in the run's node summary. Other CLI errors
+and timeouts allow fallback. Give decisions a `TimeoutSeconds` of 120 to cover cold `claude -p`
+starts. Keep `ConfidenceThreshold` at 0 for its uncalibrated probabilities.
 
 ### 5.3 Jev
 
