@@ -1925,8 +1925,9 @@ when Enter/retry is refused. Time, an empty-looking unreadable screen, and a red
 cannot clear that hold. The complete correlated UserPrompt remains the receipt.
 
 The composer guard compares the rendered draft to the digest of the guarded
-write. A collapsed Claude token exposes an index and line count and holds Enter
-until the full draft is visible. After a definitive stale-observation refusal,
+write. A collapsed Claude token exposes an index and line count. Automatic
+submission requires a fully rendered draft at the write fence, including when
+the token appears inside otherwise matching text. After a definitive stale-observation refusal,
 one Enter retry requires a freshly rendered matching draft, the same input
 revision, runner epoch and claimed generation, and the final runner write fence.
 

@@ -3003,7 +3003,7 @@ public sealed partial class SessionRunnerRuntime : IAsyncDisposable
             return !(_lastInputOutputSequence >= _lastSequence)
                 && _screen?.GetScreenText() is { } screen
                 && ClaudeScreen.TryReadComposer(screen, out draft, preserveDraftWhitespace: true)
-                && !draft.StartsWith("[Pasted text #", StringComparison.Ordinal);
+                && !draft.Contains("[Pasted text #", StringComparison.Ordinal);
         }
 
         private static bool MatchesOwnedDraft(OwnedComposer owned, string renderedDigest) =>

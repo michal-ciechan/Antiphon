@@ -481,6 +481,26 @@ public class ClaudeDialogInputGuardTests
     }
 
     [Test]
+    public async Task GuardedEnterRefusesAnOpaqueTokenInsideOtherwiseMatchingText()
+    {
+        const string body = "fixture prefix [Pasted text #1 +2 lines] fixture suffix";
+        await using var f = new Fixture();
+        var write = await f.RequestAsync(body);
+        (await f.Runtime.SendConditionalInputAsync(
+            f.Id, write with { ExpectedComposerDigest = "" }, CancellationToken.None))
+            .Outcome.ShouldBe(ConditionalInputOutcomes.Written);
+
+        f.Session.RenderDialogScreenForTest(Clear.Replace("❯ ", $"❯ {body}"));
+        var enter = await f.RequestAsync("\r");
+        (await f.Runtime.SendConditionalInputAsync(f.Id, enter with
+        {
+            ExpectedComposerDigest = ComposerInput.Digest(body),
+            RequireOwnedComposer = true,
+        }, CancellationToken.None)).Outcome.ShouldBe(ConditionalInputOutcomes.ObservationUnknown);
+        f.Child.Inputs.ShouldBe([body]);
+    }
+
+    [Test]
     public async Task GuardedEnterRefusesForeignCollapsedTokenAfterOwnedPaste()
     {
         const string body = "fixture alpha\nfixture beta\nfixture gamma";
