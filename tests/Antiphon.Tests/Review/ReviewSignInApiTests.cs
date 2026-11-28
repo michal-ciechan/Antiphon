@@ -159,6 +159,8 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
         allowed.WorkflowRevisionId = allowedOnly.Id;
         runs.Count(run => run.Repo == WritableRepo && run.Run.WorkflowRevisionId == original.Id).ShouldBeGreaterThan(0);
         runs.Count(run => run.Repo != WritableRepo && run.Run.WorkflowRevisionId == original.Id).ShouldBeGreaterThan(0);
+        var allowedSubject = await db.ReviewSubjects.SingleAsync(subject => subject.Id == allowed.SubjectId);
+        allowedSubject.Repo = WritableRepo.ToUpperInvariant();
         foreach (var run in new[] { allowed, other })
         {
             db.ReviewContextPacks.Add(new ReviewContextPack

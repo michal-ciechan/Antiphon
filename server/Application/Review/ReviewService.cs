@@ -22,6 +22,7 @@ public sealed class ReviewService(
     AppDbContext db,
     IEventBus events,
     ReviewViewer viewer,
+    ReviewReadScope reads,
     IOptions<ReviewSettings> settings,
     TimeProvider time,
     ReviewWorkflowService workflows,
@@ -86,16 +87,21 @@ public sealed class ReviewService(
         return new ReviewListDto<ReviewRunSummaryDto>(summaries, summaries.Count);
     }
 
-    public async Task<ReviewRunDetailDto> GetRunAsync(Guid id, CancellationToken ct)
+    public Task<ReviewRunDetailDto> GetRunAsync(Guid id, CancellationToken ct) => GetRunDetailAsync(id, reads.Runs, ct);
+
+    private Task<ReviewRunDetailDto> GetRunDetailAsync(Guid id, CancellationToken ct) =>
+        GetRunDetailAsync(id, db.ReviewRuns.AsNoTracking(), ct);
+
+    private async Task<ReviewRunDetailDto> GetRunDetailAsync(Guid id, IQueryable<ReviewRun> runs, CancellationToken ct)
     {
-        var run = await db.ReviewRuns.AsNoTracking()
+        var run = await runs
             .Include(r => r.Subject)
             .Include(r => r.Iterations)
             .Include(r => r.Nodes)
             .Include(r => r.Gates).ThenInclude(g => g.Passes)
             .AsSplitQuery()
             .SingleOrDefaultAsync(r => r.Id == id, ct)
-            ?? throw new NotFoundException("Review run", id);
+            ?? throw reads.RunNotFound(id);
         var counts = await FindingCountsAsync([id], ct);
         var costs = await CostsAsync([id], ct);
         return ToDetail(run, counts.GetValueOrDefault(id), costs.GetValueOrDefault(id));
@@ -174,7 +180,7 @@ public sealed class ReviewService(
         await db.SaveChangesAsync(ct);
         await PublishAsync(run.Id, ct);
         executor.Wake();
-        return await GetRunAsync(run.Id, ct);
+        return await GetRunDetailAsync(run.Id, ct);
     }
 
     /// <summary>
@@ -390,7 +396,7 @@ public sealed class ReviewService(
             await db.SaveChangesAsync(ct);
             await PublishAsync(run.Id, ct);
             executor.Wake();
-            return await GetRunAsync(run.Id, ct);
+            return await GetRunDetailAsync(run.Id, ct);
         }
 
         if (run.Status is ReviewRunStatus.Queued or ReviewRunStatus.Running)
@@ -438,7 +444,7 @@ public sealed class ReviewService(
             await WithdrawApprovalAsync(run, who, ct);
         await PublishAsync(run.Id, ct);
         executor.Wake();
-        return await GetRunAsync(run.Id, ct);
+        return await GetRunDetailAsync(run.Id, ct);
     }
 
     /// <summary>
@@ -523,8 +529,7 @@ public sealed class ReviewService(
 
     public async Task<WorkflowGraphDto> GetWorkflowRevisionAsync(Guid id, CancellationToken ct)
     {
-        var revision = await db.ReviewWorkflowRevisions.AsNoTracking().SingleOrDefaultAsync(w => w.Id == id, ct)
-            ?? throw new NotFoundException("Review workflow revision", id);
+        var revision = await reads.GetRevisionAsync(id, ct);
         var graph = JsonSerializer.Deserialize<WorkflowGraphDto>(revision.GraphJson, GraphJson)
             ?? throw new InvalidOperationException($"Workflow revision {id} holds no graph.");
         return graph with { RevisionId = revision.Id, Hash = revision.Hash };
@@ -534,8 +539,7 @@ public sealed class ReviewService(
 
     public async Task<ReviewListDto<ReviewFindingDto>> ListFindingsAsync(Guid runId, ReviewFindingStatus? status, CancellationToken ct)
     {
-        if (!await db.ReviewRuns.AnyAsync(r => r.Id == runId, ct))
-            throw new NotFoundException("Review run", runId);
+        await reads.RequireRunAsync(runId, ct);
         var query = db.ReviewFindings.AsNoTracking().Include(f => f.Events).Where(f => f.RunId == runId);
         if (status is { } s)
             query = query.Where(f => f.Status == s);
@@ -840,7 +844,7 @@ public sealed class ReviewService(
         await PublishAsync(run.Id, ct);
         if (request.Decision == ReviewGateDecision.AnotherRound || (walked && request.Decision == ReviewGateDecision.Approve))
             executor.Wake();
-        return await GetRunAsync(run.Id, ct);
+        return await GetRunDetailAsync(run.Id, ct);
     }
 
     private async Task<ReviewGate> OpenGateAsync(Guid gateId, CancellationToken ct)

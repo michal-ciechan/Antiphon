@@ -58,8 +58,11 @@ public class ExceptionMiddleware
             ["title"] = GetProblemTitle(statusCode),
             ["status"] = statusCode,
             ["detail"] = detail,
-            ["traceId"] = traceId,
         };
+
+        // A masked read has a fixed body. The correlation ID remains in the response header.
+        if (exception is not MaskedNotFoundException)
+            problemDetails["traceId"] = traceId;
 
         if (exception is HttpException { Code: not null } codedException)
             problemDetails["code"] = codedException.Code;

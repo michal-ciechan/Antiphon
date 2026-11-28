@@ -192,6 +192,7 @@ interface WorkflowPolicyDto {
 | POST | `/api/review-runs/demo` | | `{ items: ReviewRunSummaryDto[], total }`. Seeds about 10 realistic runs. Enabled only when `Review:DemoSeedEnabled` is true (on in Development); otherwise 404, which the UI uses to hide "Load demo data". The executor never picks up demo runs. |
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` |
 | GET | `/api/review-runs/{id}/findings` | `?status=` | `{ items: ReviewFindingDto[], total }` |
+| GET | `/api/review-runs/{id}/packs/{iteration}/{group}` | | Reviewer context pack as Markdown |
 | POST | `/api/review-runs/{id}/refresh` | | 202. Re-reads the PR (the manual Refresh): a moved head starts a `push` iteration (next round); a failed run with an unchanged head starts a `recheck` iteration; demo runs are only re-announced. |
 | POST | `/api/review-runs/{id}/rounds` | `ReviewRoundRequest` (body optional) | `ReviewRunDetailDto`. A manual review round, same round, the steer stored on the run for the packs. A run waiting at `await-fixes` completes it with `recheck`; an approved, awaiting-merge or failed run starts a `recheck` iteration at the current head (the parked wait is superseded and `antiphon/approval` goes back to pending, as a push revokes it). 409 `review_run_at_gate` at a gate (decide it with `AnotherRound` and a steer instead), `review_run_finished` (merged or closed), `review_run_busy` (queued or running), `review_run_not_walked` (demo data); 422 for a steer over 4,000 characters; 503 when the code host fails. |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` | `ReviewFindingDto` |
@@ -213,6 +214,12 @@ interface WorkflowPolicyDto {
 | POST | `/api/review-auth/logout` | | Clears the session; answers with a "Signed out" page. |
 
 With sign-in on, every other `/api` route and `/hubs` answers **401** `{ error: 'sign_in_required', signInUrl }` without a session; the client sends the browser to `signInUrl` with `returnUrl` set to the current page. A gate on a repo where the viewer lacks `Review:Auth:RequiredRepoPermission` has `viewerCanDecide: false` and says why, and deciding it is a 403.
+
+In GitHub mode a repository-restricted session can read run details, findings, context packs, and
+workflow policy by run ID only for its granted GitHub repositories. A stored revision is readable
+through either workflow route when any run in scope pins it. Missing and out-of-scope IDs return the
+same `404` Problem Details body with code `not_found`. The correlation ID is in the response header.
+Standalone mode gives the viewer instance-wide access.
 
 Validation checks the submitted graph against the server's registered work and chain capabilities.
 It adds located errors for invalid kinds, unknown steps, kind mismatches, child-only reviewer routes,

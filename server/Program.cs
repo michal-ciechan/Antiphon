@@ -1044,6 +1044,7 @@ builder.Services.AddHostedService<Antiphon.Server.Infrastructure.Supervision.Spe
     // Review engine: runs, findings, gates, workflow graph and decision chains.
     builder.Services.AddSingleton<ReviewWorkflowService>();
     builder.Services.AddScoped<ReviewWorkflowPolicyService>();
+    builder.Services.AddScoped<ReviewReadScope>();
     builder.Services.AddScoped(sp =>
     {
         var http = sp.GetRequiredService<IHttpContextAccessor>().HttpContext;
