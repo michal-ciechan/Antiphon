@@ -226,6 +226,6 @@ public class ReviewPublishSummaryTests
         var node = walk.Workflow.Node("publish")!;
         if (template is not null)
             node = node with { Params = new Dictionary<string, object?> { ["summaryTemplate"] = template } };
-        return ReviewSummaryRenderer.Render(walk, node, null, null, findings, [], 0, verify, false);
+        return ReviewSummaryRenderer.Render(walk, node, null, null, findings, [], 0, verify, false).Body;
     }
 }

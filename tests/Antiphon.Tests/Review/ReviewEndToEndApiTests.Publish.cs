@@ -256,6 +256,29 @@ public partial class ReviewEndToEndApiTests
     }
 
     [Test]
+    public async Task C2110_S1_pg_Truncated_summary_leaves_omitted_findings_unposted()
+    {
+        var graph = PublishGraph(new Dictionary<string, object?> { ["summaryTemplate"] = "{{unknown}}" });
+        var candidates = Enumerable.Range(1, 12).Select(index => PublishCandidate($"C{index}", new string('<', 1000), 50 + index)
+            with { File = new string('\x60', 1000), InDiff = false }).ToList();
+        var fixture = await PostFixtureAsync(21117, graph, candidates);
+
+        var accepted = Receipt(fixture.Pr, fixture.Output);
+        var body = accepted.Review.Body;
+        System.Text.Encoding.UTF8.GetByteCount(body).ShouldBeLessThanOrEqualTo(ReviewSummaryRenderer.MaxCustomBodyBytes);
+        body.ShouldContain("Some findings were omitted");
+        fixture.Output.SummaryOnly.Count.ShouldBeGreaterThan(0);
+        fixture.Output.SummaryOnly.Count.ShouldBeLessThan(candidates.Count);
+        foreach (var finding in fixture.Findings)
+        {
+            var visible = fixture.Output.SummaryOnly.Contains(finding.Key);
+            body.Contains($"- {finding.Key} major · ", StringComparison.Ordinal).ShouldBe(visible);
+            finding.Posted.ShouldBe(visible);
+            finding.ExternalThreadUrl.ShouldBe(visible ? accepted.Posted.Url : null);
+        }
+    }
+
+    [Test]
     public async Task C2110_S1_pg_Legacy_default_body_and_inline_comments_are_exact()
     {
         var graph = PublishGraph(new Dictionary<string, object?>());
