@@ -152,6 +152,9 @@ test('C2109_S1_diagnostic_focus', async () => {
   toggle.focus()
   await user.keyboard('{Enter}')
   expect(screen.queryByTestId('graph-node-intake')).not.toBeInTheDocument()
+  await act(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  })
   expect(toggle).toHaveFocus()
 })
 
