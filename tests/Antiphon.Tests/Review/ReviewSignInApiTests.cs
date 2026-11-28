@@ -91,7 +91,7 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
     }
 
     [Test]
-    public async Task S1_workflow_policy_requires_access_to_the_run_and_selected_revision()
+    public async Task S1_repository_scoped_reads_mask_outside_and_missing_ids()
     {
         using var client = NewClient();
         using (var boss = NewClient())
@@ -101,39 +101,73 @@ public class ReviewSignInApiTests(ReviewSignInApiTests.Factory factory)
             seeded.EnsureSuccessStatusCode();
         }
 
-        var (allowedRun, otherRun, otherRevision) = await PinOtherRevisionAsync();
-        var path = $"/api/review-runs/{allowedRun}/workflow-policy";
-        using var signedOut = await client.GetAsync(path);
-        signedOut.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        var (allowedRun, otherRun, sharedRevision, otherRevision) = await PinOtherRevisionAsync();
+        var missingId = Guid.NewGuid();
+        var policy = $"/api/review-runs/{allowedRun}/workflow-policy";
+        (string Route, Guid Allowed, Guid Outside)[] reads =
+        [
+            ("/api/review-runs/{0}", allowedRun, otherRun),
+            ("/api/review-workflows/revisions/{0}", sharedRevision, otherRevision),
+            ("/api/review-runs/{0}/workflow-policy", allowedRun, otherRun),
+            ($"{policy}?revisionId={{0}}", sharedRevision, otherRevision),
+            ("/api/review-runs/{0}/findings", allowedRun, otherRun),
+            ("/api/review-runs/{0}/packs/1/fixture", allowedRun, otherRun),
+        ];
+
+        foreach (var (route, allowed, _) in reads)
+        {
+            using var signedOut = await client.GetAsync(string.Format(route, allowed));
+            signedOut.StatusCode.ShouldBe(HttpStatusCode.Unauthorized, route);
+        }
         using var signedOutValidation = await client.PostAsJsonAsync("/api/review-workflows/validate", new { });
         signedOutValidation.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
         await SignInAsync(client, "dev-code", "/reviews");
-        using var allowed = await client.GetAsync(path);
-        allowed.StatusCode.ShouldBe(HttpStatusCode.OK);
-        using var deniedRun = await client.GetAsync($"/api/review-runs/{otherRun}/workflow-policy");
-        using var deniedRevision = await client.GetAsync($"{path}?revisionId={otherRevision}");
-        new[] { deniedRun.StatusCode, deniedRevision.StatusCode }
-            .ShouldBe([HttpStatusCode.Forbidden, HttpStatusCode.Forbidden]);
+        foreach (var (route, allowed, outside) in reads)
+        {
+            using var visible = await client.GetAsync(string.Format(route, allowed));
+            visible.StatusCode.ShouldBe(HttpStatusCode.OK, route);
+            using var denied = await client.GetAsync(string.Format(route, outside));
+            using var missing = await client.GetAsync(string.Format(route, missingId));
+            denied.StatusCode.ShouldBe(HttpStatusCode.NotFound, route);
+            missing.StatusCode.ShouldBe(HttpStatusCode.NotFound, route);
+            denied.Content.Headers.ContentType!.MediaType.ShouldBe("application/problem+json", route);
+            (await denied.Content.ReadAsByteArrayAsync()).ShouldBe(await missing.Content.ReadAsByteArrayAsync(), route);
+            (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().ShouldBe("not_found", route);
+        }
+
+        using var signedInValidation = await client.PostAsJsonAsync("/api/review-workflows/validate", new { });
+        signedInValidation.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
-    private async Task<(Guid AllowedRun, Guid OtherRun, Guid OtherRevision)> PinOtherRevisionAsync()
+    private async Task<(Guid AllowedRun, Guid OtherRun, Guid SharedRevision, Guid OtherRevision)> PinOtherRevisionAsync()
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var runs = await db.ReviewRuns.OrderBy(run => run.Id).Select(run => new { Run = run, run.Subject.Repo }).ToListAsync();
         var allowed = runs.First(run => run.Repo == WritableRepo).Run;
-        var other = runs.First(run => run.Repo != WritableRepo).Run;
-        var original = (await db.ReviewWorkflowRevisions.FindAsync(other.WorkflowRevisionId))!;
-        var alternate = new ReviewWorkflowRevision
+        var other = runs.First(run => run.Repo == "acme/orders-service").Run;
+        var original = (await db.ReviewWorkflowRevisions.FindAsync(allowed.WorkflowRevisionId))!;
+        ReviewWorkflowRevision Revision(string hash) => new()
         {
-            Id = Guid.NewGuid(), Name = "other-workflow", Hash = new string('a', 64),
-            GraphJson = original.GraphJson, CreatedAt = original.CreatedAt,
+            Id = Guid.NewGuid(), Name = original.Name, Hash = hash, GraphJson = original.GraphJson, CreatedAt = original.CreatedAt,
         };
-        db.ReviewWorkflowRevisions.Add(alternate);
+        var alternate = Revision(new string('a', 64));
+        var allowedOnly = Revision(new string('b', 64));
+        db.ReviewWorkflowRevisions.AddRange(alternate, allowedOnly);
         other.WorkflowRevisionId = alternate.Id;
+        allowed.WorkflowRevisionId = allowedOnly.Id;
+        runs.Count(run => run.Repo == WritableRepo && run.Run.WorkflowRevisionId == original.Id).ShouldBeGreaterThan(0);
+        runs.Count(run => run.Repo != WritableRepo && run.Run.WorkflowRevisionId == original.Id).ShouldBeGreaterThan(0);
+        foreach (var run in new[] { allowed, other })
+        {
+            db.ReviewContextPacks.Add(new ReviewContextPack
+            {
+                Id = Guid.NewGuid(), RunId = run.Id, Iteration = 1, GroupKey = "fixture", Content = "Fixture pack",
+            });
+        }
         await db.SaveChangesAsync();
-        return (allowed.Id, other.Id, alternate.Id);
+        return (allowed.Id, other.Id, original.Id, alternate.Id);
     }
 
     [Test]
