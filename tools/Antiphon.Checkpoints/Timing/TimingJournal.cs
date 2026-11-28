@@ -115,18 +115,20 @@ public sealed class TimingJournal
         var bytes = JsonSerializer.SerializeToUtf8Bytes(ev, Json);
         try
         {
-            await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (AfterPartialStage is not null)
                 {
-                    await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), cancellationToken).ConfigureAwait(false);
+                    stream.Write(bytes.AsSpan(0, bytes.Length / 2));
                     stream.Flush(true);
                     await AfterPartialStage(temp).ConfigureAwait(false);
-                    await stream.WriteAsync(bytes.AsMemory(bytes.Length / 2), cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    stream.Write(bytes.AsSpan(bytes.Length / 2));
                 }
                 else
                 {
-                    await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                    stream.Write(bytes);
                 }
                 stream.Flush(true);
             }
@@ -173,11 +175,12 @@ public sealed class TimingJournal
             await AfterSequenceAssigned().ConfigureAwait(false);
 
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(ev, Json) + "\n");
-        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+        cancellationToken.ThrowIfCancellationRequested();
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         if (byteLimit is int limit && (stream.Length + bytes.Length > limit
             || existing.Events.Count >= CheckpointBuildObservation.EventLimit))
             throw new TimingReadBoundException();
-        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        stream.Write(bytes);
         FlushEntered?.TrySetResult(true);
         if (FlushGate is not null)
             await FlushGate().ConfigureAwait(false);

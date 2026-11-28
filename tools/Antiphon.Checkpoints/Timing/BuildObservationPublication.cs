@@ -15,13 +15,13 @@ internal sealed class BuildObservationPublication
             return;
         _startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         var stop = new CancellationTokenSource(Deadline);
-        Completion = Task.Run(async () =>
+        Completion = Task.Factory.StartNew(() =>
         {
             using (stop)
             {
-                await publish(stop.Token).ConfigureAwait(false);
+                publish(stop.Token).GetAwaiter().GetResult();
             }
-        });
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
     internal async Task FlushOnExitAsync()

@@ -134,7 +134,12 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
             budget.Token.ThrowIfCancellationRequested();
             SafeWrite.Require(SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(runDirectory)));
             var pending = Path.Combine(path, BuildObservationReplay.BatchFile);
-            SafeWrite.Require(SafeWrite.Text(pending, "observation-batch-incomplete", SafeWrite.Under(path)));
+            // The freshly created private directory and task lock already provide custody.
+            using (var batch = new FileStream(pending, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
+            {
+                batch.Write("observation-batch-incomplete"u8);
+                batch.Flush(true);
+            }
             var journal = open?.Invoke(path) ?? TimingJournal.Open(path, ByteLimit);
             foreach (var record in records)
             {
