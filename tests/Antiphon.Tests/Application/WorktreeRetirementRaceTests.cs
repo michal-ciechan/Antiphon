@@ -119,6 +119,7 @@ public sealed class WorktreeRetirementRaceTests
         var ct = CancellationToken.None;
         var fault = new ReplyQueueInsertFault(answer);
         await using var world = await RaceWorld.CreateAsync(interceptor: fault);
+        world.Adapter.WithClaudeDialogObservation();
         world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
         world.Adapter.OnSubmitted = body => AppendAsync(world.Adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, body);
         var request = new CreateAgentTaskRequest(Goal: goal, Workspace: WorkspaceMode.ReadOnly,
@@ -165,8 +166,10 @@ public sealed class WorktreeRetirementRaceTests
         await queue.FlushSessionAsync(recipient, ct);
         await using (var db = world.CreateDb())
         {
+            var session = await db.AgentSessions.SingleAsync(s => s.Id == recipient, ct);
+            session.Status.ShouldBe(SessionStatus.Running, session.FailureReason);
             var brief = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == recipient && m.Body.Contains(goal), ct);
-            brief.Status.ShouldBe(QueuedMessageStatus.Sent);
+            brief.Status.ShouldBe(QueuedMessageStatus.Sent, brief.DeliveryVerdict?.ToString());
             var prompt = await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == recipient
                 && t.Kind == TranscriptKinds.UserPrompt && t.Text!.Contains(goal), ct);
             PromptSubmissionMatch.IsCompleteIn(brief.Body, prompt.Text).ShouldBeTrue();
