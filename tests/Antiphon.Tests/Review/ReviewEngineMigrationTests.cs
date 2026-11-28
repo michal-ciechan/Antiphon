@@ -1,3 +1,4 @@
+using Antiphon.Server.Application.Review;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
@@ -58,6 +59,40 @@ public sealed class ReviewEngineMigrationTests
 public sealed class ReviewEngineDatabaseMigrationTests
 {
     private const string Predecessor = "20261120091515_AddRequestedModelAlias";
+
+    [Test]
+    public async Task Legacy_execution_keeps_its_summary_after_the_warnings_migration(CancellationToken ct)
+    {
+        await using var database = await MigrationTestDatabase.CreateAsync(MigrationTestDatabase.CallerReportReceiptMigration, ct);
+        await using var db = new AppDbContext(TestDbFixture.CreateDbContextOptions(database.ConnectionString));
+        var subjectId = Guid.NewGuid();
+        var runId = Guid.NewGuid();
+        var executionId = Guid.NewGuid();
+        const string summary = "A renamed-file\nstatus antiphon/review not posted: from file name\nA next-file";
+
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "ReviewSubjects"
+                ("Id", "Host", "Repo", "Title", "AuthorLogin", "OpenedByLogin", "BaseRef", "HeadRef",
+                 "BaseSha", "HeadSha", "OwnerTeams", "OwnerUsers", "CreatedAt")
+            VALUES ({subjectId}, 'GitHub', 'fixture/legacy', 'Legacy review', 'author', 'author', 'main', 'change',
+                    repeat('a', 40), repeat('b', 40), ARRAY[]::text[], ARRAY[]::text[], now());
+            INSERT INTO "ReviewRuns"
+                ("Id", "SubjectId", "Status", "Stage", "Round", "BotOnlyRounds", "CostUsd",
+                 "Categories", "WorkflowName", "StartedAt", "UpdatedAt")
+            VALUES ({runId}, {subjectId}, 'Running', 'Intake', 1, 0, 0, ARRAY[]::text[], 'pr-review', now(), now());
+            INSERT INTO "ReviewNodeExecutions"
+                ("Id", "RunId", "NodeId", "Iteration", "Sequence", "Kind", "Status", "InputTokens",
+                 "OutputTokens", "CostUsd", "Summary")
+            VALUES ({executionId}, {runId}, 'delta', 1, 1, 'Code', 'Succeeded', 0, 0, 0, {summary});
+            """, ct);
+
+        await db.Database.MigrateAsync(MigrationTestDatabase.ReviewNodeExecutionWarningsMigration, ct);
+
+        var execution = await db.ReviewNodeExecutions.AsNoTracking().SingleAsync(n => n.Id == executionId, ct);
+        var output = ReviewService.ToDto(execution);
+        output.Summary.ShouldBe(summary);
+        output.Warnings.ShouldBeNull();
+    }
 
     [Test]
     public async Task A_stored_review_row_refuses_the_downgrade_and_the_detach(CancellationToken ct)

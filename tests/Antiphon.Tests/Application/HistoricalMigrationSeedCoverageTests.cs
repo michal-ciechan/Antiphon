@@ -33,6 +33,8 @@ public sealed class HistoricalMigrationSeedCoverageTests
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportCompletedAt", true, false)),
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportPromptSequence", true, false)),
         ("20261125151517_AddCallerReportSettlementReceipt", new("AgentTasks", "ReceivedReportSessionId", true, false)),
+        // The ReviewEngineDatabaseMigrationTests predecessor fixture inserts this row without Warnings.
+        (MigrationTestDatabase.ReviewNodeExecutionWarningsMigration, new("ReviewNodeExecutions", "Warnings", true, false)),
     ];
 
     [Test]

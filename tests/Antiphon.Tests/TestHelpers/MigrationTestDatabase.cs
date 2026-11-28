@@ -41,7 +41,7 @@ internal static class MigrationTestDatabase
 
     /// <summary>The review engine migration. Its Down throws, so a rewind detaches an empty copy instead.</summary>
     public const string ReviewEngineMigration = "20261122173647_AddReviewEngine";
-    private const string ReviewNodeExecutionWarningsMigration = "20261128054109_AddReviewNodeExecutionWarnings";
+    public const string ReviewNodeExecutionWarningsMigration = "20261128054109_AddReviewNodeExecutionWarnings";
 
     /// <summary>The message <c>AddReviewEngine.Down</c> throws, which the detach repeats for stored rows.</summary>
     public const string ReviewEngineDowngradeRefusal = "Review engine tables cannot be discarded by a downgrade.";
