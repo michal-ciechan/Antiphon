@@ -1,6 +1,6 @@
 import { Badge, Box, Group, Text, Tooltip, UnstyledButton } from '@mantine/core'
 import { BaseEdge, EdgeLabelRenderer, Handle, Position, type Edge, type EdgeProps, type Node, type NodeProps } from '@xyflow/react'
-import type { ReactNode } from 'react'
+import { memo, type ReactNode } from 'react'
 import {
   TbArrowMerge,
   TbArrowsSplit2,
@@ -98,7 +98,7 @@ function ExpandToggle({ expanded, count, step, onToggle }: { expanded: boolean; 
   )
 }
 
-export function StepNodeView({ data }: NodeProps<StepNode>) {
+export const StepNodeView = memo(function StepNodeView({ data }: NodeProps<StepNode>) {
   const { def, status, execs, items, dir, selected, iterationsRun, item, expandable, expanded, onToggleExpand } = data
   const meta = NODE_STATUS_META[status]
   const kind = NODE_KIND_META[def.kind]
@@ -217,7 +217,7 @@ export function StepNodeView({ data }: NodeProps<StepNode>) {
       )}
     </Box>
   )
-}
+})
 
 export type SectionData = {
   title: string

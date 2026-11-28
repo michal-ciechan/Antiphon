@@ -185,7 +185,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
           items: n.item ? [] : groupByItem(mine).filter((g) => g.itemKey !== null),
           iterationsRun: new Set(run.nodes.filter((x) => x.nodeId === n.stepId && (!n.item || x.itemKey === n.item)).map((x) => x.iteration)).size,
           dir: n.dir,
-          selected: selectedId === n.id,
+          selected: false,
           item: n.item,
           expandable: agents.length > 0,
           expanded: expandedSteps.has(n.stepId),
@@ -196,7 +196,11 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
       out.push(step)
     }
     return out
-  }, [layout, execs, run.nodes, selectedId, graph.name, setCollapsed, agentsByStep, expandedSteps])
+  }, [layout, execs, run.nodes, graph.name, setCollapsed, agentsByStep, expandedSteps])
+
+  const selectedNodes = useMemo(() => selectedId === null ? flowNodes : flowNodes.map((node) =>
+    node.id === selectedId ? { ...node, data: { ...node.data, selected: true } } : node
+  ), [flowNodes, selectedId])
 
   const flowEdges = useMemo(() => {
     // an edge animates while its visible target runs; for an agent node, only that agent's executions count
@@ -260,7 +264,7 @@ function WorkflowGraph({ run, graph, now }: { run: ReviewRunDetailDto; graph: Wo
   const canvas = (variant: 'inline' | 'fullscreen') => (
     <ReactFlow
       key={`${variant}:${collapseKey}|${expandKey}`}
-      nodes={flowNodes}
+      nodes={selectedNodes}
       edges={flowEdges}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
