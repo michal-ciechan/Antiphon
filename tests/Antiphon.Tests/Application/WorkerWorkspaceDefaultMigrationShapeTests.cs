@@ -1,4 +1,5 @@
 using Antiphon.Server.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Shouldly;
 using TUnit.Core;
@@ -27,10 +28,16 @@ public sealed class WorkerWorkspaceDefaultMigrationShapeTests
     [Test]
     public void C458_DownDropsOnlyTheAddedColumns()
     {
-        var operations = new Card0458WorkerWorkspaceDefault().DownOperations;
+        var operations = new DowngradeProbe().DownOperations;
         operations.Count.ShouldBe(2);
         operations.Cast<DropColumnOperation>()
             .Select(x => x.Table + "." + x.Name).Order()
             .ShouldBe(new[] { "AgentTasks.WorkspaceSource", "Projects.DefaultWorkerWorkspace" });
+    }
+
+    // Keep an explicit call to the protected migration body for the downgrade selector witness.
+    private sealed class DowngradeProbe : Card0458WorkerWorkspaceDefault
+    {
+        protected override void Down(MigrationBuilder migrationBuilder) => base.Down(migrationBuilder);
     }
 }
