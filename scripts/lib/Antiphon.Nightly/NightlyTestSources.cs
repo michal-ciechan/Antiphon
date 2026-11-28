@@ -12,6 +12,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection.Metadata;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -125,9 +126,43 @@ namespace Antiphon.Nightly
             var methodDot = identity.LastIndexOf('.');
             var arguments = identity.IndexOf('[');
             if (arguments > 0 && arguments < methodDot && identity[methodDot - 1] == ']'
-                && identity.LastIndexOf('`', arguments - 1) >= 0)
+                && TypeName.TryParse(identity.AsSpan(0, methodDot), out var type)
+                && type.AssemblyName == null && type.IsConstructedGenericType && HasValidGenericArguments(type))
                 return identity.Substring(0, arguments) + identity.Substring(methodDot);
             return identity;
+        }
+
+        private static bool HasValidGenericArguments(TypeName type)
+        {
+            var arguments = type.GetGenericArguments();
+            return TryGetArity(type.GetGenericTypeDefinition(), out var arity) && arguments.Length == arity
+                && arguments.All(argument => !argument.IsByRef && !argument.IsPointer && IsClosedType(argument));
+        }
+
+        private static bool IsClosedType(TypeName type)
+        {
+            if (type.IsArray || type.IsPointer) return IsClosedType(type.GetElementType());
+            if (type.IsByRef) return false;
+            if (type.IsConstructedGenericType) return HasValidGenericArguments(type);
+            return TryGetArity(type, out var arity) && arity == 0;
+        }
+
+        private static bool TryGetArity(TypeName type, out int arity)
+        {
+            arity = 0;
+            // Reflection's name parser also accepts embedded spaces in names; source types do not have them.
+            if (type.FullName.Any(char.IsWhiteSpace)) return false;
+            // Each metadata name declares its own parameters. The argument list supplies those of all declaring types too.
+            for (var part = type; part != null; part = part.IsNested ? part.DeclaringType : null)
+            {
+                var name = part.Name;
+                var marker = name.LastIndexOf('`');
+                if (marker < 0) continue;
+                if (marker == 0 || !int.TryParse(name.AsSpan(marker + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var count)
+                    || count <= 0 || count > int.MaxValue - arity) return false;
+                arity += count;
+            }
+            return true;
         }
     }
 }
