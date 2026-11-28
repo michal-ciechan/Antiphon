@@ -279,6 +279,24 @@ public partial class ReviewEndToEndApiTests
     }
 
     [Test]
+    public async Task C2110_S1_pg_Pinned_hidden_coverage_falls_back_to_visible_recipient_findings()
+    {
+        var graph = PublishGraph(new Dictionary<string, object?>
+        {
+            ["inputs"] = new[] { "collate", "verify" },
+            ["summaryTemplate"] = "A template stored before validation\n\n~~~md\n{{findings}}\n~~~",
+        });
+        var candidate = PublishCandidate("A", "Visible summary-only finding", 55) with { InDiff = false };
+        var fixture = await PostFixtureAsync(21114, graph, [candidate]);
+        var review = Receipt(fixture.Pr, fixture.Output).Review;
+        review.Body.ShouldStartWith("**Antiphon review**, round 1 (iteration 1)\n");
+        review.Body.ShouldNotContain("~~~");
+        review.Body.ShouldContain("Listed here only:\n- F1 major · src&#47;Lease&#46;&#8203;cs&#58;&#8203;55: " + candidate.Title);
+        fixture.Findings.ShouldHaveSingleItem().Posted.ShouldBeTrue();
+        review.Comments.ShouldBeEmpty();
+    }
+
+    [Test]
     public async Task C2110_S1_pg_Legacy_default_body_and_inline_comments_are_exact()
     {
         var graph = PublishGraph(new Dictionary<string, object?>());

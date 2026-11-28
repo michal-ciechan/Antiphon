@@ -204,6 +204,19 @@ public class ReviewPublishSummaryTests
 
     private static readonly ReviewPublishConfiguration Binding = new("collate", "verify", "categorise", "select");
 
+    [Test]
+    public void C2110_S1_unit_Custom_summary_uses_the_same_LF_bytes_for_CRLF_and_LF_templates()
+    {
+        var finding = new ReviewFinding { Key = "F1", Severity = ReviewSeverity.Major, FilePath = "path", Title = "Visible finding" };
+        const string template = "Custom heading\n\n{{findings}}\n\n{{blastRadius}}\n";
+        var lf = Render(Walk(), template, [finding], null);
+        var crlf = Render(Walk(), template.ReplaceLineEndings("\r\n"), [finding], null);
+
+        System.Text.Encoding.UTF8.GetBytes(crlf).ShouldBe(System.Text.Encoding.UTF8.GetBytes(lf));
+        lf.ShouldStartWith("Custom heading\n\nFindings:\n- **F1** major · path: Visible finding\n\n**Blast radius across all iterations**\n");
+        lf.ShouldNotContain("\r");
+    }
+
     private static ReviewWalk Walk(params ReviewNodeExecution[] rows) =>
         new(null!, null!, new ReviewRun { Round = 1, Subject = new ReviewSubject(), Nodes = [.. rows] },
             new ReviewIteration { Iteration = 2 }, ReviewWorkflowYaml.LoadDefault(), TimeProvider.System);

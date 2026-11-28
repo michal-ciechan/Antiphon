@@ -141,6 +141,45 @@ public class ReviewWorkflowApiTests(AntiphonWebAppFactory factory)
     }
 
     [Test]
+    public async Task C2110_S1_pg_validate_rejects_hidden_publish_coverage()
+    {
+        using var client = factory.CreateClient();
+        var graph = (await client.GetFromJsonAsync<WorkflowGraphDto>("/api/review-workflows/default", ReviewWorkflowService.GraphJsonOptions))
+            .ShouldNotBeNull();
+        var cases = new (string Label, string Template)[]
+        {
+            ("fence", "```md\n{{findings}}\n```"),
+            ("HTML comment", "<!--\n{{defaultBody}}\n-->"),
+            ("inline code", "Literal `text\n{{findings}}\ncontinues`"),
+            ("HTML block", "<div>\n{{findings}}\n</div>"),
+            ("link destination", "[link](\n{{findings}}\n)"),
+            ("indented code", "    {{defaultBody}}"),
+        };
+        var results = new List<(string Label, JsonElement Result)>();
+        foreach (var (label, template) in cases)
+        {
+            var edited = graph with
+            {
+                Nodes = graph.Nodes.Select(n => n.Id == "publish"
+                    ? n with { Params = new Dictionary<string, object?> { ["summaryTemplate"] = template } } : n).ToList(),
+            };
+            using var response = await client.PostAsJsonAsync("/api/review-workflows/validate", edited, ReviewWorkflowService.GraphJsonOptions);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            results.Add((label, await response.Content.ReadFromJsonAsync<JsonElement>()));
+        }
+
+        foreach (var (label, result) in results)
+        {
+            result.GetProperty("valid").GetBoolean().ShouldBeFalse(label);
+            var diagnostic = result.GetProperty("diagnostics").EnumerateArray()
+                .Single(d => d.GetProperty("code").GetString() == "invalid-summary-template");
+            diagnostic.GetProperty("nodeIds").EnumerateArray().Select(id => id.GetString()).ShouldBe(["publish"]);
+            diagnostic.GetProperty("field").GetString().ShouldBe("summaryTemplate");
+            diagnostic.GetProperty("message").GetString()!.ShouldContain("visible");
+        }
+    }
+
+    [Test]
     public async Task The_default_graph_validates_and_a_loop_without_a_gate_does_not()
     {
         using var client = factory.CreateClient();
