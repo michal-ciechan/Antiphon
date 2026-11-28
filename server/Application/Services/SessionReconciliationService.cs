@@ -273,6 +273,11 @@ public sealed class SessionReconciliationService
                     continue;
                 }
 
+                // A live launch may still be waiting to reach the runner. An owner of an
+                // older generation cannot protect a replacement or override an Exited observation.
+                if (session.Status == SessionStatus.Starting && _ownership?.OwnsGeneration(session.Id, session.StartedAt) == true)
+                    continue;
+
                 session.Status = SessionStatus.Failed;
                 session.FailureReason = RunnerUnknownSessionReason;
                 session.EndedAt ??= now;

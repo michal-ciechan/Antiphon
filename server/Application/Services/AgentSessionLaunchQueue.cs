@@ -5,6 +5,7 @@ using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Domain.StateMachine;
 using Antiphon.Server.Infrastructure.Data;
+using Antiphon.SessionRunner.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -14,10 +15,10 @@ namespace Antiphon.Server.Application.Services;
 
 public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 {
-    private const byte AdmissionDeferred = 1;
+    private readonly record struct LaunchOwner(DateTime? Generation, bool AdmissionDeferred = false);
     private readonly object _gate = new();
     private readonly HashSet<Task> _launches = [];
-    private readonly ConcurrentDictionary<Guid, byte> _owned = new();
+    private readonly ConcurrentDictionary<Guid, LaunchOwner> _owned = new();
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AgentSessionLaunchQueue> _logger;
     private readonly CancellationToken _stopping;
@@ -51,7 +52,7 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
         Guid sessionId, Guid agentId, DateTime acceptedGeneration, AgentLaunchSpec spec, string? remoteControlName,
         bool resume = false, LaunchNotes? notes = null, string? initialPrompt = null)
     {
-        if (!_owned.TryAdd(sessionId, 0)) return;
+        if (!TryRegister(sessionId, acceptedGeneration)) return;
         var launch = Task.Run(() => LaunchInteractiveSessionAsync(
             sessionId, agentId, acceptedGeneration, spec, remoteControlName, resume, notes, initialPrompt));
         TrackLaunch(launch, sessionId, agentId, interactive: true);
@@ -59,10 +60,16 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 
     public bool Owns(Guid sessionId) => _owned.ContainsKey(sessionId);
 
-    internal bool IsWorkspaceAdmissionDeferred(Guid sessionId) =>
-        _owned.TryGetValue(sessionId, out var state) && state == AdmissionDeferred;
+    public bool OwnsGeneration(Guid sessionId, DateTime generation) =>
+        _owned.TryGetValue(sessionId, out var owner) && owner.Generation == SessionGeneration.Normalize(generation);
 
-    public bool TryRegister(Guid sessionId) => _owned.TryAdd(sessionId, 0);
+    internal bool IsWorkspaceAdmissionDeferred(Guid sessionId) =>
+        _owned.TryGetValue(sessionId, out var owner) && owner.AdmissionDeferred;
+
+    public bool TryRegister(Guid sessionId) => _owned.TryAdd(sessionId, default);
+
+    public bool TryRegister(Guid sessionId, DateTime generation) =>
+        _owned.TryAdd(sessionId, new(SessionGeneration.Normalize(generation)));
 
     public void Unregister(Guid sessionId) => _owned.TryRemove(sessionId, out _);
 
@@ -74,7 +81,7 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
 
     public void ResumeInterrupted(Guid sessionId, Guid agentId)
     {
-        if (!_owned.TryAdd(sessionId, 0))
+        if (!TryRegister(sessionId))
             return;
 
         var launch = Task.Run(() => ResumeOwnedAsync(sessionId, agentId));
@@ -191,7 +198,8 @@ public sealed class AgentSessionLaunchQueue : ILaunchOwnership, ILaunchDrain
                 {
                     // The committed Starting generation still owns its brief and this queue entry.
                     // No adapter has started. Retry admission without repeating the dispatch claim.
-                    if (_owned.TryUpdate(sessionId, AdmissionDeferred, 0))
+                    if (_owned.TryGetValue(sessionId, out var owner) && !owner.AdmissionDeferred
+                        && _owned.TryUpdate(sessionId, owner with { AdmissionDeferred = true }, owner))
                         _logger.LogInformation("Workspace admission deferred interactive launch for session {SessionId}", sessionId);
                 }
             }

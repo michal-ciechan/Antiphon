@@ -9,6 +9,9 @@ public interface ILaunchOwnership
 {
     bool Owns(Guid sessionId);
 
+    /// <summary>Whether the live launch owns this exact Starting generation.</summary>
+    bool OwnsGeneration(Guid sessionId, DateTime generation) => false;
+
     /// <summary>
     /// Claim the session and resume its launch on a background task. A second call for an id
     /// this process already owns is a no-op.
@@ -17,6 +20,8 @@ public interface ILaunchOwnership
 
     /// <summary>Returns false when this process already owns the id.</summary>
     bool TryRegister(Guid sessionId);
+
+    bool TryRegister(Guid sessionId, DateTime generation) => TryRegister(sessionId);
 
     void Unregister(Guid sessionId);
 }

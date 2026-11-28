@@ -218,7 +218,7 @@ public sealed class AgentSessionService : IDelegateSessionStopper
             adapter = _adapterFactory.Create(request.AgentKind, session.RunnerId);
             var spec = await BuildRuntimeLaunchSpecAsync(launchSpec, session, worktree.Path, resumeMode: null, ct);
             EnsureHerdrLaunchAllowed(session, spec);
-            claimedLaunch = _launchOwnership?.TryRegister(session.Id) ?? false;
+            claimedLaunch = _launchOwnership?.TryRegister(session.Id, session.StartedAt) ?? false;
             await AdmitWorkspaceAsync(session, ct);
             await adapter.StartAsync(spec, ct);
 
