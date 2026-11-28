@@ -462,6 +462,33 @@ Authorization failures are **403**, not conflicts: `handoff_principal_denied`,
   `WorkspaceSlotColdReset` and `WorkspaceSlotQuarantineRelease`. The `GET /sessions/workspace-slots`
   inventory and watchdog keys are S4.
 
+## PR review engine
+
+These are server routes. Use the review run's GUID from `items[].id` when reading its findings.
+See the [review engine API contract](features/012-review-engine/api.md) for mutations, exact DTOs
+and the remaining routes.
+
+| Method | Route | Returns |
+|---|---|---|
+| GET | `/api/review-runs` | `{ items, total }` of run summaries. Optional query filters are `status`, `repo`, `stage` and `q`. |
+| GET | `/api/review-runs/{id}/findings` | `{ items, total }` of findings with their response history. Optional query filter `status`. |
+| GET | `/api/review-queue` | `{ items, total }` of open gates with their run and SLA. `scope` defaults to `All`. Use `Mine` for assignments to the viewer (or query `login`) and unassigned gates for the viewer's teams. Use `Teams` for the viewer's team gates, or all team-owned gates when the viewer has no configured teams. |
+
+Use `GET /api/review-auth/status` to check the sign-in mode. With `Review:Auth:Mode=GitHub`,
+sign in at `/api/review-auth/login` in the browser and send the resulting
+`antiphon.review.session` cookie with these reads. A request without a session returns 401
+`sign_in_required`. When running the examples with an authenticated PowerShell web session,
+pass that session as `-WebSession` on each protected request.
+
+```powershell
+$api = if ($env:ANTIPHON_API) { $env:ANTIPHON_API } else { 'http://localhost:17202' }
+$runs = Invoke-RestMethod "$api/api/review-runs?repo=acme%2Fwidgets&status=AtGate"
+$runs.items
+# Set $runId to the id of the run you want to inspect.
+(Invoke-RestMethod "$api/api/review-runs/$runId/findings?status=Open").items
+(Invoke-RestMethod "$api/api/review-queue?scope=Mine").items
+```
+
 ## Shapes that bite
 
 - **PLURAL, OR 404.** `/api/boards`, `/api/agents`, `/api/cards`. There is no `/api/board`, and a
