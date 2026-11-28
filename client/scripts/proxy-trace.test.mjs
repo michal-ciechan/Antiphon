@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { EventEmitter } from 'node:events'
 import { describe, expect, it } from 'vitest'
 import { createWsProxyTrace } from './proxy-trace.mjs'

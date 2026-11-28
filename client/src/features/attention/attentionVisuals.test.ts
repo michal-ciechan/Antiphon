@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import { TbAlertTriangle, TbClockPause, TbHourglassHigh, TbUserOff } from 'react-icons/tb'
 import type { AttentionItemDto, AttentionKind } from '../../api/attention'

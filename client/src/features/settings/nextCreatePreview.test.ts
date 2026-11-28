@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { ComplexityCandidateDto, ComplexityChainDto, ComplexityChainListDto, ComplexityEffectiveDto, TaskComplexity } from '../../api/complexityChains'
 import type { RolePolicyRowDto } from '../../api/rolePolicy'

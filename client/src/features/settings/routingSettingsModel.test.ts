@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { describe, expect, it } from 'vitest'
 import type { ComplexityChainDto, ComplexityEffectiveDto } from '../../api/complexityChains'
 import type { RoutingPinDto } from '../../api/routingPins'
