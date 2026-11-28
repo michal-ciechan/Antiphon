@@ -245,7 +245,7 @@ public class ReviewWorkflowApiTests(ReviewWorkflowApiTests.Factory factory)
         var validation = (await response.Content.ReadFromJsonAsync<WorkflowValidationDto>())!;
         validation.Valid.ShouldBeFalse();
         validation.Diagnostics.ShouldContain(d => d.Code == expectedCode
-            && (nodeId is null || d.NodeIds.Contains(nodeId)));
+            && (nodeId == null || d.NodeIds.Contains(nodeId)));
     }
 
     [Test]
