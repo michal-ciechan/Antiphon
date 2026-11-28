@@ -870,11 +870,11 @@ public sealed class RunSchedulerTests : CheckpointTestBase
 
     private static async Task<ObservationArm> RunObservationArmAsync(string repo, string results,
         bool grouped, bool fails, TimingFault? fault, Action<TimingJournal>? configureJournal = null,
-        string project = "sample", bool refuse = false, BuildObservationPublication? stalledPublication = null)
+        string project = "sample", bool refuse = false, BuildObservationPublication? stalledPublication = null, SlotLease? suppliedLease = null)
     {
         var clock = new ControlledTimeProvider(ObservationEpoch);
         var driver = new FakeDriver();
-        var slots = new ObservationSlotTrace(refuse);
+        var slots = new ObservationSlotTrace(refuse, suppliedLease);
         var console = new StringWriter();
         var runtime = new CheckpointApp.Runtime
         {
@@ -965,7 +965,7 @@ public sealed class RunSchedulerTests : CheckpointTestBase
     private sealed record ObservationArm(int Exit, IReadOnlyList<DriverRequest> Commands, IReadOnlyList<string> Slots,
         byte[] Json, byte[] Markdown, string Line, TrxParseResult Trx, BuildObservationRead Read, double ExecutionMilliseconds);
 
-    private sealed class ObservationSlotTrace(bool refuse) : IBuildSlotClient
+    private sealed class ObservationSlotTrace(bool refuse, SlotLease? suppliedLease) : IBuildSlotClient
     {
         internal List<string> Events { get; } = [];
         public Task<SlotSession> ProbeAsync(CancellationToken cancellationToken) => Task.FromResult(new SlotSession("enabled", 6));
@@ -975,9 +975,12 @@ public sealed class RunSchedulerTests : CheckpointTestBase
             if (refuse)
                 return Task.FromResult(new SlotLease { State = "refused", ExitCode = ExitCodes.Invalid });
             Events.Add("grant " + label);
+            if (suppliedLease is not null)
+                return Task.FromResult(suppliedLease);
             return Task.FromResult(new SlotLease
             {
                 State = "granted", MaxCpuCount = session.MaxCpuCount, LeaseId = ObservationLease.ToString(),
+                BrokerEndpoint = "http://slots.test/build-slots",
                 ReleaseAsync = _ =>
                 {
                     Events.Add("release " + label);
@@ -990,67 +993,96 @@ public sealed class RunSchedulerTests : CheckpointTestBase
     [Test]
     public async Task C2103_broker_telemetry_gap_is_explicit()
     {
-        var (binding, history, request, producer, custody) = await ObserveBrokerAndCustodyAsync();
+        var (observation, binding, history, request, producer, custody) = await ObserveBrokerAndCustodyAsync();
         var held = BuildObservationReplay.MeasureProducerHold(binding, history);
-        held.ShouldBe(new BrokerCoverage("known", null, 5));
-        BuildObservationReplay.Classify(producer, request, held, custody).Status.ShouldBe("eligible-ready");
+        held.ShouldBe(new BrokerCoverage("known", null, 5, binding));
+        BuildObservationReplay.Classify(observation, producer, request, held, custody).Status.ShouldBe("eligible-ready");
 
         var unknown = BuildObservationReplay.MeasureProducerHold(binding, null);
         unknown.ShouldBe(new BrokerCoverage("unknown", "broker-telemetry-unreachable", null), "broker-405");
-        BuildObservationReplay.Classify(producer, request, unknown, custody).Status.ShouldBe("unknown");
+        BuildObservationReplay.Classify(observation, producer, request, unknown, custody).Status.ShouldBe("unknown");
         BuildObservationReplay.MeasureProducerHold(binding, []).Reason.ShouldBe("broker-pair-missing");
+        foreach (var other in new ProducerLeaseBinding?[]
+                 {
+                     null, binding with { AttemptId = Guid.NewGuid().ToString("D") },
+                     binding with { LeaseId = Guid.NewGuid() }, binding with { Authority = "another-broker" },
+                 })
+        {
+            var mismatched = held with { Binding = other };
+            BuildObservationReplay.Classify(observation, producer, request, mismatched, custody)
+                .ShouldBe(new BuildAvailabilityResult("unknown", "broker-binding-unverified"));
+        }
     }
 
     [Test]
     public async Task C2103_custody_telemetry_gap_is_explicit()
     {
-        var (binding, history, request, producer, custody) = await ObserveBrokerAndCustodyAsync();
+        var (observation, binding, history, request, producer, custody) = await ObserveBrokerAndCustodyAsync();
         var held = BuildObservationReplay.MeasureProducerHold(binding, history);
         held.HeldSeconds.ShouldBe(5);
-        BuildObservationReplay.Classify(producer, request, held, custody).Status.ShouldBe("eligible-ready");
-        BuildObservationReplay.Classify(producer, request, held, null)
+        BuildObservationReplay.Classify(observation, producer, request, held, custody).Status.ShouldBe("eligible-ready");
+        BuildObservationReplay.Classify(observation, producer, request, held, null)
             .ShouldBe(new BuildAvailabilityResult("unknown", "custody-record-unreachable"), "custody-access-denied");
-        BuildObservationReplay.Classify(producer, request, held, custody with { RemovedAt = request.RequestedAt })
+        BuildObservationReplay.Classify(observation, producer, request, held, custody with { RemovedAt = request.RequestedAt })
             .ShouldBe(new BuildAvailabilityResult("ineligible", "output-absent"));
     }
 
-    private async Task<(ProducerLeaseBinding Binding, ProducerLeaseTransition[] History, BuildAvailabilityRequest Request,
+    private async Task<(TimingEvent Observation, ProducerLeaseBinding Binding, ProducerLeaseTransition[] History, BuildAvailabilityRequest Request,
         ObservedBuild Producer, BuildCustodyEvidence Custody)> ObserveBrokerAndCustodyAsync()
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var clock = new ControlledTimeProvider(ObservationEpoch);
         var transitions = new LeaseLog();
         await using var fixture = await BuildSlotBrokerFixture.StartAsync(clock: clock, log: transitions);
-        var label = "build:" + ObservationBuild;
+        var label = "CP-1@sample";
         using var acquired = await fixture.Http.PostAsJsonAsync("build-slots",
-            new BuildSlotRequest(20, clock.GetUtcNow().UtcDateTime.AddSeconds(-1), label, TaskId: "producer"),
+            new BuildSlotRequest(20, clock.GetUtcNow().UtcDateTime.AddSeconds(-1), label,
+                SessionId: ObservationSession.ToString("D"), TaskId: ObservationTask.ToString("D")),
             deadline.Token);
         acquired.StatusCode.ShouldBe(HttpStatusCode.OK);
         var lease = (await acquired.Content.ReadFromJsonAsync<BuildSlotGrant>(deadline.Token))!.LeaseId!.Value;
         var grant = fixture.Broker.List().Leases.Single();
         grant.LeaseId.ShouldBe(lease);
-        grant.TaskId.ShouldBe("producer");
-        clock.Advance(TimeSpan.FromSeconds(5));
-        using var released = await fixture.Http.DeleteAsync("build-slots/" + lease, deadline.Token);
-        released.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+        grant.TaskId.ShouldBe(ObservationTask.ToString("D"));
+        grant.SessionId.ShouldBe(ObservationSession.ToString("D"));
+        var endpoint = new Uri(fixture.Http.BaseAddress!, "build-slots").AbsoluteUri;
+        var repo = TempDir();
+        Directory.CreateDirectory(Path.Combine(repo, "sample"));
+        File.WriteAllText(Path.Combine(repo, "sample", "sample.csproj"), """<Project Sdk="Microsoft.NET.Sdk" />""");
+        var arm = await RunObservationArmAsync(repo, Path.Combine(repo, ".antiphon", "checkpoints"), grouped: false,
+            fails: false, TimingFault.None, suppliedLease: new SlotLease
+            {
+                State = "granted", MaxCpuCount = 6, LeaseId = lease.ToString("D"), BrokerEndpoint = endpoint,
+                ReleaseAsync = async token =>
+                {
+                    clock.Advance(TimeSpan.FromSeconds(5));
+                    using var released = await fixture.Http.DeleteAsync("build-slots/" + lease, token);
+                    released.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+                },
+            });
+        arm.Exit.ShouldBe(ExitCodes.Green);
+        var observation = arm.Read.Events.Single();
+        var phase = observation.BuildPhase.ShouldNotBeNull();
         var terminal = transitions.Entries.Single(entry => entry.Id == lease && entry.Held is not null);
         terminal.Held.ShouldBe(5);
         fixture.Broker.List().Occupied.ShouldBe(0);
         using var denied = await fixture.Http.GetAsync("build-slots/" + lease, deadline.Token);
         denied.StatusCode.ShouldBe(HttpStatusCode.MethodNotAllowed);
 
-        var binding = new ProducerLeaseBinding("fixture-broker", fixture.Broker.Metrics().BrokerStartedAtUtc.ToString("O"),
-            lease, grant.TaskId!, "fixture-run", ObservationBuild);
+        var binding = new ProducerLeaseBinding(CheckpointBuildObservation.BrokerAuthority(endpoint)!,
+            fixture.Broker.Metrics().BrokerStartedAtUtc.ToString("O"), lease, grant.TaskId!,
+            "CP-1-20261127-000000-abcd", ObservationBuild, grant.SessionId!);
         var grantedAt = new DateTimeOffset(grant.GrantedAtUtc);
         var releasedAt = grantedAt.AddSeconds(terminal.Held!.Value);
         var input = new BuildInputDescriptor("antiphon", ObservationSource.Commit!, ObservationSource.Fingerprint!,
-            "sample", "requested", "graph", "toolchain", "fixture-runner", "linux", "x64");
+            phase.Project!, phase.RequestedPropertiesDigest!, "graph", "toolchain", "fixture-runner", "linux", "x64");
         var output = Path.Combine(TempDir(), "fixture-runtime");
         File.WriteAllText(output, "fixture-owned runtime");
         File.Exists(output).ShouldBeTrue();
         var at = releasedAt.AddSeconds(1);
-        return (binding, [new(binding, "grant", grantedAt), new(binding, "release", releasedAt)],
-            new("consumer", at, input), new("producer", ObservationBuild, input, grantedAt, releasedAt, "ok", "generation", false),
+        return (observation, binding, [new(binding, "grant", grantedAt), new(binding, "release", releasedAt)],
+            new("consumer", at, input), new(phase.TaskId!, phase.BuildId, input, phase.RequestedAt, phase.SettledAt,
+                phase.Outcome, "generation", false),
             new(input.Runner, ObservationBuild, "generation", true, releasedAt, at.AddSeconds(2), null,
                 releasedAt, at.AddSeconds(2), null));
     }

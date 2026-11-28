@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Serialization;
 using System.Text.Json;
 
 namespace Antiphon.Checkpoints;
@@ -11,6 +13,9 @@ public sealed record CheckpointBuildPhase(
     double ElapsedSeconds, string Outcome, string BuildSource, string? OperatingSystem, string Architecture,
     double? TestHostSeconds, DateTimeOffset? CleanupStartedAt, DateTimeOffset? CleanupEndedAt, bool? OutputsCleaned)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BrokerAuthority { get; init; }
+
     public string BrokerCoverageReason { get; init; } = "broker-telemetry-unreachable";
     public string CustodyCoverageReason { get; init; } = "custody-record-unreachable";
 }
@@ -43,9 +48,16 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
         internal DateTimeOffset RequestedAt { get; } = requestedAt;
         internal long StartedTick { get; } = startedTick;
         internal string? PropertyDigest { get; set; }
-        internal string? LeaseId { get; set; }
+        internal string? LeaseId { get; private set; }
+        internal string? BrokerEndpoint { get; private set; }
         internal DateTimeOffset? LaunchedAt { get; set; }
         internal DateTimeOffset? ExitedAt { get; set; }
+
+        internal void RecordLease(SlotLease lease)
+        {
+            LeaseId = lease.LeaseId;
+            BrokerEndpoint = lease.BrokerEndpoint;
+        }
 
         internal void RecordProperties(IReadOnlyList<string> properties)
         {
@@ -77,7 +89,10 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
             attempt.RequestedAt, attempt.LaunchedAt, attempt.ExitedAt, time.GetUtcNow(),
             time.GetElapsedTime(attempt.StartedTick).TotalSeconds, outcome, buildSource,
             OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : null,
-            RuntimeInformation.ProcessArchitecture.ToString(), testHostSeconds, null, null, null);
+            RuntimeInformation.ProcessArchitecture.ToString(), testHostSeconds, null, null, null)
+        {
+            BrokerAuthority = BrokerAuthority(attempt.BrokerEndpoint),
+        };
         var record = Event(EventKind, attempt.Id, attempt.RequestedAt);
         record.BuildPhase = phase;
         // Reserve room for the sequence, newline and terminal cleanup timestamps.
@@ -159,7 +174,12 @@ internal sealed class CheckpointBuildObservation(string runDirectory, string run
         UnavailableReason = "effective-inputs-unavailable",
     };
 
-    private static string? GuidId(string? value) => Guid.TryParse(value, out var parsed) ? parsed.ToString("D") : null;
+    // The endpoint can carry credentials or deployment-specific path components.
+    internal static string? BrokerAuthority(string? endpoint) =>
+        endpoint is { Length: > 0 and <= 4096 } ? Digest(Encoding.UTF8.GetBytes(endpoint.TrimEnd('/'))) : null;
+
+    private static string? GuidId(string? value) =>
+        Guid.TryParse(value, out var parsed) && parsed != Guid.Empty ? parsed.ToString("D") : null;
 
     private static string? Hex(string? value, int min, int max) => value is not null &&
         (value.Length == min || value.Length == max) && value.All(Uri.IsHexDigit) ? value : null;

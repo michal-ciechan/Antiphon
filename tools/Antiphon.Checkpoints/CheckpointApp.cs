@@ -189,8 +189,9 @@ public static class CheckpointApp
             wallLimit is int wall ? TimeSpan.FromMinutes(wall) : executionLimit + admissionLimit, runtime.TimeProvider);
         state.HardWallTimeoutAt = budget.StartedAt + budget.HardWallLimit;
         var scheduler = new RunScheduler(driver, platform, runtime.TimeProvider ?? TimeProvider.System);
+        // The owner's session GUID identifies its launch attempt on broker lease records.
         var buildObservation = request.ObserveBuilds
-            ? new CheckpointBuildObservation(runDirectory, state.RunId, owner.TaskId, null,
+            ? new CheckpointBuildObservation(runDirectory, state.RunId, owner.TaskId, owner.SessionId,
                 runtime.TimeProvider ?? TimeProvider.System)
             : null;
         SchedulerResult result;

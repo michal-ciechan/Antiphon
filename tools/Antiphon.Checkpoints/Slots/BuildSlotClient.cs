@@ -22,6 +22,7 @@ public sealed class SlotLease : IAsyncDisposable
     public string? SlotReason { get; init; }
     public SlotDiagnostic? Diagnostic { get; init; }
     public string? LeaseId { get; init; }
+    internal string? BrokerEndpoint { get; init; }
     public Func<CancellationToken, Task>? ReleaseAsync { get; init; }
 
     public ValueTask DisposeAsync() =>
@@ -259,6 +260,8 @@ public sealed class BuildSlotClient : IBuildSlotClient
                         return new SlotLease
                         {
                             State = "granted", LeaseId = leaseId, MaxCpuCount = cpu,
+                            BrokerEndpoint = response.RequestMessage?.RequestUri is { IsAbsoluteUri: true } broker
+                                ? broker.AbsoluteUri : _endpoint,
                             WaitedSeconds = elapsed,
                             ReleaseAsync = async token =>
                             {

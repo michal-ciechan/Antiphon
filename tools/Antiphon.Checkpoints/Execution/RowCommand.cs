@@ -113,7 +113,8 @@ internal static class RowCommand
             return row.Fail(ExitCodes.Invalid, guard.Reason);
 
         var observation = options.Has("observe-builds")
-            ? new CheckpointBuildObservation(results, row.RunId, runtime.EnvironmentLookup("ANTIPHON_TASK_ID"), null, time)
+            ? new CheckpointBuildObservation(results, row.RunId, runtime.EnvironmentLookup("ANTIPHON_TASK_ID"),
+                runtime.EnvironmentLookup("ANTIPHON_SESSION_ID"), time)
             : null;
         var observed = observation?.Begin(input.NoBuild ? "standalone-replay" : "standalone-composite",
             outputPath.TrimEnd('/'), project, start);
@@ -156,7 +157,7 @@ internal static class RowCommand
         }
 
         if (observed is not null)
-            observed.LeaseId = lease.LeaseId;
+            observed.RecordLease(lease);
         row.Slot = lease.State;
         row.SlotReason = lease.SlotReason;
         row.WaitedSeconds = lease.WaitedSeconds;

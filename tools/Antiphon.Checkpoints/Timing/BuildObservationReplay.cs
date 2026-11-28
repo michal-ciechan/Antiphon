@@ -3,10 +3,10 @@ namespace Antiphon.Checkpoints;
 // A source supplies these records only after binding a retained transition to the broker boot
 // and the producer. Checkpoint-side acquire/release logs and aggregate counters cannot supply it.
 internal sealed record ProducerLeaseBinding(
-    string Authority, string Generation, Guid LeaseId, string TaskId, string RunId, string BuildId);
+    string Authority, string Generation, Guid LeaseId, string TaskId, string RunId, string BuildId, string AttemptId);
 
 internal sealed record ProducerLeaseTransition(ProducerLeaseBinding Binding, string Kind, DateTimeOffset At);
-internal sealed record BrokerCoverage(string Status, string? Reason, double? HeldSeconds);
+internal sealed record BrokerCoverage(string Status, string? Reason, double? HeldSeconds, ProducerLeaseBinding? Binding = null);
 internal sealed record BuildObservationRead(IReadOnlyList<TimingEvent> Events, string? CoverageReason);
 
 internal static class BuildObservationReplay
@@ -17,7 +17,9 @@ internal static class BuildObservationReplay
         if (history is null)
             return new("unknown", "broker-telemetry-unreachable", null);
         if (string.IsNullOrWhiteSpace(expected.Authority) || string.IsNullOrWhiteSpace(expected.Generation)
-            || expected.LeaseId == Guid.Empty)
+            || expected.LeaseId == Guid.Empty || !Guid.TryParse(expected.TaskId, out var task) || task == Guid.Empty
+            || !Guid.TryParse(expected.AttemptId, out var attempt) || attempt == Guid.Empty
+            || string.IsNullOrWhiteSpace(expected.RunId) || string.IsNullOrWhiteSpace(expected.BuildId))
             return new("unknown", "broker-binding-unverified", null);
         var paired = history.Where(item => item.Binding == expected).ToArray();
         if (paired.Length != 2)
@@ -26,7 +28,7 @@ internal static class BuildObservationReplay
         var release = Array.Find(paired, item => item.Kind == "release");
         if (grant is null || release is null || release.At < grant.At)
             return new("unknown", "broker-pair-unverified", null);
-        return new("known", null, (release.At - grant.At).TotalSeconds);
+        return new("known", null, (release.At - grant.At).TotalSeconds, expected);
     }
 
     internal const int TaskShardLimit = 16;
@@ -140,11 +142,23 @@ internal static class BuildObservationReplay
     private static string TaskRoot(string runDirectory) =>
         Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(runDirectory)))!;
 
-    internal static BuildAvailabilityResult Classify(ObservedBuild producer, BuildAvailabilityRequest request,
+    internal static BuildAvailabilityResult Classify(TimingEvent observation, ObservedBuild producer, BuildAvailabilityRequest request,
         BrokerCoverage broker, BuildCustodyEvidence? custody)
     {
         if (broker.Status != "known")
             return new("unknown", broker.Reason);
+        if (broker.Binding is not { } binding || string.IsNullOrWhiteSpace(binding.Authority)
+            || string.IsNullOrWhiteSpace(binding.Generation) || broker.HeldSeconds is not double held || !double.IsFinite(held) || held < 0
+            || observation.BuildPhase is not { Version: "antiphon-timing-phase-v1" } phase
+            || !Guid.TryParse(phase.TaskId, out var task) || task == Guid.Empty
+            || !Guid.TryParse(phase.AttemptId, out var attempt) || attempt == Guid.Empty
+            || string.IsNullOrWhiteSpace(observation.RunId) || string.IsNullOrWhiteSpace(phase.BuildId)
+            || binding.Authority != phase.BrokerAuthority || binding.TaskId != phase.TaskId
+            || binding.AttemptId != phase.AttemptId || binding.RunId != observation.RunId
+            || binding.BuildId != phase.BuildId || !Guid.TryParse(phase.LeaseId, out var lease)
+            || lease == Guid.Empty || binding.LeaseId != lease
+            || producer.TaskId != phase.TaskId || producer.BuildId != phase.BuildId)
+            return new("unknown", "broker-binding-unverified");
         return BuildAvailability.Classify(request, producer with { LeaseVerified = true }, custody);
     }
 }

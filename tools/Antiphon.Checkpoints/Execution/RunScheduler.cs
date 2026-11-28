@@ -485,7 +485,7 @@ public sealed class RunScheduler
                 TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes), value => progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, value), cancellationToken).ConfigureAwait(false);
             progress.Slot = lease.State;
             if (observation is not null)
-                observation.LeaseId = lease.LeaseId;
+                observation.RecordLease(lease);
             progress.SlotReason = lease.SlotReason;
             progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, lease.WaitedSeconds);
             Publish(request);
