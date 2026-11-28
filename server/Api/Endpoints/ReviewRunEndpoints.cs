@@ -71,8 +71,7 @@ public static class ReviewRunEndpoints
         app.MapPost("/api/review-findings/{id:guid}/responses", async (Guid id, FindingResponseRequest request, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.RespondAsync(id, request, ct))).WithTags("Review engine");
 
-        const string queuePath = "/api/review-queue";
-        app.MapGet(queuePath, async (string? scope, string? login, ReviewService service, CancellationToken ct) =>
+        app.MapGet("/api/review-queue", async (string? scope, string? login, ReviewService service, CancellationToken ct) =>
             Results.Ok(await service.GetQueueAsync(scope, login, ct))).WithTags("Review engine");
 
         var gates = app.MapGroup("/api/review-gates/{id:guid}").WithTags("Review engine");

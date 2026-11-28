@@ -124,7 +124,7 @@ user-secrets or your platform's secret store.
 ### 4.2 A working starting point
 
 This configuration is for a company on github.com, with the Claude Code CLI signed in on the server
-machine. It is the same set of settings that `scripts/antiphon review-standalone` uses (section 6.1).
+machine. The standalone launcher has its own defaults (section 6.1).
 
 ```json
 {
@@ -349,7 +349,7 @@ On Windows, use `scripts\antiphon.cmd` with the same command names and flags.
 
 - Starts Postgres 16 on port 17290 in the `antiphon-review-standalone-pg` container with a dedicated volume.
 - Clones the repo to `--mirror-path`.
-- Reads the App from Bitwarden and passes the settings from section 4.2 as server environment variables.
+- Reads the App from Bitwarden and configures the server through environment variables.
 - Starts the server on 17262 and the Vite UI on 17263.
 
 ```powershell
@@ -364,12 +364,13 @@ On Windows, use `scripts\antiphon.cmd` with the same command names and flags.
 - Logs go to `logs/review-standalone/`.
 - The defaults point at Antiphon's own repo and vault item. Pass `--repo`, `--vault-item`,
   `--viewer-login` and `--mirror-path` for your deployment.
-- The command switches off the merge gate for `--repo`, so Antiphon merges approved PRs. Pass
-  `--no-auto-merge` to keep the gate on.
+- Polling runs every 120 seconds for `--repo` and considers open PRs without requiring the `antiphon`
+  label. Use `--no-polling` to turn it off or `--poll-seconds` to set the interval.
+- The command switches off the merge gate for `--repo`, so Antiphon merges approved PRs using the
+  server's default `rebase` merge method. Pass `--no-auto-merge` to keep the gate on.
 - `--sign-in` enables GitHub sign-in (section 7.1) and allows `--viewer-login` to sign in. It
   requires `--public-base-url` and a `Client secret` field in the vault item.
-- Other options include `--no-polling`, `--no-client`, `--poll-seconds`, `--port`, `--client-port`
-  and `--postgres-port`.
+- Other options include `--no-client`, `--port`, `--client-port` and `--postgres-port`.
 
 ### 6.2 Inside an existing Antiphon (AppHost)
 

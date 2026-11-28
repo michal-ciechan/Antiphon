@@ -1234,13 +1234,14 @@ routes except the four `/api/review-auth/*` routes. In GitHub mode, gate decisio
 |---|---|---|---|
 | GET | `/api/review-runs` | Optional query `status`, `repo`, `stage`, `q` (title, repo, author or PR number) | `{ items: ReviewRunSummaryDto[], total }`, newest update first |
 | GET | `/api/review-runs/kpis` | | `ReviewKpisDto` with counts, rounds, cost and model usage |
-| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub takes `owner/name` and a positive `prNumber`. Local requires `baseSha` and defaults `headSha` to `HEAD`. | 201 `ReviewRunDetailDto` with a `Location` header for the new run |
+| POST | `/api/review-runs` | `{ host, repo, prNumber?, baseSha?, headSha?, title? }`. GitHub takes `owner/name` and a positive `prNumber`. Local requires `baseSha` and defaults `headSha` to `HEAD`. | 201 `ReviewRunDetailDto` with a `Location` header for the new run. GitHub intake will include an `existing` flag (pending GH-56). |
 | POST | `/api/review-runs/demo` | No body | `{ items: ReviewRunSummaryDto[], total }` for seeded runs. 404 when `Review:DemoSeedEnabled` is false. |
 | GET | `/api/review-runs/{id}` | | `ReviewRunDetailDto` with iterations, node executions and gates |
 | GET | `/api/review-runs/{id}/findings` | Optional query `status` | `{ items: ReviewFindingDto[], total }`, including response history |
 | GET | `/api/review-runs/{id}/packs/{iteration}/{group}` | Integer iteration and reviewer group key | Stored pack as `text/markdown; charset=utf-8`. 404 for a missing pack. |
 | POST | `/api/review-runs/{id}/refresh` | No body | 202 with an empty body. Checks the code host and queues follow-up work when needed. |
 | POST | `/api/review-runs/{id}/rounds` | Optional body `{ steerPrompt? }` | `ReviewRunDetailDto` after requesting another review at the current head |
+| POST | `/api/review-runs/{id}/close` (pending GH-56) | Close request | See [GH-56](https://github.com/michal-ciechan/Antiphon/issues/56). |
 | POST | `/api/review-runs/{id}/responses` | `{ responses: (FindingResponseRequest & { findingId })[] }` | `{ items: ReviewFindingDto[] }` |
 | POST | `/api/review-findings/{id}/responses` | `FindingResponseRequest` (`{ action, reasonCategory?, scope?, text? }`) | Updated `ReviewFindingDto` |
 | GET | `/api/review-queue` | Optional query `scope` (`Mine`, `Teams`, `All`, default `All`) and `login` (for `Mine`) | `{ items: QueueItemDto[], total }` with gate, run and SLA information |
@@ -1258,8 +1259,10 @@ routes except the four `/api/review-auth/*` routes. In GitHub mode, gate decisio
 | GET | `/api/review-auth/callback` | OAuth query `code` and `state` with the sign-in state cookie, or `error` on cancellation | Sets the session cookie and redirects to the return path (302). HTML error page on failure. |
 | POST | `/api/review-auth/logout` | No body | Clears the session cookie and returns an HTML signed-out page |
 
-[GH-56](https://github.com/michal-ciechan/Antiphon/issues/56) is pending. It adds the
-`existing` flag to GitHub intake responses and introduces `POST /api/review-runs/{id}/close`.
+**GH-56 integration note.** Fold the GH-56 list, intake, detail, refresh and rounds entries into
+the five matching rows of this table. Fill in the single close row in each API map. When GH-56
+lands, remove the pending markers from both maps, the temporary allowance in the route guard and
+this note. [GH-56](https://github.com/michal-ciechan/Antiphon/issues/56)
 
 ### Review surface
 
