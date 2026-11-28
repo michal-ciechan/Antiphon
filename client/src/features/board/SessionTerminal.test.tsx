@@ -14,6 +14,7 @@ const xtermMock = vi.hoisted(() => ({
     write: ReturnType<typeof vi.fn>
     clear: ReturnType<typeof vi.fn>
     dispose: ReturnType<typeof vi.fn>
+    focus: ReturnType<typeof vi.fn>
     onDataHandler?: (input: string) => void
     onResizeHandler?: (size: { cols: number; rows: number }) => void
     customKeyHandler?: (event: KeyboardEvent) => boolean
@@ -71,6 +72,7 @@ vi.mock('@xterm/xterm', () => ({
     write = vi.fn()
     clear = vi.fn()
     dispose = vi.fn()
+    focus = vi.fn()
     cols = 100
     rows = 30
     onDataHandler?: (input: string) => void
@@ -201,6 +203,7 @@ describe('SessionTerminal', () => {
     terminal.onDataHandler?.('before release')
     fireEvent.click(retry)
     await waitFor(() => expect(terminal.options?.disableStdin).toBe(false))
+    expect(terminal.focus).toHaveBeenCalledOnce()
     terminal.onDataHandler?.('after release')
     await waitFor(() => expect(inputSpy.mock.calls).toEqual([[{ input: 'after release' }]]))
     expect(signalrMock.connection.invoke.mock.calls).toEqual([

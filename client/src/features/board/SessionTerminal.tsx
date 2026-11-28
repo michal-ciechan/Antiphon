@@ -1,5 +1,5 @@
 import '@xterm/xterm/css/xterm.css'
-import { Box, Stack, Text } from '@mantine/core'
+import { Box, Button, Stack, Text } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { useEffect, useRef, useState } from 'react'
 import { HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr'
@@ -30,7 +30,11 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
   const generation = session.startedAt
   const running = session.status === 'Running'
   const sendInput = useRef<((input: string) => void) | null>(null)
-  const [terminalConnection, setTerminalConnection] = useState<{ sessionId: string; generation: string; joined: boolean; detail?: string }>()
+  const [terminalConnection, setTerminalConnection] = useState<{
+    sessionId: string; generation: string; joined: boolean; detail?: string; retry?: () => void
+  }>()
+  const retryAttachment = terminalConnection?.sessionId === sessionId && terminalConnection.generation === generation
+    ? terminalConnection.retry : undefined
   const inputEnabled = running && terminalConnection?.sessionId === sessionId
     && terminalConnection.generation === generation && terminalConnection.joined
   // Touch devices / narrow viewports can't produce TUI keys (arrows, esc, tab, ctrl) — give them buttons.
@@ -69,7 +73,7 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
       .configureLogging(LogLevel.Warning)
       .build()
 
-    const setJoined = (acknowledged: boolean, detail?: string) => {
+    const setJoined = (acknowledged: boolean, detail?: string, retry?: () => void) => {
       if (disposed) return
       joined = acknowledged
       terminal.options.disableStdin = !running || !joined
@@ -82,18 +86,27 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
           }
         })
       } : null
-      setTerminalConnection({ sessionId, generation, joined, detail })
+      setTerminalConnection({ sessionId, generation, joined, detail, retry })
     }
 
-    const join = async () => {
+    const join = async (focusOnSuccess = false) => {
       if (disposed || connection.state !== HubConnectionState.Connected) return
       const attempt = ++joinAttempt
+      setJoined(false)
       try {
         await connection.invoke('JoinGroup', groupName)
-        if (attempt === joinAttempt && connection.state === HubConnectionState.Connected) setJoined(true)
+        if (!disposed && attempt === joinAttempt && connection.state === HubConnectionState.Connected) {
+          setJoined(true)
+          if (focusOnSuccess) terminal.focus()
+        }
       } catch (error) {
         if (attempt === joinAttempt) {
-          setJoined(false, error instanceof Error ? error.message : 'Terminal attachment was refused.')
+          setJoined(false, error instanceof Error ? error.message : 'Terminal attachment was refused.', () => {
+            void (async () => {
+              await join(true)
+              await replayBacklog(true)
+            })()
+          })
         }
       }
     }
@@ -241,6 +254,9 @@ export function SessionTerminal({ session, fill = false }: SessionTerminalProps)
           {terminalConnection?.sessionId === sessionId && terminalConnection.detail
             ? terminalConnection.detail : 'Waiting for terminal attachment.'}
         </Text>
+      )}
+      {running && retryAttachment && (
+        <Button size="xs" variant="light" onClick={retryAttachment}>Retry terminal attachment</Button>
       )}
       {showKeypad && inputEnabled && (
         <TerminalKeypad onKey={(sequence) => sendInput.current?.(sequence)} />
