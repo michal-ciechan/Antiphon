@@ -19,6 +19,7 @@ public sealed class RowRequest
     public List<KeyValuePair<string, string>> Properties { get; init; } = [];
     internal IReadOnlyList<string>? ResolvedBuildProperties { get; init; }
     internal CheckpointIntermediateCache? IntermediateCache { get; init; }
+    internal CheckpointBuildObservation.Attempt? BuildObservation { get; init; }
     public IReadOnlyList<string> KnownFlaky { get; init; } = [];
     public int Repeat { get; init; } = 1;
     public string Commit { get; init; } = new string('0', 40);
@@ -133,6 +134,8 @@ public sealed class RowRunner
         var properties = (request.ResolvedBuildProperties ?? BuildStep.PropertyArguments(
             request.Properties, _platform.IsWindows, request.Repeat,
             request.Repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, request.Project!) : null)).ToList();
+        if (!request.NoBuild)
+            request.BuildObservation?.RecordProperties(properties);
         var runOutput = request.OutputPath ?? "";
         if (!string.IsNullOrWhiteSpace(request.Project) && !string.IsNullOrWhiteSpace(request.OutputPath))
             runOutput = BuildStep.AppendSharedLayout(properties, request.WorkingDirectory, request.Project, request.OutputPath).Owned;
@@ -228,13 +231,17 @@ public sealed class RowRunner
             await EnsureTimingAsync().ConfigureAwait(false);
             var buildWatch = System.Diagnostics.Stopwatch.StartNew();
             var buildArgs = BuildStep.BuildArguments(request.Project!, request.OutputPath!, properties, request.MaxCpuCount);
+            if (request.BuildObservation is { } observedBuild && _driver is not ProcessDriver)
+                observedBuild.LaunchedAt = _time.GetUtcNow();
             var built = await RowTimeout.RunWithDeadlineAsync(
                 _driver,
-                Child(request, fileName, buildArgs, "build.log", request.Environment),
+                Child(request, fileName, buildArgs, "build.log", request.Environment) with { BuildObservation = request.BuildObservation },
                 request.Deadline,
                 _time,
                 cancellationToken).ConfigureAwait(false);
             buildWatch.Stop();
+            if (request.BuildObservation is { } completedBuild && _driver is not ProcessDriver)
+                completedBuild.ExitedAt = built.Exited;
             var buildSeconds = buildWatch.Elapsed.TotalSeconds;
             var buildSourceOk = request.SourceBoundary?.Invoke() != false;
             if (built.TimedOut)
@@ -287,16 +294,16 @@ public sealed class RowRunner
             runEnvironment ??= request.Environment.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
             PhaseJournalDiagnostic.Enable(runEnvironment, request.ResultsDirectory, request.Name, request.TimingRunId);
         }
-        var hostLaunch = DateTimeOffset.UtcNow;
-        var hostStartTick = System.Diagnostics.Stopwatch.GetTimestamp();
+        var hostLaunch = _time.GetUtcNow();
+        var hostStartTick = _time.GetTimestamp();
         var run = await RowTimeout.RunWithDeadlineAsync(
             _driver,
             Child(request, fileName, runArgs, "console.log", runEnvironment ?? request.Environment),
             request.Deadline,
                 _time,
             cancellationToken).ConfigureAwait(false);
-        var hostExit = DateTimeOffset.UtcNow;
-        var hostElapsed = System.Diagnostics.Stopwatch.GetElapsedTime(hostStartTick);
+        var hostExit = _time.GetUtcNow();
+        var hostElapsed = _time.GetElapsedTime(hostStartTick);
         var sourceStable = request.SourceBoundary?.Invoke() != false;
         if (binding is not null && !run.TimedOut) OwnedOutputLedger.Adopt(binding.OutputPath, run.Exited);
         if (binding is not null && binding.Check() != "verified")

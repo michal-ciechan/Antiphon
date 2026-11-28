@@ -23,6 +23,7 @@ public sealed record DriverRequest(
     internal int GraphEvaluationParallelism { get; init; } = 1;
     // A non-null result refuses the already prepared request before the build child starts.
     internal Func<CancellationToken, Task<DriverResult?>>? BeforeBuildStart { get; init; }
+    internal CheckpointBuildObservation.Attempt? BuildObservation { get; init; }
 
     // Inherited environment names starting with one of these (ignoring case) are removed before Environment is applied.
     public IReadOnlyList<string> ClearedEnvironmentPrefixes { get; init; } = [];

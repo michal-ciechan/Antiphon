@@ -6,7 +6,7 @@ using TUnit.Core;
 namespace Antiphon.Tests.Checkpoints;
 
 [Category("Unit")]
-public sealed class RunSchedulerTests : CheckpointTestBase
+public sealed partial class RunSchedulerTests : CheckpointTestBase
 {
     [Test]
     public void C2103_availability_is_bound_to_inputs_and_request_time()

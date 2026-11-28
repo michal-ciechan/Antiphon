@@ -182,6 +182,8 @@ public sealed class ProcessDriver : IConfinedDriver
             else if (prelaunch is null)
             {
                 started = true;
+                if (request.BuildObservation is { } observation)
+                    observation.LaunchedAt = DateTimeOffset.UtcNow;
                 _running.TryAdd(process, 0);
                 process.BeginRead(
                     line => { lock (outputGate) Capture(line, stdout, log, request.OnOutput); },
@@ -189,6 +191,8 @@ public sealed class ProcessDriver : IConfinedDriver
                 await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
                 processExit = process.ExitCode;
                 exitedAt = DateTimeOffset.UtcNow;
+                if (request.BuildObservation is { } completed)
+                    completed.ExitedAt = exitedAt;
             }
         }
         catch (OperationCanceledException ex)

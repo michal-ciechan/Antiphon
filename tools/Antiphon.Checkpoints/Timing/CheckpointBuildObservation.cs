@@ -1,0 +1,143 @@
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+
+namespace Antiphon.Checkpoints;
+
+public sealed record CheckpointBuildPhase(
+    string Version, string Invocation, string? TaskId, string? AttemptId, string BuildId, string? Project,
+    string? SourceSha, string? SourceFingerprint, string? RequestedPropertiesDigest, string? LeaseId,
+    DateTimeOffset RequestedAt, DateTimeOffset? LaunchedAt, DateTimeOffset? ExitedAt, DateTimeOffset SettledAt,
+    double ElapsedSeconds, string Outcome, string BuildSource, string? OperatingSystem, string Architecture,
+    double? TestHostSeconds, DateTimeOffset? CleanupStartedAt, DateTimeOffset? CleanupEndedAt, bool? OutputsCleaned);
+
+// Collect scalar facts during execution. Only the terminal path opens the shared journal.
+internal sealed class CheckpointBuildObservation(string runDirectory, string runId, string? taskId,
+    string? attemptId, TimeProvider time, int eventLimit = CheckpointBuildObservation.EventLimit)
+{
+    internal const int EventLimit = 128;
+    internal const int ByteLimit = 64 * 1024;
+    private const int DiagnosticReserve = 2048;
+    private const string Producer = "checkpoint-build";
+    private const string EventKind = "build-observed";
+    private const string Schema = "antiphon-timing-phase-v1";
+
+    private readonly List<TimingEvent> _records = [];
+    private int _recordBytes;
+    private bool _truncated;
+
+    internal static string JournalRoot(string ownedRunDirectory) => Path.Combine(ownedRunDirectory, "build-observation");
+
+    internal sealed class Attempt(string invocation, string id, string? project, SourceObservation source,
+        DateTimeOffset requestedAt, long startedTick)
+    {
+        internal string Invocation { get; } = invocation;
+        internal string Id { get; } = id;
+        internal string? Project { get; } = project;
+        internal SourceObservation Source { get; } = source;
+        internal DateTimeOffset RequestedAt { get; } = requestedAt;
+        internal long StartedTick { get; } = startedTick;
+        internal string? PropertyDigest { get; set; }
+        internal string? LeaseId { get; set; }
+        internal DateTimeOffset? LaunchedAt { get; set; }
+        internal DateTimeOffset? ExitedAt { get; set; }
+
+        internal void RecordProperties(IReadOnlyList<string> properties)
+        {
+            if (properties.Count <= 64 && properties.Sum(property => (long)property.Length) <= 4096)
+                PropertyDigest = Digest(JsonSerializer.SerializeToUtf8Bytes(properties));
+        }
+    }
+
+    internal Attempt Begin(string invocation, string id, string? project, SourceObservation source)
+    {
+        var relative = project?.Replace('\\', '/');
+        if (relative is { Length: > 240 } || relative?.StartsWith('/') == true || relative?.Contains(':') == true
+            || relative?.Split('/').Contains("..", StringComparer.Ordinal) == true)
+            relative = null;
+        return new(invocation, id, relative, source, time.GetUtcNow(), time.GetTimestamp());
+    }
+
+    internal void Complete(Attempt attempt, string outcome, string buildSource, double? testHostSeconds = null)
+    {
+        if (_records.Count >= eventLimit - 1 || attempt.Id.Length > 128)
+        {
+            _truncated = true;
+            return;
+        }
+        var clean = attempt.Source is { CaptureStatus: "known", DirtyFiles: 0 };
+        var phase = new CheckpointBuildPhase(Schema, attempt.Invocation, GuidId(taskId), GuidId(attemptId),
+            attempt.Id, attempt.Project, clean ? Hex(attempt.Source.Commit, 40, 64) : null,
+            clean ? Hex(attempt.Source.Fingerprint, 64, 64) : null, attempt.PropertyDigest, GuidId(attempt.LeaseId),
+            attempt.RequestedAt, attempt.LaunchedAt, attempt.ExitedAt, time.GetUtcNow(),
+            time.GetElapsedTime(attempt.StartedTick).TotalSeconds, outcome, buildSource,
+            OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : null,
+            RuntimeInformation.ProcessArchitecture.ToString(), testHostSeconds, null, null, null);
+        var record = Event(EventKind, attempt.Id, attempt.RequestedAt);
+        record.BuildPhase = phase;
+        // Reserve room for the sequence, newline and terminal cleanup timestamps.
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(record, TimingJournal.Json).Length + 112;
+        if (_recordBytes + bytes > ByteLimit - DiagnosticReserve)
+        {
+            _truncated = true;
+            return;
+        }
+        _recordBytes += bytes;
+        _records.Add(record);
+    }
+
+    internal async Task PublishAsync(Func<string, TimingJournal>? open, Action<string> diagnostic,
+        DateTimeOffset? cleanupStartedAt = null, DateTimeOffset? cleanupEndedAt = null, bool? outputsCleaned = null)
+    {
+        if (_records.Count == 0 && !_truncated)
+            return;
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        try
+        {
+            var path = JournalRoot(runDirectory);
+            SafeWrite.Require(SafeWrite.CreateFreshDirectory(path, SafeWrite.Under(runDirectory)));
+            var journal = (open ?? TimingJournal.Open)(path);
+            if (_truncated)
+            {
+                var marker = Event("build-observation-coverage", "", _records.FirstOrDefault()?.StartedAt ?? time.GetUtcNow());
+                marker.UnavailableReason = "observation-truncated";
+                await journal.AppendAsync(marker, budget.Token).ConfigureAwait(false);
+            }
+            foreach (var record in _records)
+            {
+                record.BuildPhase = record.BuildPhase! with
+                {
+                    CleanupStartedAt = cleanupStartedAt, CleanupEndedAt = cleanupEndedAt, OutputsCleaned = outputsCleaned,
+                };
+                await journal.AppendAsync(record, budget.Token).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or OperationCanceledException)
+        {
+            try { diagnostic("BUILD OBSERVATION coverage=unknown reason=journal-" + ex.GetType().Name); }
+            catch (Exception logError) when (logError is IOException or InvalidOperationException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private TimingEvent Event(string kind, string buildId, DateTimeOffset started) => new()
+    {
+        EventId = Digest(JsonSerializer.SerializeToUtf8Bytes(new[] { Producer, taskId, attemptId, runId, buildId, kind })),
+        EventKind = kind,
+        RunId = runId,
+        Producer = Producer,
+        ProducerVersion = Schema,
+        SetKind = "build-observation",
+        SetId = buildId,
+        ProducingBuildId = buildId,
+        StartedAt = started,
+        CoverageStatus = "unknown",
+        UnavailableReason = "effective-inputs-unavailable",
+    };
+
+    private static string? GuidId(string? value) => Guid.TryParse(value, out var parsed) ? parsed.ToString("D") : null;
+
+    private static string? Hex(string? value, int min, int max) => value is not null &&
+        (value.Length == min || value.Length == max) && value.All(Uri.IsHexDigit) ? value : null;
+
+    private static string Digest(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+}

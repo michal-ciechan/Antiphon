@@ -615,6 +615,7 @@ public static class Program
             Slots = options.Get("slots") ?? "auto",
             KeepOutputs = options.Has("keep-outputs"),
             CleanOnRed = options.Has("clean-on-red"),
+            ObserveBuilds = options.Has("observe-builds"),
             ExpectedSourceSha = options.Get("expected-source-sha"),
         });
     }

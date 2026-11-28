@@ -29,11 +29,14 @@ internal sealed class BuildSlotBrokerFixture : IAsyncDisposable
     public BuildSlotBroker Broker => _app.Services.GetRequiredService<BuildSlotBroker>();
     public HttpMessageHandler Handler => _handler;
 
-    public static async Task<BuildSlotBrokerFixture> StartAsync(int budget = 2, int cpu = 6, int renewEvery = 1)
+    public static async Task<BuildSlotBrokerFixture> StartAsync(int budget = 2, int cpu = 6, int renewEvery = 1,
+        TimeProvider? clock = null, ILoggerProvider? log = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], EnvironmentName = "Test" });
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
+        if (log is not null)
+            builder.Logging.AddProvider(log);
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["SessionRunner:BuildSlots:Enabled"] = "true",
@@ -47,6 +50,8 @@ internal sealed class BuildSlotBrokerFixture : IAsyncDisposable
         });
         builder.Services.AddSingleton<IProcessLivenessProbe>(new ForeignLiveness());
         builder.Services.AddSingleton<IHostMemoryProbe>(new Memory());
+        if (clock is not null)
+            builder.Services.AddSingleton(clock);
         builder.Services.AddBuildSlotBroker(builder.Configuration);
         var app = builder.Build();
         app.MapBuildSlotRoutes();

@@ -26,6 +26,7 @@ public sealed class SchedulerRequest
     public SourceRunGuard? SourceGuard { get; init; }
     public string? ExpectedSourceSha { get; init; }
     public string? TimingRoot { get; init; }
+    internal CheckpointBuildObservation? BuildObservation { get; init; }
     internal CheckpointIntermediateCache? IntermediateCache { get; init; }
     internal Func<CheckpointBuildBinding, CancellationToken, Task>? BeforeBuildReceiptWrite { get; init; }
 }
@@ -221,7 +222,7 @@ public sealed class RunScheduler
                     pending.Remove(next);
                     var rowProgress = request.State.Rows.First(row => row.Id == next.Id);
                     rowProgress.State = "running";
-                    rowProgress.StartedAt = DateTimeOffset.UtcNow;
+                    rowProgress.StartedAt = _buildTimeProvider.GetUtcNow();
                     rowProgress.LastOutputAt = rowProgress.StartedAt;
                     var concurrent = running.Count + 1;
                     if (concurrent > request.State.MaxConcurrentRows)
@@ -412,6 +413,7 @@ public sealed class RunScheduler
     {
         using var activity = budget.Work();
         var wallStarted = _buildTimeProvider.GetTimestamp();
+        var observation = request.BuildObservation?.Begin("grouped-producer", build.Id, build.Project, request.State.Source.Start);
         long? admittedAt = null;
         var before = OutputCleanup.MatchingIsolatedDirectories(request.WorkingDirectory, build.Id);
         try
@@ -425,7 +427,7 @@ public sealed class RunScheduler
         }
 
         progress.State = "building";
-        progress.StartedAt = DateTimeOffset.UtcNow;
+        progress.StartedAt = _buildTimeProvider.GetUtcNow();
         var deadlineMinutes = BuildDeadlineMinutes(request.Manifest, request.Rows, build.Id, request.RowTimeoutOverride);
         progress.DeadlineMinutes = deadlineMinutes;
         request.State.MaxConcurrentBuilds = Math.Max(
@@ -435,6 +437,7 @@ public sealed class RunScheduler
         var repeat = request.Rows.First(row => row.Build == build.Id).Repeat;
         var originalProperties = BuildStep.PropertyArguments(request.Manifest.Build.Properties, _platform.IsWindows, repeat,
             repeat > 1 ? RepeatRequest.CanonicalProject(request.WorkingDirectory, build.Project) : null);
+        observation?.RecordProperties(originalProperties);
         var candidate = request.IntermediateCache?.Prepare(build.Project, originalProperties, activePartitions,
             cancellationToken: cancellationToken);
         List<string> LayoutProperties(string? intermediateRoot)
@@ -473,7 +476,7 @@ public sealed class RunScheduler
         var sourceOk = true;
         string? preLaunchSourceRefusal = null;
         var verificationParallelism = 1;
-        var started = DateTimeOffset.UtcNow;
+        var started = _buildTimeProvider.GetUtcNow();
         try
         {
             progress.Slot = "acquiring";
@@ -481,6 +484,8 @@ public sealed class RunScheduler
             await using var lease = await budget.AcquireAsync(request.Slots, session, "build:" + build.Id, activity,
                 TimeSpan.FromMinutes(request.Manifest.Build.SlotWaitMinutes), value => progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, value), cancellationToken).ConfigureAwait(false);
             progress.Slot = lease.State;
+            if (observation is not null)
+                observation.LeaseId = lease.LeaseId;
             progress.SlotReason = lease.SlotReason;
             progress.WaitedSeconds = Math.Max(progress.WaitedSeconds, lease.WaitedSeconds);
             Publish(request);
@@ -530,7 +535,7 @@ public sealed class RunScheduler
             }
             var cpu = lease.MaxCpuCount > 0 ? lease.MaxCpuCount : 4;
             verificationParallelism = intermediate is null ? 1 : cpu;
-            started = DateTimeOffset.UtcNow;
+            started = _buildTimeProvider.GetUtcNow();
             if (request.BeforeLaunch is not null)
                 await request.BeforeLaunch(cancellationToken).ConfigureAwait(false);
             var admitted = AdmitOriginalLedger();
@@ -609,12 +614,18 @@ public sealed class RunScheduler
                 if (!defersLaunch && beforeStart is not null
                     && await beforeStart(token).ConfigureAwait(false) is { } refused)
                     return refused;
-                return await _driver.RunAsync(new DriverRequest("dotnet", args, request.WorkingDirectory, log)
+                if (!defersLaunch && observation is not null)
+                    observation.LaunchedAt = _buildTimeProvider.GetUtcNow();
+                var driven = await _driver.RunAsync(new DriverRequest("dotnet", args, request.WorkingDirectory, log)
                 {
                     Ledger = ledger,
                     GraphEvaluationParallelism = verificationParallelism,
                     BeforeBuildStart = defersLaunch ? beforeStart : null,
+                    BuildObservation = observation,
                 }, token).ConfigureAwait(false);
+                if (!defersLaunch && observation is not null)
+                    observation.ExitedAt = driven.Exited;
+                return driven;
             }
         }
         catch (OperationCanceledException)
@@ -635,7 +646,7 @@ public sealed class RunScheduler
             ProcessDriver.AppendLog(log, outside.Detail);
         if (result is not null)
         {
-            progress.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
+            progress.Seconds = (_buildTimeProvider.GetUtcNow() - started).TotalSeconds;
             var succeeded = result.ExitCode == 0 && !result.TimedOut && sourceOk && outside?.Kind is null;
             // Keep the source gate's pre-launch refusal when the post-attempt ledger also
             // detects the same change. Both custody observations remain in the evidence.
@@ -695,6 +706,8 @@ public sealed class RunScheduler
             progress.WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds;
             progress.ExecutedSeconds = admittedAt is long at ? _buildTimeProvider.GetElapsedTime(at).TotalSeconds : 0;
             OutputCleanup.RecordCreatedOutputs(request.State, request.WorkingDirectory, build.Id, before);
+            if (observation is not null)
+                request.BuildObservation!.Complete(observation, progress.State, progress.Source.BuildSource);
         }
 
         void MarkBuildCanceled()
@@ -720,7 +733,7 @@ public sealed class RunScheduler
         long? admittedAt = null;
         try
         {
-        var started = DateTimeOffset.UtcNow;
+        var started = _buildTimeProvider.GetUtcNow();
         progress.Slot = "acquiring";
         Publish(request);
         await using var lease = await budget.AcquireAsync(request.Slots, session, spec.Id + "@" + (spec.Build ?? "command"), activity,
@@ -807,12 +820,12 @@ public sealed class RunScheduler
             TimingProducer = "tool",
             ProducingBuildId = spec.Build,
         }, TextWriter.Null, cancellationToken).ConfigureAwait(false);
-        progress.LastOutputAt = DateTimeOffset.UtcNow;
+        progress.LastOutputAt = _buildTimeProvider.GetUtcNow();
         result.Id = spec.Id;
         result.Slot = lease.State;
         result.SlotReason = lease.SlotReason;
         result.WaitedSeconds = Math.Max(progress.WaitedSeconds, lease.WaitedSeconds);
-        result.Seconds = (DateTimeOffset.UtcNow - started).TotalSeconds;
+        result.Seconds = (_buildTimeProvider.GetUtcNow() - started).TotalSeconds;
         result.Source = rowSource;
         result.ExecutedSeconds = _buildTimeProvider.GetElapsedTime(admittedAt.Value).TotalSeconds;
         result.WallSeconds = _buildTimeProvider.GetElapsedTime(wallStarted).TotalSeconds;
@@ -926,8 +939,8 @@ public sealed class RunScheduler
             Trx = trx,
         };
 
-    private static double Elapsed(DateTimeOffset? started) =>
-        started is DateTimeOffset at ? Math.Max(0, (DateTimeOffset.UtcNow - at).TotalSeconds) : 0;
+    private double Elapsed(DateTimeOffset? started) =>
+        started is DateTimeOffset at ? Math.Max(0, (_buildTimeProvider.GetUtcNow() - at).TotalSeconds) : 0;
 
     private static void Publish(SchedulerRequest request)
     {

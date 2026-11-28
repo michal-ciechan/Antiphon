@@ -14,6 +14,8 @@ public sealed class RunRequest
     public string Slots { get; set; } = "auto";
     public bool KeepOutputs { get; set; }
     public bool CleanOnRed { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ObserveBuilds { get; set; }
     public string RepoRoot { get; set; } = "";
     public string Commit { get; set; } = "";
     public string Branch { get; set; } = "";

@@ -46,6 +46,11 @@ public static class CheckpointApp
         public Func<string, SourceObservation>? SourceCapture { get; init; }
         // The row verb's results-directory stamp (yyyyMMdd-HHmmss-xxxx); tests pin it to reach an existing directory.
         public Func<string>? RowStamp { get; init; }
+        internal Func<string>? RunStamp { get; init; }
+        internal ReportHost? ReportHost { get; init; }
+        internal Func<string, TimingJournal>? BuildObservationJournal { get; init; }
+        internal string? HostSnapshotText { get; init; }
+        internal string? GitSnapshotText { get; init; }
     }
 
     public static string ToolSource(Runtime? runtime = null) => runtime?.ToolDirectory ?? (runtime?.CleanupContext ?? CheckpointCleanupDefaults.Context).Io.ImageDirectory;
@@ -133,8 +138,9 @@ public static class CheckpointApp
         var entryAdmitted = await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false);
         if (entryAdmitted)
         {
-            WriteRunText(context, runDirectory, "host.txt", HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
-            WriteRunText(context, runDirectory, "git.txt", GitSnapshot.Capture(repo));
+            WriteRunText(context, runDirectory, "host.txt", runtime.HostSnapshotText
+                ?? HostSnapshot.Capture(BuildSlotClient.DefaultEndpoint(OperatingSystem.IsWindows())));
+            WriteRunText(context, runDirectory, "git.txt", runtime.GitSnapshotText ?? GitSnapshot.Capture(repo));
         }
         var store = new RunStateStore(context);
         var state = new RunState
@@ -182,6 +188,10 @@ public static class CheckpointApp
             wallLimit is int wall ? TimeSpan.FromMinutes(wall) : executionLimit + admissionLimit, runtime.TimeProvider);
         state.HardWallTimeoutAt = budget.StartedAt + budget.HardWallLimit;
         var scheduler = new RunScheduler(driver, platform, runtime.TimeProvider ?? TimeProvider.System);
+        var buildObservation = request.ObserveBuilds
+            ? new CheckpointBuildObservation(runDirectory, state.RunId, owner.TaskId, null,
+                runtime.TimeProvider ?? TimeProvider.System)
+            : null;
         SchedulerResult result;
         StatePublicationException? publicationFailure = null;
         using var watchCancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -240,6 +250,7 @@ public static class CheckpointApp
                 ExpectedSourceSha = request.ExpectedSourceSha,
                 IntermediateCache = heldCache,
                 TimingRoot = Environment.GetEnvironmentVariable("ANTIPHON_TEST_TIMING_ROOT"),
+                BuildObservation = buildObservation,
             }, workCancel.Token).ConfigureAwait(false);
             }
             else if (sourceGuard.Reason is not null)
@@ -304,7 +315,8 @@ public static class CheckpointApp
             manifest.Checkpoints.FirstOrDefault(spec => spec.Id == row.Id)?.IsCommand != true).ToList();
         source.BuildSource = testRows.Count == 0 ? "notApplicable"
             : testRows.All(row => row.Source.BuildSource == "verified") ? "verified" : "unknown";
-        var model = BuildReport(runDirectory, repo, request, manifest, state, result, context, cancellationToken);
+        var model = BuildReport(runDirectory, repo, request, manifest, state, result, context, cancellationToken,
+            runtime.ReportHost);
         async Task<int> RetainPublicationFailure(StatePublicationException failure)
         {
             state.ExitCode = model.ExitCode = ExitCodes.Invalid;
@@ -434,6 +446,7 @@ public static class CheckpointApp
         // CARD-1570: outputs this run created and kept because it is red are evidence, not a cleanup
         // refusal; any other output still present after cleanup stays a refusal.
         var keptBecauseRed = new List<string>();
+        var cleanupStartedAt = buildObservation is null ? (DateTimeOffset?)null : finalizationTime.GetUtcNow();
         try
         {
             if (owner.Bound && !await owner.EnsureLiveAsync(cancellationToken).ConfigureAwait(false))
@@ -526,6 +539,7 @@ public static class CheckpointApp
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
         FinalizationPhase("output-cleanup");
+        var cleanupEndedAt = buildObservation is null ? (DateTimeOffset?)null : finalizationTime.GetUtcNow();
         state.Budget = model.Budget = budget.Snapshot(admissionLimit);
         model.Budget.FinalizationSeconds = finalizationTime.GetElapsedTime(finalizationStarted).TotalSeconds;
         model.EndedAt = context.Time.GetUtcNow();
@@ -551,6 +565,9 @@ public static class CheckpointApp
             ReportWriter.WriteFiles(context, runDirectory, model);
         }
         cancellationToken.ThrowIfCancellationRequested();
+        if (buildObservation is not null)
+            await buildObservation.PublishAsync(runtime.BuildObservationJournal, Note,
+                cleanupStartedAt, cleanupEndedAt, model.CleanedOutputs).ConfigureAwait(false);
         Note("done exit=" + model.ExitCode);
         await logWriter.FlushAsync().ConfigureAwait(false);
         await logWriter.DisposeAsync().ConfigureAwait(false);
@@ -582,7 +599,7 @@ public static class CheckpointApp
         var resultsOwnership = SafeWrite.Under(resultsRoot, gitExecutable: runtime.GitExecutable);
         SafeWrite.Require(write.CreateDirectory(resultsRoot, resultsOwnership));
         // Runs do not reclaim any older repository paths.
-        var runId = RepoPaths.RunId(context);
+        var runId = runtime.RunStamp?.Invoke() ?? RepoPaths.RunId(context);
         var runDirectory = Path.Combine(resultsRoot, runId);
         SafeWrite.Require(write.CreateFreshDirectory(runDirectory, resultsOwnership));
         try
@@ -781,7 +798,8 @@ public static class CheckpointApp
         RunRequest request,
         CheckpointManifest manifest,
         RunState state,
-        SchedulerResult result, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default)
+        SchedulerResult result, CheckpointCleanupContext? context = null, CancellationToken cancellationToken = default,
+        ReportHost? host = null)
     {
         context ??= CheckpointCleanupDefaults.Context;
         var rows = new List<ReportRow>();
@@ -838,13 +856,7 @@ public static class CheckpointApp
             Source = state.Source,
             Branch = request.Branch,
             Worktree = repo,
-            Host = new ReportHost
-            {
-                Os = System.Runtime.InteropServices.RuntimeInformation.OSDescription.Trim(),
-                Cores = Environment.ProcessorCount,
-                MemAvailableMb = HostSnapshot.ReadMemAvailableMb(),
-                LoadAvg = HostSnapshot.ReadLoad(),
-            },
+            Host = host ?? HostSnapshot.Report(),
             StartedAt = state.StartedAt,
             EndedAt = ended,
             WallSeconds = (ended - state.StartedAt).TotalSeconds,

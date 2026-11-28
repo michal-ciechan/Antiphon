@@ -59,7 +59,8 @@ internal static class RowCommand
             return ExitCodes.Invalid;
         }
 
-        var row = new Receipt(console, name, Required(options, "filter"));
+        var time = runtime.TimeProvider ?? TimeProvider.System;
+        var row = new Receipt(console, name, Required(options, "filter"), time, runtime.ReportHost);
         var project = Required(options, "project");
         var outputPath = Required(options, "output-path");
         var platform = runtime.Platform ?? new RuntimePlatform();
@@ -111,6 +112,12 @@ internal static class RowCommand
         if (!guard.Observe())
             return row.Fail(ExitCodes.Invalid, guard.Reason);
 
+        var observation = options.Has("observe-builds")
+            ? new CheckpointBuildObservation(results, row.RunId, runtime.EnvironmentLookup("ANTIPHON_TASK_ID"), null, time)
+            : null;
+        var observed = observation?.Begin(input.NoBuild ? "standalone-replay" : "standalone-composite",
+            outputPath.TrimEnd('/'), project, start);
+
         // (4) The host build slot (CARD-0589), after every input check so an invalid row never waits.
         SlotLease lease;
         if (input.NoSlot)
@@ -135,10 +142,13 @@ internal static class RowCommand
             lease = await slots.AcquireAsync(session, name + "@" + project, cancellationToken).ConfigureAwait(false);
         }
 
+        if (observed is not null)
+            observed.LeaseId = lease.LeaseId;
         row.Slot = lease.State;
         row.SlotReason = lease.SlotReason;
         row.WaitedSeconds = lease.WaitedSeconds;
         var held = true;
+        RowRunResult? observedResult = null;
         try
         {
             if (lease.ExitCode == ExitCodes.SlotTimeout)
@@ -166,6 +176,7 @@ internal static class RowCommand
                 Properties = input.Properties,
                 ResolvedBuildProperties = replay?.Properties,
                 IntermediateCache = replayCache,
+                BuildObservation = observed,
                 Commit = row.Commit,
                 Source = source,
                 SourceBoundary = guard.Observe,
@@ -182,11 +193,12 @@ internal static class RowCommand
                 ChildOutput = console.WriteLine,
                 ClearedEnvironmentPrefixes = [PhaseEnvironmentPrefix],
             };
-            var runner = new RowRunner(runtime.Driver ?? new ProcessDriver { DotnetShim = input.DotnetShim }, platform);
+            var runner = new RowRunner(runtime.Driver ?? new ProcessDriver { DotnetShim = input.DotnetShim }, platform, time);
             RowRunResult result;
             try
             {
                 result = await runner.RunAsync(request, new TrailerFilter(console, name), cancellationToken).ConfigureAwait(false);
+                observedResult = result;
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
             {
@@ -205,6 +217,12 @@ internal static class RowCommand
         {
             if (held)
                 await lease.DisposeAsync().ConfigureAwait(false);
+            if (observed is not null)
+            {
+                observation!.Complete(observed, observedResult?.BuildState ?? "interrupted", source.BuildSource,
+                    observedResult?.Timings?.TestHostWallSeconds);
+                await observation.PublishAsync(runtime.BuildObservationJournal, Console.Error.WriteLine).ConfigureAwait(false);
+            }
         }
     }
 
@@ -372,9 +390,9 @@ internal static class RowCommand
     }
 
     // The row's report line, its receipts and its trailer.
-    private sealed class Receipt(TextWriter console, string name, string filter)
+    private sealed class Receipt(TextWriter console, string name, string filter, TimeProvider time, ReportHost? host)
     {
-        private readonly DateTimeOffset _started = DateTimeOffset.UtcNow;
+        private readonly DateTimeOffset _started = time.GetUtcNow();
 
         public string Filter { get; } = filter;
         public string? Results { get; set; }
@@ -440,7 +458,7 @@ internal static class RowCommand
         {
             if (Results is not null)
             {
-                var ended = DateTimeOffset.UtcNow;
+                var ended = time.GetUtcNow();
                 try
                 {
                     ReportWriter.WriteFiles(Results, new ReportModel
@@ -450,13 +468,7 @@ internal static class RowCommand
                         Commit = Commit,
                         Worktree = Worktree,
                         Source = Source,
-                        Host = new ReportHost
-                        {
-                            Os = System.Runtime.InteropServices.RuntimeInformation.OSDescription.Trim(),
-                            Cores = Environment.ProcessorCount,
-                            MemAvailableMb = HostSnapshot.ReadMemAvailableMb(),
-                            LoadAvg = HostSnapshot.ReadLoad(),
-                        },
+                        Host = host ?? HostSnapshot.Report(),
                         StartedAt = _started,
                         EndedAt = ended,
                         WallSeconds = (ended - _started).TotalSeconds,

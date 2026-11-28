@@ -71,6 +71,9 @@ public sealed class TimingEvent
     public int Sequence { get; set; }
     public string DurabilityClass { get; set; } = "local";
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CheckpointBuildPhase? BuildPhase { get; set; }
+
     [JsonIgnore]
     public string PayloadIdentity => TimingJournal.PayloadIdentity(this);
 }

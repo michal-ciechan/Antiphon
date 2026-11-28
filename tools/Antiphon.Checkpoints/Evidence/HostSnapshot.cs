@@ -5,6 +5,14 @@ namespace Antiphon.Checkpoints;
 
 public static class HostSnapshot
 {
+    internal static ReportHost Report() => new()
+    {
+        Os = RuntimeInformation.OSDescription.Trim(),
+        Cores = Environment.ProcessorCount,
+        MemAvailableMb = ReadMemAvailableMb(),
+        LoadAvg = ReadLoad(),
+    };
+
     public static string Capture(string? slotsEndpoint = null)
     {
         var text = new System.Text.StringBuilder();
