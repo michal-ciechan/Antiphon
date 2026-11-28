@@ -22,8 +22,7 @@ internal static class ReviewWorkflowPolicy
 
     public static WorkflowNodePolicyDto ForNode(ReviewPolicySettings policy, WorkflowNode node, string repo)
     {
-        var contract = ReviewWorkflowSteps.Find(node.Run)?.Contract;
-        var step = contract is not null && contract.Kind == node.Kind ? contract : null;
+        var step = ReviewWorkflowSteps.Resolve(node)?.Contract;
         return new(
             node.Id,
             step is null ? null : OnFailure(policy, node),

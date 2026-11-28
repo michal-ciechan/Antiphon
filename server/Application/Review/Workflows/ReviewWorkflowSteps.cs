@@ -43,6 +43,13 @@ internal static class ReviewWorkflowSteps
     private static readonly ReviewStepChain Decision = new(ReviewChainFamily.Decision, ReviewCategorisation.DefaultChain);
     private static readonly ReviewStepChain DecisionWithEmptyDefault = Decision with { EmptyUsesDefault = true };
 
+    private static readonly Dictionary<ReviewNodeKind, Registration> ControlSteps = new()
+    {
+        [ReviewNodeKind.Gate] = new(new(ReviewNodeKind.Gate, []), ReviewDecideSteps.GateAsync),
+        [ReviewNodeKind.Wait] = new(new(ReviewNodeKind.Wait, []), ReviewDecideSteps.WaitAsync),
+        [ReviewNodeKind.FanOut] = new(new(ReviewNodeKind.FanOut, []), ReviewReviewSteps.FanOutAsync),
+    };
+
     private static readonly Dictionary<string, Registration> Steps = new(StringComparer.Ordinal)
     {
         ["Intake"] = new(new(ReviewNodeKind.Code, []), ReviewIntakeSteps.IntakeAsync),
@@ -68,6 +75,8 @@ internal static class ReviewWorkflowSteps
     public static IReadOnlyCollection<string> Names => Steps.Keys;
 
     public static Registration? Find(string? name) => name is null ? null : Steps.GetValueOrDefault(name);
+
+    public static Registration? Resolve(WorkflowNode node) => ControlSteps.GetValueOrDefault(node.Kind) ?? Find(node.Run);
 
     public static string ChainName(WorkflowNode node) => Steps[node.Run!].Contract.Chain!.Resolve(node).Value;
 }

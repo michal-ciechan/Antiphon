@@ -356,14 +356,9 @@ public sealed class ReviewWorkflowExecutor(
     }
 
     private static Task<NodeResult> RunNodeAsync(ReviewWalk walk, WorkflowNode node, ReviewNodeExecution execution, CancellationToken ct) =>
-        node.Kind switch
-        {
-            ReviewNodeKind.Gate => ReviewDecideSteps.GateAsync(walk, node, execution, ct),
-            ReviewNodeKind.Wait => ReviewDecideSteps.WaitAsync(walk, node, execution, ct),
-            ReviewNodeKind.FanOut => ReviewReviewSteps.FanOutAsync(walk, node, execution, ct),
-            _ when node.Run is { } name && ReviewWorkflowSteps.Find(name) is { } step => step.Run(walk, node, execution, ct),
-            _ => Task.FromResult(NodeResult.Fail($"The executor has no step for '{node.Run ?? node.Id}' ({node.Kind}).")),
-        };
+        ReviewWorkflowSteps.Resolve(node) is { } step
+            ? step.Run(walk, node, execution, ct)
+            : Task.FromResult(NodeResult.Fail($"The executor has no step for '{node.Run ?? node.Id}' ({node.Kind})."));
 
     /// <summary>
     /// Follows the edge for the execution's outcome. A back edge into the entry node starts the next
