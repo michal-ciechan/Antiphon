@@ -33,6 +33,9 @@ public sealed class ReviewService(
     ReviewReviewerReconciler reviewerReconciler)
 {
     public const string RunChangedEvent = "ReviewRunChanged";
+    internal const string AutomaticIntakeTrigger = "opened";
+    internal const string LegacyOpenConflictCode = "legacy_review_run_open";
+    internal const string LegacyRecovery = "docs/features/012-review-engine/api.md#recover-an-unresolved-github-run";
     private const string CloseAuditNode = "review-run-close";
     private const int MaxCloseReasonLength = 4000;
 
@@ -153,6 +156,7 @@ public sealed class ReviewService(
                 throw new ServiceUnavailableException("GitHub did not confirm the pull request's repository identity.", "review_github_identity_unavailable");
             if (await FindOpenRunAsync(authority, repositoryId.Value, prNumber!.Value, ct) is { } existingRun)
                 return await ReuseRunAsync(existingRun, repo, pr, ct);
+            await EnsureNoLegacyIntakeHoldAsync(authority, repo, pr, trigger, ct);
         }
 
         var snapshot = await ReadIntakeAsync(() => ReviewIntake.ReadFilesAsync(binding, pr, ct));
@@ -223,6 +227,33 @@ public sealed class ReviewService(
         db.ReviewRuns.Where(r => !r.IsDemo && r.GitHubAuthority == authority && r.GitHubRepositoryId == repositoryId
                 && r.GitHubPrNumber == number && r.Status != ReviewRunStatus.Closed)
             .Select(r => (Guid?)r.Id).SingleOrDefaultAsync(ct);
+
+    internal static IQueryable<ReviewRun> UnresolvedGitHubRuns(AppDbContext db) =>
+        db.ReviewRuns.AsNoTracking().Where(r => !r.IsDemo && r.Subject.Host == ReviewHost.GitHub && r.GitHubRepositoryId == null);
+
+    private async Task EnsureNoLegacyIntakeHoldAsync(string authority, string repo, CodeHostPullRequest pr, string trigger, CancellationToken ct)
+    {
+        // A redirect can identify the current repository's slug. It cannot identify a historical run.
+        var currentRepo = pr.RepositoryName?.ToLowerInvariant() ?? repo;
+        var automatic = trigger == AutomaticIntakeTrigger;
+        var legacy = await UnresolvedGitHubRuns(db)
+            .Where(r => r.GitHubAuthority == authority && r.GitHubPrNumber == pr.Number
+                && (r.GitHubRepo == repo || r.GitHubRepo == currentRepo)
+                && (automatic || r.Status != ReviewRunStatus.Closed))
+            .OrderBy(r => r.Status == ReviewRunStatus.Closed).ThenBy(r => r.Id)
+            .Select(r => new { r.Id, r.Status }).FirstOrDefaultAsync(ct);
+        if (legacy is null)
+            return;
+
+        var extensions = new Dictionary<string, object?> { ["legacyRunId"] = legacy.Id, ["recovery"] = LegacyRecovery };
+        if (legacy.Status == ReviewRunStatus.Closed)
+            throw new ConflictException($"Closed historical review run {legacy.Id:D} holds automatic intake. See {LegacyRecovery}.",
+                "legacy_review_run_closed", extensions);
+
+        throw new ConflictException($"Historical review run {legacy.Id:D} is still open. An authorized operator can close it with "
+            + $"POST /api/review-runs/{legacy.Id:D}/close or review-run close {legacy.Id:D}. See {LegacyRecovery}.",
+            LegacyOpenConflictCode, extensions);
+    }
 
     private async Task<ReviewRunDetailDto> ReuseRunAsync(Guid runId, string requestedRepo, CodeHostPullRequest pr, CancellationToken ct)
     {

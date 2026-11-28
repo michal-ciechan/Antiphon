@@ -126,16 +126,13 @@ public sealed class ReviewPoller(
         }
     }
 
-    private static IQueryable<ReviewRun> UnresolvedGitHubRuns(AppDbContext db) => db.ReviewRuns.AsNoTracking()
-        .Where(r => !r.IsDemo && r.Subject.Host == ReviewHost.GitHub && r.GitHubRepositoryId == null);
-
     private async Task ReportLegacyAtActivationAsync(CancellationToken ct)
     {
         try
         {
             await using var scope = scopes.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var count = await UnresolvedGitHubRuns(db).CountAsync(ct);
+            var count = await ReviewService.UnresolvedGitHubRuns(db).CountAsync(ct);
             if (count != 0)
                 logger.LogWarning("{Count} historical GitHub review runs need verified repository IDs. Review history and closures remain visible. See the review API activation procedure.", count);
         }
@@ -169,14 +166,15 @@ public sealed class ReviewPoller(
             if (repo.Host == ReviewHost.GitHub)
             {
                 var slug = name.ToLowerInvariant();
-                var legacy = await UnresolvedGitHubRuns(db)
+                var legacy = await ReviewService.UnresolvedGitHubRuns(db)
                     .Where(r => r.GitHubAuthority == binding.Target.GitHubAuthority && r.GitHubRepo == slug && r.GitHubPrNumber != null)
                     .OrderBy(r => r.Id).Select(r => new { r.Id, r.GitHubPrNumber, r.Status }).ToListAsync(ct);
                 legacyPrs = legacy.Select(r => r.GitHubPrNumber!.Value).ToHashSet();
                 if (legacy.Count != 0)
                 {
                     var preview = string.Join(", ", legacy.Take(8).Select(r => $"{r.Id:D} ({r.Status})"));
-                    tally.LegacyAttention = $"{legacy.Count} unresolved historical review runs need verified repository IDs: {preview}.";
+                    var code = legacy.Any(r => r.Status != ReviewRunStatus.Closed) ? $"{ReviewService.LegacyOpenConflictCode}: " : "";
+                    tally.LegacyAttention = $"{code}{legacy.Count} unresolved historical review runs need verified repository IDs: {preview}.";
                 }
             }
             foreach (var pr in open.Values.Where(p => !existing.ContainsKey(p.Number) && !legacyPrs.Contains(p.Number) && Matches(repo, p))
@@ -185,7 +183,7 @@ public sealed class ReviewPoller(
                 await ActAsync(tally, $"#{pr.Number}", async () =>
                 {
                     var run = await WithServiceAsync(PollerActor,
-                        s => s.CreateRunAsync(new CreateReviewRunRequest(repo.Host, name, pr.Number), "opened", null, ct));
+                        s => s.CreateRunAsync(new CreateReviewRunRequest(repo.Host, name, pr.Number), ReviewService.AutomaticIntakeTrigger, null, ct));
                     if (run.Existing == false)
                         tally.Started++;
                 }, ct);
@@ -286,18 +284,15 @@ public sealed class ReviewPoller(
     }
 
     /// <summary>
-    /// Starts a run or asks for a round, then replies. A refusal (finished, at a gate, busy) is the
-    /// reply; a code host or other failure throws so the comment is retried.
+    /// Starts a run or requests a round, then acknowledges the command and posts the result.
+    /// Reports an unresolved legacy hold in the polling pass before either GitHub write.
     /// </summary>
     private async Task ActOnCommandAsync(AppDbContext db, CodeHostBinding binding, ReviewPollingRepo repo, string name,
         IReadOnlyDictionary<int, CodeHostOpenPullRequest> open, CodeHostConversationComment comment, ReviewCommand command, string marker, Tally tally,
         CancellationToken ct)
     {
-        var target = binding.Target with { PrNumber = comment.PrNumber };
-        var conversation = binding.Host.Capabilities.CanPostConversation;
-        if (conversation)
-            await BestEffortAsync(() => binding.Host.AddCommentReactionAsync(target, comment.Id, "eyes", ct), name, comment.Id);
-
+        var commentTarget = binding.Target with { PrNumber = comment.PrNumber };
+        var target = commentTarget;
         string reply;
         if (!open.ContainsKey(comment.PrNumber))
         {
@@ -332,14 +327,22 @@ public sealed class ReviewPoller(
                     reply = $"Round {run.Round} queued{SteerText(command.Steer)}.";
                 }
             }
+            catch (ConflictException ex) when (ex.Code == ReviewService.LegacyOpenConflictCode)
+            {
+                tally.Error = $"comment {comment.Id} on #{comment.PrNumber}: {Describe(ex)}";
+                return;
+            }
             catch (HttpException ex) when (ex.StatusCode is 404 or 409 or 422)
             {
                 reply = $"Not queued: {ex.Message}";
             }
         }
 
-        if (conversation)
+        if (binding.Host.Capabilities.CanPostConversation)
+        {
+            await BestEffortAsync(() => binding.Host.AddCommentReactionAsync(commentTarget, comment.Id, "eyes", ct), name, comment.Id);
             await BestEffortAsync(() => binding.Host.PostConversationCommentAsync(target, $"{reply}\n\n{ReviewCommand.AnswerTag(comment.Id)}", ct), name, comment.Id);
+        }
     }
 
     /// <summary>True when an iteration's trigger is the marker, or a wait completed for it names it.</summary>
