@@ -87,7 +87,6 @@ public sealed class ChannelOutboundUnifiedTransportTests
             var defaultSettle = kind == "trailing" && !busy && !lateGateway;
             var watchRedraw = defaultSettle && cut == "confirm-save";
             timing?.SetTag("c519.default-settle", defaultSettle);
-            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var fault = new HandoffFault(cut);
             var refusalSave = new RefusalSaveFault(fault);
             var producer = new RefusalProducer();
@@ -113,6 +112,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
             producer.Inner = w.Producer;
             if (watchRedraw)
                 WatchComposerRedraw(w.H.Adapter);
+            // Give the handoff its full budget after clone and gateway setup.
+            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             using (TestTrace.ChunkSpan("C519 receive source"))
                 await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
             if (watchRedraw)
@@ -364,8 +365,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     public async Task C519_Partial_prompt_requires_complete_receipt()
     {
         var broker = await SharedBrokerAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await ReceiveSourceAsync(w, "main", false, new HandoffFault("partial-prompt"), deadline.Token);
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, deadline.Token);
         await w.H.DrainOutboundAsync();
@@ -378,10 +379,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
     public async Task C519_Enabled_loss_notice_reaches_adapter()
     {
         var broker = await SharedBrokerAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, gatewayStarted: false);
         var source = await w.H.SeedChannelCorrelationAsync("lost complete source prompt", w.Key,
             sentAtUtc: w.H.Now.AddHours(-2));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await w.H.Dispatcher.SweepStaleCorrelationsAsync(deadline.Token);
         await using (var db = w.Db())
         {
@@ -405,12 +406,12 @@ public sealed class ChannelOutboundUnifiedTransportTests
     public async Task C519_Size_refusal()
     {
         var broker = await SharedBrokerAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, maxMessageBytes: 4096);
         await w.SeedCrashSourceAsync("main");
         // Incompressible bytes cross the client cap and reach the broker's smaller topic cap.
         var bytes = new byte[32 * 1024]; Random.Shared.NextBytes(bytes);
         await File.WriteAllBytesAsync(w.SourcePath, bytes);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, deadline.Token);
         await w.H.DrainOutboundAsync();
         var failed = (await w.DeliveryAsync("main"))!;
@@ -508,7 +509,6 @@ public sealed class ChannelOutboundUnifiedTransportTests
     {
         var broker = await SharedBrokerAsync();
         {
-            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var worker = new FakeAgentProtocolAdapter { DialogGuardEnabled = true, ClaudeComposerChrome = true };
             if (busy) worker.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var workerEvents = new WorkerTurnBus();
@@ -606,6 +606,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
                 });
             };
+            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             await ReceiveSourceAsync(w, "main", false, new HandoffFault("none"), scenario.Token);
             // The source prompt is setup here. Use the default for the actual converter handoff
             // on the idle representative of each cut.
