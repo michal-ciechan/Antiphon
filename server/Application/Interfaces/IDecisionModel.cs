@@ -37,7 +37,12 @@ public sealed record DecisionQuestion(string Name, DecisionQuestionKind Kind, st
 public sealed record DecisionRequest(string State, IReadOnlyList<DecisionQuestion> Questions);
 
 /// <summary>The chain entry being tried: its provider id, the model to ask for, and its time budget.</summary>
-public sealed record DecisionOptions(string ProviderId, string? Model = null, TimeSpan? Timeout = null);
+public sealed record DecisionOptions(string ProviderId, string? Model = null, TimeSpan? Timeout = null)
+{
+    // The chain passes a deadline-linked token to the model. Keep the original cancellation
+    // available when a response status is already known and only its diagnostic is optional.
+    internal CancellationToken? CallerCancellationToken { get; init; }
+}
 
 public sealed record DecisionServedBy(string Provider, string Transport, string ResolvedModel);
 

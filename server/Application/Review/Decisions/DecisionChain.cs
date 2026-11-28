@@ -144,7 +144,7 @@ public sealed class DecisionChain(
         CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(Math.Max(1, provider.TimeoutSeconds));
-        var decisionOptions = new DecisionOptions(entry.Provider, provider.Model, timeout);
+        var decisionOptions = new DecisionOptions(entry.Provider, provider.Model, timeout) { CallerCancellationToken = ct };
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var started = Stopwatch.GetTimestamp();

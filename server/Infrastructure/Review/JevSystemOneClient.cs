@@ -12,13 +12,19 @@ namespace Antiphon.Server.Infrastructure.Review;
 /// <summary>
 /// Jev System One over HTTP (review engine design 7.3), for every dialect: <c>typesafe-native</c>,
 /// <c>litellm-systemone</c> (the enterprise default, D-29), <c>litellm-passthrough</c> and
-/// <c>openrouter-systemone</c>. The body is the same for all of them:
-/// <c>{ model, state, questions: { name: { type, instructions, choices | levels } } }</c>.
-/// Never <c>/v1/decisions</c>. The key is sent as a bearer token and never logged.
+/// <c>openrouter-systemone</c>. The body includes the model, shared state and named questions.
+/// Choice and score questions carry their options in <c>criteria</c>.
 /// </summary>
 public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionSettings> settings) : IDecisionModel
 {
     public const string CostHeader = "x-litellm-response-cost";
+    private const int MaxErrorTextLength = 300;
+    private const int MaxErrorBodyBytes = 16 * 1024;
+    private const int MaxErrorReadSeconds = 2;
+    private const int MaxErrorDepth = 12;
+    private const int MaxErrorNodes = 256;
+    private const int MaxErrorArrayItems = 64;
+    private const string DiagnosticOmitted = "Provider diagnostic omitted.";
 
     public bool Serves(string dialect) => JevDialects.All.Contains(dialect, StringComparer.OrdinalIgnoreCase);
 
@@ -28,7 +34,8 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
             throw new DecisionProviderException(DecisionFailureKind.NotConfigured, $"Provider '{options.ProviderId}' is not configured.");
         var endpoint = Endpoint(provider)
             ?? throw new DecisionProviderException(DecisionFailureKind.NotConfigured, $"Provider '{options.ProviderId}' has no base URL.");
-        if (string.IsNullOrWhiteSpace(provider.ApiKey))
+        var apiKey = provider.ApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey))
             throw new DecisionProviderException(DecisionFailureKind.NotConfigured, $"Provider '{options.ProviderId}' has no API key.");
         var model = options.Model ?? provider.Model
             ?? throw new DecisionProviderException(DecisionFailureKind.NotConfigured, $"Provider '{options.ProviderId}' names no model.");
@@ -37,29 +44,26 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         {
             Content = new StringContent(BuildBody(request, model).ToJsonString(), Encoding.UTF8, "application/json"),
         };
-        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", provider.ApiKey);
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-        HttpResponseMessage response;
+        // With ResponseHeadersRead, the client's timeout only covers the headers. Keep the
+        // same deadline for content reads while passing the caller's cancellation through.
+        var callerToken = options.CallerCancellationToken ?? ct;
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(http.Timeout);
         try
         {
-            response = await http.SendAsync(message, ct);
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new DecisionProviderException(DecisionFailureKind.Unavailable, $"Transport failure: {ex.Message}");
-        }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-        {
-            throw new DecisionProviderException(DecisionFailureKind.Timeout, "The HTTP client timed out.");
-        }
-
-        using (response)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var status = (int)response.StatusCode;
+            using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, budget.Token);
             if (!response.IsSuccessStatusCode)
-                throw new DecisionProviderException(Classify(status), $"HTTP {status}: {ErrorText(body)}", status);
+            {
+                var status = (int)response.StatusCode;
+                var kind = Classify(status);
+                var diagnostic = await ErrorTextAsync(response.Content, request.Questions, budget.Token);
+                callerToken.ThrowIfCancellationRequested();
+                throw new DecisionProviderException(kind, $"HTTP {status}: {diagnostic}", status);
+            }
 
+            var body = await response.Content.ReadAsStringAsync(budget.Token);
             JsonObject root;
             try
             {
@@ -74,49 +78,62 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
             if (root["answers"] is not JsonObject answers)
                 throw new DecisionProviderException(DecisionFailureKind.SchemaFailure, "The response has no 'answers' object.");
 
-            var resolved = root["model"]?.GetValue<string>() ?? model;
+            var resolved = StringValue(root["model"]) ?? model;
             var servedBy = new DecisionServedBy(options.ProviderId, "Http", resolved);
-            var usage = ParseUsage(root["usage"]);
+            var usage = ParseUsage(root["usage"] as JsonObject);
             var cost = ParseCost(response, usage, provider);
             var parsed = new Dictionary<string, DecisionAnswer>(StringComparer.Ordinal);
             foreach (var question in request.Questions)
                 parsed[question.Name] = ParseAnswer(question, answers[question.Name], servedBy);
             return new DecisionResult(parsed, usage, cost, "actual", servedBy);
         }
+        catch (HttpRequestException ex)
+        {
+            throw new DecisionProviderException(DecisionFailureKind.Unavailable, $"Transport failure: {ex.Message}");
+        }
+        catch (OperationCanceledException) when (!callerToken.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new DecisionProviderException(DecisionFailureKind.Timeout, "The HTTP client timed out.");
+        }
     }
 
-    /// <summary>
-    /// The request body (design 7.3). Option descriptions are folded into <c>instructions</c> as
-    /// <c>value: description</c> lines until OQ-3 settles whether Jev takes description fields (ABF-4).
-    /// </summary>
+    /// <summary>System One uses a choice criteria map and an ordered score criteria array (design 7.3).</summary>
     public static JsonObject BuildBody(DecisionRequest request, string model)
     {
         var questions = new JsonObject();
         foreach (var question in request.Questions)
         {
-            var instructions = question.Instructions;
-            var described = question.Options.Where(o => !string.IsNullOrWhiteSpace(o.Description)).ToList();
-            if (described.Count > 0)
-                instructions += "\n" + string.Join("\n", described.Select(o => $"{o.Value}: {o.Description}"));
             var item = new JsonObject
             {
-                ["type"] = question.Kind switch
-                {
-                    DecisionQuestionKind.Noul => "noul",
-                    DecisionQuestionKind.Choice => "choice",
-                    _ => "score",
-                },
-                ["instructions"] = instructions,
+                ["type"] = WireType(question.Kind),
+                ["instructions"] = question.Instructions,
             };
             if (question.Kind == DecisionQuestionKind.Choice)
-                item["choices"] = new JsonArray(question.Options.Select(o => (JsonNode)new JsonObject { ["value"] = o.Value }).ToArray());
+            {
+                var criteria = new JsonObject();
+                foreach (var option in question.Options)
+                    criteria[option.Value] = string.IsNullOrWhiteSpace(option.Description) ? null : option.Description;
+                item["criteria"] = criteria;
+            }
             else if (question.Kind == DecisionQuestionKind.Score)
-                item["levels"] = new JsonArray(question.Options.Select(o => (JsonNode)new JsonObject { ["label"] = o.Value }).ToArray());
+            {
+                var criteria = new JsonArray();
+                foreach (var level in question.Options)
+                    criteria.Add(string.IsNullOrWhiteSpace(level.Description) ? level.Value : level.Description);
+                item["criteria"] = criteria;
+            }
             questions[question.Name] = item;
         }
 
         return new JsonObject { ["model"] = model, ["state"] = request.State, ["questions"] = questions };
     }
+
+    private static string WireType(DecisionQuestionKind kind) => kind switch
+    {
+        DecisionQuestionKind.Noul => "noul",
+        DecisionQuestionKind.Choice => "choice",
+        _ => "score",
+    };
 
     private static Uri? Endpoint(ReviewDecisionProvider provider)
     {
@@ -142,24 +159,186 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         _ => DecisionFailureKind.Unavailable,
     };
 
-    /// <summary>The LiteLLM <c>{"error":{"message"}}</c> envelope or the first 300 characters of the body.</summary>
-    private static string ErrorText(string body)
+    private static async Task<string> ErrorTextAsync(HttpContent content, IReadOnlyList<DecisionQuestion> questions,
+        CancellationToken ct)
     {
+        // The status is already known. Allow at most two seconds for its diagnostic, bounded
+        // by the remaining provider and HttpClient deadlines. The caller checks cancellation separately.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(TimeSpan.FromSeconds(MaxErrorReadSeconds));
+        // SendAsync uses ResponseHeadersRead so the error body has not been buffered.
+        // Reserve one extra byte to distinguish an exact-limit body from a truncated one.
+        var buffer = new byte[MaxErrorBodyBytes + 1];
+        int bytes;
         try
         {
-            if (JsonNode.Parse(body) is JsonObject root && root["error"] is JsonObject error && error["message"] is JsonValue text)
-                return text.ToString();
+            using var stream = await content.ReadAsStreamAsync(budget.Token);
+            bytes = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken: budget.Token);
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or OperationCanceledException or ObjectDisposedException)
+        {
+            return DiagnosticOmitted;
+        }
+
+        if (budget.IsCancellationRequested || bytes > MaxErrorBodyBytes)
+            return DiagnosticOmitted;
+
+        try
+        {
+            using var document = JsonDocument.Parse(buffer.AsMemory(0, bytes), new JsonDocumentOptions { MaxDepth = MaxErrorDepth });
+            var root = document.RootElement;
+            var nodesLeft = MaxErrorNodes;
+            if (!WithinErrorBudget(root, ref nodesLeft))
+                return DiagnosticOmitted;
+
+            var error = ErrorProperty(root, "error");
+            var detail = ErrorProperty(root, "detail");
+            var message = PublicMessage(ErrorString(ErrorProperty(error, "message")))
+                ?? PublicMessage(ErrorString(error))
+                ?? PublicMessage(ErrorString(detail))
+                ?? PublicMessage(ErrorString(root));
+            if (message is not null)
+                return message;
+
+            var diagnostic = string.Join("; ", ValidationMessages(detail, questions));
+            return diagnostic.Length == 0 ? DiagnosticOmitted : BoundErrorText(diagnostic);
         }
         catch (JsonException)
         {
+            return DiagnosticOmitted;
         }
-
-        return body.Length <= 300 ? body : body[..300];
     }
 
-    private static DecisionUsage ParseUsage(JsonNode? usage)
+    private static bool WithinErrorBudget(JsonElement element, ref int nodesLeft)
     {
-        static long Read(JsonNode? node, params string[] names)
+        if (--nodesLeft < 0)
+            return false;
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            if (element.GetArrayLength() > MaxErrorArrayItems)
+                return false;
+            foreach (var child in element.EnumerateArray())
+                if (!WithinErrorBudget(child, ref nodesLeft))
+                    return false;
+        }
+        else if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+                if (!WithinErrorBudget(property.Value, ref nodesLeft))
+                    return false;
+        }
+        return true;
+    }
+
+    private static IEnumerable<string> ValidationMessages(JsonElement detail, IReadOnlyList<DecisionQuestion> questions)
+    {
+        if (detail.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in detail.EnumerateArray())
+                foreach (var message in ValidationMessages(entry, questions))
+                    yield return message;
+            yield break;
+        }
+
+        if (detail.ValueKind != JsonValueKind.Object)
+            yield break;
+
+        var text = PublicMessage(ErrorString(ErrorProperty(detail, "msg")) ?? ErrorString(ErrorProperty(detail, "message")));
+        if (text is not null)
+        {
+            var path = PublicLocation(ErrorProperty(detail, "loc"), questions);
+            yield return path is null ? text : $"{path}: {text}";
+        }
+
+        foreach (var message in ValidationMessages(ErrorProperty(detail, "detail"), questions))
+            yield return message;
+        foreach (var message in ValidationMessages(ErrorProperty(detail, "errors"), questions))
+            yield return message;
+    }
+
+    // Provider messages can include input values. Publish fixed reasons and drop all other text.
+    private static string? PublicMessage(string? text) => text switch
+    {
+        "Field required" or "Expected text" or "Expected a question map"
+            or "Invalid score question" or "Rubric is invalid" or "bad question type" or "rate limited" => text,
+        string value when value.StartsWith("Invalid Decisions request:", StringComparison.Ordinal) => "Invalid Decisions request",
+        _ => null,
+    };
+
+    private static string? PublicLocation(JsonElement location, IReadOnlyList<DecisionQuestion> questions)
+    {
+        var segments = location.ValueKind == JsonValueKind.Array
+            ? location.EnumerateArray().Select(segment => segment.ValueKind == JsonValueKind.Number
+                ? segment.GetRawText() : ErrorString(segment)).ToArray()
+            : ErrorString(location)?.Split('.', MaxErrorArrayItems + 1);
+        if (segments is null || segments.Length == 0 || segments.Length > MaxErrorArrayItems)
+            return null;
+
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var segment = segments[i];
+            var previous = i > 0 ? segments[i - 1] : null;
+            segments[i] = previous switch
+            {
+                // Map a request question to its zero-based position without publishing the name.
+                "questions" => QuestionPosition(segment, questions),
+                "criteria" when segment is { Length: > 0 and <= 3 }
+                    && int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+                    && index is >= 0 and < 255 => index.ToString(CultureInfo.InvariantCulture),
+                _ => segment is "body" or "model" or "state" or "questions" or "type" or "instructions"
+                    or "criteria" or "choice" or "score" or "noul" ? segment : null,
+            };
+            if (segments[i] is null)
+                return null;
+        }
+        return string.Join('.', segments);
+    }
+
+    private static string? QuestionPosition(string? name, IReadOnlyList<DecisionQuestion> questions)
+    {
+        for (var i = 0; i < questions.Count; i++)
+            if (questions[i].Name == name)
+                return i.ToString(CultureInfo.InvariantCulture);
+        return null;
+    }
+
+    private static JsonElement ErrorProperty(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return default;
+
+        try
+        {
+            return element.TryGetProperty(name, out var value) ? value : default;
+        }
+        catch (InvalidOperationException)
+        {
+            throw new JsonException("The provider diagnostic contains an invalid JSON property name.");
+        }
+    }
+
+    private static string? ErrorString(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.String)
+            return null;
+
+        try
+        {
+            return element.GetString();
+        }
+        catch (InvalidOperationException)
+        {
+            // JsonDocument accepts escaped lone surrogates until a string is decoded.
+            throw new JsonException("The provider diagnostic contains an invalid JSON string.");
+        }
+    }
+
+    private static string BoundErrorText(string text) => text.Length <= MaxErrorTextLength ? text : text[..MaxErrorTextLength];
+
+    private static DecisionUsage ParseUsage(JsonObject? usage)
+    {
+        static long Read(JsonObject? node, params string[] names)
         {
             foreach (var name in names)
             {
@@ -184,66 +363,93 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         return (usage.InputTokens * provider.InputPricePerMillionUsd + usage.OutputTokens * provider.OutputPricePerMillionUsd) / 1_000_000m;
     }
 
-    /// <summary>
-    /// Reads one answer. The field names are not settled until the first live call (OQ-2), so this
-    /// accepts <c>value</c>/<c>answer</c>, <c>probabilities</c>/<c>distribution</c> and
-    /// <c>probability</c>/<c>p_yes</c>. A missing answer key is a refusal (LiteLLM rule).
-    /// </summary>
+    /// <summary>Read the System One fields and legacy aliases. An omitted answer is a refusal.</summary>
     private static DecisionAnswer ParseAnswer(DecisionQuestion question, JsonNode? node, DecisionServedBy servedBy)
     {
         var refused = new DecisionAnswer(question.Name, question.Kind, null, null, null, Refused: true, servedBy);
         if (node is null)
             return refused;
-        if (node is JsonObject obj && obj["refused"] is JsonValue r && r.TryGetValue<bool>(out var isRefused) && isRefused)
+        var obj = node as JsonObject;
+        if (obj?["refused"] is JsonValue r && r.TryGetValue<bool>(out var isRefused) && isRefused)
             return refused;
+        if (obj?["type"] is { } type && StringValue(type) != WireType(question.Kind))
+            throw InvalidAnswer(question, "has a mismatched question type");
 
+        var scoreAnswer = question.Kind == DecisionQuestionKind.Score && obj?.ContainsKey("score") == true;
         var probabilities = new Dictionary<string, double>(StringComparer.Ordinal);
-        if (node is JsonObject withDistribution && (withDistribution["probabilities"] ?? withDistribution["distribution"]) is JsonObject distribution)
+        if ((obj?["probabilities"] ?? obj?["distribution"]) is JsonObject distribution)
         {
             foreach (var (key, value) in distribution)
             {
-                if (value is JsonValue v && v.TryGetValue<double>(out var p))
-                    probabilities[key] = p;
+                if (Number(value) is { } probability && probability is >= 0 and <= 1)
+                {
+                    var label = scoreAnswer && int.TryParse(key, NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+                        && index < question.Options.Count ? question.Options[index].Value : key;
+                    probabilities[label] = probability;
+                }
             }
         }
 
         if (question.Kind == DecisionQuestionKind.Noul)
         {
-            double? yes = node switch
+            var hasNoul = obj?.ContainsKey("noul") == true;
+            double? yes = hasNoul ? Number(obj!["noul"]) : node switch
             {
                 JsonValue v when v.TryGetValue<double>(out var p) => p,
                 JsonObject o when Number(o["probability"] ?? o["p_yes"] ?? o["value"] ?? o["answer"]) is { } p => p,
                 _ => probabilities.TryGetValue("yes", out var py) ? py : probabilities.TryGetValue("true", out var pt) ? pt : null,
             };
-            if (yes is not { } pYes || pYes is < 0 or > 1)
+            if (yes is not { } pYes || pYes is not (>= 0 and <= 1))
             {
-                if (node is JsonObject o && Text(o["value"] ?? o["answer"]) is { } word && TryYesNo(word, out var isYes))
-                    pYes = isYes ? 1 : 0;
-                else
-                    throw new DecisionProviderException(DecisionFailureKind.SchemaFailure, $"Answer '{question.Name}' has no probability of yes.");
+                if (hasNoul || Text(obj?["value"] ?? obj?["answer"]) is not { } word || !TryYesNo(word, out var isYes))
+                    throw InvalidAnswer(question, "has no probability of yes");
+                pYes = isYes ? 1 : 0;
             }
 
             var map = new Dictionary<string, double> { ["yes"] = pYes, ["no"] = 1 - pYes };
             return new DecisionAnswer(question.Name, question.Kind, pYes >= 0.5 ? "yes" : "no", Math.Max(pYes, 1 - pYes), map, false, servedBy);
         }
 
-        var valueText = node switch
+        string? valueText;
+        if (scoreAnswer)
         {
-            JsonValue v => v.ToString(),
-            JsonObject o => Text(o["value"] ?? o["answer"] ?? o["label"]),
-            _ => null,
-        };
-        if (valueText is null && probabilities.Count > 0)
-            valueText = probabilities.MaxBy(p => p.Value).Key;
+            if (Number(obj!["score"]) is not { } score || !double.IsFinite(score) || score < 0 || score > question.Options.Count - 1)
+                throw InvalidAnswer(question, "has a score outside its levels");
+            var index = (int)Math.Round(score, MidpointRounding.AwayFromZero);
+            valueText = question.Options[index].Value;
+        }
+        else if (question.Kind == DecisionQuestionKind.Choice && obj?.ContainsKey("choice") == true)
+        {
+            valueText = StringValue(obj["choice"]);
+        }
+        else
+        {
+            valueText = node switch
+            {
+                JsonValue v => v.ToString(),
+                JsonObject o => Text(o["value"] ?? o["answer"] ?? o["label"]),
+                _ => null,
+            };
+            if (valueText is null && probabilities.Count > 0)
+                valueText = probabilities.MaxBy(p => p.Value).Key;
+        }
         if (valueText is null || question.Options.All(o => o.Value != valueText))
-            throw new DecisionProviderException(DecisionFailureKind.SchemaFailure, $"Answer '{question.Name}' is not one of its options.");
-        double? confidence = node is JsonObject c && Number(c["confidence"]) is { } given
-            ? given
-            : probabilities.TryGetValue(valueText, out var pv) ? pv : null;
+            throw InvalidAnswer(question, "is not one of its options");
+        var confidenceNode = obj?["confidence"];
+        var confidence = Number(confidenceNode);
+        if (confidenceNode is not null && confidence is not (>= 0 and <= 1))
+            throw InvalidAnswer(question, "has invalid confidence");
+        if (confidence is null && probabilities.TryGetValue(valueText, out var probabilityForValue))
+            confidence = probabilityForValue;
         return new DecisionAnswer(question.Name, question.Kind, valueText, confidence, probabilities.Count > 0 ? probabilities : null, false, servedBy);
     }
 
+    private static DecisionProviderException InvalidAnswer(DecisionQuestion question, string problem) =>
+        new(DecisionFailureKind.SchemaFailure, $"Answer '{question.Name}' {problem}.");
+
     private static double? Number(JsonNode? node) => node is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
+
+    private static string? StringValue(JsonNode? node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     private static string? Text(JsonNode? node) => node is JsonValue v
         ? v.TryGetValue<string>(out var s) ? s : v.ToString()

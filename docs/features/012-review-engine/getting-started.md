@@ -331,6 +331,15 @@ below a confidence threshold.
 | `litellm-systemone` | `{BaseUrl}/v1/systemone` (a LiteLLM proxy; `BaseUrl` is required) |
 | `litellm-passthrough` | `{BaseUrl}/typesafe/v1/systemone` (`BaseUrl` is required) |
 
+Jev sends named questions. For a `choice` question, `criteria` maps option names to descriptions or
+JSON `null`. For a `score` question, `criteria` lists level descriptions from lowest to highest, using
+the label for any level without a description. The client maps score indices to the original labels
+and records the model the proxy reports, both token counts and the cost. An HTTP 400 records one
+rejected call and stops the decision chain without fallback. The diagnostic uses fixed validation
+reasons and recognized schema paths. If the body stalls or the diagnostic exceeds its read or
+parsing limits, the chain still rejects the request and displays `Provider diagnostic omitted.` See
+[review engine design 7.3–7.4](design.md#73-jev-dialects).
+
 ```json
 "Decisions": {
   "Providers": {
