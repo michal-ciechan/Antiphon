@@ -46,9 +46,9 @@ public sealed class ChannelOutboundUnifiedTransportTests
     [After(Test)]
     public Task DrainWorldDisposalsAsync() => UnifiedOutboundTransport.DrainDisposalsAsync();
 
-    // The probes' compiled model (ProbeGeneratedModel), generated or reused before any test's own deadline starts.
+    // Check the verified stage before any scenario can start a probe.
     [Before(Class)]
-    public static Task ProbeModelAsync() => ProbeGeneratedModel.ResultAsync();
+    public static Task ProbeModelAsync() => ProbeGeneratedModel.RequireSelectedStagedArtifactAsync();
 
     // Disposed once both C519 classes have finished (else after the assembly), never by one class alone.
     [After(Class)]
@@ -62,10 +62,31 @@ public sealed class ChannelOutboundUnifiedTransportTests
     private static async Task QueueToAdapterAsync(string kind, bool busy)
     {
         var broker = await SharedBrokerAsync();
-        foreach (var lateGateway in new[] { false, true })
-        foreach (var cut in new[] { "queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save" })
+        string[] cuts = ["queue-insert", "queue-committed", "confirm-save", "capture", "definite-refusal", "refusal-save"];
+        var scenarios = from lateGateway in new[] { false, true }
+                        from cut in cuts
+                        select (LateGateway: lateGateway, Cut: cut);
+        bool StartsWorker(string cut) => kind == "main" && cut == "refusal-save";
+
+        // Every scenario has its own schema, topic, consumer group and fake gateway.
+        // Overlap the in-process worlds inside this test's seat. Join them before
+        // running scenarios that start a recovery child, one child at a time.
+        await Parallel.ForEachAsync(scenarios.Where(scenario => !StartsWorker(scenario.Cut)),
+            new ParallelOptions { MaxDegreeOfParallelism = 12 },
+            (scenario, _) => new ValueTask(RunScenarioAsync(scenario.LateGateway, scenario.Cut)));
+        foreach (var scenario in scenarios.Where(scenario => StartsWorker(scenario.Cut)))
+            await RunScenarioAsync(scenario.LateGateway, scenario.Cut);
+
+        async Task RunScenarioAsync(bool lateGateway, string cut)
         {
-            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            using var timing = TestTrace.ChunkSpan("C519 queue-to-adapter scenario");
+            timing?.SetTag("c519.kind", kind);
+            timing?.SetTag("c519.cut", cut);
+            timing?.SetTag("c519.busy", busy);
+            timing?.SetTag("c519.late-gateway", lateGateway);
+            var defaultSettle = kind == "trailing" && !busy && !lateGateway;
+            var watchRedraw = defaultSettle && cut == "confirm-save";
+            timing?.SetTag("c519.default-settle", defaultSettle);
             var fault = new HandoffFault(cut);
             var refusalSave = new RefusalSaveFault(fault);
             var producer = new RefusalProducer();
@@ -85,11 +106,27 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         };
                         return service;
                     });
-                }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave), clock: clock);
+                }, options => options.AddInterceptors(fault, new CommittedQueueFault(fault), refusalSave),
+                // Keep the default settle on one intact delivery path through every injected cut.
+                clock: clock, postEvidenceSettleMs: defaultSettle ? null : 0);
             producer.Inner = w.Producer;
-            await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
+            if (watchRedraw)
+                WatchComposerRedraw(w.H.Adapter);
+            // Give the handoff its full budget after clone and gateway setup.
+            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            using (TestTrace.ChunkSpan("C519 receive source"))
+                await ReceiveSourceAsync(w, kind, busy, fault, scenario.Token);
+            if (watchRedraw)
+            {
+                await using var db = w.Db();
+                var source = await db.SessionQueuedMessages.SingleAsync(m => m.Id == w.MemberId, scenario.Token);
+                source.LastDeliveryBaselineSequence.ShouldBeNull("the first delivery has no observable transcript floor");
+                w.H.Adapter.Inputs.Count(input => input == "\r").ShouldBe(2,
+                    "a redraw before Enter supplies no submit evidence, so the swallowed Enter must be retried");
+            }
             if (cut == "capture") fault.Armed = true;
-            await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
+            using (TestTrace.ChunkSpan("C519 capture turn"))
+                await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
             if (cut == "capture")
             {
                 fault.Fired.ShouldBe(1);
@@ -99,7 +136,11 @@ public sealed class ChannelOutboundUnifiedTransportTests
             (await w.DeliveryAsync(kind))!.State.ShouldBe(ChannelOutboundDeliveryState.Captured);
             if (cut is "definite-refusal" or "refusal-save")
             { producer.RefuseNext = true; fault.Armed = cut == "refusal-save"; }
-            await w.H.TickOutboundAsync(); await w.H.TickOutboundAsync();
+            using (TestTrace.ChunkSpan("C519 publish ticks"))
+            {
+                await w.H.TickOutboundAsync();
+                await w.H.TickOutboundAsync();
+            }
             if (cut is "definite-refusal" or "refusal-save")
             {
                 producer.Refusals.ShouldBe(1);
@@ -148,6 +189,41 @@ public sealed class ChannelOutboundUnifiedTransportTests
             await w.AssertReceiptAsync();
             scenario.Token.ThrowIfCancellationRequested();
         }
+    }
+
+    private static void WatchComposerRedraw(FakeAgentProtocolAdapter adapter)
+    {
+        // A silent first Enter leaves the draft in place. If the earlier redraw
+        // is mistaken for submit evidence, the queue never retries that Enter.
+        adapter.SwallowSubmits = 1;
+        adapter.SubmitAck = "";
+        var samples = 0;
+        var bodyWritten = false;
+        long? redraw = null;
+        adapter.BeforeRenderedSnapshot = () =>
+        {
+            // Composer evidence, initial settle sample, then a redraw on the next poll.
+            if (bodyWritten && ++samples == 3)
+            {
+                adapter.Emit("\nComposer redraw\n");
+                redraw = Stopwatch.GetTimestamp();
+            }
+        };
+        adapter.BeforeInput = (input, _) =>
+        {
+            if (input.Contains("whole source HEAD ", StringComparison.Ordinal))
+                bodyWritten = true;
+            if (input == "\r" && bodyWritten)
+            {
+                redraw.ShouldNotBeNull("the composer must be sampled again before Enter");
+                Stopwatch.GetElapsedTime(redraw.Value).ShouldBeGreaterThanOrEqualTo(
+                    TimeSpan.FromMilliseconds(new DeliveryVerificationSettings().PostEvidenceSettleMs),
+                    "the redraw must be inside the settle window, before Enter supplies submit evidence");
+                adapter.BeforeRenderedSnapshot = null;
+                adapter.BeforeInput = null;
+            }
+            return Task.CompletedTask;
+        };
     }
 
     private static async Task ReceiveSourceAsync(UnifiedOutboundTransport w, string kind, bool busy,
@@ -289,8 +365,8 @@ public sealed class ChannelOutboundUnifiedTransportTests
     public async Task C519_Partial_prompt_requires_complete_receipt()
     {
         var broker = await SharedBrokerAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await ReceiveSourceAsync(w, "main", false, new HandoffFault("partial-prompt"), deadline.Token);
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, deadline.Token);
         await w.H.DrainOutboundAsync();
@@ -303,10 +379,10 @@ public sealed class ChannelOutboundUnifiedTransportTests
     public async Task C519_Enabled_loss_notice_reaches_adapter()
     {
         var broker = await SharedBrokerAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, gatewayStarted: false);
         var source = await w.H.SeedChannelCorrelationAsync("lost complete source prompt", w.Key,
             sentAtUtc: w.H.Now.AddHours(-2));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await w.H.Dispatcher.SweepStaleCorrelationsAsync(deadline.Token);
         await using (var db = w.Db())
         {
@@ -330,12 +406,12 @@ public sealed class ChannelOutboundUnifiedTransportTests
     public async Task C519_Size_refusal()
     {
         var broker = await SharedBrokerAsync();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await using var w = await UnifiedOutboundTransport.CreateAsync(broker, maxMessageBytes: 4096);
         await w.SeedCrashSourceAsync("main");
         // Incompressible bytes cross the client cap and reach the broker's smaller topic cap.
         var bytes = new byte[32 * 1024]; Random.Shared.NextBytes(bytes);
         await File.WriteAllBytesAsync(w.SourcePath, bytes);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(120));
         await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, deadline.Token);
         await w.H.DrainOutboundAsync();
         var failed = (await w.DeliveryAsync("main"))!;
@@ -433,7 +509,6 @@ public sealed class ChannelOutboundUnifiedTransportTests
     {
         var broker = await SharedBrokerAsync();
         {
-            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             var worker = new FakeAgentProtocolAdapter { DialogGuardEnabled = true, ClaudeComposerChrome = true };
             if (busy) worker.ReadyHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var workerEvents = new WorkerTurnBus();
@@ -442,6 +517,7 @@ public sealed class ChannelOutboundUnifiedTransportTests
             // recovery's.
             await using var w = await UnifiedOutboundTransport.CreateAsync(broker,
                 warmProbes: 2 + (cut is "conversion-dispatched" or "enqueue-refused" ? 1 : 0) + (cut == "result-committed" ? 1 : 0),
+                postEvidenceSettleMs: 0,
                 configure: services =>
             {
                 services.AddSingleton(Options.Create(delegation));
@@ -530,7 +606,13 @@ public sealed class ChannelOutboundUnifiedTransportTests
                         connectionString: w.Schema.ConnectionString, createdAtUtc: w.H.Now);
                 });
             };
+            using var scenario = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             await ReceiveSourceAsync(w, "main", false, new HandoffFault("none"), scenario.Token);
+            // The source prompt is setup here. Use the default for the actual converter handoff
+            // on the idle representative of each cut.
+            if (!busy)
+                w.H.Provider.GetRequiredService<IOptions<SupervisionSettings>>().Value.DeliveryVerification
+                    .PostEvidenceSettleMs = new DeliveryVerificationSettings().PostEvidenceSettleMs;
             await w.H.Dispatcher.OnTurnEndAsync(w.H.SessionId, scenario.Token);
             await w.H.TickOutboundAsync();
             var delivery = (await w.DeliveryAsync("main"))!;

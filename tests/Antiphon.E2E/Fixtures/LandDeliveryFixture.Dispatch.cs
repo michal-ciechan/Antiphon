@@ -67,6 +67,20 @@ public sealed partial class LandDeliveryFixture
         await db.SaveChangesAsync();
     }
 
+    public async Task RestartBeforeInterruptedDispatchEligibilityAsync(Guid sourceTaskId)
+    {
+        await using var db = CreateContext();
+        var row = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.SourceTaskId == sourceTaskId
+            && m.SourceLandNotificationId != null && m.Status == QueuedMessageStatus.Sent
+            && m.DeliveryVerdict == null && m.DeliveryAttempts > 0 && m.LastDeliveryStartedAt != null)
+            .OrderBy(m => m.LastDeliveryStartedAt).FirstAsync();
+        var started = row.LastDeliveryStartedAt!.Value;
+        // Pin only the queue clock during the early scan, so restarting Kestrel cannot consume
+        // the test's one-second margin. Leave the persisted attempt timestamps untouched.
+        await UseChildAsync("none", new(row.AgentSessionId, row.Id, row.DeliveryAttempts,
+            started, started + InterruptedAttemptAge - TimeSpan.FromSeconds(1)));
+    }
+
     /// <summary>
     /// V-16: zero ordinary sibling warnings. The project's <c>trunk</c> default is deleted under
     /// the claim lease, after the pre-lease observation. The cut falls back to HEAD and owes the
@@ -421,8 +435,8 @@ public sealed partial class LandDeliveryFixture
         attempted.ShouldNotBeEmpty();
         var eligibleAt = attempted.Max(m => m.LastDeliveryStartedAt!.Value) + InterruptedAttemptAge;
         var waitStarted = DateTime.UtcNow;
-        // Arrange the production recovery prerequisite with real time while the child is dead.
-        // Do not edit attempt timestamps, shorten the safety guard or extend ReceiptAsync's deadline.
+        // Wait out the configured guard in real time while the child is dead, using untouched
+        // attempt timestamps.
         while (DateTime.UtcNow < eligibleAt)
         {
             var remaining = eligibleAt - DateTime.UtcNow;
@@ -439,8 +453,8 @@ public sealed partial class LandDeliveryFixture
     /// Grok session, which has no composer reader, so the restarted host holds that attempt for a
     /// complete UserPrompt or an orchestrator decision: no Enter, no retype, no attempt charge.
     /// Once the attempt is older than InterruptedAttemptAge the stranded-queue watchdog records a
-    /// durable input-delivery-unknown warning. Call after <see cref="WaitForInterruptedDispatchEligibilityAsync"/>
-    /// and the restart. <paramref name="promptMarker"/> identifies the held body in a prompt.
+    /// durable input-delivery-unknown warning. Call after restarting the recovery child.
+    /// <paramref name="promptMarker"/> identifies the held body in a prompt.
     /// </summary>
     public async Task AssertUnknownPreTypingAttemptHeldAsync(Guid sourceTaskId, string promptMarker)
     {
@@ -451,9 +465,8 @@ public sealed partial class LandDeliveryFixture
                 && m.DeliveryVerdict == null && m.DeliveryAttempts > 0).ToListAsync();
         attempted.ShouldNotBeEmpty("the pre-typing crash must leave a charged Sent/null-verdict attempt");
         var started = attempted.Min(m => m.LastDeliveryStartedAt!.Value);
-        // The row is already eligible; the restarted host's watchdog (60 s default period) records
-        // the decision on its next pass: two periods plus host warm-up, the same window as
-        // WaitForLateConfirmedInterruptedRowsAsync.
+        // The row is already eligible; the restarted host's watchdog records the decision on
+        // its next pass. The deadline also allows a slow host warm-up.
         AgentIncident? incident = null;
         await UntilAsync(async () =>
         {
@@ -463,6 +476,9 @@ public sealed partial class LandDeliveryFixture
             return incident is not null;
         }, "input-delivery-unknown decision for the held pre-typing attempt", 150);
         incident!.Kind.ShouldBe(AgentIncidentKind.DeliveryTransportFailed);
+        incident.CreatedAt.ShouldBeGreaterThanOrEqualTo(
+            attempted.Max(m => m.LastDeliveryStartedAt!.Value) + InterruptedAttemptAge,
+            "the watchdog cannot report an unknown delivery before the configured guard elapses");
 
         await using var final = CreateContext();
         foreach (var before in attempted)
@@ -489,8 +505,8 @@ public sealed partial class LandDeliveryFixture
 
     public async Task WaitForLateConfirmedInterruptedRowsAsync(IReadOnlyDictionary<Guid, int> attemptsByRow)
     {
-        // Queue recovery runs from the restarted host's own flushes or stranded-queue sweep (60 s
-        // default period) once the row is eligible: two sweep periods plus host warm-up.
+        // Queue recovery runs from the restarted host's own flushes or stranded-queue sweep
+        // once the row is eligible. The deadline also allows a slow host warm-up.
         List<SessionQueuedMessage> rows = [];
         try
         {

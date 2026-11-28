@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
+using Antiphon.Tests.TestHelpers;
 using Shouldly;
 using TUnit.Core;
 
@@ -149,6 +151,79 @@ public sealed class TestTraceSummaryTests
                   400.0 ms (self    279.4)  harness create {slot=3}
 
             """));
+    }
+
+    [Test]
+    public void Chunk_summary_subtracts_overlapping_intervals_from_wall_time_once()
+    {
+        using var fixture = WithTrace("""
+            {"TraceId":"t","SpanId":"p","Source":"Antiphon.Tests","Name":"process lifetime","Start":"2026-11-23T10:00:00.000Z","DurationMs":100}
+            {"TraceId":"t","SpanId":"s","Source":"Antiphon.Tests","Name":"process startup","Start":"2026-11-23T10:00:00.000Z","DurationMs":10}
+            {"TraceId":"t","SpanId":"d","Source":"TUnit.Lifecycle","Name":"test discovery","Start":"2026-11-23T10:00:00.010Z","DurationMs":5}
+            {"TraceId":"t","SpanId":"a","Source":"TUnit.Lifecycle","Name":"test assembly","Start":"2026-11-23T10:00:00.020Z","DurationMs":65}
+            {"TraceId":"t","SpanId":"h1","ParentId":"a","Source":"TUnit.Lifecycle","Name":"hook: Open()","Start":"2026-11-23T10:00:00.020Z","DurationMs":10}
+            {"TraceId":"t","SpanId":"f","ParentId":"h1","Source":"Antiphon.Tests","Name":"fixture initialize","Start":"2026-11-23T10:00:00.021Z","DurationMs":8,"Tags":{"antiphon.fixture":"shared"}}
+            {"TraceId":"t","SpanId":"g","ParentId":"a","Source":"TUnit.Lifecycle","Name":"test suite","Start":"2026-11-23T10:00:00.030Z","DurationMs":47,"Tags":{"test.suite.name":"Alpha"}}
+            {"TraceId":"tx","SpanId":"x","Source":"TUnit","Name":"test case","Start":"2026-11-23T10:00:00.030Z","DurationMs":35,"Tags":{"tunit.test.class":"Alpha","test.suite.name":"Alpha","tunit.test.id":"1"}}
+            {"TraceId":"tx","SpanId":"x1","ParentId":"x","Source":"TUnit","Name":"hook: Prepare()","Start":"2026-11-23T10:00:00.033Z","DurationMs":3}
+            {"TraceId":"tx","SpanId":"x2","ParentId":"x","Source":"TUnit","Name":"test body","Start":"2026-11-23T10:00:00.040Z","DurationMs":20}
+            {"TraceId":"t","SpanId":"x3","ParentId":"g","Source":"TUnit","Name":"dispose Alpha","Start":"2026-11-23T10:00:00.060Z","DurationMs":5,"Tags":{"tunit.trace.scope":"test","tunit.test.id":"1"}}
+            {"TraceId":"ty","SpanId":"y","Source":"TUnit","Name":"test case","Start":"2026-11-23T10:00:00.055Z","DurationMs":20,"Tags":{"tunit.test.class":"Beta"}}
+            {"TraceId":"ty","SpanId":"y2","ParentId":"y","Source":"TUnit","Name":"test body","Start":"2026-11-23T10:00:00.055Z","DurationMs":20}
+            {"TraceId":"t","SpanId":"c1","ParentId":"g","Source":"TUnit.Lifecycle","Name":"hook: CloseClass()","Start":"2026-11-23T10:00:00.075Z","DurationMs":2}
+            {"TraceId":"t","SpanId":"h2","ParentId":"a","Source":"TUnit.Lifecycle","Name":"hook: Close()","Start":"2026-11-23T10:00:00.080Z","DurationMs":5}
+            """);
+        var path = fixture.PathOf("trace.jsonl");
+        TestTraceBreakdown.Run(path, fixture.Out, fixture.Error).ShouldBe(0);
+        var output = Regex.Replace(fixture.Out.ToString(), " +", " ");
+        output.ShouldContain("Wall 100.000 ms");
+        output.ShouldContain("Startup 10.000");
+        output.ShouldContain("Discovery 5.000");
+        output.ShouldContain("One-time setup 10.000");
+        output.ShouldContain("One-time teardown 7.000");
+        output.ShouldContain("Per-test setup 10.000");
+        output.ShouldContain("Per-test body 40.000");
+        output.ShouldContain("Per-test teardown 5.000");
+        output.ShouldContain("Limiter wait -");
+        output.ShouldContain("Process exit/teardown 15.000");
+        output.ShouldContain("Idle/unaccounted 8.000");
+        output.ShouldContain("35.000 Alpha");
+        output.ShouldContain("20.000 Beta");
+    }
+
+    [Test]
+    public void Exporter_has_no_destination_without_opt_in()
+    {
+        TestTrace.HasFileDestination(null, null).ShouldBeFalse();
+        TestTrace.HasFileDestination(" ", "").ShouldBeFalse();
+        TestTrace.HasFileDestination("traces", null).ShouldBeTrue();
+        TestTrace.HasFileDestination(null, "trace.jsonl").ShouldBeTrue();
+    }
+
+    [Test]
+    public void Otlp_requires_separate_opt_in()
+    {
+        const string endpoint = "http://localhost:4317";
+        TestTrace.HasOtlpDestination("traces", null, endpoint).ShouldBeFalse();
+        TestTrace.HasOtlpDestination("traces", "0", endpoint).ShouldBeFalse();
+        TestTrace.HasOtlpDestination("traces", "1", null).ShouldBeFalse();
+        TestTrace.HasOtlpDestination(null, "1", endpoint).ShouldBeFalse();
+        TestTrace.HasOtlpDestination("traces", "1", endpoint).ShouldBeTrue();
+    }
+
+    [Test]
+    public void Chunk_helper_spans_require_the_trace_directory_even_with_a_listener()
+    {
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => ReferenceEquals(source, TestTrace.Source),
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        using var span = TestTrace.ChunkSpan("chunk helper opt-in test");
+        var enabled = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(TestTrace.DirectoryVariable));
+        (span is not null).ShouldBe(enabled);
     }
 
     [Test]

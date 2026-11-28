@@ -2149,6 +2149,9 @@ The post-land warning runs the shard manifest one shard at a time through the bu
 
 ## Test traces (OpenTelemetry-style spans)
 
+For a slow chunk or class, use the [antiphon-test-trace skill](../.claude/skills/antiphon-test-trace/SKILL.md)
+and the [test tracing runbook](test-tracing.md) for per-process JSONL and the phase breakdown.
+
 Fixtures emit `Activity` spans from the `Antiphon.Tests` source (`tests/Shared/TestTrace.cs`). Every
 `TestTiming.BeginPhase`/`BeginProcess`/`BeginFixturePhase` call is also a span, and the shared choke
 points add their own: `harness create`/`harness di-build`/`harness dispose` (BridgeQueueHarness),

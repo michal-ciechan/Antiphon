@@ -32,6 +32,7 @@ internal sealed class HerdrTestProcess : IAsyncDisposable
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
         };
         foreach (var arg in InteractiveArgs) start.ArgumentList.Add(arg);
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("Herdr dummy process launch");
         return Process.Start(start) ?? throw new IOException("Owned shell child did not start.");
     }
 
@@ -118,6 +119,7 @@ if ($IsWindows) {
         start.ArgumentList.Add("--treenode-filter");
         start.ArgumentList.Add("/*/*/FakeHerdrServerListenerTests/C801_CrashedOwnerLeaseReclaimed");
         start.Environment[OwnedFixtureMode] = mode;
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("Herdr peer process launch");
         return Process.Start(start) ?? throw new IOException("Herdr owned peer did not start.");
     }
 
@@ -211,6 +213,7 @@ if ($IsWindows) {
     public async ValueTask DisposeAsync()
     {
         if (!Process.HasExited) Process.Kill(entireProcessTree: true);
+        using var span = Antiphon.Tests.TestHelpers.TestTrace.ChunkSpan("Herdr peer process wait");
         await Process.WaitForExitAsync();
         if (_stdout is not null) await _stdout;
         if (_stderr is not null) await _stderr;

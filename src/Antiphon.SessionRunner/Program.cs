@@ -1,6 +1,7 @@
 using Antiphon.Observability;
 using Antiphon.Agents.Pty;
 using Antiphon.SessionRunner;
+using Antiphon.SessionRunner.Agent2Agent;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -187,6 +188,8 @@ builder.Services.AddHostedService<HerdrStatusPushService>();
 var effectivePtyRequest = PtyBackendConfiguration.EffectiveRequest(
     builder.Configuration[PtyBackendPolicy.ConfigKey], Environment.GetEnvironmentVariable(PtyBackendPolicy.EnvVar));
 builder.Services.PostConfigure<SessionRunnerSettings>(settings => settings.PtyBackend = effectivePtyRequest);
+// Optional Agent2Agent endpoint over headless Codex turns (2026-11-27 standalone plan); inert unless SessionRunner:A2A:Enabled.
+builder.Services.AddRunnerA2A(builder.Configuration);
 
 configurationTiming.Complete();
 configurationTiming.Dispose();
@@ -242,6 +245,7 @@ app.MapGet("/diagnostics/startup", () => liveTiming.ReadStartup());
 app.MapHealthChecks("/health");
 app.MapGet("/repository-maintenance", (RunnerRepositoryMaintenance maintenance) => Results.Json(maintenance.Last));
 app.MapCodexCliVersionRoutes();
+app.MapRunnerA2A();
 
 // Which pseudoconsole every session here gets, on request. The server's delivery ceilings are
 // coupled to this answer (CARD-0037), and it is the one thing it cannot infer from its own

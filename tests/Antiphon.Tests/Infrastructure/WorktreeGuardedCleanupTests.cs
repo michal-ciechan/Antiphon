@@ -796,14 +796,47 @@ public sealed class WorktreeGuardedCleanupTests
         public Func<string, IReadOnlyList<string>, Task<LandingGitResult?>>? OtherCommand;
         public static async Task<RemovalHarness> CreateAsync(Func<LandingSafetyHarness, Task>? beforeRequest = null)
         {
-            var h = new RemovalHarness();
-            h.H = new LandingSafetyHarness { Clock = h.Clock, ConfigureServices = services => {
-                services.AddSingleton<IWorktreeLockDiagnostics>(h.Diagnostics); services.AddSingleton<IWorktreeDeleteAccessProbe>(h.Probe); } };
-            await h.H.InitializeAsync(); h.SourceSha = await h.H.AddSourceAsync();
-            if (beforeRequest is not null) await beforeRequest(h.H);
-            h.H.Fault.Phase = LandPhase.CleanupStarted; h.H.Fault.AfterCommit = true;
-            await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => h.H.RunAsync());
-            h.Operation = (await h.H.OperationAsync())!;
+            RemovalHarness? configured = null;
+            void Configure(LandingSafetyHarness host)
+            {
+                var removal = new RemovalHarness { H = host };
+                host.Clock = removal.Clock;
+                host.ConfigureServices = services =>
+                {
+                    services.AddSingleton<IWorktreeLockDiagnostics>(removal.Diagnostics);
+                    services.AddSingleton<IWorktreeDeleteAccessProbe>(removal.Probe);
+                };
+                configured = removal;
+            }
+
+            string? sourceSha = null;
+            if (beforeRequest is null && !LandingEvidence.Enabled)
+            {
+                // Copy the publication cut before creating the cleanup journal or installing any case-specific hooks.
+                await LandingHarnessSnapshot.CreateAsync("guarded-cleanup-publication-cut", Configure, async host =>
+                {
+                    var preparedSha = await PreparePublicationCutAsync(host, null);
+                    (await host.OperationAsync()).ShouldNotBeNull().OriginalSourceSha.ShouldBe(preparedSha);
+                });
+            }
+            else
+            {
+                var host = new LandingSafetyHarness();
+                try
+                {
+                    Configure(host);
+                    sourceSha = await PreparePublicationCutAsync(host, beforeRequest);
+                }
+                catch
+                {
+                    await host.DisposeAsync();
+                    throw;
+                }
+            }
+
+            var h = configured.ShouldNotBeNull();
+            h.Operation = (await h.H.OperationAsync()).ShouldNotBeNull();
+            h.SourceSha = sourceSha ?? h.Operation.OriginalSourceSha.ShouldNotBeNull();
             await using var db = h.H.CreateContext();
             var request = await db.AgentTaskLandRequests.SingleAsync(r => r.TaskId == h.H.Fixture.TaskId && r.IsPending);
             var op = h.Operation;
@@ -822,6 +855,19 @@ public sealed class WorktreeGuardedCleanupTests
             };
             return h;
         }
+
+        private static async Task<string> PreparePublicationCutAsync(LandingSafetyHarness host,
+            Func<LandingSafetyHarness, Task>? beforeRequest)
+        {
+            await host.InitializeAsync();
+            var sourceSha = await host.AddSourceAsync();
+            if (beforeRequest is not null) await beforeRequest(host);
+            host.Fault.Phase = LandPhase.CleanupStarted;
+            host.Fault.AfterCommit = true;
+            await Should.ThrowAsync<LandingSafetyHarness.InjectedSaveFailure>(() => host.RunAsync());
+            return sourceSha;
+        }
+
         public async Task<WorktreeRemoval> RemoveAsync(bool context = true, CancellationToken ct = default)
         {
             await using var lease = await H.Services.GetRequiredService<IRepositoryMutationLease>().TryAcquireAsync(H.Fixture.Repository, ct);

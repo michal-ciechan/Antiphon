@@ -70,6 +70,7 @@ internal class TestDbOperations
         string sharedDatabaseName,
         string templateDatabaseName)
     {
+        using var span = TestTrace.ChunkSpan("database template protect", "antiphon.fixture", "db-assembly");
         await using var maintenance = new NpgsqlConnection(maintenanceConnectionString);
         await maintenance.OpenAsync().ConfigureAwait(false);
         await TestDbFixtureLifecycle.TerminateBackendsAsync(maintenance, sharedDatabaseName).ConfigureAwait(false);
@@ -421,6 +422,7 @@ internal sealed class TestDbFixtureLifecycle
 
     public async Task<IsolatedTestSchema> CreateIsolatedSchemaAsync()
     {
+        using var span = TestTrace.ChunkSpan("TestDbFixture create isolated database");
         var ready = await EnsureReadyAsync().ConfigureAwait(false);
         string? pooled = null;
         if (_pool is { } pool)

@@ -15,6 +15,7 @@ using Antiphon.Server.Infrastructure.Agents;
 using Antiphon.Server.Infrastructure.Data;
 using Antiphon.Server.Infrastructure.Security;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
 using Testcontainers.PostgreSql;
 
 namespace Antiphon.E2E.Fixtures;
@@ -99,6 +100,7 @@ public class AntiphonAppFixture
 
     public async Task InitializeAsync()
     {
+        using var span = TestTrace.ChunkSpan("AntiphonAppFixture initialize");
         DistillerCanary?.Validate();
         // Opt-out, not opt-in: a test that never thought about diagnostics still gets them.
         // Only adopt the running test when the caller did not choose a directory — a fixture shared
@@ -277,6 +279,7 @@ public class AntiphonAppFixture
 
     public async Task DisposeAsync()
     {
+        using var span = TestTrace.ChunkSpan("AntiphonAppFixture dispose");
         // CARD-0102: stop what this fixture started, BEFORE the database and the host it needs to
         // identify those sessions are torn down. Sets SessionLeakVerdict rather than throwing here —
         // a leak must fail the run, and it must not do so by abandoning a Postgres container.
@@ -755,8 +758,10 @@ public class AntiphonAppFixture
                 wb.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
             });
 
-            KestrelHost = builder.Build();
-            KestrelHost.Start();
+            using (TestTrace.ChunkSpan("KestrelWebApplicationFactory build"))
+                KestrelHost = builder.Build();
+            using (TestTrace.ChunkSpan("KestrelWebApplicationFactory start"))
+                KestrelHost.Start();
 
             // WAF calls GetTestServer() on the returned host.
             // Return a dummy host with TestServer to satisfy that.

@@ -20,8 +20,23 @@ using Antiphon.Server.Infrastructure.Orchestration;
 
 namespace Antiphon.E2E.Fixtures;
 
-internal sealed record LandDeliveryOptions(string Root, string Cut = "none", string CompletionForm = "raw")
+internal sealed record LandDeliveryOptions(
+    string Root, string Cut = "none", string CompletionForm = "raw", bool UseShortInterruptedAttemptGuard = false,
+    LandDeliveryOptions.RecoveryClock? QueueClock = null)
 {
+    internal sealed class RecoveryClock(DateTime at) : TimeProvider
+    {
+        private long _heldTicks = at.Ticks;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            var ticks = Interlocked.Read(ref _heldTicks);
+            return ticks == 0 ? TimeProvider.System.GetUtcNow() : new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
+
+        public void Resume() => Interlocked.Exchange(ref _heldTicks, 0);
+    }
+
     public string Gate => Path.Combine(Root, "caller-busy");
     public void Configure(Dictionary<string, string?> settings)
     {
@@ -56,9 +71,21 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
         settings["Delegation:MaxTasksPerRoot"] = "1"; // Preserve the real conflict cap branch; never launch a model helper.
         settings["Supervision:DeliveryVerification:Enabled"] = "true";
         settings["Supervision:DeliveryVerification:TranscriptConfirmEnabled"] = "true";
+        if (UseShortInterruptedAttemptGuard)
+        {
+            // Keep all three components of the guard for the owned pre-typing crash witness.
+            settings["Supervision:DeliveryVerification:TranscriptConfirmTimeoutSeconds"] = "10";
+            settings["Supervision:DeliveryVerification:PostFailureConfirmGraceSeconds"] = "3";
+            settings["Supervision:DeliveryVerification:UnobservableBaselineConfirmClockToleranceSeconds"] = "2";
+        }
+        // Exercise the hosted stranded-queue sweep without waiting a minute for its first pass.
+        // The sweep still uses the production age and delivery-verification guards.
+        settings["Supervision:RcWatch:ProbeIntervalSeconds"] = "10";
     }
     public void ConfigureServices(IServiceCollection services)
     {
+        if (QueueClock is { } queueClock)
+            services.AddSingleton(p => ActivatorUtilities.CreateInstance<SessionMessageQueueService>(p, queueClock));
         // The CLI probes the real version endpoint before sending a land request. Give this
         // fixture's unstamped server a checkout identity while preserving its advertised capabilities.
         services.ConfigureHttpJsonOptions(options =>
@@ -296,6 +323,7 @@ internal sealed record LandDeliveryOptions(string Root, string Cut = "none", str
                 || options.Cut == "review-queue-inserted" && boundary == "queue-inserted"
                 || options.Cut == "review-before-wakeup" && boundary == "queue-committed-before-wakeup";
             if (!blocked || File.Exists(Path.Combine(options.Root, boundary + ".release"))) return;
+            Antiphon.Tests.TestHelpers.TestTrace.FlushLocal();
             var barrierPath = Path.Combine(options.Root, boundary + ".barrier.json");
             var temporary = barrierPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(new

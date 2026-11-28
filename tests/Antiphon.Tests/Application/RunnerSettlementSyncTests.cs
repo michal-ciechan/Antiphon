@@ -1161,7 +1161,7 @@ public sealed class RunnerSettlementSyncTests
         public string Desktop => Path.Combine(Root, "desktop");
         public string Worktree => Path.Combine(Root, "wt");
         public string Runner => Path.Combine(Root, "runner");
-        public Guid TaskId { get; } = Guid.NewGuid();
+        public Guid TaskId { get; }
         private bool _cardBranch;
         public string Branch => (_cardBranch ? "feat/card-1213-code-" : "feat/card-task-") + TaskId.ToString("N")[..8];
         public string FullRef => "refs/heads/" + Branch;
@@ -1172,10 +1172,30 @@ public sealed class RunnerSettlementSyncTests
         private ProgressBaselineSnapshot _snapshot = null!;
         private bool _runnerCloned;
 
-        private SyncWorld()
+        private SyncWorld(string? root = null, Guid? taskId = null)
         {
-            Root = Path.Combine(Path.GetTempPath(), "c657-" + Guid.NewGuid().ToString("N")[..12]);
+            Root = root ?? Path.Combine(Path.GetTempPath(), "c657-" + Guid.NewGuid().ToString("N")[..12]);
+            TaskId = taskId ?? Guid.NewGuid();
             Git = new RecordingGit(Leases);
+        }
+
+        internal SyncWorld AttachPreparedTree(string root, Func<string?, string?> rewrite)
+        {
+            var world = new SyncWorld(root, TaskId)
+            {
+                _cardBranch = _cardBranch,
+                _runnerCloned = _runnerCloned,
+                Baseline = Baseline,
+                Task = Clone(Task),
+            };
+            world.Task.RepoPath = rewrite(Task.RepoPath);
+            world.Task.WorkingDirectory = rewrite(Task.WorkingDirectory)
+                ?? throw new InvalidOperationException("Prepared settlement tree has no working directory.");
+            world.Task.WorktreePath = rewrite(Task.WorktreePath);
+            world.Task.ProgressBaselineJson = rewrite(Task.ProgressBaselineJson);
+            world._snapshot = TaskProgressJson.TryReadBaseline(world.Task.ProgressBaselineJson)
+                ?? throw new InvalidOperationException("Prepared settlement tree has no progress baseline.");
+            return world;
         }
 
         public static async Task<SyncWorld> CreateAsync(

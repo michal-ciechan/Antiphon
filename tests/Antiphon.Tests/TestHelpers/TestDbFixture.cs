@@ -32,6 +32,7 @@ public class TestDbFixture
 			return;
 		if (!SharedStoreWarmup.SelectionNeedsSharedStore(context.AllTests))
 			return;
+		using var span = TestTrace.ChunkSpan("TestDbFixture initialize", "antiphon.fixture", "db-assembly");
 		// Image/cache hits can prepare PostgreSQL without constructing an EF context. Build
 		// the fixture model and any assembly-specific model while PostgreSQL starts, before
 		// timed test bodies. These setup spans overlap and can sum past wall time.
@@ -57,6 +58,7 @@ public class TestDbFixture
 
 	public static async Task DisposeAsync()
 	{
+		using var span = TestTrace.ChunkSpan("TestDbFixture dispose", "antiphon.fixture", "db-assembly");
 		await Lifecycle.DisposeAsync();
 		WriteProbeEvidence();
 	}

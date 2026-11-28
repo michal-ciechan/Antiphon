@@ -32,7 +32,7 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
     public IsolatedTestSchema Schema { get; private set; } = null!;
     public ServiceProvider Services { get; private set; } = null!;
     public Guid SessionId { get; private init; } = Guid.NewGuid();
-    public Guid CallerSessionId { get; } = Guid.NewGuid();
+    public Guid CallerSessionId { get; private init; } = Guid.NewGuid();
     public AgentTask Task { get; private set; } = null!;
     private Guid? _attachedTaskId;
     private bool _borrowed;
@@ -154,6 +154,20 @@ internal sealed class RunnerSettlementWorld : IAsyncDisposable
         session.Status = SessionStatus.Running;
         await db.SaveChangesAsync(); await world.ReloadAsync();
         return world;
+    }
+
+    internal RunnerSettlementWorld AttachPreparedCopy(SyncWorld git, IsolatedTestSchema schema)
+    {
+        var copy = new RunnerSettlementWorld(git, _fenced, SyncClock is not null, _mirrorPublish, _syncDebt)
+        {
+            Schema = schema,
+            SessionId = SessionId,
+            CallerSessionId = CallerSessionId,
+        };
+        if (SyncClock is { } clock)
+            copy.SyncClock!.SetUtcNow(clock.GetUtcNow());
+        copy.BuildServices();
+        return copy;
     }
 
     private void BuildServices()

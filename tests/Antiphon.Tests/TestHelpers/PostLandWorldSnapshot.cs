@@ -127,6 +127,24 @@ internal static class PostLandWorldSnapshot
     private static Task<IsolatedTestSchema> CloneDatabaseAsync(Template template, string token) =>
         CloneDatabaseAsync(template.Database, template.ConnectionString, template.Token, token);
 
+    // Cloned fixtures have a full schema, but only a few populated tables. An ordinary
+    // heap without a main fork's worth of pages has no rows to rewrite. Keep tables
+    // that may reach other heaps or have statement-level effects even if empty.
+    private const string RewriteColumns = """
+        WITH rewrite_tables AS MATERIALIZED (
+          SELECT t.relname FROM pg_catalog.pg_class t
+          WHERE t.relnamespace = 'public'::regnamespace
+            AND t.relkind IN ('r', 'p')
+            AND (t.relkind = 'p' OR t.relhasrules OR pg_catalog.pg_relation_size(t.oid) > 0
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = t.oid)
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger g WHERE g.tgrelid = t.oid AND NOT g.tgisinternal))
+        )
+        SELECT c.table_name, c.column_name, c.data_type
+        FROM information_schema.columns c JOIN rewrite_tables t ON t.relname = c.table_name
+        WHERE c.table_schema = 'public' AND c.is_generated = 'NEVER'
+          AND c.data_type IN ('text', 'character varying', 'json', 'jsonb')
+        """;
+
     /// <summary>Clones a frozen template database as <c>test_&lt;token&gt;</c>, replacing <paramref name="oldToken"/> with
     /// <paramref name="token"/> in every text/json column (shared with <see cref="LandingHarnessSnapshot"/>).</summary>
     internal static async Task<IsolatedTestSchema> CloneDatabaseAsync(string templateDatabase, string templateConnectionString,
@@ -159,11 +177,7 @@ internal static class PostLandWorldSnapshot
                 DO $$
                 DECLARE r record;
                 BEGIN
-                  FOR r IN SELECT c.table_name, c.column_name, c.data_type
-                           FROM information_schema.columns c
-                           JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-                           WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.is_generated = 'NEVER'
-                             AND c.data_type IN ('text', 'character varying', 'json', 'jsonb')
+                  FOR r IN {{RewriteColumns}}
                   LOOP
                     IF r.data_type IN ('json', 'jsonb') THEN
                       EXECUTE format('UPDATE public.%I SET %I = replace(%I::text, %L, %L)::%s WHERE %I::text ILIKE %L',
@@ -185,11 +199,7 @@ internal static class PostLandWorldSnapshot
                     DO $$
                     DECLARE r record;
                     BEGIN
-                      FOR r IN SELECT c.table_name, c.column_name, c.data_type
-                               FROM information_schema.columns c
-                               JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-                               WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.is_generated = 'NEVER'
-                                 AND c.data_type IN ('text', 'character varying', 'json', 'jsonb')
+                      FOR r IN {{RewriteColumns}}
                       LOOP
                         IF r.data_type IN ('json', 'jsonb') THEN
                           EXECUTE format('UPDATE public.%I SET %I = replace(%I::text, %L, %L)::%s WHERE strpos(%I::text, %L) > 0',

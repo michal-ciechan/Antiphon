@@ -47,6 +47,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
 
     public async Task InitializeAsync()
     {
+        using var span = TestTrace.ChunkSpan("LandingProtocolHarness initialize");
         Schema = await TestDbFixture.CreateIsolatedSchemaAsync();
         BuildServices();
         await SeedAsync();
@@ -54,6 +55,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
 
     private void BuildServices()
     {
+        using var span = TestTrace.ChunkSpan("LandingProtocolHarness build services");
         Queue = new();
         var services = new ServiceCollection();
         services.AddLogging();
@@ -212,6 +214,7 @@ internal sealed class LandingProtocolHarness : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var span = TestTrace.ChunkSpan("LandingProtocolHarness dispose");
         if (Services is not null) await Services.DisposeAsync();
         if (Schema is not null) await Schema.DisposeAsync();
         Git.Dispose();

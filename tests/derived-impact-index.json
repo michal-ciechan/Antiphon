@@ -47,9 +47,9 @@
   "cappedPaths": [
     {
       "path": ".claude/skills/antiphon-delegate/SKILL.md",
-      "classes": 185,
+      "classes": 186,
       "reason": "cap",
-      "owed": 160,
+      "owed": 161,
       "first": [
         "AgentTaskInternalDecisionLifecycleTests",
         "AgentTaskLandActiveSourceClaimTests",
@@ -95,9 +95,9 @@
     },
     {
       "path": "AGENTS.md",
-      "classes": 231,
+      "classes": 232,
       "reason": "cap",
-      "owed": 206,
+      "owed": 207,
       "first": [
         "StandingSpecialistSeatTests",
         "BlockedTaskParkProjectionTests",
@@ -116,9 +116,9 @@
     },
     {
       "path": "CLAUDE.md",
-      "classes": 201,
+      "classes": 202,
       "reason": "cap",
-      "owed": 176,
+      "owed": 177,
       "first": [
         "AgentTaskCheckScheduleTests",
         "AgentTaskCheckSweepTests",
@@ -142,9 +142,9 @@
     },
     {
       "path": "README.md",
-      "classes": 134,
+      "classes": 135,
       "reason": "cap",
-      "owed": 109,
+      "owed": 110,
       "first": [
         "AgentSessionServiceIntegrationTests",
         "AgentTaskStandingAgentDispatchTests",
@@ -183,9 +183,9 @@
     },
     {
       "path": "docs/agent-card-lifecycle.md",
-      "classes": 181,
+      "classes": 182,
       "reason": "cap",
-      "owed": 156,
+      "owed": 157,
       "first": [
         "AgentTaskMidTurnRefineTests",
         "AgentTaskPoolTests",
@@ -199,9 +199,9 @@
     },
     {
       "path": "docs/ops-http.md",
-      "classes": 183,
+      "classes": 184,
       "reason": "cap",
-      "owed": 158,
+      "owed": 159,
       "first": [
         "AgentTaskLandAdmissionControlledTests",
         "AgentTaskLandAdmissionTests",
@@ -215,9 +215,9 @@
     },
     {
       "path": "docs/orchestration-loop.md",
-      "classes": 193,
+      "classes": 194,
       "reason": "cap",
-      "owed": 168,
+      "owed": 169,
       "first": [
         "AgentTaskCheckInterpreterTests",
         "AgentTaskCheckScheduleTests",
@@ -1398,18 +1398,18 @@
     },
     {
       "path": "server/Application/Settings/SupervisionSettings.cs",
-      "classes": 176,
+      "classes": 177,
       "reason": "cap",
-      "owed": 151,
+      "owed": 152,
       "first": [
+        "CapacityObsoleteQueueTests",
         "CapacityRecoveryPersistenceTests",
         "CapacityRecoveryTaskTests",
         "ChannelBridgeTests",
+        "ChannelOutboundUnifiedTransportTests",
         "GrokDelegateEndToEndTests",
         "HerdrSupervisionFailureEvidenceTests",
-        "ModelAvailabilityTests",
-        "RoutingPinCandidateDispatchTests",
-        "SessionHealthTests"
+        "ModelAvailabilityTests"
       ]
     },
     {
@@ -1740,9 +1740,9 @@
     },
     {
       "path": "server/Infrastructure/Git/LandingGit.cs",
-      "classes": 67,
+      "classes": 70,
       "reason": "cap",
-      "owed": 42,
+      "owed": 45,
       "first": [
         "LandNonCodeSkipTests",
         "LibGit2VsGitInspectionTests",
@@ -2441,14 +2441,14 @@
       "reason": "cap",
       "owed": 36,
       "first": [
+        "PostLandMutationDeliveryTests",
         "AgentTaskLandCheckpointMatrixTests",
         "AgentTaskLandConcurrencyTests",
         "AgentTaskLandDispatchYieldTests",
         "AgentTaskLandHoldVisibilityTests",
         "AgentTaskLandRemovalMatrixTests",
         "C0824RefOnlyBoundaryTests",
-        "CheckpointSourceApprovalTests",
-        "LandingGitBatchingTests"
+        "CheckpointSourceApprovalTests"
       ]
     },
     {
@@ -2533,9 +2533,9 @@
     },
     {
       "path": "tests/Antiphon.Tests/TestHelpers/TestDbFixture.cs",
-      "classes": 534,
+      "classes": 535,
       "reason": "cap",
-      "owed": 509,
+      "owed": 510,
       "first": [
         "ChannelOutboundRecoveryTests",
         "PhoneHomeStrandedQueueTests",
@@ -13581,7 +13581,6 @@
         "AgentTaskReplyIntegrationTests",
         "ApiErrorRecoveryServiceTests",
         "C2074IncidentCapIntentTests",
-        "CapacityObsoleteQueueTests",
         "CapacityRecoveryAcceptanceTests",
         "CapacityRecoveryPolicyTests",
         "CapacityRecoverySupervisionTests",
@@ -13591,6 +13590,7 @@
         "OutputDistillationApplyRaceTests",
         "PendingNoteWithholdTests",
         "SessionMessageQueueGrokPtyIntegrationTests",
+        "SessionMessageQueueInterruptedAttemptTests",
         "SessionMessageQueuePtyIntegrationTests",
         "SessionQueueReceiptPlumbingTests",
         "StandingRestartAccountingTests",
@@ -19831,6 +19831,40 @@
       ]
     },
     {
+      "path": "src/Antiphon.SessionRunner/A2A/CodexA2AAgent.cs",
+      "classes": [
+        "CodexA2AEndpointTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/A2A/CodexExecEvents.cs",
+      "classes": [
+        "CodexExecUnitTests",
+        "HerdrPaneDisposalIdentityTests",
+        "LinuxServerRestartTests",
+        "TranscriptSinceClientTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/A2A/CodexTurnRunner.cs",
+      "classes": [
+        "CodexA2AEndpointTests",
+        "CodexExecUnitTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/A2A/RunnerA2ARegistration.cs",
+      "classes": [
+        "CodexExecUnitTests"
+      ]
+    },
+    {
+      "path": "src/Antiphon.SessionRunner/A2A/RunnerA2ASettings.cs",
+      "classes": [
+        "CodexExecUnitTests"
+      ]
+    },
+    {
       "path": "src/Antiphon.SessionRunner/AbsenceEvidenceRoutes.cs",
       "classes": [
         "DelegationDispatchRecoveryBoundaryTests",
@@ -21767,6 +21801,13 @@
       "path": "tests/Antiphon.Card0490.NativeHarness/OwnedQemuProcess.cs",
       "classes": [
         "Card0490NativeExecutionTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.ChannelOutbound.Probe/ProbeModel.cs",
+      "classes": [
+        "ChannelOutboundProbeModelTests",
+        "WorktreeResidueRecoveryTests"
       ]
     },
     {
@@ -25129,6 +25170,7 @@
       "classes": [
         "DelegateBranchDeliveryTests",
         "PhoneHomeRollingRunnerTests",
+        "ReviewEvidenceResettlementTests",
         "RunnerCompletionProgressTests",
         "RunnerSyncLeaseFairnessTests",
         "RunnerTaskSettlementTests",
@@ -28112,9 +28154,11 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandingEvidence.cs",
       "classes": [
+        "AgentTaskLandActiveSourceClaimTests",
         "AgentTaskLandRefusedRetryTests",
         "LandRestartReplayTests",
-        "RepositoryMutationLeaseTests"
+        "RepositoryMutationLeaseTests",
+        "WorktreeGuardedCleanupTests"
       ]
     },
     {
@@ -28156,7 +28200,9 @@
     {
       "path": "tests/Antiphon.Tests/TestHelpers/LandingHarnessSnapshot.cs",
       "classes": [
-        "AgentTaskLandPublicationTests"
+        "AgentTaskLandActiveSourceClaimTests",
+        "AgentTaskLandPublicationTests",
+        "WorktreeGuardedCleanupTests"
       ]
     },
     {
@@ -28214,7 +28260,7 @@
         "LandReplacementApprovalTests",
         "LandRequestWriteDiagnosticTests",
         "LandWarmArtifactsTests",
-        "PostLandMutationDeliveryTests",
+        "WorktreeGuardedCleanupTests",
         "WorktreeLandingCleanupRetryTests"
       ]
     },
@@ -28526,12 +28572,19 @@
       ]
     },
     {
+      "path": "tests/Antiphon.Tests/TestHelpers/PostLandWorldSnapshot.cs",
+      "classes": [
+        "ReviewEvidenceResettlementTests"
+      ]
+    },
+    {
       "path": "tests/Antiphon.Tests/TestHelpers/ProbeGeneratedModel.cs",
       "classes": [
         "ChannelOutboundProbeModelTests",
         "ChannelOutboundRecoveryTests",
         "ChannelOutboundUnifiedCrashTests",
-        "ChannelOutboundUnifiedTransportTests"
+        "ChannelOutboundUnifiedTransportTests",
+        "WorktreeResidueRecoveryTests"
       ]
     },
     {
@@ -28833,6 +28886,12 @@
       "path": "tests/Antiphon.Tests/TestHelpers/RestartableQueueRecipient.cs",
       "classes": [
         "C0824RefOnlyReceiptTests"
+      ]
+    },
+    {
+      "path": "tests/Antiphon.Tests/TestHelpers/RetirementWorkerStartupHook.cs",
+      "classes": [
+        "WorktreeResidueRecoveryTests"
       ]
     },
     {
@@ -29758,16 +29817,21 @@
     {
       "path": "tests/Shared/TestTrace.cs",
       "classes": [
+        "ChannelOutboundUnifiedTransportTests",
         "CodexCliObservationTests",
         "HerdrLabelFollowSchedulingTests",
+        "ReviewEvidenceResettlementTests",
         "TestTraceSummaryTests"
       ]
     },
     {
       "path": "tests/Shared/TestTraceOtlp.cs",
       "classes": [
+        "ChannelOutboundUnifiedTransportTests",
         "CodexCliObservationTests",
-        "HerdrLabelFollowSchedulingTests"
+        "HerdrLabelFollowSchedulingTests",
+        "ReviewEvidenceResettlementTests",
+        "TestTraceSummaryTests"
       ]
     },
     {

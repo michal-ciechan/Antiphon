@@ -53,6 +53,7 @@ internal sealed class LandingGitFixture : IAsyncDisposable
     /// </summary>
     public async Task InitializeAsync()
     {
+        using var span = TestTrace.ChunkSpan("LandingGitFixture setup");
         if (GitTreeTemplate.Enabled && SourceBranch is null)
         {
             GitTreeTemplate? template = null;

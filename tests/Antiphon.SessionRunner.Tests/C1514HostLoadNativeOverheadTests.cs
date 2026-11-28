@@ -30,20 +30,32 @@ public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
     }
     private async Task MeasureAsync()
     {
+#if C1514_SAMPLER_CALIBRATION
+        var worstCpuPoints = double.NegativeInfinity;
+#endif
         for (var pair = 0; pair < 2; pair++)
         {
             var loadBefore = HostLoad();
             var off = await RunAsync(false); var on = await RunAsync(true);
             var loadAfter = HostLoad();
-            (on.CpuPoints - off.CpuPoints).ShouldBeLessThan(1d, "incremental CPU points of one core; pair=" + pair);
-            on.Samples.ShouldBeGreaterThanOrEqualTo(12); on.P95TickMs.ShouldBeLessThan(25d);
-            on.Bytes.ShouldBeLessThanOrEqualTo(256L * 1024 * 1024); on.Requests.ShouldBeLessThanOrEqualTo(on.TotalSamples);
+            var cpuPoints = on.CpuPoints - off.CpuPoints;
             Console.WriteLine("C1514 overhead pair=" + pair + " offCpuPoints=" + off.CpuPoints.ToString("R", CultureInfo.InvariantCulture)
                 + " onCpuPoints=" + on.CpuPoints.ToString("R", CultureInfo.InvariantCulture) + " samples=" + on.Samples
                 + " measuredTicks=" + on.MeasuredTicks + " p95TickMs=" + on.P95TickMs.ToString("R", CultureInfo.InvariantCulture)
                 + " spoolBytes=" + on.Bytes + " authorityRequests=" + on.Requests
                 + " loadBefore=" + loadBefore + " loadAfter=" + loadAfter);
+#if C1514_SAMPLER_CALIBRATION
+            // Preserve both pairs when the intentional CPU regression crosses the budget.
+            worstCpuPoints = Math.Max(worstCpuPoints, cpuPoints);
+#else
+            cpuPoints.ShouldBeLessThan(1d, "incremental CPU points of one core; pair=" + pair);
+#endif
+            on.Samples.ShouldBeGreaterThanOrEqualTo(12); on.P95TickMs.ShouldBeLessThan(25d);
+            on.Bytes.ShouldBeLessThanOrEqualTo(256L * 1024 * 1024); on.Requests.ShouldBeLessThanOrEqualTo(on.TotalSamples);
         }
+#if C1514_SAMPLER_CALIBRATION
+        worstCpuPoints.ShouldBeLessThan(1d, "maximum incremental CPU points of one core across both pairs");
+#endif
     }
     private async Task<Measurement> RunAsync(bool enabled)
     {
@@ -60,6 +72,10 @@ public class C1514HostLoadNativeOverheadTests(C1514HostLoadFixture fixture)
         // Past the 15s warmup the on/off gap is background tiered compilation of the enabled path
         // (about 2.9 points), not the steady sampler (about 0.15 with the compiler off).
         info.Environment["DOTNET_TieredCompilation"] = "0";
+#if C1514_SAMPLER_CALIBRATION
+        if (enabled && Environment.GetEnvironmentVariable(HostStatsSamplerService.CalibrationCpuVariable) is { } extraCpu)
+            info.Environment[HostStatsSamplerService.CalibrationCpuVariable] = extraCpu;
+#endif
         foreach (var arg in new[] { Path.Combine(AppContext.BaseDirectory, "Antiphon.SessionRunner.dll"), "--urls", "http://127.0.0.1:0",
             "--SessionRunner:SessionLogPath", root, "--SessionRunner:Herdr:Enabled", "false", "--SessionRunner:CpuWatchdogEnabled", "false",
             "--SessionRunner:BuildSlotsOnly", "false", "--PhoneHome:Enabled", "false", "--PhoneHome:CapacityStatePath", Path.Combine(root, "capacity"),

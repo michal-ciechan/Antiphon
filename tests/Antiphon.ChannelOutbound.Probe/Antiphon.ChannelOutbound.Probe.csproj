@@ -14,4 +14,9 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.20" PrivateAssets="all" />
     <ProjectReference Include="../../server/Antiphon.Server.csproj" />
   </ItemGroup>
+  <!-- The test project stages this output directory with the probe. If baking fails,
+       the test host's existing generator can still prepare the model under its seat. -->
+  <Target Name="BakeVerifiedProbeModel" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; --bake-model" Timeout="90000" ContinueOnError="WarnAndContinue" />
+  </Target>
 </Project>

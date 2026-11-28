@@ -1,8 +1,4 @@
 using System.Diagnostics;
-using System.Reflection.Metadata;
-using System.Reflection.PortableExecutable;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
@@ -24,7 +20,6 @@ namespace Antiphon.Tests.TestHelpers;
 internal static class ProbeGeneratedModel
 {
     public const string Label = "C519_PROBE_MODEL";
-    private const string AssemblyName = "Antiphon.ChannelOutbound.Probe.GeneratedModel";
     // Measured 20-27 s on the HP laptop (5 runs, an otherwise idle host). About 3x rather than R5's 2x p95 because
     // it runs once per probe build, usually while other launch groups load the host, and a time-out costs every probe
     // of the run (about 6 s each) and turns ChannelOutboundProbeModelTests red. Well inside TUnit's 5-minute hook
@@ -40,6 +35,24 @@ internal static class ProbeGeneratedModel
     public static Task<Result> ResultAsync() => Generated.Value;
 
     public static async Task<string?> PathAsync() => (await Generated.Value).Path;
+
+    // Build verification must fail if the stage is incomplete, even if runtime generation can recover.
+    internal static string RequireStagedArtifact()
+    {
+        var probe = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe");
+        var key = ProbeModel.BuildKey(probe);
+        return ProbeModel.FindBuiltArtifact(probe, key)
+            ?? throw new InvalidOperationException("Missing or mismatched staged verified probe model for build " + key);
+    }
+
+    internal static async Task<string> RequireSelectedStagedArtifactAsync()
+    {
+        var staged = RequireStagedArtifact();
+        var result = await ResultAsync();
+        if (!string.Equals(result.Path, staged, StringComparison.Ordinal))
+            throw new InvalidOperationException("Probe model selection did not use the verified stage: " + result.Detail);
+        return staged;
+    }
 
     /// <summary>
     /// Adds the compiled model to a probe config a test wrote itself, once the model is ready (the caller's class asks
@@ -68,9 +81,11 @@ internal static class ProbeGeneratedModel
         {
             var probe = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe");
             var root = Path.Combine(AppContext.BaseDirectory, "channel-outbound-probe-model");
-            var key = Key(probe);
+            var key = ProbeModel.BuildKey(probe);
+            if (ProbeModel.FindBuiltArtifact(probe, key) is { } built)
+                return Report(new(built, "build artifact key=" + key), watch);
             var published = Path.Combine(root, key);
-            var dll = Path.Combine(published, AssemblyName + ".dll");
+            var dll = Path.Combine(published, ProbeModel.AssemblyName + ".dll");
             if (File.Exists(dll)) return Report(new(Reuse(published, dll), "reused key=" + key), watch);
             Directory.CreateDirectory(root);
             Prune(root, key);
@@ -79,7 +94,7 @@ internal static class ProbeGeneratedModel
             try
             {
                 var (exit, output) = await RunAsync(Path.Combine(probe, "Antiphon.ChannelOutbound.Probe.dll"), work);
-                if (exit != 0 || !File.Exists(Path.Combine(work, AssemblyName + ".dll")))
+                if (exit != 0 || !File.Exists(Path.Combine(work, ProbeModel.AssemblyName + ".dll")))
                     return Report(new(null, "generation failed exit=" + exit + " " + output), watch);
                 try
                 {
@@ -170,26 +185,6 @@ internal static class ProbeGeneratedModel
         catch (UnauthorizedAccessException)
         {
         }
-    }
-
-    // The probe, its model assemblies and the provider: a rebuild of any of them is a new key, so a cached model is
-    // always the one this probe build generated.
-    private static string Key(string probe)
-    {
-        var mvids = new StringBuilder();
-        foreach (var name in new[]
-                 {
-                     "Antiphon.ChannelOutbound.Probe.dll", "Antiphon.Server.dll", "Microsoft.EntityFrameworkCore.dll",
-                     "Microsoft.EntityFrameworkCore.Relational.dll", "Npgsql.EntityFrameworkCore.PostgreSQL.dll",
-                     "Npgsql.dll",
-                 })
-        {
-            using var stream = File.OpenRead(Path.Combine(probe, name));
-            using var pe = new PEReader(stream);
-            var metadata = pe.GetMetadataReader();
-            mvids.Append(name).Append('=').Append(metadata.GetGuid(metadata.GetModuleDefinition().Mvid)).Append('\n');
-        }
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mvids.ToString())))[..16].ToLowerInvariant();
     }
 
     private static async Task<(int Exit, string Output)> RunAsync(string probeDll, string work)

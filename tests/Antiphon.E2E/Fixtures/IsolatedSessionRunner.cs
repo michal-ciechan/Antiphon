@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Antiphon.Tests.TestHelpers;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -129,6 +130,7 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
 
     private Process StartProcess(int port)
     {
+        using var span = TestTrace.ChunkSpan("E2E isolated runner process launch");
         var runnerPath = TestAppHostPath.Resolve(
             "Antiphon.SessionRunner", AppContext.BaseDirectory,
             OperatingSystem.IsWindows(), siblingProducer: false);
@@ -209,7 +211,8 @@ internal sealed class IsolatedSessionRunner : IAsyncDisposable, IIsolatedSession
         {
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            using (TestTrace.ChunkSpan("E2E isolated runner process wait"))
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
         }
         catch (InvalidOperationException)
         {

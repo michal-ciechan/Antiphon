@@ -1,7 +1,7 @@
 import { onlineManager } from '@tanstack/react-query'
 import { cleanup } from '@testing-library/react'
 import { HttpResponse, delay, http, type JsonBodyType } from 'msw'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentTaskRole } from '../../api/agentTasks'
 import {
   complexityChainKeys,
@@ -29,6 +29,11 @@ import {
 } from './routingSettingsModel'
 
 vi.mock('@mantine/notifications', () => ({ notifications: { show: vi.fn() } }))
+
+let user: ReturnType<typeof userEvent.setup>
+beforeEach(() => {
+  user = userEvent.setup({ delay: null })
+})
 
 const grok: ComplexityCandidateDto = {
   agentKind: 'Grok',
@@ -127,6 +132,17 @@ const listDto: ComplexityChainListDto = {
       updatedAt: '2026-09-04T00:00:00Z',
     }),
   ],
+}
+
+// Single-cell cases render the Plan row and its Any-role fallback for the tested tier.
+// The matrix-wide cases below use the full list fixture.
+function planCellList(tier: TaskComplexity): ComplexityChainListDto {
+  return {
+    ...listDto,
+    roles: ['Plan'],
+    complexities: [tier],
+    chains: listDto.chains.filter(cell => cell.complexity === tier),
+  }
 }
 
 const planEffective: ComplexityChainListDto = {
@@ -251,6 +267,12 @@ function serveRouting(options?: {
   const list = options?.list ?? listDto
   const effective = options?.effective ?? { Plan: planEffective, Code: codeEffective }
   server.use(
+    // Keep the policy section populated without rendering the full catalogue in every
+    // matrix case. Policy read-state cases below register their own full response.
+    http.get('/api/role-policy', () => HttpResponse.json({
+      ...ROLE_POLICY_FIXTURE,
+      roles: ROLE_POLICY_FIXTURE.roles.slice(0, 1),
+    })),
     http.get('/api/complexity-chains', ({ request }) => {
       const role = new URL(request.url).searchParams.get('role') as AgentTaskRole | null
       if (!role) return HttpResponse.json(list)
@@ -393,7 +415,7 @@ describe('C1270 failed-read matrix display', () => {
         modelAlias: read === 'standing agent' ? null : 'gpt-6-astra',
         agentId: read === 'standing agent' ? c1270AgentId : null,
       })
-      serveRouting({ pins: [stagePin], effective: { Plan: { ...planEffective, chains: [c1270Cell(read, strength, tier)] } } })
+      serveRouting({ list: planCellList(tier), pins: [stagePin], effective: { Plan: { ...planEffective, chains: [c1270Cell(read, strength, tier)] } } })
       if (read === 'routing pins') server.use(http.get('/api/routing-pins', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
       if (read === 'role policy') server.use(http.get('/api/role-policy', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
       renderWithProviders(<RoutingSettingsTab />)
@@ -436,7 +458,7 @@ const c1270AgentName = 'stage pin binds standing agent Reviewer Bot (ClaudeCode)
 describe('C1270 failed-read reachable surfaces', () => {
   it.each((['chain', 'chain metadata'] as const).flatMap(read => (['Medium', 'Easy'] as const).map(tier => ({ read, tier }))))(
     'C1270 V-2 $read read failure beside a stored reason on $tier', async ({ read, tier }) => {
-      serveRouting({ effective: { Plan: { ...planEffective, chains: [c1270StoredReasonCell(read, tier)] } } })
+      serveRouting({ list: planCellList(tier), effective: { Plan: { ...planEffective, chains: [c1270StoredReasonCell(read, tier)] } } })
       renderWithProviders(<RoutingSettingsTab />)
 
       const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
@@ -449,6 +471,7 @@ describe('C1270 failed-read reachable surfaces', () => {
   it.each(['Preferred', 'Required'] as const)(
     'C1270 V-2 standing agent pin with a chain read failure keeps the agent route with a $strength pin', async (strength) => {
       serveRouting({
+        list: planCellList('Easy'),
         pins: [pin({ id: 'pin-plan', role: 'Plan', strength, agentKind: null, modelLevel: null, modelAlias: null, agentId: c1270AgentId })],
         effective: { Plan: { ...planEffective, chains: [chain('Easy', { role: 'Plan', resolvedFrom: 'none', effective: {
           source: 'agent', candidates: [], governsDefault: false,
@@ -487,9 +510,12 @@ const c1270EditorCases = [
 
 describe('C1270 cell editor after a failed read', () => {
   it.each(c1270EditorCases.flatMap(c => (['Medium', 'Easy'] as const).map(tier => ({ ...c, tier }))))(
-    'C1270 V-2 editor after a $label read failure on $tier', async ({ read, cell: makeCell, tier }) => {
+    'C1270 V-2 editor after a $label read failure on $tier', async ({ read, label, cell: makeCell, tier }) => {
       const put = vi.fn()
-      serveRouting({ effective: { Plan: { ...planEffective, chains: [makeCell(tier)] } } })
+      // Keep an earlier tier in one save case to catch a PUT that always targets the first cell.
+      const nonFirstTierSave = label === 'chain' && tier === 'Easy'
+      const list: ComplexityChainListDto = nonFirstTierSave ? { ...listDto, roles: ['Plan'] } : planCellList(tier)
+      serveRouting({ list, effective: { Plan: { ...planEffective, chains: [makeCell(tier)] } } })
       server.use(http.put('/api/complexity-chains/:role/:complexity', async ({ params, request }) => {
         put(`${params.role}/${params.complexity}`, await request.json())
         return HttpResponse.json(chain(tier, { role: 'Plan' }))
@@ -497,7 +523,11 @@ describe('C1270 cell editor after a failed read', () => {
       renderWithProviders(<RoutingSettingsTab />)
 
       const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
-      await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+      if (nonFirstTierSave) {
+        const firstCell = screen.getByTestId('routing-matrix-cell-Plan-Hard')
+        expect(firstCell.compareDocumentPosition(cell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeGreaterThan(0)
+      }
+      await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
       const editor = await screen.findByTestId('routing-cell-editor')
       const reason = within(editor).getByLabelText('Reason (optional)')
       const expires = within(editor).getByLabelText('Expires (optional)')
@@ -514,13 +544,13 @@ describe('C1270 cell editor after a failed read', () => {
         expect(confirm).not.toBeChecked()
         expect(save).toBeDisabled()
         expect(clear).toBeDisabled()
-        await userEvent.click(within(editor).getByRole('button', { name: 'Add candidate' }))
-        await userEvent.type(reason, 'rewrite')
+        await user.click(within(editor).getByRole('button', { name: 'Add candidate' }))
+        await user.type(reason, 'rewrite')
         expect(save).toBeDisabled()
-        await userEvent.click(confirm)
+        await user.click(confirm)
         expect(clear).toBeEnabled()
         expect(save).toBeEnabled()
-        await userEvent.click(save)
+        await user.click(save)
         await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
         expect(put.mock.calls[0][0]).toBe(`Plan/${tier}`)
         expect(put.mock.calls[0][1]).toMatchObject({ provenance: 'Human', reason: 'rewrite', notAfter: null })
@@ -534,9 +564,9 @@ describe('C1270 cell editor after a failed read', () => {
         expect(confirm).not.toBeChecked()
         expect(save).toBeDisabled()
         expect(clear).toBeEnabled()
-        await userEvent.click(confirm)
+        await user.click(confirm)
         expect(save).toBeEnabled()
-        await userEvent.click(save)
+        await user.click(save)
         await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
         expect(put).toHaveBeenCalledWith(`Plan/${tier}`, {
           candidates: [{ agentKind: 'Grok', modelLevel: 'Frontier' }], provenance: 'Human', reason: null, notAfter: null,
@@ -737,7 +767,10 @@ describe('C1270 D-1 read state table', () => {
     .map(state => ({ read, state }))))(
     'C1270 D-1 $read read $state', async ({ read: name, state }: { read: string; state: C1270D1State }) => {
       const read = c1270D1Reads[name]
-      serveRouting({ usage: fullUsage })
+      // Only the matrix read cases assert the role rows and their controls.
+      // For the other sections, keep the matrix mounted with its Any-role row.
+      const list = read.configure ? listDto : { ...planCellList('Medium'), roles: [] }
+      serveRouting({ usage: fullUsage, list })
       // msw checks the first listed handler first, so the read under test wins over the revisions default.
       server.use(
         c1270D1Handler(read, state === 'loading' ? c1270D1Respond.infinite(read)
@@ -850,7 +883,7 @@ describe('C1270 D-1 offline reads and the cell editor', () => {
       )
       const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
       const cell = await screen.findByTestId('routing-matrix-cell-Plan-Hard')
-      await userEvent.click(within(cell).getByRole('button', { name: 'Configure Plan / Hard' }))
+      await user.click(within(cell).getByRole('button', { name: 'Configure Plan / Hard' }))
       const editor = await screen.findByTestId('routing-cell-editor')
       const button = within(editor).getByRole('button', { name: action })
       expect(button).toBeEnabled()
@@ -877,13 +910,13 @@ describe('C1270 D-2 clear confirmation after a failed read', () => {
     { tier: 'Medium' as const, tail: 'Without an own rule this cell falls back to the Any role list.' },
     { tier: 'Easy' as const, tail: 'Without an own rule this cell is Unset — a --complexity dispatch for this role and tier will block until an operator sets a row.' },
   ])('C1270 D-2 clear confirmation after a chain read failure on $tier', async ({ tier, tail }) => {
-    serveRouting({ effective: { Plan: { ...planEffective, chains: [c1270Cell('chain', 'Required', tier)] } } })
+    serveRouting({ list: planCellList(tier), effective: { Plan: { ...planEffective, chains: [c1270Cell('chain', 'Required', tier)] } } })
     renderWithProviders(<RoutingSettingsTab />)
     const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
-    await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+    await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
     const editor = await screen.findByTestId('routing-cell-editor')
-    await userEvent.click(within(editor).getByRole('checkbox', { name: c1270EditorConfirm.chain }))
-    await userEvent.click(within(editor).getByRole('button', { name: 'Clear override' }))
+    await user.click(within(editor).getByRole('checkbox', { name: c1270EditorConfirm.chain }))
+    await user.click(within(editor).getByRole('button', { name: 'Clear override' }))
 
     const confirm = await within(editor).findByTestId('routing-cell-editor-clear-confirm')
     expect(confirm).toHaveTextContent(`Clear Plan/${tier} override?`)
@@ -892,12 +925,12 @@ describe('C1270 D-2 clear confirmation after a failed read', () => {
   })
 
   it.each(['Medium', 'Easy'] as const)('C1270 D-2 clear confirmation after a chain metadata read failure on %s names the unread reason and expiry', async (tier) => {
-    serveRouting({ effective: { Plan: { ...planEffective, chains: [c1270Cell('chain metadata', 'Required', tier)] } } })
+    serveRouting({ list: planCellList(tier), effective: { Plan: { ...planEffective, chains: [c1270Cell('chain metadata', 'Required', tier)] } } })
     renderWithProviders(<RoutingSettingsTab />)
     const cell = await screen.findByTestId(`routing-matrix-cell-Plan-${tier}`)
-    await userEvent.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
+    await user.click(within(cell).getByRole('button', { name: `Configure Plan / ${tier}` }))
     const editor = await screen.findByTestId('routing-cell-editor')
-    await userEvent.click(within(editor).getByRole('button', { name: 'Clear override' }))
+    await user.click(within(editor).getByRole('button', { name: 'Clear override' }))
 
     const confirm = await within(editor).findByTestId('routing-cell-editor-clear-confirm')
     expect(confirm).toHaveTextContent('The stored reason and expiry are unknown (chain metadata read failed (InvalidOperationException)); clearing deletes them with the row.')
@@ -909,7 +942,7 @@ describe('RoutingSettingsTab', () => {
     .flatMap(source => (['Hard', 'Medium', 'Easy'] as const).map(tier => ({ source, tier }))))(
     'C1258 V-2 stage-pin failure suppresses route promises $source/$tier', async ({ source, tier }) => {
       const reason = 'stage pin read failed (InvalidOperationException)'
-      serveRouting({ pins: [], effective: { Plan: {
+      serveRouting({ list: planCellList(tier), pins: [], effective: { Plan: {
         ...planEffective,
         chains: [chain(tier, {
           role: 'Plan', resolvedFrom: source === 'any' ? 'any' : source === 'config' ? 'config' : 'role',
@@ -936,7 +969,7 @@ describe('RoutingSettingsTab', () => {
   it.each(['Hard', 'Medium', 'Easy'] as const)(
     'C1258 V-2 stage-pin failure on an Unset cell keeps Stored cell: unset %s', async (tier) => {
       const reason = 'stage pin read failed (InvalidOperationException)'
-      serveRouting({ pins: [], effective: { Plan: {
+      serveRouting({ list: planCellList(tier), pins: [], effective: { Plan: {
         ...planEffective,
         chains: [chain(tier, {
           role: 'Plan', resolvedFrom: 'none', candidates: [],
@@ -1042,7 +1075,7 @@ describe('RoutingSettingsTab', () => {
     { name: 'non-default-preferred-pin-banner-read-failure', tier: 'Easy', governsDefault: false, candidates: [codex], reason: 'stage pin read failed (InvalidOperationException)', label: 'Effective routing unknown', stored: 'Stored cell: unset', pinStrength: 'Preferred', banner: 'Preferred Human pin: Plan → Grok/Frontier. Tried before each Plan cell.' },
     { name: 'non-default-unlaunchable-policy', tier: 'Easy', governsDefault: false, candidates: [], reason: 'Plan policy names Raw/Frontier, which delegation cannot launch', label: 'Unset — a --complexity Easy dispatch blocks', stored: null },
   ] satisfies Array<{ name: string; tier: TaskComplexity; governsDefault: boolean; candidates: ComplexityCandidateDto[]; reason: string; label: string; stored: string | null; pinStrength?: 'Required' | 'Preferred'; banner?: string }>)('C097M V-C4 diagnostic $name', async (row) => {
-    serveRouting({ pins: row.pinStrength ? [pin({ role: 'Plan', strength: row.pinStrength, agentKind: 'Grok', modelLevel: 'Frontier' })] : [], effective: { Plan: {
+    serveRouting({ list: planCellList(row.tier), pins: row.pinStrength ? [pin({ role: 'Plan', strength: row.pinStrength, agentKind: 'Grok', modelLevel: 'Frontier' })] : [], effective: { Plan: {
       ...planEffective,
       chains: [chain(row.tier, { role: 'Plan', effective: {
         source: 'rolePolicy', candidates: row.candidates, stagePin: null,
@@ -1074,7 +1107,7 @@ describe('RoutingSettingsTab', () => {
     { name: 'standing-agent-read-failure', source: 'agent', candidates: [], reason: 'stage pin binds standing agent c097m-standing (ClaudeCode); an ordinary dispatch runs on that agent and does not walk this row; chain read failed (InvalidOperationException)', label: 'Pinned to standing agent c097m-standing (ClaudeCode) — an ordinary dispatch runs there; this row is not walked' },
   ] satisfies Array<{ name: string; source: ComplexityEffectiveDto['source']; candidates: ComplexityCandidateDto[]; reason: string | null; label: string; candidateText?: string }>)('C097M V-C4 diagnostic $name', async (row) => {
     const { source, candidates, reason, label } = row
-    serveRouting({ effective: { Plan: {
+    serveRouting({ list: planCellList('Easy'), effective: { Plan: {
       ...planEffective,
       chains: [chain('Easy', { role: 'Plan', effective: {
         source, candidates, withheldReason: reason, governsDefault: false,
@@ -1110,10 +1143,10 @@ describe('RoutingSettingsTab', () => {
     renderWithProviders(<RoutingSettingsTab />)
     // Wait for the data-loaded test id before clicking; the original C470 failure cause is a hypothesis, not established (CARD-0097 D2).
     const mutationHard = await screen.findByTestId('routing-matrix-cell-Mutation-Hard')
-    await userEvent.click(within(mutationHard).getByRole('button', { name: 'Configure Mutation / Hard' }))
+    await user.click(within(mutationHard).getByRole('button', { name: 'Configure Mutation / Hard' }))
     const editor = await screen.findByTestId('routing-cell-editor')
-    await userEvent.click(within(editor).getByRole('button', { name: 'Add candidate' }))
-    await userEvent.click(within(editor).getByRole('button', { name: 'Save' }))
+    await user.click(within(editor).getByRole('button', { name: 'Add candidate' }))
+    await user.click(within(editor).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
     expect(put).toHaveBeenCalledWith('Mutation', expect.objectContaining({ provenance: 'Human' }))
     await screen.findByTestId('routing-pin-banner-Code')
@@ -1309,7 +1342,7 @@ describe('RoutingSettingsTab', () => {
     expect(within(planHard).getByRole('button', { name: 'Configure Plan / Hard' })).toBeInTheDocument()
     expect(screen.queryByTestId('routing-cell-editor')).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Configure Plan / Hard' }))
+    await user.click(screen.getByRole('button', { name: 'Configure Plan / Hard' }))
     expect(await screen.findByRole('dialog', { name: 'Configure Plan / Hard' })).toBeInTheDocument()
     expect(screen.getByTestId('routing-cell-editor')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
@@ -1348,11 +1381,11 @@ describe('C1275 editor draft across a failed list refresh', () => {
     serveRouting()
     const { queryClient } = renderWithProviders(<RoutingSettingsTab />)
     const anyHard = await screen.findByTestId('routing-matrix-cell-any-Hard')
-    await userEvent.click(within(anyHard).getByRole('button', { name: 'Configure Any role / Hard' }))
+    await user.click(within(anyHard).getByRole('button', { name: 'Configure Any role / Hard' }))
     const editor = await screen.findByTestId('routing-cell-editor')
     const reason = within(editor).getByLabelText('Reason (optional)')
-    await userEvent.clear(reason)
-    await userEvent.type(reason, 'unsaved draft')
+    await user.clear(reason)
+    await user.type(reason, 'unsaved draft')
 
     server.use(http.get('/api/complexity-chains', () => HttpResponse.json({ title: 'boom' }, { status: 500 })))
     await act(async () => { await queryClient.refetchQueries({ queryKey: complexityChainKeys.list(), exact: true }) })

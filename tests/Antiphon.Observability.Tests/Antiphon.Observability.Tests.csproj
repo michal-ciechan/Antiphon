@@ -3,4 +3,9 @@
   <ItemGroup><PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.20" /><PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.21" /><PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" /><PackageReference Include="TUnit" Version="1.44.0" /><PackageReference Include="Shouldly" Version="4.3.0" /><PackageReference Include="Microsoft.AspNetCore.TestHost" Version="9.0.21" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../../src/Antiphon.Observability/Antiphon.Observability.csproj" /><ProjectReference Include="../../server/Antiphon.Server.csproj" Aliases="global,server" /><ProjectReference Include="../../src/Antiphon.SessionRunner/Antiphon.SessionRunner.csproj" /><ProjectReference Include="../../Antiphon.AppHost/Antiphon.AppHost.csproj" ReferenceOutputAssembly="false" /></ItemGroup>
   <ItemGroup><Compile Include="../Antiphon.Tests/TestHelpers/ProductionRunnerGuard.cs" Link="ProductionRunnerGuard.cs" /><Compile Include="../Antiphon.Tests/TestHelpers/ProductionRunnerGuardAssemblyHook.cs" Link="ProductionRunnerGuardAssemblyHook.cs" /><Compile Include="../Antiphon.Tests/TestHelpers/ProductionRunnerGuardTests.cs" Link="ProductionRunnerGuardTests.cs" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
+    <Compile Include="..\Shared\TestTraceOtlp.cs" Link="TestSupport\TestTraceOtlp.cs" />
+    <Compile Include="..\Shared\TestTrace.cs" Link="TestSupport\TestTrace.cs" />
+  </ItemGroup>
 </Project>

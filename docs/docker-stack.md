@@ -2339,3 +2339,72 @@ Like the desktop runner, a Windows phone-home runner advertises the `windows-job
 backend, and the server accepts its slash-normalized drive-rooted verification coordinates under
 its own roots. A remote SourceLanding Mutation on a Windows runner has not been exercised end to
 end yet; keep those on the desktop or server2 until it has.
+
+## Standalone runner with an A2A endpoint
+
+Any runner can also serve an [Agent2Agent](https://a2a-protocol.org) (A2A v1.0) endpoint that runs headless Codex
+turns, so a client can drive Codex on that host directly, with no AppHost, server or phone-home. It is off by default
+(`SessionRunner:A2A:Enabled=false`), and nothing else in the runner changes when it is on. Plan and decisions:
+[2026-11-27 standalone A2A plan](superpowers/plans/2026-11-27-session-runner-standalone-a2a.md).
+
+- **Protocol.** JSON-RPC at `POST /a2a` and the agent card at `GET /.well-known/agent-card.json`, served by the official
+  .NET SDK (`A2A.AspNetCore`). Microsoft Agent Framework's `A2AAgent` (`Microsoft.Agents.AI.A2A`), the A2A SDK clients and
+  the A2A inspector all work against it.
+- **Model.** One A2A context is one Codex thread. Each message runs one turn: `codex exec --json -` for a new context,
+  `codex exec resume --json <thread> -` after that. The prompt goes on stdin. Progress (intermediate agent messages,
+  `ran: <command> (exit N)`, changed files) arrives as `working` status updates. The final answer is the `response` artifact;
+  its metadata carries `antiphon.codex.threadId` and `antiphon.codex.usage`.
+- **Cancel.** `CancelTask` kills the turn's process tree, including commands Codex started, through a kill-on-close
+  Windows Job Object. A client that disconnects mid-turn leaves the task `canceled`. A turn also ends at
+  `TurnTimeoutMinutes`, and anything Codex left running is killed when the turn ends.
+- **Message metadata on a new context.** `antiphon.cwd` sets the working directory, which must be under `WorkspaceRoot`
+  and pass through no junction or symlink. `antiphon.codex.threadId` continues an existing Codex thread, but only with
+  `AllowThreadAttach=true`, because it reaches every thread in that Codex home, the user's own sessions included.
+
+Start it on the laptop from a normal terminal (an agent shell's Job Object would kill it), on any port other than the
+desktop runner's 17204, with its own log path:
+
+```powershell
+src\Antiphon.SessionRunner\bin\Debug\net9.0\Antiphon.SessionRunner.exe --urls http://localhost:17291 `
+  --SessionRunner:SessionLogPath C:\Antiphon\standalone\logs --Serilog:LogPath C:\Antiphon\standalone\logs `
+  --SessionRunner:A2A:Enabled true --SessionRunner:A2A:WorkspaceRoot C:\src `
+  --SessionRunner:A2A:Sandbox danger-full-access
+```
+
+```csharp
+// Microsoft Agent Framework client: one session, as many turns as you like.
+var agent = new A2AClient(new Uri("http://localhost:17291/a2a"), http).AsAIAgent();
+var session = await agent.CreateSessionAsync();
+Console.WriteLine((await agent.RunAsync("Summarise the README in two lines.", session)).Text);
+```
+
+| Setting (`SessionRunner:A2A:`) | Default | Meaning |
+|---|---|---|
+| `Enabled` | `false` | Maps the endpoint and the card. |
+| `WorkspaceRoot` | (required) | Default working directory and the root `antiphon.cwd` must stay under. |
+| `Sandbox` | `read-only` | Codex `sandbox_mode`: `read-only`, `workspace-write` or `danger-full-access`. |
+| `Model` | (Codex default) | Passed as `-m`. |
+| `CodexExecutable` | `codex` | Must resolve to a native `codex.exe` on Windows, not the npm `.cmd` shim. |
+| `CodexHome` | (inherited) | `CODEX_HOME` for the turns; unset uses the signed-in user's. |
+| `MaxConcurrentTurns` | `2` | Turns over this are `rejected`; so is a second turn in a busy context. |
+| `TurnTimeoutMinutes` | `30` | The turn is killed and fails after this. |
+| `MaxContexts` | `1000` | Idle contexts beyond this are forgotten, least recently used first. |
+| `AllowThreadAttach` | `false` | Allows `antiphon.codex.threadId`. |
+| `BearerTokenFile` | (none) | See access below. |
+| `Path`, `PublicUrl` | `/a2a`, first `--urls` | Route and the URL the card advertises. |
+
+Access. Without `BearerTokenFile` the endpoint serves direct loopback callers only: a non-loopback address, a
+`Forwarded` or `X-Forwarded-*` header, or a Host other than `localhost` or a loopback address gets 403. That keeps a local
+reverse proxy (Caddy, `tailscale serve`) from exposing it by accident. With a token file (16 characters or more), every
+JSON-RPC call needs `Authorization: Bearer <token>`, and the card is open so remote clients can discover the endpoint.
+JSON-RPC always needs `Content-Type: application/json`, so a web page cannot start a turn with a simple cross-site POST.
+The runner's other routes have no auth at all, so never bind a runner to a non-loopback address without a firewall.
+
+Windows sandbox. Measured 2026-11-27 with codex-cli 0.172.0: Codex has no Windows sandbox yet (`windows_sandbox_service`
+is under development), and under `exec` it refuses every shell command with "blocked by policy" in `read-only` and in
+`workspace-write`, whatever `approval_policy` says. On Windows only `danger-full-access` runs commands, as the runner's
+user, so point `WorkspaceRoot` at a tree you are happy for it to change. Turns without commands work in every mode.
+
+Limits. Contexts and tasks live in memory, so a restarted runner forgets them; a client can continue a thread with
+`antiphon.codex.threadId` when `AllowThreadAttach` is on. Codex is the only backend. The pty session API is unchanged and
+still needs the server's Codex adapter for verified prompt delivery.

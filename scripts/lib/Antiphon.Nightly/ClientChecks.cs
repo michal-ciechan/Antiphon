@@ -109,7 +109,10 @@ namespace Antiphon.Nightly
             {
                 var cache = System.IO.Path.Combine(clientDir, "node_modules", ".tmp", "eslintcache");
                 files.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(cache));
-                launch = new ClientToolLaunch("node", new[] { eslint, ".", "--max-warnings", "0", "--cache", "--cache-strategy", "content", "--cache-location", cache }, clientDir);
+                var arguments = new List<string> { eslint, ".", "--max-warnings", "0", "--cache", "--cache-strategy", "content", "--cache-location", cache };
+                // Bound the Windows cold full-client lint to two workers.
+                if (host.Probe.Platform() == "windows") arguments.AddRange(new[] { "--concurrency", "2" });
+                launch = new ClientToolLaunch("node", arguments, clientDir);
             }
             if (!ClientGate.Tee(files, logFile, false, host, tools, launch, out var code)) return 1;
             ClientGate.Footer(host, "CLIENT LINT EXIT CODE: ", code, logFile);

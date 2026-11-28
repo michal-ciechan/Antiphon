@@ -102,7 +102,7 @@ public sealed class ClientChecksTests
 
         var launch = world.Tools.Launches.ShouldHaveSingleItem();
         launch.FileName.ShouldBe("node");
-        launch.Arguments.ToArray().ShouldBe([world.Eslint, ".", "--max-warnings", "0", "--cache", "--cache-strategy", "content", "--cache-location", world.Client("node_modules", ".tmp", "eslintcache")]);
+        launch.Arguments.ToArray().ShouldBe([world.Eslint, ".", "--max-warnings", "0", "--cache", "--cache-strategy", "content", "--cache-location", world.Client("node_modules", ".tmp", "eslintcache"), "--concurrency", "2"]);
         launch.WorkingDirectory.ShouldBe(world.Client());
         world.Files.Directory.Exists(world.Client("node_modules", ".tmp")).ShouldBeTrue();
         world.Lines.ShouldBe(["clean", "", "CLIENT LINT EXIT CODE: 0" + Pass, "Full output: " + world.Logs("client-lint.log")]);

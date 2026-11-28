@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
@@ -30,7 +28,7 @@ public sealed class WorktreeResidueRecoveryTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Host.Fixture.TaskId);
-        var body = ReleaseBody(task, h.SourceSha);
+        var body = WorktreeRetirementCrashWorker.ReleaseBody(task, h.SourceSha);
         var released = await service.ReleaseAsync(task.Id, body, Operator, CancellationToken.None);
         var heldPath = Path.Combine(h.NamedWorktree, "held.bin");
         await using (var held = new FileStream(heldPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
@@ -78,7 +76,7 @@ public sealed class WorktreeResidueRecoveryTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Host.Fixture.TaskId);
-        var released = await service.ReleaseAsync(task.Id, ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
+        var released = await service.ReleaseAsync(task.Id, WorktreeRetirementCrashWorker.ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
         retirementId = released.Id;
         var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == released.Id);
         await service.TryRetireAsync(row, null, CancellationToken.None);
@@ -109,7 +107,7 @@ public sealed class WorktreeResidueRecoveryTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Host.Fixture.TaskId);
-        var released = await service.ReleaseAsync(task.Id, ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
+        var released = await service.ReleaseAsync(task.Id, WorktreeRetirementCrashWorker.ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
         retirementId = released.Id;
         var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == released.Id);
         await service.TryRetireAsync(row, null, CancellationToken.None);
@@ -148,7 +146,7 @@ public sealed class WorktreeResidueRecoveryTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Host.Fixture.TaskId);
-        var released = await service.ReleaseAsync(task.Id, ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
+        var released = await service.ReleaseAsync(task.Id, WorktreeRetirementCrashWorker.ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
         var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == released.Id);
         try { await service.TryRetireAsync(row, null, cts.Token); }
         catch (OperationCanceledException) { }
@@ -235,7 +233,7 @@ public sealed class WorktreeResidueRecoveryTests
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
         var task = await db.AgentTasks.SingleAsync(t => t.Id == h.Host.Fixture.TaskId);
-        var released = await service.ReleaseAsync(task.Id, ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
+        var released = await service.ReleaseAsync(task.Id, WorktreeRetirementCrashWorker.ReleaseBody(task, h.SourceSha), Operator, CancellationToken.None);
         var row = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == released.Id);
         (await service.TryRetireAsync(row, null, CancellationToken.None)).IsClean.ShouldBeTrue();
 
@@ -277,10 +275,22 @@ public sealed class WorktreeResidueRecoveryTests
     [Arguments("run-projection")]
     public async Task C459_WorkerDeathAtEveryRetirementHandoff(string cut)
     {
-        await using var h = await SettledRemovalHarness.CreateAsync(namedLeaf: true);
-        var ready = Path.Combine(h.Host.Fixture.Root, "worker-ready.json");
+        await using var h = await SettledRemovalHarness.CreateCrashFixtureAsync();
+        var ready = Path.Combine(h.Fixture.Root, "worker-ready.json");
+        var namedWorktree = SettledRemovalHarness.NamedWorktreePath(h);
         AssertRetirementAdmission(h, cut, ready);
-        await using var worker = StartRetirementWorker(h, cut, ready);
+        // Check the stage and model parity before either child starts.
+        var stagedModel = ProbeGeneratedModel.RequireStagedArtifact();
+        var modelWitness = ProbeModel.LoadedModelLabel + ProbeModel.ReadModuleVersionId(stagedModel);
+        var useCompiledModel = await WorktreeRetirementCrashWorker.PrepareCompiledModelAsync();
+        useCompiledModel.ShouldBeTrue("the retirement worker must use the verified staged model");
+        // Prepare the operator's release request on the fixture's warm context. The
+        // worker still checks the revision and all release conditions against the store.
+        ReleaseWorktreeRetirementRequest releaseBody;
+        await using (var db = h.CreateContext())
+            releaseBody = await WorktreeRetirementCrashWorker.ReadReleaseAsync(h, db);
+        var request = new WorktreeRetirementCrashWorker.Request(h.Fixture.Root, h.Fixture.TaskId, cut, ready, releaseBody);
+        await using var worker = StartRetirementWorker(h, request, useCompiledModel);
         try
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
@@ -296,9 +306,9 @@ public sealed class WorktreeResidueRecoveryTests
             }
 
             observed.Outcome.ShouldBe("accepted", observed.Error);
-            await using var observer = h.Host.CreateContext();
+            await using var observer = h.CreateContext();
             var retirements = await observer.TaskWorktreeRetirements.AsNoTracking()
-                .Where(r => r.TaskId == h.Host.Fixture.TaskId).ToListAsync();
+                .Where(r => r.TaskId == h.Fixture.TaskId).ToListAsync();
             if (cut.EndsWith("-before", StringComparison.Ordinal) && cut.StartsWith("release-", StringComparison.Ordinal))
                 retirements.ShouldBeEmpty();
             else if (cut != "release-before")
@@ -308,7 +318,7 @@ public sealed class WorktreeResidueRecoveryTests
                 or "branch-cas" or "terminal-after" or "run-projection")
             {
                 (await observer.WorkspaceUseReservations.AsNoTracking()
-                    .AnyAsync(r => r.TaskId == h.Host.Fixture.TaskId && r.Active)).ShouldBeTrue();
+                    .AnyAsync(r => r.TaskId == h.Fixture.TaskId && r.Active)).ShouldBeTrue();
             }
 
             if (cut is "intent-after" or "git-exit" or "directory-result" or "registration-result" or "branch-cas"
@@ -334,25 +344,27 @@ public sealed class WorktreeResidueRecoveryTests
 
             if (cut == "run-projection")
             {
-                (await observer.WorktreeResidueRunCandidates.CountAsync(c => c.TaskId == h.Host.Fixture.TaskId))
+                (await observer.WorktreeResidueRunCandidates.CountAsync(c => c.TaskId == h.Fixture.TaskId))
                     .ShouldBeGreaterThan(0);
             }
 
             worker.Process.Kill(entireProcessTree: false);
             await worker.Process.WaitForExitAsync();
+            (await worker.Stderr).ShouldContain(modelWitness);
 
-            var resumeReady = Path.Combine(h.Host.Fixture.Root, "worker-ready-resume.json");
+            var resumeReady = Path.Combine(h.Fixture.Root, "worker-ready-resume.json");
             var resumeRequest = new WorktreeRetirementCrashWorker.Request(
-                h.Host.Fixture.Root, h.Host.Fixture.TaskId, "resume", resumeReady);
+                h.Fixture.Root, h.Fixture.TaskId, "resume", resumeReady);
             var resumeJson = System.Text.Json.JsonSerializer.Serialize(resumeRequest);
             System.Text.Json.JsonDocument.Parse(resumeJson).RootElement.GetProperty("Cut").GetString()
                 .ShouldBe("resume", "worker-typed-resume");
-            await using var resumed = StartRetirementWorker(h, "resume", resumeReady, resumeJson);
+            await using var resumed = StartRetirementWorker(h, resumeRequest, useCompiledModel, resumeJson);
             try
             {
                 using var resumeBudget = new CancellationTokenSource(TimeSpan.FromMinutes(2));
                 await resumed.Process.WaitForExitAsync(resumeBudget.Token);
                 resumed.Process.ExitCode.ShouldBe(0, await resumed.Stderr);
+                (await resumed.Stderr).ShouldContain(modelWitness);
             }
             finally
             {
@@ -361,9 +373,9 @@ public sealed class WorktreeResidueRecoveryTests
                 await Task.WhenAll(resumed.Stdout, resumed.Stderr);
             }
 
-            await using var recovered = h.Host.CreateContext();
+            await using var recovered = h.CreateContext();
             var final = await recovered.TaskWorktreeRetirements.AsNoTracking()
-                .SingleAsync(r => r.TaskId == h.Host.Fixture.TaskId && r.Active);
+                .SingleAsync(r => r.TaskId == h.Fixture.TaskId && r.Active);
             if (cut is "intent-after" or "git-exit" or "branch-cas")
             {
                 (await recovered.TaskWorktreeRetirementAttempts.AsNoTracking()
@@ -375,7 +387,7 @@ public sealed class WorktreeResidueRecoveryTests
             }
             else if (cut is not "release-before")
             {
-                Directory.Exists(h.NamedWorktree).ShouldBeFalse();
+                Directory.Exists(namedWorktree).ShouldBeFalse();
                 final.State.ShouldBe(WorktreeRetirementState.Complete);
             }
         }
@@ -385,10 +397,10 @@ public sealed class WorktreeResidueRecoveryTests
         }
     }
 
-    private static void AssertRetirementAdmission(SettledRemovalHarness h, string cut, string ready)
+    private static void AssertRetirementAdmission(LandingSafetyHarness h, string cut, string ready)
     {
         var owned = new WorktreeRetirementCrashWorker.Request(
-            h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
+            h.Fixture.Root, h.Fixture.TaskId, cut, ready);
         WorktreeRetirementCrashWorker.Rejection(owned).ShouldBeNull();
         var outsideRoot = Path.Combine(Path.GetTempPath(), "c889-not-owned-" + Guid.NewGuid().ToString("N"));
         WorktreeRetirementCrashWorker.Rejection(owned with { Root = outsideRoot })
@@ -405,18 +417,27 @@ public sealed class WorktreeResidueRecoveryTests
     }
 
     private static CrashWorkerProcess.Running StartRetirementWorker(
-        SettledRemovalHarness h, string cut, string ready, string? requestJson = null)
+        LandingSafetyHarness h, WorktreeRetirementCrashWorker.Request request, bool useCompiledModel, string? requestJson = null)
     {
-        var request = new WorktreeRetirementCrashWorker.Request(
-            h.Host.Fixture.Root, h.Host.Fixture.TaskId, cut, ready);
         var prepared = CrashWorkerProcess.Prepare(new CrashWorkerProcess.Spec(
             WorktreeRetirementCrashWorker.Marker,
             requestJson ?? System.Text.Json.JsonSerializer.Serialize(request),
             "ANTIPHON_C459_TEST_CONNECTION",
-            h.Host.Schema.ConnectionString,
+            h.Schema.ConnectionString,
             "/*/*/WorktreeResidueRecoveryTests/C459_WorkerDeathAtEveryRetirementHandoff",
-            ready,
-            cut));
+            request.Ready,
+            request.Cut));
+        prepared.Start.WorkingDirectory = h.Fixture.Root;
+        // Each child runs one retirement and exits or is killed before it can benefit from a profile.
+        prepared.Start.Environment["DOTNET_TieredPGO"] = "0";
+        prepared.Start.Environment["DOTNET_JitMinOpts"] = "1";
+        prepared.Start.Environment.Remove(WorktreeRetirementCrashWorker.CompiledModelVariable);
+        if (useCompiledModel)
+            prepared.Start.Environment[WorktreeRetirementCrashWorker.CompiledModelVariable] = "1";
+        // A hook already supplied by the caller keeps its normal ordering. In that case the
+        // worker still enters through the TUnit before-discovery hook.
+        if (!prepared.Start.Environment.TryGetValue(StartupHook.Variable, out var hooks) || string.IsNullOrEmpty(hooks))
+            prepared.Start.Environment[StartupHook.Variable] = typeof(StartupHook).Assembly.Location;
         var present = TestWorkerModes.All
             .Select(mode => mode.Marker)
             .Where(key => prepared.Start.Environment.ContainsKey(key))
@@ -428,11 +449,6 @@ public sealed class WorktreeResidueRecoveryTests
             .ShouldBe(CrashWorkerProcess.ConnectionSentinel);
         return CrashWorkerProcess.Start(prepared);
     }
-
-    private static ReleaseWorktreeRetirementRequest ReleaseBody(AgentTask task, string sha) =>
-        new(task.ConcurrencyToken, sha,
-            Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result ?? ""))),
-            true, "reviewed no further use");
 
     private static AgentTaskService.Caller Operator => new(null, null, "");
 

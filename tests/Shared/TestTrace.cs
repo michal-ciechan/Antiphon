@@ -1,7 +1,7 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace Antiphon.Tests.TestHelpers;
 
@@ -11,12 +11,14 @@ namespace Antiphon.Tests.TestHelpers;
 /// <list type="bullet">
 /// <item>TUnit's HTML report nests spans started inside a test under that test's trace (as
 /// "external spans", capped per run by <c>TUNIT_OTEL_MAX_EXTERNAL_SPANS</c>, default 100).</item>
-/// <item>With <see cref="FileVariable"/> set, every completed span from every source (this one,
+/// <item>With <see cref="DirectoryVariable"/> set, fixture and TUnit spans are written to one
+/// JSONL file per process. Use <c>scripts/antiphon test-trace-summary &lt;file or directory&gt;</c>.</item>
+/// <item>With only <see cref="FileVariable"/> set, every completed span from every source (this one,
 /// TUnit, Npgsql, HttpClient, ASP.NET Core) is appended to that file as one JSON object per line,
 /// with no cap. <c>scripts/antiphon summarize-test-trace --path &lt;file&gt;</c> (Antiphon.Nightly.TestTraceSummary) turns it
 /// into per-test and per-span totals.</item>
-/// <item>In assemblies that compile <c>TestTraceOtlp.cs</c>, with <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>
-/// set, every span is also exported over OTLP (a collector, Jaeger or the Aspire dashboard).</item>
+/// <item>With <see cref="DirectoryVariable"/>, <c>ANTIPHON_TEST_TRACE_OTLP=1</c> and
+/// <c>OTEL_EXPORTER_OTLP_ENDPOINT</c> set, fixture and TUnit spans are also exported over OTLP.</item>
 /// </list>
 /// With no listener, <see cref="Span"/> returns null and costs nothing. Span names and tag values
 /// are code-supplied labels; never pass payloads, prompts, paths with secrets or credentials.
@@ -24,6 +26,7 @@ namespace Antiphon.Tests.TestHelpers;
 public static partial class TestTrace
 {
     public const string SourceName = "Antiphon.Tests";
+    public const string DirectoryVariable = "ANTIPHON_TEST_TRACE_DIR";
     public const string FileVariable = "ANTIPHON_TEST_TRACE_FILE";
 
     /// <summary>With <c>ANTIPHON_TEST_TRACE_STACKS=1</c>, each SQL span (Npgsql) carries
@@ -51,6 +54,15 @@ public static partial class TestTrace
     private static readonly object Gate = new();
     private static ActivityListener? _listener;
     private static FileSink? _sink;
+
+    private static readonly bool ChunkTracingEnabled =
+        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(DirectoryVariable));
+
+    /// <summary>Starts an opt-in helper span for the chunk trace.</summary>
+    public static Activity? ChunkSpan(string name) => ChunkTracingEnabled ? Span(name) : null;
+
+    public static Activity? ChunkSpan(string name, string key, object? value) =>
+        ChunkTracingEnabled ? Span(name, key, value) : null;
 
     /// <summary>Starts a child span of whatever span is current (the test body, or an enclosing fixture span).</summary>
     public static Activity? Span(string name) => Source.StartActivity(name, ActivityKind.Internal);
@@ -97,7 +109,8 @@ public static partial class TestTrace
     internal static void InstallAtLoad()
     {
         EnsureFileExporter();
-        InstallOtlp();
+        if (_sink is not null)
+            InstallOtlp();
     }
 
     /// <summary>Implemented in TestTraceOtlp.cs where the OTLP exporter package is referenced; erased elsewhere.</summary>
@@ -105,40 +118,57 @@ public static partial class TestTrace
 
     static partial void FlushOtlp();
 
+    static partial void DisposeOtlp();
+
+    internal static bool HasFileDestination(string? directory, string? legacyPath) =>
+        !string.IsNullOrWhiteSpace(directory) || !string.IsNullOrWhiteSpace(legacyPath);
+
     /// <summary>
-    /// Installs the JSONL exporter once when <see cref="FileVariable"/> names a file. Unset or blank
-    /// installs nothing. Idempotent and cheap; also called from the assembly's test-start receiver.
+    /// Installs the JSONL exporter when a trace directory or a legacy trace file is configured.
+    /// Idempotent; also called from the assembly's test-start receiver.
     /// </summary>
     public static void EnsureFileExporter()
     {
         if (Volatile.Read(ref _listener) is not null)
             return;
-        var path = Environment.GetEnvironmentVariable(FileVariable);
-        if (string.IsNullOrWhiteSpace(path))
+        var directory = Environment.GetEnvironmentVariable(DirectoryVariable);
+        var legacyPath = Environment.GetEnvironmentVariable(FileVariable);
+        if (!HasFileDestination(directory, legacyPath))
             return;
+        var started = default(DateTime);
         lock (Gate)
         {
             if (_listener is not null)
                 return;
             try
             {
-                _sink = new FileSink(Path.GetFullPath(path));
+                var path = legacyPath;
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    using var process = Process.GetCurrentProcess();
+                    started = process.StartTime.ToUniversalTime();
+                    path = Path.Combine(directory, $"test-trace-{process.Id}-{started.Ticks}.jsonl");
+                }
+                _sink = new FileSink(Path.GetFullPath(path!));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
             {
-                Console.Error.WriteLine($"[TestTrace] {FileVariable} could not be opened ({ex.GetType().Name}); tracing to file is off.");
+                Console.Error.WriteLine($"[TestTrace] Trace file could not be opened ({ex.GetType().Name}).");
                 _listener = new ActivityListener { ShouldListenTo = _ => false };
                 return;
             }
             var sink = _sink;
             var listener = new ActivityListener
             {
-                ShouldListenTo = _ => true,
+                ShouldListenTo = source => string.IsNullOrWhiteSpace(directory)
+                    || source.Name is SourceName or "TUnit" or "TUnit.Lifecycle",
                 Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
                 SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
                 ActivityStopped = sink.Write,
                 ActivityStarted = a =>
                 {
+                    if (a.Source.Name is "TUnit" or "TUnit.Lifecycle")
+                        sink.ObserveFrameworkStart(a.StartTimeUtc);
                     if (!SqlStacks || a.Source.Name != "Npgsql") return;
                     var frames = new StackTrace(1, false).GetFrames()
                         .Select(f => f.GetMethod())
@@ -150,7 +180,18 @@ public static partial class TestTrace
                 },
             };
             ActivitySource.AddActivityListener(listener);
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => sink.Flush();
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                var exited = DateTime.UtcNow;
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    sink.RecordProcessSpan("process lifetime", started, exited);
+                    if (sink.FrameworkStart is { } first)
+                        sink.RecordProcessSpan("process startup", started, first);
+                }
+                sink.Complete();
+                DisposeOtlp();
+            };
             Volatile.Write(ref _listener, listener);
         }
     }
@@ -158,27 +199,68 @@ public static partial class TestTrace
     /// <summary>Flushes buffered spans; called after the last test in the assembly.</summary>
     public static void Flush()
     {
-        _sink?.Flush();
+        FlushLocal();
         FlushOtlp();
     }
+
+    /// <summary>Persists completed spans before publishing a barrier that permits a forced kill.</summary>
+    public static void FlushLocal() => _sink?.Flush();
 
     private sealed class FileSink
     {
         private readonly string _path;
-        private readonly ConcurrentQueue<string> _pending = new();
+        private const int Capacity = 4096;
+        private const int BatchSize = 256;
+        private readonly Channel<Activity> _pending = Channel.CreateBounded<Activity>(Capacity);
         private readonly object _write = new();
-        private int _count;
+        private readonly Task _writer;
+        private int _dropped;
+        private long _firstFrameworkTicks = long.MaxValue;
+
+        public DateTime? FrameworkStart
+        {
+            get
+            {
+                var ticks = Volatile.Read(ref _firstFrameworkTicks);
+                return ticks == long.MaxValue ? null : new DateTime(ticks, DateTimeKind.Utc);
+            }
+        }
+
+        public void ObserveFrameworkStart(DateTime start)
+        {
+            var previous = Volatile.Read(ref _firstFrameworkTicks);
+            while (start.Ticks < previous)
+            {
+                var observed = Interlocked.CompareExchange(ref _firstFrameworkTicks, start.Ticks, previous);
+                if (observed == previous)
+                    return;
+                previous = observed;
+            }
+        }
+
+        public void RecordProcessSpan(string name, DateTime start, DateTime end)
+        {
+            if (end <= start)
+                return;
+            using var activity = Source.StartActivity(name, ActivityKind.Internal, default(ActivityContext), startTime: start);
+            activity?.SetEndTime(end);
+        }
 
         public FileSink(string path)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.AppendAllText(path, "");
             _path = path;
+            _writer = Task.Run(WritePendingAsync);
         }
 
         public void Write(Activity activity)
         {
-            var line = JsonSerializer.Serialize(new SpanRecord(
+            if (!_pending.Writer.TryWrite(activity))
+                Interlocked.Increment(ref _dropped);
+        }
+
+        private static string Serialize(Activity activity) => JsonSerializer.Serialize(new SpanRecord(
                 activity.TraceId.ToHexString(),
                 activity.SpanId.ToHexString(),
                 activity.ParentSpanId == default ? null : activity.ParentSpanId.ToHexString(),
@@ -191,22 +273,51 @@ public static partial class TestTrace
                     ? activity.TagObjects.ToDictionary(t => t.Key, t => t.Value?.ToString(), StringComparer.Ordinal)
                     : null,
                 Environment.ProcessId));
-            _pending.Enqueue(line);
-            if (Interlocked.Increment(ref _count) % 256 == 0)
-                Flush();
+
+        private async Task WritePendingAsync()
+        {
+            while (await _pending.Reader.WaitToReadAsync().ConfigureAwait(false))
+            {
+                lock (_write)
+                    WriteBatch(Math.Min(BatchSize, _pending.Reader.Count));
+            }
+        }
+
+        public void Complete()
+        {
+            _pending.Writer.TryComplete();
+            _writer.GetAwaiter().GetResult();
+            if (_dropped > 0)
+                Console.Error.WriteLine($"[TestTrace] Dropped {_dropped} spans while the trace queue was full.");
         }
 
         public void Flush()
         {
             lock (_write)
             {
-                if (_pending.IsEmpty)
-                    return;
-                var builder = new StringBuilder();
-                while (_pending.TryDequeue(out var line))
-                    builder.Append(line).Append('\n');
-                try { File.AppendAllText(_path, builder.ToString()); }
-                catch (IOException) { /* a trace write never fails a test */ }
+                // Drain everything admitted before this checkpoint. New spans can continue
+                // to arrive without extending the barrier's wait.
+                var remaining = _pending.Reader.Count;
+                while (remaining > 0)
+                {
+                    var count = Math.Min(BatchSize, remaining);
+                    WriteBatch(count);
+                    remaining -= count;
+                }
+            }
+        }
+
+        private void WriteBatch(int count)
+        {
+            if (count == 0)
+                return;
+            var builder = new StringBuilder();
+            for (var written = 0; written < count && _pending.Reader.TryRead(out var activity); written++)
+                builder.Append(Serialize(activity)).Append('\n');
+            try { File.AppendAllText(_path, builder.ToString()); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Losing access to the trace destination must not fail a test.
             }
         }
     }
