@@ -34,7 +34,9 @@ public sealed class TaskWorktreeRetirementTests
             services.AddSingleton(Options.Create(new WorktreeResidueSettings { Execute = true }));
             services.AddScoped<WorktreeResidueSweepService>();
             services.AddScoped<IRetirementCommandJournal>(busy.Wrap);
-        }, commandInterceptor: refusal);
+        });
+        harness.Host.CommandInterceptor = refusal;
+        await harness.Host.RestartServicesAsync();
         var ct = CancellationToken.None;
         Guid releaseId;
         await using (var scope = harness.Host.Services.CreateAsyncScope())
