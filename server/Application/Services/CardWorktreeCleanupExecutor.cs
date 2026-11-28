@@ -16,8 +16,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git,
     CardDoneArtifactPreservation artifacts, TaskWorktreeRetirementService retirement,
     WorkspaceUseAdmission admission, TimeProvider clock, IOptions<WorktreeResidueSettings> settings,
-    IOptions<GitSettings> gitSettings, AgentTaskLandService land,
-    IOptions<WorkspaceAdmissionSettings>? admissionSettings = null, ILogger<CardWorktreeCleanupExecutor>? logger = null)
+    IOptions<GitSettings> gitSettings, AgentTaskLandService land)
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
@@ -87,7 +86,7 @@ public sealed class CardWorktreeCleanupExecutor(AppDbContext db, ILandingGit git
         // Take row locks before the shared admission lock. Create can hold the card row
         // while admitting a consumer, so this order also prevents a cross-connection cycle.
         // Git inspection and artifact preservation finished above.
-        using (var admissionLock = new WorkspaceReservationJournal.AdmissionLock(admissionSettings, logger))
+        using (var admissionLock = admission.MeasureAdmissionLock())
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
             var card = await db.Cards.FromSqlInterpolated($"SELECT * FROM \"Cards\" WHERE \"Id\" = {endpoint.Target.Cleanup.CardId} FOR UPDATE")

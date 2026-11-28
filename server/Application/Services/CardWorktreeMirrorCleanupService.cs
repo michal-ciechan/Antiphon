@@ -20,8 +20,7 @@ namespace Antiphon.Server.Application.Services;
 public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRunnerDirectory runners,
     ILandingGit git, CardDoneArtifactPreservation artifacts, WorkspaceUseAdmission admission, TimeProvider clock,
     IOptions<WorktreeResidueSettings> settings, ICompletedCardWorkspaceClient? testClient = null,
-    IOptions<PhoneHomeRunnerSettings>? phoneHome = null,
-    IOptions<WorkspaceAdmissionSettings>? admissionSettings = null, ILogger<CardWorktreeMirrorCleanupService>? logger = null)
+    IOptions<PhoneHomeRunnerSettings>? phoneHome = null)
 {
     internal Func<CancellationToken, Task>? BeforeIntentAsync { get; set; }
     internal Func<CancellationToken, Task>? AfterIntentAsync { get; set; }
@@ -95,7 +94,7 @@ public sealed class CardWorktreeMirrorCleanupService(AppDbContext db, ISessionRu
 
         // Take row locks before the shared admission lock, in the same order as Create and
         // desktop cleanup. Inspection, artifact reads and outbound socket work are outside.
-        using (var admissionLock = new WorkspaceReservationJournal.AdmissionLock(admissionSettings, logger))
+        using (var admissionLock = admission.MeasureAdmissionLock())
         await using (var tx = await db.Database.BeginTransactionAsync(ct))
         {
             await db.Cards.FromSqlInterpolated($"SELECT * FROM \"Cards\" WHERE \"Id\" = {command.CardId} FOR UPDATE")

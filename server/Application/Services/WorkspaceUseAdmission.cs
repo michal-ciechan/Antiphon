@@ -1,10 +1,12 @@
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
 using Antiphon.Server.Application.Interfaces;
+using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
 using Antiphon.Server.Domain.Enums;
 using Antiphon.Server.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Antiphon.Server.Application.Services;
 
@@ -12,8 +14,11 @@ namespace Antiphon.Server.Application.Services;
 public sealed class WorkspaceUseAdmission(
     IWorkspaceReservationJournal journal,
     AppDbContext db,
-    ILogger<WorkspaceUseAdmission>? logger = null)
+    ILogger<WorkspaceUseAdmission>? logger = null,
+    IOptions<WorkspaceAdmissionSettings>? admissionSettings = null)
 {
+    internal WorkspaceReservationJournal.AdmissionLock MeasureAdmissionLock() => new(admissionSettings, logger);
+
     /// <summary>Admits one consumer and returns its reservation (CARD-0664: callers may release it).</summary>
     public async Task<WorkspaceReservationSnapshot> RequireConsumerAsync(WorkspaceReservationCommand command, CancellationToken ct)
     {
