@@ -54,6 +54,8 @@ public static class ReviewReviewSteps
     /// <summary>A reviewer answer that does not parse is asked for once more, then the reviewer fails (design 4.7).</summary>
     public const int MaxReviewerAttempts = 2;
 
+    internal static string CollatedFanOutId(WorkflowNode node) => node.StringParam("from") ?? "review";
+
     /// <summary>
     /// The fan-out (design 3.1): one child execution of the reviewer node per group (<c>itemKey</c>),
     /// each run through <see cref="IReviewAgentRunner"/> with its pack, its answer parsed as
@@ -159,8 +161,6 @@ public static class ReviewReviewSteps
         return NodeResult.Ok(null, $"{children.Count} reviewers done: "
             + string.Join(", ", children.Select(c => $"{c.Group.Key} {ReviewWalk.Output<ReviewerOutput>(c.Child)?.Findings.Count ?? 0}")));
     }
-
-    internal static string CollatedFanOutId(WorkflowNode node) => node.StringParam("from") ?? "review";
 
     /// <summary>
     /// Collate (design 4.8): every reviewer's findings, duplicates collapsed (same file, anchor and
