@@ -61,7 +61,8 @@ public static class NativeLinuxPolicyWitness
     // CARD-2077 adds one Linux exclusion for the Windows Git UNC test. The native Windows test remains required.
     // Unit 58 of the 2026-11-22 PowerShell-to-C# plan (W2 slice S22): the CARD-1545 LiveLaneIsolationTests record's reason
     // names the live-lane-isolation-rows command (test-live-lane-isolation.ps1 was ported); the record is otherwise unchanged.
-    public const string LegacyExclusionDigest = "a53ee79416a846d6fc0694f0b185dcbbcd22c94954d37561a645c6f1b6fcf8d5";
+    // CARD-0462 adds two opposite-platform exclusion records for the Herdr scheduling witnesses.
+    public const string LegacyExclusionDigest = "91084059495d4f35b6ff986146dce7b62d94bb357701b6af9f8684bba478ad94";
     public const string LinuxReasonPrefix = "Linux-only by construction:";
     public const string AttributeResourceName = "Antiphon.TestSupport.NativeLinuxOnlyAttribute.cs";
     public const string BaselineResourceName = "Antiphon.TestSupport.NativeLinuxWindowsBaseline.json";

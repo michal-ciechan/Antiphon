@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Antiphon.SessionRunner.Contracts;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
@@ -7,11 +9,13 @@ namespace Antiphon.SessionRunner.Tests;
 
 internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
 {
+    private const int SnapshotMutexWaitMs = 50;
+
     public FakeHerdrServer Fake { get; } = new();
     public HerdrClient Client { get; }
     public SessionRunnerSettings Settings { get; }
     public HerdrSettings HerdrSettings { get; }
-    public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 9, 16, 0, 0, 0, TimeSpan.Zero));
+    public LabelSweepClock Clock { get; } = new();
     public HerdrPlacementCoordinator Coordinator { get; private set; } = new();
     public FakeHerdrServer.WorkspaceState Workspace { get; }
     public FakeHerdrServer.TabState Tab { get; }
@@ -24,7 +28,44 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
     public int GetterCount => Methods.Count(m => m == "tab.get");
     public Task FollowAsync(CancellationToken ct = default) => Child.FollowLabelsAsync(Clock, () => true, ct);
     public Task<HerdrLabelObservation?> ReadAsync() => Child.ReadLabelObservationAsync(Clock, () => true, CancellationToken.None);
-    public HerdrPaneSidecar Saved => HerdrPaneSidecar.TryLoad(Path)!;
+    public HerdrPaneSidecar Saved => TryReadSaved().ShouldNotBeNull("expected to acquire the Herdr snapshot mutex");
+
+    public HerdrPaneSidecar? TryReadSaved() => TryReadSaved(TimeSpan.FromMilliseconds(SnapshotMutexWaitMs));
+
+    public HerdrPaneSidecar? TryReadSaved(TimeSpan remaining)
+    {
+        var path = Path;
+        if (!OperatingSystem.IsWindows())
+            return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
+
+        // Windows replacement can fail with a sharing violation while the reader has the file open.
+        var millisecondsTimeout = (int)Math.Clamp(remaining.TotalMilliseconds, 0, SnapshotMutexWaitMs);
+        using var mutex = new Mutex(false, SnapshotMutexName(path));
+        try
+        {
+            if (!mutex.WaitOne(millisecondsTimeout)) return null;
+        }
+        catch (AbandonedMutexException)
+        {
+            // This thread owns the mutex after the previous owner exited.
+        }
+
+        try
+        {
+            return HerdrPaneSidecar.TryLoad(path).ShouldNotBeNull("expected a readable Herdr pane sidecar");
+        }
+        finally
+        {
+            mutex.ReleaseMutex();
+        }
+    }
+
+    internal static string SnapshotMutexName(string destination)
+    {
+        var path = System.IO.Path.GetFullPath(destination);
+        if (OperatingSystem.IsWindows()) path = path.ToUpperInvariant();
+        return "Antiphon-HerdrSnapshot-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(path)));
+    }
 
     public async Task<SessionRunnerRuntime> AdoptRuntimeAsync()
     {
@@ -37,10 +78,61 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         return runtime;
     }
 
-    public static async Task WaitAsync(Func<bool> condition)
+    public static Task WaitAsync(Func<bool> condition) => WaitAsync(_ => condition());
+
+    public Task WaitForLabelPumpAsync()
     {
-        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        while (!condition()) await Task.Delay(5, limit.Token);
+        var subscribed = WaitForSubscriptionAsync();
+        if (OperatingSystem.IsWindows()) return subscribed;
+
+        // The stream and timer start independently. Register the timer before jumping an hour.
+        return Task.WhenAll(subscribed, Clock.SweepTimerRegistered.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
+
+    public async Task WaitForSubscriptionAsync(TimeProvider? timeProvider = null)
+    {
+        var recorded = Fake.FirstSubscriptionRecorded;
+        var missedDeadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Check the signal at the deadline even if the test continuation has yet to run.
+        await using var timer = (timeProvider ?? TimeProvider.System).CreateTimer(_ =>
+        {
+            if (!recorded.IsCompletedSuccessfully)
+                missedDeadline.TrySetResult();
+        }, null, TimeSpan.FromSeconds(2), Timeout.InfiniteTimeSpan);
+
+        await Task.WhenAny(recorded, missedDeadline.Task);
+        if (missedDeadline.Task.IsCompleted)
+            throw new TimeoutException("The fake Herdr server did not record a subscription within two seconds.");
+
+        await recorded;
+        Fake.SubscriptionRecords.Count.ShouldBe(1);
+    }
+
+    public static async Task WaitAsync(Func<TimeSpan, bool> condition, TimeProvider? timeProvider = null)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (!condition(Timeout.InfiniteTimeSpan))
+                await Task.Delay(5, limit.Token);
+            return;
+        }
+
+        timeProvider ??= TimeProvider.System;
+        var timeout = TimeSpan.FromSeconds(2);
+        var interval = TimeSpan.FromMilliseconds(5);
+        var started = timeProvider.GetTimestamp();
+        while (true)
+        {
+            var remaining = timeout - timeProvider.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) break;
+            var matched = condition(remaining);
+            remaining = timeout - timeProvider.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) break;
+            if (matched) return;
+            await Task.Delay(remaining < interval ? remaining : interval, timeProvider);
+        }
+        throw new OperationCanceledException("The Herdr fixture poll reached its two-second deadline.");
     }
 
     public HerdrLabelFollowFixture(string? tabPin = "Old", string? workspacePin = "Old workspace",
@@ -104,6 +196,20 @@ internal sealed class HerdrLabelFollowFixture : IAsyncDisposable
         if (!root.StartsWith(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "antiphon-c462-"), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Unsafe fixture cleanup");
         if (Directory.Exists(root)) Directory.Delete(root, true);
+    }
+
+    internal sealed class LabelSweepClock() : FakeTimeProvider(new DateTimeOffset(2026, 9, 16, 0, 0, 0, TimeSpan.Zero))
+    {
+        private readonly TaskCompletionSource _sweepTimerRegistered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task SweepTimerRegistered => _sweepTimerRegistered.Task;
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            if (period == TimeSpan.FromMinutes(1))
+                _sweepTimerRegistered.TrySetResult();
+            return timer;
+        }
     }
 
     internal sealed class DenyProcesses : IProcessLivenessProbe

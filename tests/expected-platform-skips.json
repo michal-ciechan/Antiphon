@@ -186,6 +186,31 @@
       "platform": "windows",
       "test": "Antiphon.Tests.Checkpoints.CheckpointWarmBuildTests.fifo_seal_falls_back_cold_without_hanging",
       "reasonPrefix": "FIFO seal requires Linux mkfifo"
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.SessionRunner.Tests.HerdrLabelFollowSchedulingTests.Saved_snapshot_reads_while_writer_holds_mutex_on_unix",
+      "reasonPrefix": "Unix snapshot replacement permits a concurrent unlocked read."
+    },
+    {
+      "platform": "windows",
+      "test": "Antiphon.SessionRunner.Tests.HerdrLabelFollowSchedulingTests.Label_pump_readiness_waits_for_the_sweep_timer_on_unix",
+      "reasonPrefix": "The Unix fixture requires the label sweep timer before advancing fake time."
+    },
+    {
+      "platform": "linux",
+      "test": "Antiphon.SessionRunner.Tests.HerdrLabelFollowSchedulingTests.Saved_snapshot_read_times_out_while_writer_holds_mutex",
+      "reasonPrefix": "Windows snapshot replacement sharing requires a bounded writer mutex wait in the reader."
+    },
+    {
+      "platform": "linux",
+      "test": "Antiphon.SessionRunner.Tests.HerdrLabelFollowSchedulingTests.Saved_snapshot_poll_expires_under_contention_and_rejects_late_success",
+      "reasonPrefix": "Only the Windows snapshot poll waits for the writer mutex within its deadline."
+    },
+    {
+      "platform": "linux",
+      "test": "Antiphon.SessionRunner.Tests.HerdrLabelFollowSchedulingTests.Saved_snapshot_mutex_name_matches_production_writer",
+      "reasonPrefix": "Only the Windows fixture opens the writer's named snapshot mutex."
     }
   ]
 }

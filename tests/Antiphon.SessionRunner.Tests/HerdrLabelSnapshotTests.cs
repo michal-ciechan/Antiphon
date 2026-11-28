@@ -108,7 +108,7 @@ public class HerdrLabelSnapshotTests
                 observing = Observe();
                 if (actor != "disposal")
                 {
-                    await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.LabelFollow!.Sequence == 1);
+                    await HerdrLabelFollowFixture.WaitAsync(remaining => f.TryReadSaved(remaining)?.LabelFollow!.Sequence == 1);
                     f.GetterCount.ShouldBe(0); observing.IsCompleted.ShouldBeFalse("observer waits for the pane actor");
                 }
             }
@@ -159,7 +159,7 @@ public class HerdrLabelSnapshotTests
             var run = f.FollowAsync();
             try
             {
-                await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.LabelFollow!.Sequence == 1);
+                await HerdrLabelFollowFixture.WaitAsync(remaining => f.TryReadSaved(remaining)?.LabelFollow!.Sequence == 1);
                 if (order == "replacement") (f.Binding with { AcceptedStartedAt = f.Binding.AcceptedStartedAt!.Value.AddSeconds(1), TabLabel = "replacement" }).SaveAtomic(f.Path);
                 else f.Child.RaiseVerifiedClosed();
             }

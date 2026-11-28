@@ -1,6 +1,11 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Antiphon.SessionRunner.Contracts;
+using Antiphon.Tests.TestHelpers;
+using Antiphon.TestSupport;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,22 +22,26 @@ public class HerdrLabelFollowSchedulingTests
         await using var runtime = await f.AdoptRuntimeAsync();
         using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock);
         await pump.StartAsync(CancellationToken.None);
-        await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
-        var gate = f.Fake.GateMethod("tab.get"); Task? baseline = null;
-        try
+        await CheckAndStopPumpAsync(pump, async () =>
         {
-            f.Tab.Label = "Later"; f.Clock.Advance(TimeSpan.FromHours(1));
-            await HerdrLabelFollowFixture.WaitAsync(() => f.GetterCount == 3); // Timer owns this attempt.
-            baseline = pump.BaselineSweepAsync(CancellationToken.None);
-            (await runtime.GetAsync(f.Binding.SessionId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2))).LabelObservation.ShouldBeNull();
-            f.Saved.LabelFollow!.Sequence.ShouldBe(2);
-        }
-        finally
-        {
-            gate.Release(); if (baseline is not null) await baseline;
-            await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.TabLabel == "Later");
-            await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
-        }
+            await f.WaitForLabelPumpAsync();
+            var gate = f.Fake.GateMethod("tab.get");
+            Task? baseline = null;
+            try
+            {
+                f.Tab.Label = "Later"; f.Clock.Advance(TimeSpan.FromHours(1));
+                await HerdrLabelFollowFixture.WaitAsync(() => f.GetterCount == 3); // Timer owns this attempt.
+                baseline = pump.BaselineSweepAsync(CancellationToken.None);
+                (await runtime.GetAsync(f.Binding.SessionId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2))).LabelObservation.ShouldBeNull();
+                f.Saved.LabelFollow!.Sequence.ShouldBe(2);
+            }
+            finally
+            {
+                gate.Release();
+                if (baseline is not null) await baseline;
+            }
+            await HerdrLabelFollowFixture.WaitAsync(remaining => f.TryReadSaved(remaining)?.TabLabel == "Later");
+        });
         f.GetterCount.ShouldBe(4); // One baseline batch and one timer batch, despite all three callers.
         f.Saved.TabLabel.ShouldBe("Later");
     }
@@ -126,7 +135,7 @@ public class HerdrLabelFollowSchedulingTests
         var task = f.FollowAsync();
         try
         {
-            await HerdrLabelFollowFixture.WaitAsync(() => arm == "lease" ? f.Saved.LabelFollow!.Sequence == 1 : f.GetterCount == 1);
+            await HerdrLabelFollowFixture.WaitAsync(remaining => arm == "lease" ? f.TryReadSaved(remaining)?.LabelFollow!.Sequence == 1 : f.GetterCount == 1);
             f.Clock.Advance(TimeSpan.FromSeconds(10)); await task.WaitAsync(TimeSpan.FromSeconds(2));
             f.Saved.LabelFollow!.Observation!.ResultCode.ShouldBe("timeout"); f.Saved.TabLabel.ShouldBe("Old");
         }
@@ -168,20 +177,184 @@ public class HerdrLabelFollowSchedulingTests
     }
 
     [Test]
+    public async Task Saved_snapshot_reads_while_writer_holds_mutex_on_unix()
+    {
+        Skip.Unless(!OperatingSystem.IsWindows(), "Unix snapshot replacement permits a concurrent unlocked read.");
+        await using var f = new HerdrLabelFollowFixture();
+        f.Binding.SaveAtomic(f.Path);
+
+        using var writer = HerdrSnapshotFile.Acquire(f.Path);
+        // A different thread must read while this thread still owns the mutex.
+        var saved = Task.Run(f.TryReadSaved).WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+        saved.ShouldNotBeNull().TabLabel.ShouldBe("Old");
+    }
+
+    [Test]
+    public async Task Saved_snapshot_read_times_out_while_writer_holds_mutex()
+    {
+        NativeWindowsGate.Require("Windows snapshot replacement sharing requires a bounded writer mutex wait in the reader.");
+        await using var f = new HerdrLabelFollowFixture();
+        f.Binding.SaveAtomic(f.Path);
+        var deadline = TimeSpan.FromSeconds(1);
+        var writerHasLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = Task.Factory.StartNew(() =>
+        {
+            using var lease = HerdrSnapshotFile.Acquire(f.Path);
+            writerHasLock.SetResult();
+            releaseWriter.Task.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        Task<HerdrPaneSidecar?>? read = null;
+        try
+        {
+            await writerHasLock.Task.WaitAsync(deadline);
+            read = Task.Run(f.TryReadSaved);
+            (await read.WaitAsync(deadline)).ShouldBeNull();
+        }
+        finally
+        {
+            releaseWriter.SetResult();
+            await writer.WaitAsync(deadline);
+            if (read is not null) await read.WaitAsync(deadline);
+        }
+
+        f.Saved.TabLabel.ShouldBe("Old");
+    }
+
+    [Test]
+    public async Task Saved_snapshot_poll_expires_under_contention_and_rejects_late_success()
+    {
+        NativeWindowsGate.Require("Only the Windows snapshot poll waits for the writer mutex within its deadline.");
+        await using var f = new HerdrLabelFollowFixture();
+        f.Binding.SaveAtomic(f.Path);
+        var handoff = TimeSpan.FromSeconds(1);
+        var pollWindow = TimeSpan.FromSeconds(2);
+        var writerHasLock = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writer = Task.Factory.StartNew(() =>
+        {
+            using var lease = HerdrSnapshotFile.Acquire(f.Path);
+            writerHasLock.SetResult();
+            releaseWriter.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+        Task? poll = null;
+        try
+        {
+            await writerHasLock.Task.WaitAsync(handoff);
+            var elapsed = Stopwatch.StartNew();
+            poll = Task.Run(() => HerdrLabelFollowFixture.WaitAsync(remaining => f.TryReadSaved(remaining) is not null));
+            await Should.ThrowAsync<OperationCanceledException>(() => poll.WaitAsync(pollWindow + TimeSpan.FromMilliseconds(500)));
+            elapsed.Elapsed.ShouldBeGreaterThanOrEqualTo(pollWindow);
+            writer.IsCompleted.ShouldBeFalse();
+
+            var clock = new FakeTimeProvider();
+            HerdrPaneSidecar? observed = null;
+            // Release the real writer only after this attempt crosses the deadline.
+            var latePoll = HerdrLabelFollowFixture.WaitAsync(_ =>
+            {
+                clock.Advance(pollWindow);
+                releaseWriter.SetResult();
+                writer.WaitAsync(handoff).GetAwaiter().GetResult();
+                observed = f.Saved;
+                return observed.TabLabel == "Old";
+            }, clock);
+            await Should.ThrowAsync<OperationCanceledException>(() => latePoll);
+            observed.ShouldNotBeNull().TabLabel.ShouldBe("Old");
+        }
+        finally
+        {
+            releaseWriter.TrySetResult();
+            await writer.WaitAsync(handoff);
+            if (poll is not null)
+            {
+                try { await poll.WaitAsync(handoff); }
+                catch (OperationCanceledException) { }
+            }
+        }
+    }
+
+    [Test]
+    public async Task Saved_snapshot_mutex_name_matches_production_writer()
+    {
+        NativeWindowsGate.Require("Only the Windows fixture opens the writer's named snapshot mutex.");
+        await using var f = new HerdrLabelFollowFixture();
+        var alias = Path.Combine(Path.GetDirectoryName(f.Path)!, ".", Path.GetFileName(f.Path));
+        using var writer = HerdrSnapshotFile.Acquire(f.Path);
+        var opened = Mutex.TryOpenExisting(HerdrLabelFollowFixture.SnapshotMutexName(alias), out var fixtureMutex);
+        using (fixtureMutex)
+        {
+            opened.ShouldBeTrue("the fixture name must identify the mutex created by the production writer");
+        }
+    }
+
+    [Test]
+    public async Task Subscription_recorded_before_deadline_survives_a_delayed_waiter()
+    {
+        await using var f = new HerdrLabelFollowFixture();
+        await f.StartAsync();
+        await using var runtime = await f.AdoptRuntimeAsync();
+        using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock);
+        var readinessClock = new FakeTimeProvider();
+        var readiness = f.WaitForSubscriptionAsync(readinessClock);
+        await pump.StartAsync(CancellationToken.None);
+
+        async Task AdvanceAfterRegistrationAsync()
+        {
+            try { await f.Fake.FirstSubscriptionRecorded.WaitAsync(TimeSpan.FromSeconds(2)); }
+            finally { readinessClock.Advance(TimeSpan.FromSeconds(2)); }
+        }
+
+        await CheckAndStopPumpAsync(pump, () => Task.WhenAll(readiness, AdvanceAfterRegistrationAsync()));
+    }
+
+    [Test]
+    public async Task Label_pump_readiness_waits_for_the_sweep_timer_on_unix()
+    {
+        Skip.Unless(!OperatingSystem.IsWindows(), "The Unix fixture requires the label sweep timer before advancing fake time.");
+        await using var f = new HerdrLabelFollowFixture();
+        await f.StartAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await using var stream = f.Client.SubscribeEventsAsync(
+            [new HerdrSubscription(HerdrEventTypes.PaneClosedSubscribe)], deadline.Token).GetAsyncEnumerator();
+        var reading = stream.MoveNextAsync().AsTask();
+        try
+        {
+            await f.Fake.FirstSubscriptionRecorded.WaitAsync(deadline.Token);
+            var ready = f.WaitForLabelPumpAsync();
+            ready.IsCompleted.ShouldBeFalse("the event stream is ready while the timer is still unregistered");
+
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), f.Clock);
+            await ready;
+        }
+        finally
+        {
+            await deadline.CancelAsync();
+            try { await reading; }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        }
+    }
+
+    [Test]
     public async Task Idle_healthy_stream_checks_without_turns_or_gets()
     {
         await using var f = new HerdrLabelFollowFixture(); await f.StartAsync(); await using var runtime = await f.AdoptRuntimeAsync();
         using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock);
         await pump.StartAsync(CancellationToken.None);
-        try
+        await CheckAndStopPumpAsync(pump, async () =>
         {
-            await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
+            await f.WaitForLabelPumpAsync();
             f.Saved.TabLabel.ShouldBe("New"); f.Tab.Label = "Later";
             f.Clock.Advance(TimeSpan.FromHours(1));
-            await HerdrLabelFollowFixture.WaitAsync(() => f.Saved.TabLabel == "Later");
-            f.Saved.LabelFollow!.Sequence.ShouldBe(2); runtime.Get(f.Binding.SessionId).Status.ShouldBe("Running");
-        }
-        finally { await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2)); }
+            HerdrPaneSidecar? saved = null;
+            await HerdrLabelFollowFixture.WaitAsync(remaining => (saved = f.TryReadSaved(remaining))?.TabLabel == "Later");
+            var follow = saved.ShouldNotBeNull().LabelFollow.ShouldNotBeNull();
+            follow.Sequence.ShouldBe(2);
+            follow.Observation.ShouldNotBeNull().ResultCode.ShouldBe("validated");
+            f.GetterCount.ShouldBe(4);
+            runtime.Get(f.Binding.SessionId).Status.ShouldBe("Running");
+        });
     }
 
     [Test][Arguments(false)][Arguments(true)]
@@ -191,7 +364,7 @@ public class HerdrLabelFollowSchedulingTests
         var settings = new HerdrSettings { Enabled = enabled };
         using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(settings), NullLogger<HerdrEventPumpService>.Instance, f.Clock);
         await pump.StartAsync(CancellationToken.None);
-        if (enabled) await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
+        if (enabled) await f.WaitForSubscriptionAsync();
         await pump.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
         var count = f.GetterCount; f.Clock.Advance(TimeSpan.FromHours(2)); await Task.Yield(); f.GetterCount.ShouldBe(count);
         if (!enabled) count.ShouldBe(0);
@@ -206,9 +379,43 @@ public class HerdrLabelFollowSchedulingTests
         using var pump = new HerdrEventPumpService(runtime, f.Client, Options.Create(f.HerdrSettings), NullLogger<HerdrEventPumpService>.Instance, f.Clock)
         { TimerFinalizing = async () => { entered.TrySetResult(); await release.Task; } };
         await pump.StartAsync(CancellationToken.None);
-        await HerdrLabelFollowFixture.WaitAsync(() => f.Fake.SubscriptionRecords.Count == 1);
+        await f.WaitForSubscriptionAsync();
         var stopping = pump.StopAsync(CancellationToken.None);
         try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(2)); stopping.IsCompleted.ShouldBeFalse(); }
         finally { release.TrySetResult(); await stopping.WaitAsync(TimeSpan.FromSeconds(2)); }
+    }
+
+    private static async Task CheckAndStopPumpAsync(HerdrEventPumpService pump, Func<Task> check,
+        [CallerMemberName] string testMethod = "")
+    {
+        Exception? bodyFailure = null;
+        try
+        {
+            await check();
+        }
+        catch (Exception error)
+        {
+            bodyFailure = error;
+            throw;
+        }
+        finally
+        {
+            try
+            {
+                using var shutdownDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                using (TestTrace.Span("Herdr pump StopAsync", "test.method", testMethod))
+                    await pump.StopAsync(shutdownDeadline.Token);
+                // StopAsync can return on cancellation with the stream or timer still running.
+                var execution = pump.ExecuteTask;
+                if (execution is null || !execution.IsCompleted)
+                    throw new TimeoutException("The Herdr pump did not join its stream and timer within two seconds.");
+                if (execution.IsFaulted)
+                    await execution;
+            }
+            catch (Exception shutdownFailure) when (bodyFailure is not null)
+            {
+                throw new AggregateException("The Herdr scheduling check and pump shutdown both failed.", bodyFailure, shutdownFailure);
+            }
+        }
     }
 }

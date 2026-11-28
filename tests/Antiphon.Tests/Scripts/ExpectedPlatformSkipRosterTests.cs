@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 using Antiphon.Nightly;
 using Antiphon.Tests.Scripts.Nightly;
 using Antiphon.Tests.TestHelpers;
@@ -47,6 +48,86 @@ public sealed class ExpectedPlatformSkipRosterTests
     private static bool Flag(PlainObject verdict, string name) => PsValue.IsTrue(verdict[name]);
 
     private static string Joined(object? values) => string.Join(",", PsValue.AsArray(values!).Select(PsValue.Str));
+
+    [Test]
+    public void Herdr_scheduling_skips_are_accepted_only_on_the_opposite_platform()
+    {
+        const string testNamespace = "Antiphon.SessionRunner.Tests";
+        const string shortName = "HerdrLabelFollowSchedulingTests";
+        const string className = testNamespace + "." + shortName;
+        var windowsSkips = new (string Method, string Reason)[]
+        {
+            ("Saved_snapshot_reads_while_writer_holds_mutex_on_unix", "Unix snapshot replacement permits a concurrent unlocked read."),
+            ("Label_pump_readiness_waits_for_the_sweep_timer_on_unix", "The Unix fixture requires the label sweep timer before advancing fake time."),
+        };
+        var linuxSkips = new (string Method, string Reason)[]
+        {
+            ("Saved_snapshot_read_times_out_while_writer_holds_mutex", "Windows snapshot replacement sharing requires a bounded writer mutex wait in the reader."),
+            ("Saved_snapshot_poll_expires_under_contention_and_rejects_late_success", "Only the Windows snapshot poll waits for the writer mutex within its deadline."),
+            ("Saved_snapshot_mutex_name_matches_production_writer", "Only the Windows fixture opens the writer's named snapshot mutex."),
+        };
+        using var fixture = NightlyFixture.Create("eps-herdr");
+        XNamespace ns = "http://microsoft.com/schemas/VisualStudio/TeamTest/2010";
+        var roster = NightlyChunkVerdict.SkipRoster(RosterPath);
+        var rcRoster = roster.Select(entry => new RcSkipEntry(PsValue.Str(PsValue.Prop(entry, "test")),
+            PsValue.Str(PsValue.Prop(entry, "platform")), PsValue.Str(PsValue.Prop(entry, "reasonPrefix")),
+            NightlyChunkVerdict.ReasonClass(entry))).ToArray();
+        var policy = NightlyPolicy.Read(Repo, "").Object;
+        var sourceIndex = new NightlyCsMethodIndex(Path.Combine(Repo, "tests"));
+        foreach (var (platform, nativePlatform, skips) in new[] { ("windows", "linux", windowsSkips), ("linux", "windows", linuxSkips) })
+        {
+            var trx = fixture.PathOf(platform + ".trx");
+            new XElement(ns + "TestRun",
+                new XElement(ns + "TestDefinitions", skips.Select(skip =>
+                    new XElement(ns + "UnitTest", new XAttribute("id", skip.Method),
+                        new XElement(ns + "TestMethod", new XAttribute("className", className), new XAttribute("name", skip.Method))))),
+                new XElement(ns + "Results", skips.Select(skip =>
+                    new XElement(ns + "UnitTestResult", new XAttribute("testId", skip.Method),
+                        new XAttribute("testName", skip.Method), new XAttribute("outcome", "NotExecuted"),
+                        new XElement(ns + "Output", new XElement(ns + "DebugTrace", "Skipped: " + skip.Reason))))),
+                new XElement(ns + "ResultSummary", new XAttribute("outcome", "Completed"),
+                    new XElement(ns + "Counters", new XAttribute("total", skips.Length), new XAttribute("executed", 0),
+                        new XAttribute("passed", 0), new XAttribute("failed", 0), new XAttribute("notExecuted", skips.Length))))
+                .Save(trx);
+            var parsed = NightlyTrx.ReadIdentities(trx);
+            var expectedIds = skips.Select(skip => className + "." + skip.Method).ToArray();
+            parsed.Select(row => row.Identity).ShouldBe(expectedIds);
+            var accepted = Verdict(parsed, processExit: 8, roster: roster, platform: platform);
+            Flag(accepted, "coverageComplete").ShouldBeTrue(platform + ": " + Joined(accepted["reasons"]));
+            Flag(accepted, "testsPassed").ShouldBeTrue(Joined(accepted["reasons"]));
+            PsValue.AsArray(accepted["toleratedSkips"]).Select(row => PsValue.Str(PsValue.Prop(row, "identity"))).ShouldBe(expectedIds);
+
+            var refused = Verdict(parsed, processExit: 8, roster: roster, platform: nativePlatform);
+            Flag(refused, "coverageComplete").ShouldBeFalse();
+            PsValue.AsArray(refused["reasons"]).Select(PsValue.Str)
+                .ShouldContain("unexecuted-outcome:" + string.Join(",", expectedIds));
+
+            var rcAccepted = RcChunkOutcome.Read(0, false, trx, rcRoster, platform);
+            rcAccepted.Outcome.ShouldBe("Passed", rcAccepted.Reason);
+            var rcRefused = RcChunkOutcome.Read(0, false, trx, rcRoster, nativePlatform);
+            rcRefused.Outcome.ShouldBe("Failed");
+            rcRefused.Reason.ShouldBe("unexecuted-outcome:" + string.Join(",", expectedIds));
+
+            var herdrEntries = roster.Where(entry => expectedIds.Contains(PsValue.Str(PsValue.Prop(entry, "test")))).ToArray();
+            herdrEntries.Length.ShouldBe(expectedIds.Length);
+            herdrEntries.ShouldAllBe(entry => PsValue.Str(PsValue.Prop(entry, "platform")) == platform);
+
+            var classExclusions = NightlyPolicy.ProfileExclusions(policy, "rc", "session-runner", platform)
+                .Where(row => string.Equals(row.Class, shortName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(row.Class, className, StringComparison.OrdinalIgnoreCase)).ToArray();
+            classExclusions.SelectMany(row => row.Methods).Order(StringComparer.Ordinal)
+                .ShouldBe(skips.Select(skip => skip.Method).Order(StringComparer.Ordinal));
+            classExclusions.ShouldAllBe(row => row.Methods.Length > 0);
+            var nativeExclusions = NightlyPolicy.ProfileExclusions(policy, "rc", "session-runner", nativePlatform);
+            foreach (var (method, reason) in skips)
+            {
+                var node = new PlainObject(("ClassName", className), ("Method", method));
+                NightlyPolicy.NodeExcluded(node, classExclusions).ShouldBeTrue(method);
+                NightlyPolicy.NodeExcluded(node, nativeExclusions).ShouldBeFalse(method);
+                sourceIndex.ReachableSkipTexts(shortName, method, testNamespace, fold: false).ShouldContain(reason, method);
+            }
+        }
+    }
 
     [Test]
     public void Windows_qualification_tolerates_the_three_linux_only_witnesses()
@@ -199,7 +280,7 @@ public sealed class ExpectedPlatformSkipRosterTests
         var windows = committed.Where(e => PsValue.Str(PsValue.Prop(e, "platform")) == "windows").ToArray();
         var unique = windows.Select(e => PsValue.Str(PsValue.Prop(e, "test"))).Distinct(StringComparer.Ordinal).Count();
         var gaps = NightlyExpectedSkips.SourceGaps(Repo, "windows", committed, null);
-        rows.Check(windows.Length == 35 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
+        rows.Check(windows.Length == 37 && unique == windows.Length && gaps.Length == 0, "EPS census-matches-source",
             "windows=" + windows.Length + " unique=" + unique + " gaps=" + string.Join(",", gaps));
 
         var planted = committed.Append(Entry("windows", Missing, "gone")).ToArray();

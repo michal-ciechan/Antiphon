@@ -25,6 +25,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
     private readonly ConcurrentQueue<string> _liveEvents = new();
     private readonly List<string> _replayBuffer = [];
     private readonly List<IReadOnlyList<JsonElement>> _subscriptionRecords = [];
+    private readonly TaskCompletionSource _firstSubscriptionRecorded = NewListeningTcs();
     private readonly object _listenGate = new();
     private readonly object _eventGate = new();
     private TaskCompletionSource _listening = NewListeningTcs();
@@ -169,6 +170,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
 
     /// <summary>Each subscribe call's subscriptions array, in order (CARD-0162).</summary>
     public IReadOnlyList<IReadOnlyList<JsonElement>> SubscriptionRecords => _subscriptionRecords.ToArray();
+    internal Task FirstSubscriptionRecorded => _firstSubscriptionRecorded.Task;
 
     /// <summary>
     /// Historical events re-delivered to EVERY new subscription (emulates measured E5 replay).
@@ -386,6 +388,7 @@ internal sealed class FakeHerdrServer : IAsyncDisposable
         }
 
         _subscriptionRecords.Add(subs);
+        _firstSubscriptionRecorded.TrySetResult();
 
         // E2: naming an unknown / rejected pane fails the WHOLE call with a SUFFIXED error id.
         var rejectPane = RejectSubscribePaneId;

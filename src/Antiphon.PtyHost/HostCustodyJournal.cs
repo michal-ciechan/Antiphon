@@ -37,6 +37,12 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
 
     public HostCustodyJournal(VerificationCustodyStore store, VerificationExecutionBinding binding,
         Guid hostInstanceId)
+        : this(store, binding, hostInstanceId, platformAdmitted: true)
+    {
+    }
+
+    internal HostCustodyJournal(VerificationCustodyStore store, VerificationExecutionBinding binding,
+        Guid hostInstanceId, bool platformAdmitted)
     {
         _store = store;
         Binding = store.RequireBinding(binding);
@@ -44,7 +50,8 @@ public sealed class HostCustodyJournal : IPtyCustodyJournal
             || store.ReadRecord<CustodyStamp>(binding, "runner-seal.json") is not null)
             throw new VerificationCustodyException("verification_custody_sealed_or_missing_intent");
         using var host = Process.GetCurrentProcess();
-        var linuxIdentity = binding.Backend == VerificationCustodyBackends.LinuxCgroup
+        // A foreign backend gets an observable refusal. Only an admitted Linux backend needs kernel identity.
+        var linuxIdentity = platformAdmitted && binding.Backend == VerificationCustodyBackends.LinuxCgroup
             ? LinuxProcessIdentity.TryRead(host.Id)
                 ?? throw new VerificationCustodyException("verification_custody_identity_mismatch")
             : null;
