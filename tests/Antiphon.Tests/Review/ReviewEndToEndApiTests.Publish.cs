@@ -319,7 +319,9 @@ public partial class ReviewEndToEndApiTests
     }
 
     [Test]
-    public async Task C2110_S1_pg_Legacy_default_body_and_inline_comments_are_exact()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task C2110_S1_pg_Legacy_default_body_and_inline_comments_are_exact(bool configured)
     {
         var graph = PublishGraph(new Dictionary<string, object?>());
         var inline = PublishCandidate("A", "Inline <literal>", 13) with { Check = "SEED-0004", Suggestion = "replacement\n" };
@@ -329,8 +331,8 @@ public partial class ReviewEndToEndApiTests
         var dropped = PublishCandidate("E", "Dropped by verify", 33);
         var settings = factory.Services.GetRequiredService<IOptions<ReviewSettings>>().Value;
         var publicBaseUrl = settings.PublicBaseUrl;
-        settings.PublicBaseUrl = null;
-        var observations = new List<(ReviewNodeStatus Status, CodeHostReview Review)>();
+        settings.PublicBaseUrl = configured ? " https://ANTIPHON.test/review-base/// " : null;
+        var observations = new List<(ReviewNodeStatus Status, Guid RunId, CodeHostReview Review)>();
         try
         {
             foreach (var (status, index) in new[] { ReviewNodeStatus.Succeeded, ReviewNodeStatus.Skipped, ReviewNodeStatus.FailedContinued }
@@ -349,7 +351,7 @@ public partial class ReviewEndToEndApiTests
                 fixture.Findings[0].ExternalCommentId.ShouldBe(posted.CommentId);
                 fixture.Findings[0].ExternalThreadId.ShouldBe(posted.ThreadId);
                 fixture.Findings[1].ExternalThreadUrl.ShouldBe(accepted.Posted.Url);
-                observations.Add((status, accepted.Review));
+                observations.Add((status, fixture.RunId, accepted.Review));
             }
         }
         finally
@@ -357,19 +359,21 @@ public partial class ReviewEndToEndApiTests
             settings.PublicBaseUrl = publicBaseUrl;
         }
 
-        foreach (var (status, review) in observations)
+        foreach (var (status, runId, review) in observations)
         {
+            var link = $"[View this review in Antiphon](<https://antiphon.test/review-base/reviews/{runId:D}>)";
             var note = status == ReviewNodeStatus.Succeeded ? "1 findings were disproved by the verifier and dropped."
                 : "_These findings were not verified: no verifier is configured._";
-            review.Body.ShouldBe(Lines("**Antiphon review**, round 1 (iteration 1)", "", "Findings:",
+            string[] backlink = configured ? [link, ""] : [];
+            review.Body.ShouldBe(Lines(["**Antiphon review**, round 1 (iteration 1)", "", ..backlink, "Findings:",
                 "- **F1** major · \x60src/Lease.cs\x60: Inline <literal>", "", "Listed here only:",
                 "- F2 nit · \x60src/Lease.cs:16\x60: Summary nit", "- F3 major · \x60src/Lease.cs:55\x60: Outside hunk", "",
-                "1 more below this round's bar are kept in Antiphon.", "", note, ""), status.ToString());
+                "1 more below this round's bar are kept in Antiphon.", "", note, ""]), status.ToString());
             var comment = review.Comments.ShouldHaveSingleItem();
             (comment.Path, comment.Line).ShouldBe((inline.File, inline.Line));
             var fence = new string('\x60', 3);
-            comment.Body.ShouldBe(Lines("**F1 · major** Inline <literal>", "", "Body for A", "", fence + "suggestion",
-                "replacement", fence, "", "_Check SEED-0004_", ""), status.ToString());
+            comment.Body.ShouldBe(Lines(["**F1 · major** Inline <literal>", "", "Body for A", "", fence + "suggestion",
+                "replacement", fence, "", "_Check SEED-0004_", "", ..backlink]), status.ToString());
         }
     }
 
