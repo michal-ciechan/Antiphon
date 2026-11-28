@@ -66,9 +66,14 @@ public sealed class AdditiveMigrationRuleWitnessTests
         var text = Read("docs/testing-and-build.md");
         var sources = TestSources();
         AssertTokensReal(text, sources);
-        // The CARD-1785 token matched only this witness file.
-        var stale = text.Replace("`" + MigratorToken + "`", "`IMigrator.Migrate`", StringComparison.Ordinal);
+
+        const string staleToken = "IMigrator.Migrate";
+        var stale = text.Replace($"`{MigratorToken}`", $"`{staleToken}`", StringComparison.Ordinal);
         stale.ShouldNotBe(text);
+        var otherSites = sources.Where(source => !source.Contains(staleToken, StringComparison.Ordinal)).ToArray();
+        AssertTokensReal(stale, [.. otherSites, "class Test { void Run(IMigrator IMigrator) => IMigrator.Migrate(\"target\"); }"]);
+        Should.Throw<ShouldAssertException>(() => AssertTokensReal(stale,
+            [.. otherSites, "class Test { string Method => nameof(IMigrator.Migrate); }"]));
         Should.Throw<ShouldAssertException>(() => AssertTokensReal(stale, sources));
     }
 
