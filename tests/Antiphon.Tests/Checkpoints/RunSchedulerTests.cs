@@ -9,6 +9,70 @@ namespace Antiphon.Tests.Checkpoints;
 public sealed class RunSchedulerTests : CheckpointTestBase
 {
     [Test]
+    public void C2103_availability_is_bound_to_inputs_and_request_time()
+    {
+        var origin = new DateTimeOffset(2026, 11, 27, 0, 0, 0, TimeSpan.Zero);
+        DateTimeOffset At(int seconds) => origin.AddSeconds(seconds);
+        var inputs = new BuildInputDescriptor("antiphon", new string('a', 40), "source-fingerprint",
+            "tests/Antiphon.Tests", "effective-properties", "evaluated-graph", "toolchain", "runner-1", "linux", "x64");
+        var request = new BuildAvailabilityRequest("consumer", At(20), inputs);
+        var producer = new ObservedBuild("producer", "build-1", inputs, At(1), At(10), "ok", "generation-1", true);
+        var custody = new OutputCustody("runner-1", "build-1", "generation-1", true,
+            At(5), At(40), null, At(5), At(25), At(25));
+
+        Check("verified-ready", request, producer, custody, new("eligible-ready", BuildId: "build-1"));
+        Check("settlement-boundary", request with { RequestedAt = At(10) }, producer, custody,
+            new("eligible-ready", BuildId: "build-1"));
+        var unknownGraph = inputs with { GraphDigest = null };
+        Check("unknown-graph", request with { Inputs = unknownGraph }, producer with { Inputs = unknownGraph }, custody,
+            new("unknown", "key-incomplete"));
+        var changedInputs = new (string Label, BuildInputDescriptor Inputs)[]
+        {
+            ("same-sha-changed-properties", inputs with { PropertiesDigest = "different-properties" }),
+            ("different-sha", inputs with { SourceSha = new string('b', 40) }),
+            ("different-fingerprint", inputs with { Fingerprint = "different-fingerprint" }),
+            ("different-graph", inputs with { GraphDigest = "different-graph" }),
+            ("different-toolchain", inputs with { ToolchainDigest = "different-toolchain" }),
+            ("different-runner", inputs with { Runner = "runner-2" }),
+            ("different-os", inputs with { OperatingSystem = "windows" }),
+            ("different-architecture", inputs with { Architecture = "arm64" }),
+        };
+        foreach (var (label, changed) in changedInputs)
+            Check(label, request with { Inputs = changed }, producer, custody, new("ineligible", "key-mismatch"));
+        Check("future-settlement", request, producer with { SettledAt = At(30) }, custody,
+            new("in-flight-candidate", BuildId: "build-1"));
+        Check("future-failure", request, producer with { SettledAt = At(30), Outcome = "failed" }, custody,
+            new("in-flight-candidate", BuildId: "build-1"));
+        Check("active-no-lease", request,
+            producer with { SettledAt = null, Outcome = null, LeaseVerified = false }, custody,
+            new("unknown", "lease-unverified"));
+        Check("before-start", request with { RequestedAt = At(0) }, producer, custody,
+            new("ineligible", "producer-not-started"));
+        Check("failed-producer", request, producer with { Outcome = "failed" }, custody,
+            new("ineligible", "producer-failed"));
+        Check("canceled-producer", request, producer with { Outcome = "canceled" }, custody,
+            new("ineligible", "producer-failed"));
+        Check("revoked-custody", request, producer, custody with { RevokedAt = At(20) },
+            new("ineligible", "custody-revoked"));
+        Check("unverified-custody", request, producer, custody with { Verified = false },
+            new("unknown", "custody-unverified"));
+        Check("expired-custody", request, producer, custody with { Until = At(20) },
+            new("ineligible", "custody-expired"));
+        Check("removed-at-request", request with { RequestedAt = At(25) }, producer, custody,
+            new("ineligible", "output-absent"));
+        Check("different-output-generation", request, producer, custody with { OutputGeneration = "generation-2" },
+            new("unknown", "custody-binding-mismatch"));
+        Check("gap-in-presence-proof", request with { RequestedAt = At(25) }, producer, custody with { RemovedAt = null },
+            new("unknown", "output-presence-unknown"));
+        Check("unaligned-clock", request with { ClockAligned = false }, producer, custody,
+            new("unknown", "clock-unaligned"));
+    }
+
+    private static void Check(string label, BuildAvailabilityRequest request, ObservedBuild producer,
+        OutputCustody? custody, BuildAvailabilityResult expected)
+        => BuildAvailability.Classify(request, producer, custody).ShouldBe(expected, label);
+
+    [Test]
     public async Task rows_wait_for_the_build_source_receipt_before_readiness()
     {
         var root = TempDir();
