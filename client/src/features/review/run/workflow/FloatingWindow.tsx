@@ -59,7 +59,7 @@ export function FloatingWindow({
         display: 'flex',
         flexDirection: 'column',
         transform: `translate(${offset.x}px, ${offset.y}px)`,
-        background: 'var(--mantine-color-dark-7)',
+        background: 'var(--mantine-color-body)',
       }}
     >
       <Group
@@ -70,7 +70,7 @@ export function FloatingWindow({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        style={{ cursor: 'grab', userSelect: 'none', touchAction: 'none', borderBottom: '1px solid var(--mantine-color-dark-4)' }}
+        style={{ cursor: 'grab', userSelect: 'none', touchAction: 'none', borderBottom: '1px solid var(--mantine-color-default-border)' }}
       >
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
           <TbGripHorizontal size={14} style={{ opacity: 0.5, flexShrink: 0 }} />

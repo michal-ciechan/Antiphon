@@ -7,6 +7,7 @@ import { ModelBadge } from '../../components/ReviewBadges'
 import { NODE_KIND_META, NODE_STATUS_META, tolerant } from '../../reviewMeta'
 import { fmtDuration, fmtTokens } from '../../reviewFormat'
 import { splitExecutionOutput } from './executionOutput'
+import classes from './NodeSidePanel.module.css'
 
 const WRAP_OUTPUT = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' } as const
 
@@ -18,7 +19,7 @@ function paramText(v: unknown): string {
 function ExecRow({ e, current, now, showItem, showOutcome }: { e: NodeExecutionDto; current: boolean; now: number; showItem: boolean; showOutcome: boolean }) {
   const meta = NODE_STATUS_META[e.status]
   return (
-    <Table.Tr bg={current ? 'dark.6' : undefined}>
+    <Table.Tr bg={current ? 'var(--mantine-color-default-hover)' : undefined}>
       <Table.Td>
         <Text size="xs" ff="monospace">
           it{e.iteration}
@@ -67,7 +68,11 @@ function ExecutionOutput({ execution, current }: { execution: NodeExecutionDto; 
   if (!hasBody && warnings.length === 0) return null
 
   return (
-    <Paper withBorder p="xs" bg="dark.7" style={{ overflowWrap: 'anywhere' }}>
+    <Paper withBorder p="xs" style={{
+      background: 'var(--mantine-color-default)',
+      color: 'var(--mantine-color-text)',
+      overflowWrap: 'anywhere',
+    }}>
       <Text size="xs" fw={600} c={current ? undefined : 'dimmed'} mb={4}>
         it{execution.iteration}{execution.itemKey ? ` · ${execution.itemKey}` : ''}
       </Text>
@@ -77,7 +82,7 @@ function ExecutionOutput({ execution, current }: { execution: NodeExecutionDto; 
         </Text>
       )}
       {warnings.length > 0 && (
-        <Box mt={hasBody ? 'xs' : 0} c="warning.3">
+        <Box mt={hasBody ? 'xs' : 0} className={classes.warnings}>
           <Group gap={4} mb={2}>
             <TbAlertTriangle size={14} aria-hidden="true" />
             <Text size="xs" fw={700}>Warnings</Text>
@@ -177,8 +182,13 @@ export function NodeSidePanel({
               role="region"
               aria-label="Execution history"
               tabIndex={0}
-              className="mantine-focus-auto"
-              style={{ overflowX: 'auto', maxWidth: '100%', maxHeight: 420 }}
+              className={classes.executionHistory}
+              style={{
+                '--execution-history-focus-color': 'var(--mantine-color-text)',
+                overflowX: 'auto',
+                maxWidth: '100%',
+                maxHeight: 420,
+              }}
             >
               <Table fz="xs" verticalSpacing={3} w="max-content" miw="100%" style={{ whiteSpace: 'nowrap' }}>
                 <Table.Thead>

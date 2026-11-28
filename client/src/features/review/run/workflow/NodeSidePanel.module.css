@@ -1,0 +1,8 @@
+.executionHistory:focus-visible {
+  outline: 2px solid var(--execution-history-focus-color);
+  outline-offset: -2px;
+}
+
+.warnings {
+  color: light-dark(var(--mantine-color-warning-8), var(--mantine-color-warning-3));
+}
