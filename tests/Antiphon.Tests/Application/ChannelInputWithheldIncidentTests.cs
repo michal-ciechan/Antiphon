@@ -349,8 +349,37 @@ public sealed partial class ChannelInputWithheldIncidentTests
         : FakeTimeProvider(new DateTimeOffset(2026, 11, 5, 12, 0, 0, TimeSpan.Zero))
     {
         public TimeSpan UtcAdjustment { get; set; }
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
         public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + UtcAdjustment;
         public override long GetTimestamp() => base.GetUtcNow().Ticks;
+    }
+
+    [Test]
+    [Timeout(120_000)]
+    public async Task TruncatedOwningPromptParksBeforeTheNextChannelDelivery(CancellationToken ct)
+    {
+        await using var schema = await TestDbFixture.CreateIsolatedSchemaAsync();
+        await using var h = await OpenProducerAsync(schema.ConnectionString, new OutageQueueClock());
+        await h.InsertStoreVisibleTurnAsync("fixture prompt", "fixture idle");
+        var chat = await h.BindChannelAsync();
+        using var bridge = Bridge(h);
+        h.Adapter.OnSubmitted = submitted => h.InsertStoreVisibleTurnAsync(submitted[..^8], "fixture clipped turn");
+        await bridge.HandleInboundAsync(Message(chat, "fixture-truncated", "fixture original complete body"), ct);
+
+        await using var db = Db(schema.ConnectionString);
+        var parked = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.AgentSessionId == h.SessionId, ct);
+        parked.Status.ShouldBe(QueuedMessageStatus.Pending);
+        parked.DeliveryVerdict.ShouldBe(DeliveryVerdict.Truncated);
+
+        h.Adapter.OnSubmitted = submitted => h.InsertStoreVisibleTurnAsync(submitted, "fixture later answer");
+        await bridge.HandleInboundAsync(Message(chat, "fixture-later", "fixture next complete body"), ct);
+
+        var later = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(
+            m => m.AgentSessionId == h.SessionId && m.Id != parked.Id, ct);
+        later.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+        (await db.TranscriptEntries.CountAsync(t => t.AgentSessionId == h.SessionId
+            && t.Kind == TranscriptKinds.UserPrompt && t.Text == later.Body, ct)).ShouldBe(1);
+        h.Adapter.SubmittedBodies.ShouldBe([parked.Body, later.Body]);
     }
 
     [Test]

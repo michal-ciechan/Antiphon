@@ -3683,16 +3683,22 @@ public sealed partial class SessionMessageQueueService
         }
         else return TranscriptConfirm.None;
 
+        var incomplete = TranscriptConfirm.None;
         foreach (var prompt in await prompts.OrderBy(t => t.Sequence).ToListAsync(ct))
         {
-            if ((wire is not null && !PromptSubmissionMatch.IsCompleteIn(wire, prompt.Text ?? ""))
-                || !attempt.All(row => ChannelPromptCorrelation.Matches(row, prompt, tolerance, out _)))
-                continue;
-            var owners = await ChannelPromptCorrelation.MatchChannelRowsAsync(db, prompt, tolerance, _logger, message.Id, ct);
-            if (attempt.All(member => owners.Any(row => row.Id == member.Id)))
-                return new TranscriptConfirm(true, true, prompt.Text);
+            if ((wire is null || PromptSubmissionMatch.IsCompleteIn(wire, prompt.Text ?? ""))
+                && attempt.All(row => ChannelPromptCorrelation.Matches(row, prompt, tolerance, out _)))
+            {
+                var owners = await ChannelPromptCorrelation.MatchChannelRowsAsync(
+                    db, prompt, tolerance, _logger, message.Id, ct);
+                if (attempt.All(member => owners.Any(row => row.Id == member.Id)))
+                    return new TranscriptConfirm(true, true, prompt.Text);
+            }
+            else if (!incomplete.Identity
+                && ChannelPromptCorrelation.MatchesTruncatedPrefix(message, prompt, wire ?? message.Body, tolerance))
+                incomplete = new TranscriptConfirm(true, false, prompt.Text);
         }
-        return TranscriptConfirm.None;
+        return incomplete;
     }
 
     private async Task<TranscriptConfirm> FindLiveChannelReceiptAsync(

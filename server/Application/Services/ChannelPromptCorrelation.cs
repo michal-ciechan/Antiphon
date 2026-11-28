@@ -38,11 +38,14 @@ internal static class ChannelPromptCorrelation
     /// machine-note route; a marker quoted later in a task/Check report is just report content.
     /// </summary>
     public static bool HasMarkedTransportFrame(string body)
+        => TransportOpening(body).StartsWith(Prefix, StringComparison.Ordinal);
+
+    private static string TransportOpening(string body)
     {
         var opening = body.TrimStart();
         if (opening.StartsWith(ChannelPromptFormat.BatchContextMarker, StringComparison.Ordinal))
             opening = opening[ChannelPromptFormat.BatchContextMarker.Length..].TrimStart();
-        return opening.StartsWith(Prefix, StringComparison.Ordinal);
+        return opening;
     }
 
     private static bool ContainsMarker(string body)
@@ -128,6 +131,21 @@ internal static class ChannelPromptCorrelation
         }
         reason = "matched";
         return true;
+    }
+
+    public static bool MatchesTruncatedPrefix(
+        SessionQueuedMessage row, TranscriptEntry prompt, string wire, TimeSpan tolerance)
+    {
+        if (OpeningMarker(TransportOpening(wire)) is not { } marker
+            || !HasEligibleAttempt(row, prompt, tolerance, allowLegacySentAt: false, out _)
+            || OpeningMarker(TransportOpening(prompt.Text!)) != marker)
+            return false;
+
+        // A complete opening identity plus an exact prefix proves the same wire was clipped.
+        // A quote in a different outer frame cannot park the channel attempt.
+        var actual = PromptSubmissionMatch.Normalize(prompt.Text!);
+        var expected = PromptSubmissionMatch.Normalize(wire);
+        return actual.Length < expected.Length && expected.StartsWith(actual, StringComparison.Ordinal);
     }
 
     /// <summary>
