@@ -180,7 +180,7 @@ public sealed partial class AttentionService
                 AttentionKind.SessionStopStuck, prepared ? AlertSeverity.Warning : AlertSeverity.Error, null, id, null, null,
                 $"Session {id:N} on {runner}", prepared ? "Verified stop is prepared and awaiting command"
                     : "Verified stop is awaiting same-generation exit",
-                $"Runner {runner}, session {id:D}, generation {generation:O}. Warm reuse is held.",
+                $"Runner {runner}, session {id:D}, generation {generation:O}. Warm reuse and input are held.",
                 audit.CreatedAt, null, [AttentionAction.OpenDrawer],
                 ConditionKey: $"verified-stop:{id:N}:{generation.Ticks}"));
         }

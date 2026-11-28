@@ -163,7 +163,9 @@ public sealed class SessionReconciliationService
                 .AsNoTracking().SingleOrDefaultAsync(ct);
             var audit = await SessionStopAudit.Pending(_db, id, generation)
                 .SingleOrDefaultAsync(a => a.Id == candidate.Id, ct);
-            if (audit is null || !SessionStopAudit.IsPrepared(audit)) continue;
+            if (audit is null) continue;
+            await _db.Entry(audit).ReloadAsync(ct);
+            if (!SessionStopAudit.IsPrepared(audit)) continue;
             SessionStopAudit.SetOutcome(audit, SessionStopAudit.PreparationExpired);
             await _db.SaveChangesAsync(ct);
             if (transaction is not null)

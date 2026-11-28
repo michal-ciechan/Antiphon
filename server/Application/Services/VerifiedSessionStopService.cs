@@ -45,7 +45,8 @@ public sealed class VerifiedSessionStopService(
         var source = await (from session in db.AgentSessions.AsNoTracking()
             join agent in KeepSixService.StandingOrchestrators(db) on session.StandingAgentId equals (Guid?)agent.Id
             where session.DelegationTokenHash == hash && session.Status == SessionStatus.Running
-                && session.CardId == null && agent.Status == AgentStatus.Running
+                && session.CardId == null && session.WorktreeId == null && session.EndedAt == null
+                && agent.Status == AgentStatus.Running
                 && agent.PersistentSessionId != null && agent.PersistentSessionId.ToLower() == session.Id.ToString()
             select new { session.Id, session.Cwd, agent.BoardId, ProjectId = (Guid?)agent.Board!.ProjectId })
             .SingleOrDefaultAsync(ct) ?? throw PrincipalDenied();

@@ -53,6 +53,7 @@ public sealed class VerifiedSessionStopTests
     [Arguments("revoked-capability")]
     [Arguments("card-session")]
     [Arguments("stale-orchestrator")]
+    [Arguments("ended-orchestrator")]
     [Arguments("orchestrator-task-token")]
     public Task Stop_refuses_credentials_without_a_live_standing_binding(string scenario) => RunStopAsync(scenario);
 
@@ -553,7 +554,8 @@ public sealed class VerifiedSessionStopTests
         {
             await db.Entry(session).ReloadAsync();
             if (scenario is "invalid-token" or "no-token" or "worker-token" or "other-workspace" or "legacy-no-operator"
-                or "general-capability" or "revoked-capability" or "card-session" or "stale-orchestrator" or "orchestrator-task-token")
+                or "general-capability" or "revoked-capability" or "card-session" or "stale-orchestrator"
+                or "ended-orchestrator" or "orchestrator-task-token")
             {
                 response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
                 runner.KillGenerationCalls.ShouldBeEmpty();
@@ -605,8 +607,9 @@ public sealed class VerifiedSessionStopTests
     {
         var id = harness.SessionId;
         harness.Runtime.Register(id, harness.Adapter);
-        await Should.ThrowAsync<ConflictException>(() =>
+        var refused = await Should.ThrowAsync<ConflictException>(() =>
             harness.Queue.EnqueueAsync(id, "Immediate input is held", MessageSendMode.Now, ct));
+        refused.Message.ShouldBe("Session input is waiting for stop or transcript evidence.");
         string[] bodies = ["First held input", "Second held input"];
         foreach (var body in bodies)
             await harness.Queue.EnqueueAsync(id, body, MessageSendMode.WhenIdle, ct);
@@ -667,6 +670,11 @@ public sealed class VerifiedSessionStopTests
             Cwd = scenario == "other-workspace" ? Path.Combine(target.Cwd, "other") : target.Cwd,
             CreatedAt = now, StartedAt = now, LastSeenAt = now,
         };
+        if (scenario == "ended-orchestrator")
+        {
+            source.Status = SessionStatus.Stopped;
+            source.EndedAt = now;
+        }
         db.AgentSessions.Add(source);
         if (scenario == "card-session")
         {

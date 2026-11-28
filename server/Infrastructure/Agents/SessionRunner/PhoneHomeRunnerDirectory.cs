@@ -44,8 +44,8 @@ public sealed class PhoneHomeRunnerDirectory : ISessionRunnerDirectory, IRunnerE
         // CARD-0604 G-21: absent, a remote spill is typed whole rather than written anywhere.
         Antiphon.Server.Application.Services.RemoteSpillCourier? spills = null,
         ILogger<PhoneHomeRunnerDirectory>? inventoryLogger = null,
-        IRunnerEligibilityObserver? observer = null,
-        SessionInputAdmission? inputAdmission = null)
+        SessionInputAdmission? inputAdmission = null,
+        IRunnerEligibilityObserver? observer = null)
     {
         _observer = observer;
         _inputAdmission = inputAdmission;
