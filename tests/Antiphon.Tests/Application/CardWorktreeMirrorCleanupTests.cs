@@ -7,6 +7,7 @@ using Antiphon.SessionRunner.Contracts;
 using Antiphon.SessionRunner;
 using Antiphon.Tests.TestHelpers;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -17,6 +18,74 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<ProcessSpawnLimit>]
 public sealed partial class CardWorktreeMirrorCleanupTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task CardDoneTakesCardRowBeforeWorkspaceAdmission(bool mirror)
+    {
+        if (mirror)
+        {
+            await using var fixture = await CompletedCardMirrorFixture.CreateAsync();
+            await fixture.DiscoverAsync();
+            await AssertCardDoneRowFirstAsync(fixture.Card, async ct => (await fixture.TryAsync(ct)).Complete);
+        }
+        else
+        {
+            await using var fixture = await CompletedCardCleanupFixture.CreateAsync();
+            await fixture.DiscoverAsync();
+            await AssertCardDoneRowFirstAsync(fixture, async _ => (await fixture.CleanupAsync()).IsClean);
+        }
+    }
+
+    private static async Task AssertCardDoneRowFirstAsync(
+        CompletedCardCleanupFixture fixture, Func<CancellationToken, Task<bool>> cleanup)
+    {
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var ct = budget.Token;
+        await using var owner = new NpgsqlConnection(fixture.Host.Schema.ConnectionString);
+        await owner.OpenAsync(ct);
+        await using var transaction = await owner.BeginTransactionAsync(ct);
+        await using var row = new NpgsqlCommand("""SELECT "Id" FROM "Cards" WHERE "Id" = @card FOR NO KEY UPDATE""",
+            owner, transaction);
+        row.Parameters.AddWithValue("card", fixture.CardId);
+        (await row.ExecuteScalarAsync(ct)).ShouldBe(fixture.CardId);
+
+        var cleaning = cleanup(ct);
+        bool admissionAvailable;
+        try
+        {
+            await using var waiting = new NpgsqlCommand("""
+                SELECT EXISTS (
+                    SELECT FROM pg_locks
+                    WHERE NOT granted AND locktype = 'transactionid'
+                      AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
+                )
+                """, owner, transaction);
+            while (await waiting.ExecuteScalarAsync(ct) is not true)
+            {
+                if (cleaning.IsCompleted)
+                {
+                    await cleaning;
+                    throw new InvalidOperationException("CardDone returned without waiting on the held card row.");
+                }
+                await Task.Delay(50, ct);
+            }
+
+            // The other backend is now waiting on our row. Under the old order it also holds
+            // admission, so a Create-style admission here would close a two-backend lock cycle.
+            await using var admission = new NpgsqlCommand(
+                "SELECT pg_try_advisory_xact_lock(1017, 459)", owner, transaction);
+            admissionAvailable = (await admission.ExecuteScalarAsync(ct)) is true;
+        }
+        finally
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            (await cleaning).ShouldBeTrue("cleanup must complete after the card writer releases its locks");
+        }
+
+        admissionAvailable.ShouldBeTrue("the blocked CardDone backend must leave admission available to the card writer");
+    }
+
     // case: independently bound mirror H behind published P; mutation: use P as expected mirror HEAD;
     // red: physical directory/registration removal and imported receipt's H fail.
     [Test] public async Task C1017_MirrorBehindPushedTip()

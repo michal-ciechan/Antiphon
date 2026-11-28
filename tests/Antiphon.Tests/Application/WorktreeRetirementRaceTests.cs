@@ -112,6 +112,131 @@ public sealed class WorktreeRetirementRaceTests
     }
 
     [Test]
+    public async Task ContendedCreateAndReplyReachTheRecipientDespiteAnEnqueueFailure()
+    {
+        const string goal = "Produce the admission contention report";
+        const string answer = "Use the second option.\nKeep the complete reply.";
+        var fault = new ReplyQueueInsertFault(answer);
+        await using var world = await RaceWorld.CreateAsync(interceptor: fault);
+        world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
+        world.Adapter.OnSubmitted = body => AppendAsync(world.Adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, body);
+        var request = new CreateAgentTaskRequest(Goal: goal, Workspace: WorkspaceMode.ReadOnly,
+            WorkingDirectory: world.Path);
+        var ct = CancellationToken.None;
+
+        async Task<AgentTaskCreatedDto> CreateAsync()
+        {
+            await using var scope = world.Provider.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<AgentTaskService>()
+                .CreateAsync(request, world.ManualCaller(), ct);
+        }
+
+        async Task AppendAsync(Guid sessionId, string kind, string? text)
+        {
+            await using var db = world.CreateDb();
+            var sequence = await db.TranscriptEntries.Where(e => e.AgentSessionId == sessionId)
+                .MaxAsync(e => (long?)e.Sequence, ct) ?? 0;
+            var now = DateTime.UtcNow;
+            db.TranscriptEntries.Add(new TranscriptEntry
+            {
+                Id = Guid.NewGuid(), AgentSessionId = sessionId, Sequence = sequence + 1,
+                Kind = kind, Text = text, CreatedAt = now, Timestamp = now,
+                StopReason = kind == TranscriptKinds.TurnEnd ? TranscriptKinds.StopReasons.EndTurn : null,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        await using var holder = new NpgsqlConnection(world.Schema.ConnectionString);
+        await holder.OpenAsync(ct);
+        await using (var busy = await HoldAdmissionAsync(holder))
+        {
+            (await Should.ThrowAsync<ServiceUnavailableException>(CreateAsync)).Code.ShouldBe("workspace_admission_busy");
+            await using var db = world.CreateDb();
+            (await db.AgentTasks.AnyAsync(t => t.Goal == goal, ct)).ShouldBeFalse();
+        }
+
+        var created = await CreateAsync();
+        (await world.Dispatcher.TickAsync(ct)).Dispatched.ShouldBe(1);
+        await world.LaunchQueue.WaitForIdleAsync(LoadTimeoutBounds.LaunchQueueIdleWait, ct);
+        var queue = world.Provider.GetRequiredService<SessionMessageQueueService>();
+        Guid recipient;
+        await using (var db = world.CreateDb())
+            recipient = (await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct)).AgentSessionId!.Value;
+        await queue.FlushSessionAsync(recipient, ct);
+        await using (var db = world.CreateDb())
+        {
+            var brief = await db.SessionQueuedMessages.SingleAsync(m => m.AgentSessionId == recipient && m.Body.Contains(goal), ct);
+            brief.Status.ShouldBe(QueuedMessageStatus.Sent);
+            var prompt = await db.TranscriptEntries.SingleAsync(t => t.AgentSessionId == recipient
+                && t.Kind == TranscriptKinds.UserPrompt && t.Text!.Contains(goal), ct);
+            PromptSubmissionMatch.IsCompleteIn(brief.Body, prompt.Text).ShouldBeTrue();
+        }
+
+        await AppendAsync(recipient, TranscriptKinds.AssistantText, "Which option should I use?\n\n"
+            + DelegationReportFormatter.ReportToken(DelegationReportFormatter.Short(created.Id), "blocked"));
+        await AppendAsync(recipient, TranscriptKinds.TurnEnd, null);
+        await world.Replies.OnTurnEndAsync(recipient, ct);
+        await AssertBlockedAndUnqueuedAsync();
+
+        await using (var busy = await HoldAdmissionAsync(holder))
+        {
+            (await Should.ThrowAsync<ServiceUnavailableException>(() => world.Replies.AnswerAsync(created.Id, answer, ct)))
+                .Code.ShouldBe("workspace_admission_busy");
+            await AssertBlockedAndUnqueuedAsync();
+        }
+
+        fault.Armed = true;
+        (await Should.ThrowAsync<InvalidOperationException>(() => world.Replies.AnswerAsync(created.Id, answer, ct)))
+            .Message.ShouldBe(ReplyQueueInsertFault.Message);
+        fault.Armed.ShouldBeFalse("the real queue insert was interrupted");
+        await AssertBlockedAndUnqueuedAsync();
+
+        await world.Replies.AnswerAsync(created.Id, answer, ct);
+        await using (var db = world.CreateDb())
+        {
+            var replied = await db.AgentTaskEvents.SingleAsync(e => e.AgentTaskId == created.Id
+                && e.Type == AgentTaskEventType.Replied, ct);
+            replied.AgentSessionId.ShouldBe(recipient);
+            var row = await db.SessionQueuedMessages.SingleAsync(m =>
+                m.ConversationKey == AgentTaskInputService.ConversationKey(created.Id, replied.Id), ct);
+            row.AgentSessionId.ShouldBe(recipient);
+            row.Status.ShouldBe(QueuedMessageStatus.Sent);
+            row.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
+            var transcript = await db.TranscriptEntries.SingleAsync(t =>
+                t.Kind == TranscriptKinds.UserPrompt && t.Text!.Contains(answer), ct);
+            transcript.AgentSessionId.ShouldBe(recipient);
+            PromptSubmissionMatch.IsCompleteIn(replied.InputBody!, transcript.Text).ShouldBeTrue();
+        }
+
+        async Task AssertBlockedAndUnqueuedAsync()
+        {
+            await using var db = world.CreateDb();
+            var task = await db.AgentTasks.AsNoTracking().SingleAsync(t => t.Id == created.Id, ct);
+            task.Status.ShouldBe(AgentTaskStatus.Blocked);
+            (await db.AgentTaskEvents.AnyAsync(e => e.AgentTaskId == created.Id && e.Type == AgentTaskEventType.Replied, ct)).ShouldBeFalse();
+            (await db.SessionQueuedMessages.AnyAsync(m => m.AgentSessionId == recipient && m.Body.Contains(answer), ct)).ShouldBeFalse();
+        }
+    }
+
+    private sealed class ReplyQueueInsertFault(string reply) : SaveChangesInterceptor
+    {
+        public const string Message = "fixture lost the reply queue insert";
+        public bool Armed { get; set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData,
+            InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (Armed && eventData.Context!.ChangeTracker.Entries<SessionQueuedMessage>()
+                .Any(e => e.State == EntityState.Added && e.Entity.Body.Contains(reply, StringComparison.Ordinal)))
+            {
+                Armed = false;
+                throw new InvalidOperationException(Message);
+            }
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    [Test]
     public void C694_DeleteDirectory_RemovesReadOnlyFile()
     {
         var root = Directory.CreateTempSubdirectory("c694-cleanup-").FullName;

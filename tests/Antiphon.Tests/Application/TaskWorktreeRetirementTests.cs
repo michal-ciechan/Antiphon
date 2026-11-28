@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Antiphon.Server.Application.Dtos;
 using Antiphon.Server.Application.Exceptions;
+using Antiphon.Server.Application.Interfaces;
 using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Antiphon.Server.Domain.Entities;
@@ -12,6 +13,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using Shouldly;
 using TUnit.Core;
 
@@ -21,6 +23,95 @@ namespace Antiphon.Tests.Application;
 [ParallelLimiter<GitProcessSpawnLimit>]
 public sealed class TaskWorktreeRetirementTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task ResidueSweepRetriesBusyAdmissionBeforeClaimOrAfterDurableRemoval(bool afterRemoval)
+    {
+        var busy = new RetirementAdmissionCut(afterRemoval);
+        await using var harness = await SettledRemovalHarness.CreateAsync(namedLeaf: true, configure: services =>
+        {
+            services.AddSingleton(Options.Create(new WorktreeResidueSettings { Execute = true }));
+            services.AddScoped<WorktreeResidueSweepService>();
+            services.AddScoped<IRetirementCommandJournal>(busy.Wrap);
+        });
+        var ct = CancellationToken.None;
+        Guid releaseId;
+        await using (var scope = harness.Host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var task = await db.AgentTasks.SingleAsync(t => t.Id == harness.Host.Fixture.TaskId, ct);
+            task.Status = AgentTaskStatus.Succeeded;
+            task.Role = AgentTaskRole.Code;
+            await db.SaveChangesAsync(ct);
+            var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(task.Result!)));
+            var service = scope.ServiceProvider.GetRequiredService<TaskWorktreeRetirementService>();
+            releaseId = (await service.ReleaseAsync(task.Id, new(task.ConcurrencyToken, harness.SourceSha, digest,
+                true, "reviewed no further use"), new(null, null, ""), ct)).Id;
+        }
+
+        await using (var holder = new NpgsqlConnection(harness.Host.Schema.ConnectionString))
+        {
+            await holder.OpenAsync(ct);
+            await using var transaction = await holder.BeginTransactionAsync(ct);
+            busy.TakeLock = async token =>
+            {
+                await using var command = new NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
+                await command.ExecuteNonQueryAsync(token);
+            };
+            if (!afterRemoval)
+                await busy.TakeLock(ct);
+
+            await using var scope = harness.Host.Services.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<WorktreeResidueSweepService>().RunAsync(ct);
+            await using var db = harness.Host.CreateContext();
+            var run = await db.WorktreeResidueRuns.SingleAsync(ct);
+            run.Deferred.ShouldBe(1);
+            run.FinishedAt.ShouldNotBeNull();
+            var outcome = await db.WorktreeResidueRunCandidates.SingleAsync(c => c.RetirementId == releaseId, ct);
+            outcome.Outcome.ShouldBe("Deferred");
+            outcome.ReasonCode.ShouldBe("workspace_admission_busy");
+            var release = await db.TaskWorktreeRetirements.SingleAsync(r => r.Id == releaseId, ct);
+            release.State.ShouldBe(afterRemoval ? WorktreeRetirementState.CommandStarted : WorktreeRetirementState.Released);
+            Directory.Exists(harness.NamedWorktree).ShouldBe(!afterRemoval);
+            busy.ComponentWrites.ShouldBe(afterRemoval ? 3 : 0);
+        }
+
+        busy.TakeLock = null;
+        await using (var scope = harness.Host.Services.CreateAsyncScope())
+            await scope.ServiceProvider.GetRequiredService<WorktreeResidueSweepService>().RunAsync(ct);
+        await using var fresh = harness.Host.CreateContext();
+        var completed = await fresh.TaskWorktreeRetirements.SingleAsync(r => r.Id == releaseId, ct);
+        completed.State.ShouldBe(WorktreeRetirementState.Complete, completed.LastReason);
+        Directory.Exists(harness.NamedWorktree).ShouldBeFalse();
+        busy.ComponentWrites.ShouldBe(3, "replaying a durable removal only finalizes it");
+    }
+
+    private sealed class RetirementAdmissionCut(bool afterRemoval)
+    {
+        public Func<CancellationToken, Task>? TakeLock { get; set; }
+        public int ComponentWrites { get; private set; }
+
+        public IRetirementCommandJournal Wrap(IServiceProvider services) =>
+            new Journal(this, afterRemoval, new RetirementCommandJournal(services.GetRequiredService<IServiceScopeFactory>(),
+                services.GetRequiredService<TimeProvider>()));
+
+        private sealed class Journal(RetirementAdmissionCut cut, bool afterRemoval, IRetirementCommandJournal inner) : IRetirementCommandJournal
+        {
+            public Task<bool> TryCommitIntentAsync(Guid attemptId, Guid commandId, CancellationToken ct) =>
+                inner.TryCommitIntentAsync(attemptId, commandId, ct);
+
+            public async Task RecordComponentAsync(Guid attemptId, bool? directory, bool? registration, bool? branch,
+                string? residue, CancellationToken ct)
+            {
+                await inner.RecordComponentAsync(attemptId, directory, registration, branch, residue, ct);
+                cut.ComponentWrites++;
+                if (afterRemoval && branch == true && cut.TakeLock is { } takeLock)
+                    await takeLock(ct);
+            }
+        }
+    }
+
 
     [Test]
     public async Task C1213_RetirementBothForms()

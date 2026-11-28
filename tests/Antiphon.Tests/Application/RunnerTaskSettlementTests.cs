@@ -624,6 +624,34 @@ public sealed class RunnerTaskSettlementTests
         world.Git.Git.Blocked.ShouldBe(1);
     }
 
+    [Test]
+    public async Task BusyAdmissionLeavesCompletedRunnerReportForTheSettlementSweep()
+    {
+        await using var world = await RunnerSettlementWorld.CreateAsync(fenced: true);
+        var tip = await world.Git.RunnerPushAsync("work.txt", "recover this report");
+        var report = RunnerSettlementWorld.Report("Implemented and pushed the repair.");
+
+        await using (var holder = new Npgsql.NpgsqlConnection(world.Schema.ConnectionString))
+        {
+            await holder.OpenAsync();
+            await using var transaction = await holder.BeginTransactionAsync();
+            await using var command = new Npgsql.NpgsqlCommand("SELECT pg_advisory_xact_lock(1017, 459)", holder, transaction);
+            await command.ExecuteNonQueryAsync();
+            await world.SettleAsync(report);
+
+            world.Task.Status.ShouldBe(AgentTaskStatus.Working, Why(world));
+            world.Task.CompletedAt.ShouldBeNull();
+            await AssertNoDebtAsync(world);
+            (await world.Git.HeadAsync()).ShouldBe(world.Git.Baseline);
+        }
+
+        (await world.SweepDeferredReportsAsync()).ShouldBe(1);
+        world.Task.Status.ShouldBe(AgentTaskStatus.Succeeded, Why(world));
+        world.Task.Result!.ShouldContain("Implemented and pushed the repair.");
+        world.Evidence()!.RemoteSync!.ConfirmedSha.ShouldBe(tip);
+        (await world.Git.HeadAsync()).ShouldBe(tip);
+    }
+
     /// <summary>
     /// CARD-1802 D-8. The genuine-unknown arm under Pending: the pushed objects are local, so the
     /// observation needs no lease, the acquire step spends the budget (SourceDescends true), and
