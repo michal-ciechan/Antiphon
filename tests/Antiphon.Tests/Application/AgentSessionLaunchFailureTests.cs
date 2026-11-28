@@ -2090,9 +2090,12 @@ public class AgentSessionLaunchFailureTests
         (await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == inboundId))
             .ChannelReplySettledAt.ShouldBeNull();
 
-        await LaunchAsync(recovered, CancellationToken.None);
+        await recovered.Runtime.DisposeSessionAsync(sessionId);
         await LaunchAsync(recovered, CancellationToken.None);
         resumed.Started.ShouldBeTrue();
+        await recovered.Runtime.DisposeSessionAsync(sessionId);
+        await LaunchAsync(recovered, CancellationToken.None);
+        duplicate.Started.ShouldBeTrue();
         var settings = recovered.Provider.GetRequiredService<IOptions<AgentSessionSettings>>().Value;
         var continuations = await db.SessionQueuedMessages.AsNoTracking().Where(m => m.AgentSessionId == sessionId
             && m.Origin == QueuedMessageOrigin.System && m.Body == settings.ResumeContinuePrompt).ToListAsync();
@@ -2106,12 +2109,13 @@ public class AgentSessionLaunchFailureTests
         resumed.SubmittedBodies.ShouldBeEmpty();
         duplicate.SubmittedBodies.ShouldBeEmpty();
 
-        resumed.AdoptedHistoryVerified = true;
         duplicate.AdoptedHistoryVerified = true;
         await recovered.Queue.FlushSessionAsync(sessionId, CancellationToken.None);
         await recovered.Queue.FlushSessionAsync(sessionId, CancellationToken.None);
 
-        resumed.SubmittedBodies.Concat(duplicate.SubmittedBodies).ShouldBe([continued.Body]);
+        resumed.SubmittedBodies.ShouldBeEmpty();
+        duplicate.StartedSessionId.ShouldBe(sessionId);
+        duplicate.SubmittedBodies.ShouldBe([continued.Body]);
         recovered.Adapter.Inputs.ShouldBeEmpty();
         var delivered = await db.SessionQueuedMessages.AsNoTracking().SingleAsync(m => m.Id == continued.Id);
         delivered.DeliveryVerdict.ShouldBe(DeliveryVerdict.Delivered);
