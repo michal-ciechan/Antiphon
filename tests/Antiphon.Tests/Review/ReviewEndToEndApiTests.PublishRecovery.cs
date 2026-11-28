@@ -70,6 +70,7 @@ public partial class ReviewEndToEndApiTests
         output.SummaryOnly.ShouldBe(["F1"]);
         var receipt = Receipt(fixture.Pr, output);
         receipt.Posted.ReviewId.ShouldBe(output.ReviewId);
+        receipt.Target.Repo.ShouldBe("acme/widgets");
         receipt.Target.PrNumber.ShouldBe(21115);
         receipt.Review.CommitSha.ShouldBe(recovered.Iterations.ShouldHaveSingleItem().HeadSha);
         receipt.Review.Body.ShouldStartWith("Verified findings\n");

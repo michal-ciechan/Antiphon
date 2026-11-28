@@ -286,7 +286,7 @@ public partial class ReviewEndToEndApiTests
             ["inputs"] = new[] { "collate", "verify" },
             ["summaryTemplate"] = "A template stored before validation\n\n~~~md\n{{findings}}\n~~~",
         });
-        var candidate = PublishCandidate("A", "Visible summary-only finding", 55) with { InDiff = false };
+        var candidate = PublishCandidate("A", "Visible summary finding", 55) with { InDiff = false };
         var fixture = await PostFixtureAsync(21114, graph, [candidate]);
         var review = Receipt(fixture.Pr, fixture.Output).Review;
         review.Body.ShouldStartWith("**Antiphon review**, round 1 (iteration 1)\n");
