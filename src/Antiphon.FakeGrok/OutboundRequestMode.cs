@@ -13,7 +13,7 @@ internal static class OutboundRequestMode
     private static readonly Regex BriefPath = new(
         @"Read it in full before you do anything else: '(?<path>[^']+)'", RegexOptions.Compiled);
 
-    public static bool TryRun(string prompt, out string result, out bool succeeded)
+    public static bool TryRun(string prompt, Action recordPrompt, out string result, out bool succeeded)
     {
         result = string.Empty;
         succeeded = false;
@@ -33,6 +33,7 @@ internal static class OutboundRequestMode
         }
         if (!match.Success)
             return false;
+        recordPrompt();
         try
         {
             var requestPath = Path.GetFullPath(match.Groups["path"].Value.Trim());

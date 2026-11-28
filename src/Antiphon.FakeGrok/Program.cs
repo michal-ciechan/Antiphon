@@ -821,12 +821,13 @@ internal static class Program
             return;
         }
 
-        if (OutboundRequestMode.TryRun(text, out var toolResult, out var toolSucceeded))
+        if (OutboundRequestMode.TryRun(text, () => AppendUserChunkOnly(sessionDir, sessionId, text),
+                out var toolResult, out var toolSucceeded))
         {
             write(toolResult + "\r\nWorked for 1.7s\r\n");
             write(IdleTitle);
-            AppendSessionFiles(sessionDir, sessionId, text, WithReportLine(text, toolResult,
-                toolSucceeded ? "done" : "failed"));
+            AppendAssistantCompletion(sessionDir, sessionId,
+                WithReportLine(text, toolResult, toolSucceeded ? "done" : "failed"), correlatePrompt: true);
             return;
         }
 
@@ -1064,10 +1065,11 @@ internal static class Program
     }
 
     /// <summary>
-    /// Completes a report-hold turn. The user chunk was written when the prompt arrived;
+    /// Completes a turn whose user chunk was written when the prompt arrived;
     /// this appends only the assistant text and <c>turn_completed</c>.
     /// </summary>
-    private static void AppendAssistantCompletion(string sessionDir, string sessionId, string assistant)
+    private static void AppendAssistantCompletion(string sessionDir, string sessionId, string assistant,
+        bool correlatePrompt = false)
     {
         try
         {
@@ -1088,7 +1090,9 @@ internal static class Program
                         sessionUpdate = "agent_message_chunk",
                         content = new { type = "text", text = assistant }
                     },
-                    _meta = Meta()
+                    _meta = correlatePrompt
+                        ? new { eventId = $"{sessionId}-{++_eventCounter}", agentTimestampMs = nowMs, promptId }
+                        : Meta()
                 }
             }));
             AppendShared(updates, JsonSerializer.Serialize(new

@@ -375,6 +375,8 @@ public sealed partial class ChannelOutboundIsolatedTests
                 "the frozen reply must not reach Kafka before tool output exists");
             fakeSlack.SentMessages.ShouldBeEmpty();
             fakeSlack.UploadedFiles.ShouldBeEmpty();
+            // The converter stays at the tool gate while the old host finishes its launch receipt poll.
+            await app.Services.GetRequiredService<ILaunchDrain>().WaitForIdleAsync(TimeSpan.FromSeconds(45), ct);
             var runnerUrl = app.OwnedRunnerUrl;
             await app.RestartOwnedHostAsync();
             app.OwnedRunnerUrl.ShouldBe(runnerUrl);
@@ -496,6 +498,7 @@ public sealed partial class ChannelOutboundIsolatedTests
         }
         finally
         {
+            await deadline.CancelAsync();
             if (initialized) await app.DisposeAsync();
             await gateway.StopAsync(CancellationToken.None);
         }
