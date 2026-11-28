@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Interfaces;
@@ -382,6 +383,141 @@ public class DecisionChainTests
 
     private const string Rejected400Prefix = "Provider 'primary' rejected the request (400): HTTP 400: ";
     private const string DiagnosticOmitted = "Provider diagnostic omitted.";
+
+    [Test]
+    [Arguments(1, 5)] // Provider deadline expires first.
+    [Arguments(5, 1)] // HttpClient deadline expires first.
+    public async Task A_stalled_400_remains_terminal_when_the_deadline_expires(int providerSeconds, int httpSeconds)
+    {
+        await using var response = new StalledSystemOneResponse(400, providerSeconds, httpSeconds);
+
+        var failure = await Should.ThrowAsync<DecisionChainException>(() =>
+            response.Chain.DecideAsync("test", Request, CancellationToken.None));
+
+        failure.Kind.ShouldBe(DecisionFailureKind.Rejected);
+        failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);
+        var call = failure.Calls.ShouldHaveSingleItem();
+        call.Provider.ShouldBe("primary");
+        call.Outcome.ShouldBe("rejected");
+        response.SecondaryRequests.ShouldBe(0);
+    }
+
+    [Test]
+    public async Task Caller_cancellation_during_a_400_body_read_propagates()
+    {
+        using var caller = new CancellationTokenSource();
+        using var body = new CancellationWitnessStream();
+        var settings = Settings(("primary", JevDialects.LiteLlmSystemOne, "https://primary.example"),
+            ("secondary", JevDialects.TypeSafeNative, "https://secondary.example"));
+        using var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StreamContent(body) });
+
+        var decision = Chain(handler, settings).DecideAsync("test", Request, caller.Token);
+        try
+        {
+            await body.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            await caller.CancelAsync();
+        }
+
+        await Should.ThrowAsync<OperationCanceledException>(() => decision);
+        handler.Requests.ShouldHaveSingleItem().Uri.ShouldBe("https://primary.example/v1/systemone");
+    }
+
+    [Test]
+    public async Task A_stalled_500_remains_unavailable_and_falls_back()
+    {
+        await using var response = new StalledSystemOneResponse(500, providerSeconds: 1, httpSeconds: 5);
+
+        var result = await response.Chain.DecideAsync("test", Request, CancellationToken.None);
+
+        result.Calls.Select(c => (c.Provider, c.Outcome)).ShouldBe([("primary", "unavailable"), ("secondary", "ok")]);
+        response.SecondaryRequests.ShouldBe(1);
+    }
+
+    private sealed class CancellationWitnessStream : MemoryStream
+    {
+        public TaskCompletionSource ReadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ReadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+    }
+
+    private sealed class StalledSystemOneResponse : IAsyncDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _stop = new();
+        private readonly LoopbackHandler _handler = new();
+        private readonly HttpClient _http;
+        private readonly Task _server;
+
+        public StalledSystemOneResponse(int status, int providerSeconds, int httpSeconds)
+        {
+            _listener.Start();
+            var settings = Settings(("primary", JevDialects.LiteLlmSystemOne, $"http://{_listener.LocalEndpoint}"),
+                ("secondary", JevDialects.TypeSafeNative, "https://secondary.example"));
+            settings.Value.Providers["primary"].TimeoutSeconds = providerSeconds;
+            _http = new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(httpSeconds) };
+            Chain = new DecisionChain([new JevSystemOneClient(_http, settings)], settings, TimeProvider.System,
+                NullLogger<DecisionChain>.Instance);
+            _server = ServeAsync(status, _stop.Token);
+        }
+
+        public DecisionChain Chain { get; }
+        public int SecondaryRequests => _handler.SecondaryRequests;
+
+        private async Task ServeAsync(int status, CancellationToken ct)
+        {
+            using var client = await _listener.AcceptTcpClientAsync(ct);
+            await using var stream = client.GetStream();
+            using var reader = new StreamReader(stream, leaveOpen: true);
+            while (await reader.ReadLineAsync(ct) is { Length: > 0 })
+            {
+                // Drain the request headers before sending the response.
+            }
+
+            var partialResponse = $"HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: 300\r\nConnection: close\r\n\r\n{{";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(partialResponse), ct);
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            try
+            {
+                await _server;
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                _listener.Stop();
+                _http.Dispose();
+                _stop.Dispose();
+            }
+        }
+
+        private sealed class LoopbackHandler() : DelegatingHandler(new SocketsHttpHandler { UseProxy = false })
+        {
+            public int SecondaryRequests { get; private set; }
+
+            protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            {
+                if (request.RequestUri!.IsLoopback)
+                    return base.SendAsync(request, cancellationToken);
+
+                SecondaryRequests++;
+                return Task.FromResult(Json(HttpStatusCode.OK, GoodAnswers));
+            }
+        }
+    }
 
     private static Task<DecisionChainException> RejectSystemOneRequestAsync(string body) =>
         RejectSystemOneRequestAsync(new StringContent(body, Encoding.UTF8, "application/json"));
