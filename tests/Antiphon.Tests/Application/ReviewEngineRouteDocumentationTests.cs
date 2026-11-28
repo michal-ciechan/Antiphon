@@ -69,6 +69,43 @@ public sealed class ReviewEngineRouteDocumentationTests(AntiphonWebAppFactory fa
     }
 
     [Test]
+    public void Only_rendered_table_rows_are_validated()
+    {
+        const string viewer = "| GET | `/api/review-me` | Viewer |";
+        var registered = new HashSet<string>(StringComparer.Ordinal) { "GET /api/review-me" };
+        var table = RouteTable(
+            viewer,
+            " | POST | `/api/review-me` | One leading space |",
+            "  | PUT | `/api/review-me` | Two leading spaces |",
+            "   | PATCH | `/api/review-me` | Three leading spaces |",
+            "DELETE | /api/review-me | No outer pipes",
+            "| POST | `/api/review-left\\|right` | Escaped pipe in a path |");
+        var failure = Should.Throw<ShouldAssertException>(() => AssertDocumentedRoutes("fixture", table, registered, registered));
+        failure.Message.ShouldContain("Unregistered in fixture");
+        foreach (var route in new[] { "POST /api/review-me", "PUT /api/review-me", "PATCH /api/review-me",
+                     "DELETE /api/review-me", "POST /api/review-left|right" })
+            failure.Message.ShouldContain(route);
+
+        string[] codeExamples =
+        [
+            "",
+            "    | Method | Path | Description |",
+            "    | --- | --- | --- |",
+            "    | POST | `/api/review-indented-code` | Indented code example |",
+            "",
+            "```markdown",
+            "| Method | Path | Description |",
+            "| --- | --- | --- |",
+            "| POST | `/api/review-fenced-code` | Fenced code example |",
+            "```",
+        ];
+        AssertDocumentedRoutes("fixture", [.. RouteTable(viewer), .. codeExamples], registered, registered);
+    }
+
+    private static string[] RouteTable(params string[] rows) =>
+        ["| Method | Path | Description |", "| --- | --- | --- |", .. rows];
+
+    [Test]
     public void Only_the_unregistered_close_route_can_be_marked_pending_GH56()
     {
         const string intake = "POST /api/review-runs";
