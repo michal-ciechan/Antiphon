@@ -116,13 +116,13 @@ public sealed class WorktreeRetirementRaceTests
     {
         const string goal = "Produce the admission contention report";
         const string answer = "Use the second option.\nKeep the complete reply.";
+        var ct = CancellationToken.None;
         var fault = new ReplyQueueInsertFault(answer);
         await using var world = await RaceWorld.CreateAsync(interceptor: fault);
         world.Adapter.RegisterOnStart = world.Provider.GetRequiredService<AgentSessionRuntime>();
         world.Adapter.OnSubmitted = body => AppendAsync(world.Adapter.StartedSessionId!.Value, TranscriptKinds.UserPrompt, body);
         var request = new CreateAgentTaskRequest(Goal: goal, Workspace: WorkspaceMode.ReadOnly,
             WorkingDirectory: world.Path);
-        var ct = CancellationToken.None;
 
         async Task<AgentTaskCreatedDto> CreateAsync()
         {
