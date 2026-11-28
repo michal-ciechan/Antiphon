@@ -35,7 +35,7 @@ import {
 } from '../../api/attention'
 import { getApiErrorMessage } from '../../api/client'
 import { useClearModelAvailabilityHold } from '../../api/modelAvailability'
-import { cancelQueuedMessage, sendQueuedMessageNow, stopSession } from '../../api/sessions'
+import { cancelQueuedMessage, sendQueuedMessageNow } from '../../api/sessions'
 import { formatCost, formatDuration } from '../delegations/taskVisuals'
 import { BlockedReplyRow } from './BlockedReplyRow'
 import { AttentionInspectionDrawer } from './AttentionInspectionDrawer'
@@ -379,7 +379,6 @@ function AttentionRowActions({
   const dropMessage = useMutation({
     mutationFn: () => cancelQueuedMessage(item.sessionId!, item.messageId!),
   })
-  const kill = useMutation({ mutationFn: stopSession })
   const clearHold = useClearModelAvailabilityHold()
 
   const pending =
@@ -389,7 +388,6 @@ function AttentionRowActions({
     cont.isPending ||
     sendNow.isPending ||
     dropMessage.isPending ||
-    kill.isPending ||
     clearHold.isPending
 
   const target = targetOf(item)
@@ -498,13 +496,10 @@ function AttentionRowActions({
       )}
 
       {killAsked && item.sessionId && (
-        <OperatorSessionStopDialog title={`Kill session ${shortSession}?`}
+        <OperatorSessionStopDialog sessionId={item.sessionId} title={`Kill session ${shortSession}?`}
           confirmLabel={`Kill session ${shortSession}`} cancelLabel="Leave it running"
-          pending={kill.isPending} onClose={() => setKillAsked(false)}
-          onConfirm={(reason, operatorToken) => kill.mutate({ sessionId: item.sessionId!, reason, operatorToken }, {
-            ...settle(`Stop requested for session ${shortSession}`, 'Could not kill the session'),
-            onSettled: () => setKillAsked(false),
-          })}>
+          onClose={() => setKillAsked(false)}
+          onDone={() => { void queryClient.invalidateQueries({ queryKey: attentionKeys.all }) }}>
           <Text size="sm"><Code>{shortSession}</Code> — {item.title}</Text>
           {item.evidence && (
             <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>{item.evidence}</Text>

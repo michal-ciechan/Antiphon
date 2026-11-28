@@ -253,14 +253,3 @@ export function useResumeSession(boardId: string) {
     },
   })
 }
-
-export function useStopSession(boardId: string) {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: stopSession,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
-      queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
-    },
-  })
-}

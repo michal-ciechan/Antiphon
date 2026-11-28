@@ -1,11 +1,12 @@
 import { ActionIcon, Alert, Badge, Box, Button, CopyButton, Group, Select, Stack, Text, Tooltip } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
+import { useQueryClient } from '@tanstack/react-query'
 import { lazy, useMemo, useState } from 'react'
 import { TbAlertCircle, TbCopy, TbPlayerStop, TbRefresh } from 'react-icons/tb'
-import type { AgentSessionSummaryDto } from '../../api/boards'
+import { boardKeys, type AgentSessionSummaryDto } from '../../api/boards'
 import { getApiErrorMessage } from '../../api/client'
 import type { AgentSessionResumeMode } from '../../api/sessions'
-import { useResumeSession, useStopSession } from '../../api/sessions'
+import { useResumeSession } from '../../api/sessions'
 import { SessionContextBadge } from '../agents/SessionContextBadge'
 import { OperatorSessionStopDialog } from '../agents/OperatorSessionStopDialog'
 import { SuspenseBoundary } from '../../shared/SuspenseBoundary'
@@ -33,7 +34,7 @@ const CLAUDE_SESSION_NOT_FOUND_TEXT = 'Claude resume session was not found'
 
 export function SessionTabs({ boardId, sessions, compact = false, fill = false }: SessionTabsProps) {
   const resumeSession = useResumeSession(boardId)
-  const stopSession = useStopSession(boardId)
+  const queryClient = useQueryClient()
   const [stopTarget, setStopTarget] = useState<string | null>(null)
   const terminalSessions = useMemo(
     () => sessions.filter((session) => session.id && session.cwd.trim().length > 0),
@@ -160,7 +161,6 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
                     size="sm"
                     variant="light"
                     color="red"
-                    loading={stopSession.isPending}
                     aria-label="Stop"
                     onClick={() => setStopTarget(selectedSession.id)}
                   >
@@ -173,7 +173,6 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
                   variant="light"
                   color="red"
                   leftSection={<TbPlayerStop size={12} />}
-                  loading={stopSession.isPending}
                   onClick={() => setStopTarget(selectedSession.id)}
                 >
                   Stop
@@ -225,16 +224,10 @@ export function SessionTabs({ boardId, sessions, compact = false, fill = false }
         </Alert>
       )}
       {stopTarget && (
-        <OperatorSessionStopDialog title={`Stop session ${stopTarget.slice(0, 8)}?`} confirmLabel="Confirm stop"
-          pending={stopSession.isPending} onClose={() => setStopTarget(null)}
-          onConfirm={(reason, operatorToken) => {
-            stopSession.mutate({ sessionId: stopTarget, reason, operatorToken }, {
-              onSuccess: () => {
-                setStopTarget(null)
-                notifications.show({ color: 'green', message: 'Session stop requested' })
-              },
-              onError: (error) => notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Stop failed') }),
-            })
+        <OperatorSessionStopDialog sessionId={stopTarget} title={`Stop session ${stopTarget.slice(0, 8)}?`}
+          confirmLabel="Confirm stop" onClose={() => setStopTarget(null)} onDone={() => {
+            void queryClient.invalidateQueries({ queryKey: boardKeys.detail(boardId) })
+            void queryClient.invalidateQueries({ queryKey: boardKeys.allDetails })
           }} />
       )}
       {selectedSession && (

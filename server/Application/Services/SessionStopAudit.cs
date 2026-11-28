@@ -14,6 +14,7 @@ public static class SessionStopAudit
     // The permanent audit summary also carries the active intent. The archivable JSON tier
     // is optional, so it must not carry any state required for admission after restart.
     private const string PendingPrefix = "Verified stop pending ";
+    private const string SettledPrefix = "Verified stop settled ";
 
     public static string Reason(string? supplied, string fallback)
     {
@@ -42,14 +43,20 @@ public static class SessionStopAudit
 
     internal static void SetOutcome(AuditRecord audit, string outcome, bool settleIntent = true)
     {
-        var firstLine = settleIntent && audit.Summary.StartsWith(PendingPrefix, StringComparison.Ordinal)
-            ? audit.Summary.IndexOf('\n') + 1
-            : 0;
-        audit.Summary = audit.Summary[firstLine..(audit.Summary.LastIndexOf('\n') + 1)] + "Outcome: " + outcome;
+        if (settleIntent && audit.Summary.StartsWith(PendingPrefix, StringComparison.Ordinal))
+            audit.Summary = SettledPrefix + audit.Summary[PendingPrefix.Length..];
+        audit.Summary = audit.Summary[..(audit.Summary.LastIndexOf('\n') + 1)] + "Outcome: " + outcome;
     }
 
     private static string PendingKey(Guid sessionId, DateTime generation) =>
         $"{PendingPrefix}{sessionId:D} {SessionGeneration.Normalize(generation):O}\n";
+
+    internal static Task<bool> HasVerifiedExitAsync(AppDbContext db, AgentSession session, CancellationToken ct)
+    {
+        var key = SettledPrefix + PendingKey(session.Id, session.StartedAt)[PendingPrefix.Length..];
+        return db.AuditRecords.AnyAsync(a => a.EventType == AuditEventType.SessionStop
+            && a.Summary.StartsWith(key) && a.Summary.EndsWith("\nOutcome: Exited"), ct);
+    }
 
     private static IQueryable<AuditRecord> Pending(AppDbContext db) =>
         db.AuditRecords.Where(a => a.EventType == AuditEventType.SessionStop && a.Summary.StartsWith(PendingPrefix));

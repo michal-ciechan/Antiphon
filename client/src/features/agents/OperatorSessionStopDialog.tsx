@@ -1,17 +1,34 @@
 import { Button, Group, Modal, PasswordInput, Stack, Textarea } from '@mantine/core'
+import { notifications } from '@mantine/notifications'
+import { useMutation } from '@tanstack/react-query'
 import { useState, type ReactNode } from 'react'
+import { getApiErrorMessage } from '../../api/client'
+import { stopSession } from '../../api/sessions'
 
-export function OperatorSessionStopDialog({ title, confirmLabel, cancelLabel = 'Cancel', children, pending, onClose, onConfirm }: {
+export function OperatorSessionStopDialog({ sessionId, title, confirmLabel, cancelLabel = 'Cancel', children, onClose, onDone }: {
+  sessionId: string
   title: string
   confirmLabel: string
   cancelLabel?: string
   children?: ReactNode
-  pending: boolean
   onClose: () => void
-  onConfirm: (reason: string, operatorToken: string) => void
+  onDone: () => void
 }) {
   const [operatorToken, setOperatorToken] = useState('')
   const [reason, setReason] = useState('')
+  const stop = useMutation({
+    mutationFn: () => stopSession({ sessionId, reason: reason.trim(), operatorToken: operatorToken.trim() }),
+    onSuccess: () => {
+      onClose()
+      onDone()
+      notifications.show({ color: 'green', message: 'Session stop requested' })
+    },
+    onError: (error) => {
+      setOperatorToken('')
+      notifications.show({ color: 'red', message: getApiErrorMessage(error, 'Could not stop the session') })
+    },
+  })
+  const pending = stop.isPending
   return (
     <Modal opened onClose={onClose} title={title} centered closeOnClickOutside={!pending} closeOnEscape={!pending}>
       <Stack gap="sm">
@@ -23,7 +40,7 @@ export function OperatorSessionStopDialog({ title, confirmLabel, cancelLabel = '
         <Group justify="flex-end" gap="xs">
           <Button size="xs" variant="subtle" disabled={pending} onClick={onClose}>{cancelLabel}</Button>
           <Button size="xs" color="red" loading={pending} disabled={!reason.trim() || !operatorToken.trim()}
-            onClick={() => onConfirm(reason.trim(), operatorToken.trim())}>
+            onClick={() => stop.mutate()}>
             {confirmLabel}
           </Button>
         </Group>

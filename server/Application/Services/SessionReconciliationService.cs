@@ -558,6 +558,10 @@ public sealed class SessionReconciliationService
             if (row.Status is SessionStatus.Failed or SessionStatus.Stopped or SessionStatus.Stopping
                 && await SessionStopAudit.Pending(_db, row.Id, row.StartedAt).AnyAsync(ct))
                 continue;
+            // An inventory pass started before the verified exit can still say Running.
+            // Its stale snapshot cannot authorize the legacy unconditional retry.
+            if (row.Status == SessionStatus.Stopped && await SessionStopAudit.HasVerifiedExitAsync(_db, row, ct))
+                continue;
 
             corrections += row.Status switch
             {
