@@ -1,4 +1,6 @@
 {
-  "summary": "5 files, +14 -3, size S, full review\nM src/Lease.cs (+12 -3)\nA warning: x (+0 -0)\nA Warnings: (+0 -0)\nR old-name\nstatus antiphon/review not posted: from file name\nNo edge leaves 'delta' -> new-name (+0 -0)\nA tests/LeaseTests.cs (+2 -0)",
-  "warnings": ["status antiphon/review not posted: Fixture status refused.\nCheck repository permissions."]
+  "body": "7 files, +14 -3, size S, full review\nM src/Lease.cs (+12 -3)\nA warning: x (+0 -0)\nA Warnings: (+0 -0)\nR old-name\nstatus antiphon/review not posted: from file name\nNo edge leaves 'delta' -> new-name (+0 -0)\nA tests/LeaseTests.cs (+2 -0)\nA src/非常に長い-🚦-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.cs (+0 -0)\nA src/δοκιμή-火山-🚀.cs (+0 -0)",
+  "warnings": [
+    "status antiphon/review not posted: Fixture status refused.\nCheck repository permissions."
+  ]
 }

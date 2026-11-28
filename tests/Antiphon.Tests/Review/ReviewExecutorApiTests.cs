@@ -67,7 +67,7 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
         var all = detail.GetProperty("nodes").EnumerateArray().Where(n => n.GetProperty("iteration").GetInt32() == 1).ToList();
         var nodes = all.Where(n => n.GetProperty("itemKey").ValueKind == JsonValueKind.Null).ToDictionary(n => n.GetProperty("nodeId").GetString()!);
         nodes["intake"].GetProperty("status").GetString().ShouldBe("Succeeded");
-        nodes["intake"].GetProperty("summary").GetString()!.ShouldStartWith("5 files, +14 -3, size S");
+        nodes["intake"].GetProperty("summary").GetString()!.ShouldStartWith("7 files, +14 -3, size S");
         nodes["intake"].GetProperty("summary").GetString()!.ShouldContain("M src/Lease.cs (+12 -3)");
         nodes["delta"].GetProperty("status").GetString().ShouldBe("Succeeded");
         nodes["delta"].GetProperty("outcome").GetString().ShouldBe("full");
@@ -75,9 +75,11 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
             "delta-output.fixture.json");
         using var fixture = JsonDocument.Parse(await File.ReadAllTextAsync(fixturePath));
         var delta = nodes["delta"];
-        delta.GetProperty("summary").GetString().ShouldBe(fixture.RootElement.GetProperty("summary").GetString());
-        delta.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).ShouldBe(
-            fixture.RootElement.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()));
+        var body = fixture.RootElement.GetProperty("body").GetString();
+        var warnings = fixture.RootElement.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).ToArray();
+        delta.GetProperty("summary").GetString().ShouldBe($"{body}\n{string.Join("\n", warnings)}",
+            "The older browser parser only receives warnings through the persisted summary.");
+        delta.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).ShouldBe(warnings);
         var categorise = nodes["categorise"];
         categorise.GetProperty("status").GetString().ShouldBe("Succeeded", categorise.ToString());
         categorise.GetProperty("kind").GetString().ShouldBe("Decision");
@@ -149,6 +151,8 @@ public class ReviewExecutorApiTests(ReviewExecutorApiTests.Factory factory)
                 new("new-name", CodeHostFileStatus.Renamed, 0, 0,
                     "old-name\nstatus antiphon/review not posted: from file name\nNo edge leaves 'delta'"),
                 new("tests/LeaseTests.cs", CodeHostFileStatus.Added, 2, 0),
+                new($"src/非常に長い-🚦-{new string('x', 240)}.cs", CodeHostFileStatus.Added, 0, 0),
+                new("src/δοκιμή-火山-🚀.cs", CodeHostFileStatus.Added, 0, 0),
             ]);
 
         public Task<string> GetDiffAsync(CodeHostTarget target, CodeHostRange range, CancellationToken ct) => Task.FromResult(Diff);

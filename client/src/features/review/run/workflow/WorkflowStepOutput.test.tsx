@@ -73,6 +73,28 @@ function renderCard(e: NodeExecutionDto) {
   )
 }
 
+const deltaExecution = {
+  summary: [deltaOutput.body, ...deltaOutput.warnings].join('\n'),
+  warnings: deltaOutput.warnings,
+}
+
+// The parser shipped in c1743b081 reads only the persisted summary.
+function legacyWarnings(summary: string) {
+  const body: string[] = []
+  const warnings: string[][] = []
+  let part = body
+  for (const line of summary.split(/\r?\n/)) {
+    if (/^status antiphon\/(?:review|approval) not posted: /.test(line)) {
+      part = []
+      warnings.push(part)
+    } else if (line.startsWith("No edge leaves '")) {
+      part = body
+    }
+    part.push(line)
+  }
+  return warnings.map((lines) => lines.join('\n'))
+}
+
 describe('Workflow execution output', () => {
   it('preserves line breaks and indentation in a wrapping monospace block', () => {
     const summary = 'Changed files\n\n  M src/one.ts (+29 -0)\n  A src/two.ts (+8 -0)'
@@ -87,17 +109,26 @@ describe('Workflow execution output', () => {
 
   it('renders only the producer warnings and keeps the file list and routing failure in output', () => {
     const failure = "No edge leaves 'categorise' for outcome 'feature'."
-    const output = { ...deltaOutput, summary: `${deltaOutput.summary}\n${failure}` }
-    const { container } = renderPanel(execution({ status: 'Failed', ...output }))
+    const summary = `${deltaExecution.summary}\n${failure}`
+    const { container } = renderPanel(execution({ ...deltaExecution, status: 'Failed', summary }))
 
-    expect(container.querySelector('pre')?.textContent).toBe(output.summary)
+    expect(container.querySelector('pre')?.textContent).toBe(`${deltaOutput.body}\n${failure}`)
     const warnings = within(screen.getByRole('list', { name: 'Warnings' })).getAllByRole('listitem')
     expect(warnings.map((warning) => warning.textContent)).toEqual(deltaOutput.warnings)
   })
 
-  it('preserves ambiguous legacy output as literal text', () => {
-    const legacy = `${deltaOutput.summary}\n${deltaOutput.warnings[0]}\n<img src=x><b>literal</b>`
-    const { container } = renderPanel(execution({ summary: legacy }))
+  it('renders the persisted response once and keeps its warning readable by an older client', () => {
+    const { container } = renderPanel(execution(deltaExecution))
+
+    expect(legacyWarnings(deltaExecution.summary)).toContain(deltaExecution.warnings[0])
+    expect(container.querySelector('pre')?.textContent).toBe(deltaOutput.body)
+    const warnings = within(screen.getByRole('list', { name: 'Warnings' })).getAllByRole('listitem')
+    expect(warnings.map((warning) => warning.textContent)).toEqual(deltaExecution.warnings)
+  })
+
+  it.each([undefined, null])('preserves ambiguous legacy output with warnings %s as literal text', (warnings) => {
+    const legacy = `${deltaExecution.summary}\n<img src=x><b>literal</b>`
+    const { container } = renderPanel(execution({ summary: legacy, warnings }))
 
     expect(container.querySelector('pre')?.textContent).toBe(legacy)
     expect(container.querySelector('pre img, pre b')).toBeNull()
@@ -105,7 +136,7 @@ describe('Workflow execution output', () => {
   })
 
   it('declares theme-aware output and keyboard focus colors', () => {
-    const { container } = renderPanel(execution(deltaOutput))
+    const { container } = renderPanel(execution(deltaExecution))
 
     expect(container.querySelector('pre')?.parentElement).toHaveStyle({
       background: 'var(--mantine-color-default)',
