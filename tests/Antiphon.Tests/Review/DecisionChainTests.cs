@@ -233,7 +233,7 @@ public class DecisionChainTests
     }
 
     [Test]
-    public async Task A_system_one_400_rejects_without_fallback_and_keeps_a_bounded_redacted_message()
+    public async Task A_system_one_400_projects_a_proxy_error_and_omits_the_request_preview()
     {
         const string message = "Invalid Decisions request: questions.change_kind.choice.criteria Field required";
         var settings = Settings(("primary", JevDialects.LiteLlmSystemOne, "https://primary.example"),
@@ -247,7 +247,7 @@ public class DecisionChainTests
 
         failure.Kind.ShouldBe(DecisionFailureKind.Rejected);
         const string prefix = "Provider 'primary' rejected the request (400): HTTP 400: ";
-        failure.Message.ShouldStartWith(prefix + message);
+        failure.Message.ShouldBe(prefix + "Invalid Decisions request");
         failure.Message.ShouldNotContain(key);
         failure.Message.Length.ShouldBeLessThanOrEqualTo(prefix.Length + 300);
         failure.Calls.ShouldHaveSingleItem().Outcome.ShouldBe("rejected");
@@ -260,15 +260,16 @@ public class DecisionChainTests
     [Arguments("""
         {"detail":[{"loc":["body","questions","reach","criteria",0],"msg":"Field required","type":"missing","input":"discard this preview"},
                    {"loc":["body","state"],"msg":"Expected text","type":"string_type"}]}
-        """, "body.questions.reach.criteria.0: Field required; body.state: Expected text")]
+        """, "body.questions.2.criteria.0: Field required; body.state: Expected text")]
     [Arguments("""
         {"detail":{"errors":{"detail":[{"loc":["body","questions"],"msg":"Expected a question map","ctx":{"msg":"discard this context"}}]}}}
         """, "body.questions: Expected a question map")]
-    [Arguments("""{"status":"bad request"}""", "The provider returned no error message.")]
-    [Arguments("Proxy refused the request", "Proxy refused the request")]
+    [Arguments("""{"detail":{"loc":"body.state","msg":"Expected text"}}""", "body.state: Expected text")]
+    [Arguments("""{"status":"bad request"}""", DiagnosticOmitted)]
+    [Arguments("Proxy refused the request", DiagnosticOmitted)]
     [Arguments("""
         {"detail":{"loc":["body","sk-fakecredential1234"],"msg":"Invalid key-primary under Bearer fixture-only-credential"}}
-        """, "body.sk-***: Invalid *** under Bearer ***")]
+        """, DiagnosticOmitted)]
     public async Task A_system_one_400_surfaces_detail_and_rejects_without_fallback(string body, string expected)
     {
         var failure = await RejectSystemOneRequestAsync(body);
@@ -285,12 +286,25 @@ public class DecisionChainTests
             """;
         var failure = await RejectSystemOneRequestAsync(body);
 
-        failure.Message.ShouldBe(Rejected400Prefix + padding + " sk-*** ta");
+        failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);
     }
 
     [Test]
-    [Arguments("""{"detail":{"message":"Field required \uD800"}}""")]
-    [Arguments("""{"detail":{"message":"Field required \uDC00"}}""")]
+    public async Task A_system_one_400_caps_the_projected_diagnostic()
+    {
+        const string message = "Field required";
+        var detail = new JsonArray();
+        for (var i = 0; i < 24; i++)
+            detail.Add(new JsonObject { ["msg"] = message });
+
+        var failure = await RejectSystemOneRequestAsync(new JsonObject { ["detail"] = detail }.ToJsonString());
+
+        failure.Message.ShouldBe(Rejected400Prefix + string.Join("; ", Enumerable.Repeat(message, 24))[..300]);
+    }
+
+    [Test]
+    [Arguments("""{"detail":{"message":"Field required \uD800","errors":[{"msg":"Expected text"}]}}""")]
+    [Arguments("""{"detail":{"message":"Field required \uDC00","errors":[{"msg":"Expected text"}]}}""")]
     [Arguments("""{"detail":{"loc":["body","\uD800"],"msg":"Field required"}}""")]
     [Arguments("""{"detail":{"loc":["body","\uDC00"],"msg":"Field required"}}""")]
     [Arguments("""{"detail":{"loc":"\uD800","msg":"Field required"}}""")]
@@ -321,13 +335,14 @@ public class DecisionChainTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_system_one_400_omits_unparseable_error_bodies(bool overDepth)
+    [Arguments(0)]
+    [Arguments(13)]
+    [Arguments(70)]
+    public async Task A_system_one_400_omits_unparseable_error_bodies(int depth)
     {
         const string body = """{"detail":{"msg":"Field required"},"input":"private request preview""";
-        var failure = await RejectSystemOneRequestAsync(overDepth
-            ? body + "\",\"nested\":" + new string('[', 70) + "0" + new string(']', 70) + "}"
+        var failure = await RejectSystemOneRequestAsync(depth > 0
+            ? body + "\",\"nested\":" + new string('[', depth) + "0" + new string(']', depth) + "}"
             : body);
 
         failure.Message.ShouldBe(Rejected400Prefix + DiagnosticOmitted);

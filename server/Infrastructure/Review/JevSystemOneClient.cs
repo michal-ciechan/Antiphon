@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Antiphon.Server.Application.Interfaces;
-using Antiphon.Server.Application.Services;
 using Antiphon.Server.Application.Settings;
 using Microsoft.Extensions.Options;
 
@@ -20,6 +19,10 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
 {
     public const string CostHeader = "x-litellm-response-cost";
     private const int MaxErrorTextLength = 300;
+    private const int MaxErrorBodyBytes = 16 * 1024;
+    private const int MaxErrorDepth = 12;
+    private const int MaxErrorNodes = 256;
+    private const int MaxErrorArrayItems = 64;
     private const string DiagnosticOmitted = "Provider diagnostic omitted.";
 
     public bool Serves(string dialect) => JevDialects.All.Contains(dialect, StringComparer.OrdinalIgnoreCase);
@@ -42,27 +45,21 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         };
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-        HttpResponseMessage response;
+        // With ResponseHeadersRead, the client's timeout only covers the headers. Keep the
+        // same deadline for content reads while passing the caller's cancellation through.
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(http.Timeout);
         try
         {
-            response = await http.SendAsync(message, ct);
-        }
-        catch (HttpRequestException ex)
-        {
-            throw new DecisionProviderException(DecisionFailureKind.Unavailable, $"Transport failure: {ex.Message}");
-        }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-        {
-            throw new DecisionProviderException(DecisionFailureKind.Timeout, "The HTTP client timed out.");
-        }
-
-        using (response)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            var status = (int)response.StatusCode;
+            using var response = await http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, budget.Token);
             if (!response.IsSuccessStatusCode)
-                throw new DecisionProviderException(Classify(status), $"HTTP {status}: {ErrorText(body, apiKey)}", status);
+            {
+                var status = (int)response.StatusCode;
+                var diagnostic = await ErrorTextAsync(response.Content, request.Questions, budget.Token);
+                throw new DecisionProviderException(Classify(status), $"HTTP {status}: {diagnostic}", status);
+            }
 
+            var body = await response.Content.ReadAsStringAsync(budget.Token);
             JsonObject root;
             try
             {
@@ -85,6 +82,14 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
             foreach (var question in request.Questions)
                 parsed[question.Name] = ParseAnswer(question, answers[question.Name], servedBy);
             return new DecisionResult(parsed, usage, cost, "actual", servedBy);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new DecisionProviderException(DecisionFailureKind.Unavailable, $"Transport failure: {ex.Message}");
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new DecisionProviderException(DecisionFailureKind.Timeout, "The HTTP client timed out.");
         }
     }
 
@@ -150,36 +155,45 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         _ => DecisionFailureKind.Unavailable,
     };
 
-    /// <summary>Expose a bounded, redacted error message from LiteLLM, TypeSafe or a plain-text proxy.</summary>
-    private static string ErrorText(string body, string apiKey)
+    private static async Task<string> ErrorTextAsync(HttpContent content, IReadOnlyList<DecisionQuestion> questions,
+        CancellationToken ct)
     {
-        const string noMessage = "The provider returned no error message.";
-        var redactor = new DiagnosticsRedactor(includePaths: true);
-        string Redact(string text) => redactor.Redact(text.Replace(apiKey, "***", StringComparison.Ordinal));
+        // SendAsync uses ResponseHeadersRead so the error body has not been buffered.
+        // Reserve one extra byte to distinguish an exact-limit body from a truncated one.
+        var buffer = new byte[MaxErrorBodyBytes + 1];
+        int bytes;
+        try
+        {
+            using var stream = await content.ReadAsStreamAsync(ct);
+            bytes = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwIfEndOfStream: false, cancellationToken: ct);
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        {
+            return DiagnosticOmitted;
+        }
+
+        if (bytes > MaxErrorBodyBytes)
+            return DiagnosticOmitted;
 
         try
         {
-            using var document = JsonDocument.Parse(body);
+            using var document = JsonDocument.Parse(buffer.AsMemory(0, bytes), new JsonDocumentOptions { MaxDepth = MaxErrorDepth });
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-                return BoundErrorText(Redact(ErrorString(root) ?? noMessage));
+            var nodesLeft = MaxErrorNodes;
+            if (!WithinErrorBudget(root, ref nodesLeft))
+                return DiagnosticOmitted;
 
             var error = ErrorProperty(root, "error");
             var detail = ErrorProperty(root, "detail");
-            var message = ErrorString(ErrorProperty(error, "message")) ?? ErrorString(error) ?? ErrorString(detail);
+            var message = PublicMessage(ErrorString(ErrorProperty(error, "message")))
+                ?? PublicMessage(ErrorString(error))
+                ?? PublicMessage(ErrorString(detail))
+                ?? PublicMessage(ErrorString(root));
             if (message is not null)
-                return BoundErrorText(Redact(message));
+                return message;
 
-            var diagnostic = new StringBuilder(MaxErrorTextLength);
-            foreach (var validationMessage in ValidationMessages(detail))
-            {
-                if (diagnostic.Length > 0)
-                    diagnostic.Append("; ");
-                diagnostic.Append(Redact(validationMessage));
-                if (diagnostic.Length >= MaxErrorTextLength)
-                    break;
-            }
-            return diagnostic.Length == 0 ? noMessage : BoundErrorText(diagnostic.ToString());
+            var diagnostic = string.Join("; ", ValidationMessages(detail, questions));
+            return diagnostic.Length == 0 ? DiagnosticOmitted : BoundErrorText(diagnostic);
         }
         catch (JsonException)
         {
@@ -187,12 +201,34 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         }
     }
 
-    private static IEnumerable<string> ValidationMessages(JsonElement detail)
+    private static bool WithinErrorBudget(JsonElement element, ref int nodesLeft)
+    {
+        if (--nodesLeft < 0)
+            return false;
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            if (element.GetArrayLength() > MaxErrorArrayItems)
+                return false;
+            foreach (var child in element.EnumerateArray())
+                if (!WithinErrorBudget(child, ref nodesLeft))
+                    return false;
+        }
+        else if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+                if (!WithinErrorBudget(property.Value, ref nodesLeft))
+                    return false;
+        }
+        return true;
+    }
+
+    private static IEnumerable<string> ValidationMessages(JsonElement detail, IReadOnlyList<DecisionQuestion> questions)
     {
         if (detail.ValueKind == JsonValueKind.Array)
         {
             foreach (var entry in detail.EnumerateArray())
-                foreach (var message in ValidationMessages(entry))
+                foreach (var message in ValidationMessages(entry, questions))
                     yield return message;
             yield break;
         }
@@ -200,30 +236,79 @@ public sealed class JevSystemOneClient(HttpClient http, IOptions<ReviewDecisionS
         if (detail.ValueKind != JsonValueKind.Object)
             yield break;
 
-        var text = ErrorString(ErrorProperty(detail, "msg")) ?? ErrorString(ErrorProperty(detail, "message"));
-        if (!string.IsNullOrWhiteSpace(text))
+        var text = PublicMessage(ErrorString(ErrorProperty(detail, "msg")) ?? ErrorString(ErrorProperty(detail, "message")));
+        if (text is not null)
         {
-            var location = ErrorProperty(detail, "loc");
-            var path = location.ValueKind == JsonValueKind.Array
-                ? string.Join('.', location.EnumerateArray()
-                    .Where(segment => segment.ValueKind is JsonValueKind.String or JsonValueKind.Number)
-                    .Select(segment => ErrorString(segment) ?? segment.GetRawText()))
-                : ErrorString(location);
-            yield return string.IsNullOrEmpty(path) ? text : $"{path}: {text}";
+            var path = PublicLocation(ErrorProperty(detail, "loc"), questions);
+            yield return path is null ? text : $"{path}: {text}";
         }
 
-        foreach (var property in detail.EnumerateObject())
-        {
-            // TypeSafe may include rejected values and extra context alongside a validation message.
-            if (property.Name is "input" or "ctx" or "loc")
-                continue;
-            foreach (var message in ValidationMessages(property.Value))
-                yield return message;
-        }
+        foreach (var message in ValidationMessages(ErrorProperty(detail, "detail"), questions))
+            yield return message;
+        foreach (var message in ValidationMessages(ErrorProperty(detail, "errors"), questions))
+            yield return message;
     }
 
-    private static JsonElement ErrorProperty(JsonElement element, string name) =>
-        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value) ? value : default;
+    // Provider messages can include input values. Publish fixed reasons and drop all other text.
+    private static string? PublicMessage(string? text) => text switch
+    {
+        "Field required" or "Expected text" or "Expected a question map"
+            or "Invalid score question" or "Rubric is invalid" or "bad question type" or "rate limited" => text,
+        string value when value.StartsWith("Invalid Decisions request:", StringComparison.Ordinal) => "Invalid Decisions request",
+        _ => null,
+    };
+
+    private static string? PublicLocation(JsonElement location, IReadOnlyList<DecisionQuestion> questions)
+    {
+        var segments = location.ValueKind == JsonValueKind.Array
+            ? location.EnumerateArray().Select(segment => segment.ValueKind == JsonValueKind.Number
+                ? segment.GetRawText() : ErrorString(segment)).ToArray()
+            : ErrorString(location)?.Split('.', MaxErrorArrayItems + 1);
+        if (segments is null || segments.Length == 0 || segments.Length > MaxErrorArrayItems)
+            return null;
+
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var segment = segments[i];
+            var previous = i > 0 ? segments[i - 1] : null;
+            segments[i] = previous switch
+            {
+                // Map a request question to its zero-based position without publishing the name.
+                "questions" => QuestionPosition(segment, questions),
+                "criteria" when segment is { Length: > 0 and <= 3 }
+                    && int.TryParse(segment, NumberStyles.None, CultureInfo.InvariantCulture, out var index)
+                    && index is >= 0 and < 255 => index.ToString(CultureInfo.InvariantCulture),
+                _ => segment is "body" or "model" or "state" or "questions" or "type" or "instructions"
+                    or "criteria" or "choice" or "score" or "noul" ? segment : null,
+            };
+            if (segments[i] is null)
+                return null;
+        }
+        return string.Join('.', segments);
+    }
+
+    private static string? QuestionPosition(string? name, IReadOnlyList<DecisionQuestion> questions)
+    {
+        for (var i = 0; i < questions.Count; i++)
+            if (questions[i].Name == name)
+                return i.ToString(CultureInfo.InvariantCulture);
+        return null;
+    }
+
+    private static JsonElement ErrorProperty(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return default;
+
+        try
+        {
+            return element.TryGetProperty(name, out var value) ? value : default;
+        }
+        catch (InvalidOperationException)
+        {
+            throw new JsonException("The provider diagnostic contains an invalid JSON property name.");
+        }
+    }
 
     private static string? ErrorString(JsonElement element)
     {
